@@ -18,13 +18,7 @@ implement Init#(EnvironmentVariables, EnvironmentVariablesInitArgs) (
 )
 
 environment_variables_get_c_string := (
-    .key          : &CChar,
-    .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .key: &CChar, .ffi: $&ForeignFunctionInterface, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?StringView, (..invalid_utf8))) {
     assume error_tracer
 
@@ -42,11 +36,7 @@ lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &EnvironmentVariables,
     .key          : StringView,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?StringView, (..out_of_memory, ..invalid_utf8))) {
     assume error_tracer
 
@@ -67,11 +57,7 @@ has := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : &EnvironmentVariables,
     .key          : StringView,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..out_of_memory, ..invalid_utf8))) {
     assume error_tracer
 

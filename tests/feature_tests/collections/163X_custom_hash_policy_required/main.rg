@@ -11,6 +11,7 @@ implement HashPolicy#(Policy, Int32) (
 )
 
 main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator := system.page_allocator
     map ::= unwrap_or_abort(.value = HashMap#(.key: Int32, .value: Int32, .policy: Policy)())
 }

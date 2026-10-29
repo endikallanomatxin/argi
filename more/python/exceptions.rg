@@ -49,7 +49,9 @@ initialization_error := (.ffi: $&ForeignFunctionInterface) -> (.exception: Excep
     exception = (._handle = _initialization_snapshot().handle, ._ffi = ffi)
 }
 
-_python_exception_clone := (.self: &Exception) -> (.result: Exception) {
+_python_exception_clone := (.self: &Exception, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Exception
+) {
     assume ffi := self&._ffi
     result = (._handle = _exception_clone(.handle = self&._handle).handle, ._ffi = self&._ffi)
 }
@@ -69,11 +71,7 @@ _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : &Exception,
     .part         : Int32,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -96,13 +94,7 @@ _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 exception_type := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Exception,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Exception, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -110,13 +102,7 @@ exception_type := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 exception_message := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Exception,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Exception, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -124,13 +110,7 @@ exception_message := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 exception_traceback := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Exception,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Exception, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 

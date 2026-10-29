@@ -1,14 +1,8 @@
 implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, StringView) (
     .Result      : Type = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    .write_value = (
-        .self         : $&Stream,
-        .value        : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Result) {
+    .write_value = (.self: $&Stream, .value: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    ) {
         assume error_tracer
 
         i :: UIntNative = 0
@@ -25,15 +19,9 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, StringView) (
 
 implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, &String) (
     .Result      : Type = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    .write_value = (
-        .self         : $&Stream,
-        .value        : &String,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Result) {
+    .write_value = (.self: $&Stream, .value: &String, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    ) {
         assume error_tracer
 
         result = write(.self = self, .value = view(value))
@@ -45,11 +33,7 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, MutableArrayView#
     .write_value = (
         .self         : $&Stream,
         .value        : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 

@@ -7,13 +7,7 @@ implement ImplicitlyCopyable#(StringView) ()
 
 -- Byte references exclude the end position, including for empty views.
 string_view_byte_address := (
-    .self         : &StringView,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &StringView, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(&UInt8, (..out_of_bounds))) {
     assume error_tracer
 
@@ -27,13 +21,7 @@ string_view_byte_address := (
 }
 
 _view_get_byte := (
-    .view         : &StringView,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .view: &StringView, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UInt8, (..out_of_bounds))) {
     assume error_tracer
 
@@ -42,6 +30,7 @@ _view_get_byte := (
 }
 
 equals := (.left: StringView, .right: StringView) -> (.ok: Bool) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if left._length != right._length {
         ok = false
         return

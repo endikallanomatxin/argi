@@ -31,6 +31,7 @@ implement OtherProduct#(Row, Column) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     row ::= Row(6)
     column ::= Column(7)
     if Product#(Row, Column).multiply(&row, &column).result != 42 { abort }

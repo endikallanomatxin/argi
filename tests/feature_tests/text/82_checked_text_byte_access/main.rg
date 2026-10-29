@@ -1,4 +1,7 @@
-expect_bounds := #(.Text: Type: TextBytes#(Text)) (.text: &Text) -> ()  {
+expect_bounds := #(.Text: Type: TextBytes#(Text)) (
+    .text: &Text, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     size ::= byte_length(text).count
     match bytes_get(.view = text, .index = size) {
         ..ok _ { abort }
@@ -11,7 +14,8 @@ expect_bounds := #(.Text: Type: TextBytes#(Text)) (.text: &Text) -> ()  {
     }
 }
 
-main := (.system: System) -> ()  {
+main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= system.page_allocator
     text ::= unwrap_or_abort(.value = String(.length = 3))
     _ ::= unwrap_or_abort(.value = set_ascii($&text, .index = 0, .byte = 65))

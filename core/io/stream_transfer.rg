@@ -1,13 +1,7 @@
 -- Transfer specialization belongs to one operation identity for both endpoints.
 StreamTransfer#(.ReaderType: Type, .WriterType: Type): Contract = (
     .transfer_stream : (
-        .reader       : $&ReaderType,
-        .writer       : $&WriterType,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .reader: $&ReaderType, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (
         .result : Errable#(
             UIntNative,
@@ -28,13 +22,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Write
     ReaderType, WriterType
 ) (
     .transfer_stream = (
-        .reader       : $&ReaderType,
-        .writer       : $&WriterType,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .reader: $&ReaderType, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (
         .result : Errable#(
             UIntNative,
@@ -76,11 +64,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer
     .transfer_stream = (
         .reader       : $&ReaderType,
         .writer       : $&BufferedWriter#(.base_type: base_type),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (
         .result : Errable#(
             UIntNative,

@@ -36,7 +36,8 @@ DecimalBuffer := (
     .length : UIntNative = 0
 )
 
-main := (.system: System) -> (.status_code: Int32 = 0) {
+main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
+    assume error_tracer
     allocator ::= system.page_allocator
     index :: UInt32 = 0
     buffer ::= DecimalBuffer()
@@ -71,15 +72,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(DecimalBuffer) (
-    .write_byte = (
-        .self         : $&DecimalBuffer,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&DecimalBuffer, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         if self&.length == 32 { abort }
@@ -88,14 +83,9 @@ implement Writer#(DecimalBuffer) (
         result = ..ok Void()
     }
 
-    .flush = (
-        .self         : $&DecimalBuffer,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&DecimalBuffer, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         abort

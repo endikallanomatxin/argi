@@ -12,11 +12,7 @@ _init_hash_set := #(
     .policy       : policy,
     .allocator    : $&Provider,
     .capacity     : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))) {
     assume error_tracer
 
@@ -33,11 +29,7 @@ HashSetInitArgs: Type = #(
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator) Init#(
@@ -61,11 +53,7 @@ StandardHashSetInitArgs: Type = #(
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#(
@@ -91,11 +79,7 @@ _map_insert_hash_set := #(
     .self         : $&HashSet#(.key: key, .policy: policy),
     .key          : key,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)      = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..out_of_memory))) {
     assume error_tracer
 
@@ -168,11 +152,7 @@ _map_reserve_hash_set := #(
     .self         : $&HashSet#(.key: key, .policy: policy),
     .capacity     : UIntNative,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 

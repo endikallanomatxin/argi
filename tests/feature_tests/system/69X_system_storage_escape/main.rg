@@ -12,7 +12,10 @@ EntryStorage := (
     .rand_gen       : RandomNumberGenerator
 )
 
-initialize_system := (.storage: $&EntryStorage) -> (.system: System) {
+initialize_system := (.storage: $&EntryStorage, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .system : System
+) {
+    assume error_tracer
     storage&.ffi = ForeignFunctionInterface()
     assume ffi ::= $&storage&.ffi
     storage&.memory = Memory()
@@ -40,12 +43,14 @@ initialize_system := (.storage: $&EntryStorage) -> (.system: System) {
     )
 }
 
-escape_system := () -> (.system: System) {
+escape_system := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.system: System) {
+    assume error_tracer
     storage :: EntryStorage
     system = initialize_system(.storage = $&storage)
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     system ::= escape_system()
     status_code = 42
 }

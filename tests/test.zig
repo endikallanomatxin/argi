@@ -238,7 +238,8 @@ test "installed argi test resolves core from its installation prefix outside rep
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\test installed_prefix := (.system: System) -> !() {
+        \\test installed_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+        \\    assume error_tracer
         \\    testing.expect(.condition = true)!
         \\}
         \\
@@ -1593,6 +1594,7 @@ test "argi run inherits stdin stdout and stderr" {
         .sub_path = "main.rg",
         .data =
         \\main := (.system: System) -> (.status_code: Int32 = 7)  {
+        \\    assume error_tracer ::= $&noop_error_tracer
         \\    input ::= unwrap_or_abort(.value = Reader#().read_byte(.self = $&system.terminal&.stdin))
         \\    match input {
         \\        ..ok byte {
@@ -2670,12 +2672,12 @@ test "argi repl preserves indexed replacement destinations across submissions" {
         \\    counter&.selections = counter&.selections + 1
         \\    result = selection&
         \\}
-        \\make_array_resource := (.selection: $&UIntNative, .counter: $&Counter, .fail: Bool, .error_tracer: $&Virtual#(.contract: ErrorTracer)) -> (.result: Errable#(Resource, (..stop))) {
+        \\make_array_resource := (.selection: $&UIntNative, .counter: $&Counter, .fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Resource, (..stop))) {
         \\    assume error_tracer
         \\    selection&= 1
         \\    if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.counter = counter, .value = 9) }
         \\}
-        \\replace_array := (.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool, .error_tracer: $&Virtual#(.contract: ErrorTracer)) -> (.result: Errable#(Int32, (..stop))) {
+        \\replace_array := (.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Int32, (..stop))) {
         \\    assume error_tracer
         \\    values&[select_array_index(.selection = selection, .counter = counter)] = make_array_resource(.selection = selection, .counter = counter, .fail = fail)!
         \\    result = ..ok 42
@@ -2767,7 +2769,7 @@ test "argi test runs configured modules and explicit target overrides suite" {
         try tmp.dir.createDir(std.testing.io, module, .default_dir);
         const source = try std.fs.path.join(std.testing.allocator, &.{ module, "main.rg" });
         defer std.testing.allocator.free(source);
-        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := (.system: System) -> !() { testing.expect(.condition = true)! }\n" });
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() { assume error_tracer; testing.expect(.condition = true)! }\n" });
     }
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = "[test]\nmodules = [\n  'first',\n  'second',\n]\n" });
     const suite = try runChildInCwd(&.{ argi, "test", "--filter", "same_name" }, root);

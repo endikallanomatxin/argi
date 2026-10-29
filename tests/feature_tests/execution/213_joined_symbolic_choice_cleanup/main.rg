@@ -42,6 +42,7 @@ replace := (.target: $&Choice, .token: Token, .consume: Bool) -> () {
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     {
         value :: Choice = ..pair(.left = (.value = 1), .right = (.value = 2))
         token :: Token = (.value = 0)

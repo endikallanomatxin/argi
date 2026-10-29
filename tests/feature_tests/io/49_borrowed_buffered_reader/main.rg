@@ -1,14 +1,9 @@
 Source := (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
 
 implement Reader#(Source) (
-    .read_byte = (
-        .self         : $&Source,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume error_tracer
 
         self&.calls = self&.calls + 1
@@ -29,8 +24,10 @@ implement Reader#(Source) (
     }
 )
 
-expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: UInt8 = 65) -> (
-) {
+expect_byte := #(.Stream: Type: Reader#(Stream)) (
+    .reader: $&Stream, .expected: UInt8 = 65, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     match unwrap_or_abort(.value = Reader#().read_byte(reader)) {
         ..end { abort }
         ..ok byte { if byte != expected { abort } }
@@ -38,6 +35,7 @@ expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: 
 }
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     -- Empty storage is a deliberate unbuffered adapter, without lookahead.
     source :: Source = (.position = 0, .fail_once = false)
     empty: [0]UInt8 = ()

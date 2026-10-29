@@ -4,11 +4,7 @@ Wrapper := (.widget: Widget)
 
 WidgetInitArgs: Type = (
     .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(Widget, WidgetInitArgs) (
@@ -32,11 +28,7 @@ implement Init#(Widget, WidgetInitArgs) (
 
 WrapperInitArgs2: Type = (
     .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(Wrapper, WrapperInitArgs2) (
@@ -55,6 +47,7 @@ implement Init#(Wrapper, WrapperInitArgs2) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     failed ::= Wrapper(.fail = true)
     match failed {
         ..error _ {}

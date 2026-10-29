@@ -1,10 +1,5 @@
 alloc_one := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) {
     assume error_tracer
 
@@ -22,6 +17,7 @@ alloc_one := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage :: PageAllocator = PageAllocator(.memory = system.memory)
     assume allocator ::= $&allocator_storage
     allocated ::= alloc_one(.allocator = $&allocator_storage)

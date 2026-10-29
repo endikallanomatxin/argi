@@ -1,6 +1,7 @@
 -- Exercise variables as well as constant expressions through syntaxing,
 -- semantizing, and codegen. Array extents cover compile-time evaluation.
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     a :: Int32 = 2
     b :: Int32 = 3
     c :: Int32 = 4

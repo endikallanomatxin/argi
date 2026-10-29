@@ -9,13 +9,14 @@ implement Deinit#(Tracked) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= system.page_allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 4))
     first ::= Tracked(.id = 1)
     second ::= Tracked(.id = 2)
     middle ::= Tracked(.id = 3)
-    push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~first)
-    push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~second)
+    push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
+    push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~second)
     inserted ::= unwrap_or_abort(
         .value = insert(
             .allocator = allocator, .self = $&array, .index = 1, .value = ~middle

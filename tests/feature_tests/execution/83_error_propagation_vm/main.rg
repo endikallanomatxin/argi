@@ -16,11 +16,7 @@ implement ErrorTracer#(CountingTracer) (
     .report        = (
         .self         : $&CountingTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -37,13 +33,7 @@ implement Deinit#(Owner) (
 )
 
 attempt := (
-    .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .fail: Bool, .tracer: $&Virtual#(ErrorTracer), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..missing))) {
     assume error_tracer
 
@@ -56,13 +46,9 @@ attempt := (
 
 propagate := (
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
+    .tracer       : $&Virtual#(ErrorTracer),
     .drops        : $&Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..other, ..missing))) {
     assume error_tracer
 
@@ -73,13 +59,9 @@ propagate := (
 
 create_owner := (
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
+    .tracer       : $&Virtual#(ErrorTracer),
     .drops        : $&Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Owner, (..missing))) {
     assume error_tracer
 
@@ -92,13 +74,9 @@ create_owner := (
 
 forward_owner := (
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
+    .tracer       : $&Virtual#(ErrorTracer),
     .drops        : $&Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Owner, (..other, ..missing))) {
     assume error_tracer
 
@@ -113,13 +91,9 @@ context_text := (.calls: $&Int32) -> (.result: StringView) {
 
 with_context := (
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
+    .tracer       : $&Virtual#(ErrorTracer),
     .calls        : $&Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..other, ..missing))) {
     assume error_tracer
 
@@ -130,6 +104,7 @@ with_context := (
 exercise := () -> (.result: Int32) {
     tracer :: CountingTracer = (.count = 0, .context_bytes = 0)
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&erased
     drops :: Int32 = 0
     recovered ::= propagate(true, $&erased, $&drops) handle error, value {
         match error.reason { ..missing {} ..other { abort } }
@@ -157,6 +132,7 @@ exercise := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     compiled ::= #run () -> (.value: Int32) { value = exercise() }
     if compiled != 42 { abort }
     #if exercise() == 42 {

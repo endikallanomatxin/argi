@@ -137,15 +137,11 @@ _network_tcp := () -> (.value: NetworkTransport) { value = ..tcp }
 resolve_addresses := (
     .host         : StringView,
     .port         : UInt16,
-    .transport    : NetworkTransport = _network_tcp(),
-    .family       : NetworkFamily    = _network_any(),
-    .passive      : Bool             = false,
+    .transport    : NetworkTransport        = _network_tcp(),
+    .family       : NetworkFamily           = _network_any(),
+    .passive      : Bool                    = false,
     .self         : &Network,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         ResolvedAddresses,
@@ -206,13 +202,7 @@ length := (.self: &ResolvedAddresses) -> (.count: UIntNative) {
 }
 
 address_at := (
-    .self         : &ResolvedAddresses,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &ResolvedAddresses, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(NetworkAddress, (..out_of_bounds))) {
     assume error_tracer
 
@@ -237,11 +227,7 @@ TcpConnection := (._network: &Network, ._handle: UIntNative)
 TcpConnectionInitArgs: Type = (
     .address      : NetworkAddress,
     .network      : &Network,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(TcpConnection, TcpConnectionInitArgs) (
@@ -286,14 +272,9 @@ implement Init#(TcpConnection, TcpConnectionInitArgs) (
     }
 )
 
-_close_TcpConnection := (
-    .self         : $&TcpConnection,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..socket_close_failed))) {
+_close_TcpConnection := (.self: $&TcpConnection, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..socket_close_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -310,20 +291,20 @@ _close_TcpConnection := (
 
 implement Deinit#(TcpConnection) (
     .deinit = (.self: $&TcpConnection) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         _ = close(self)
     }
 )
 
 _is_open_TcpConnection := (.self: &TcpConnection) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_local_address_TcpConnection := (
-    .self         : &TcpConnection,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(NetworkAddress, (..socket_option_failed))) {
+_local_address_TcpConnection := (.self: &TcpConnection, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(NetworkAddress, (..socket_option_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -342,11 +323,7 @@ TcpListener := (._network: &Network, ._handle: UIntNative)
 TcpListenerInitArgs: Type = (
     .address      : NetworkAddress,
     .network      : &Network,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(TcpListener, TcpListenerInitArgs) (
@@ -391,14 +368,9 @@ implement Init#(TcpListener, TcpListenerInitArgs) (
     }
 )
 
-_close_TcpListener := (
-    .self         : $&TcpListener,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..socket_close_failed))) {
+_close_TcpListener := (.self: $&TcpListener, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..socket_close_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -415,20 +387,20 @@ _close_TcpListener := (
 
 implement Deinit#(TcpListener) (
     .deinit = (.self: $&TcpListener) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         _ = close(self)
     }
 )
 
 _is_open_TcpListener := (.self: &TcpListener) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_local_address_TcpListener := (
-    .self         : &TcpListener,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(NetworkAddress, (..socket_option_failed))) {
+_local_address_TcpListener := (.self: &TcpListener, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(NetworkAddress, (..socket_option_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -447,11 +419,7 @@ UdpSocket := (._network: &Network, ._handle: UIntNative)
 UdpSocketInitArgs: Type = (
     .address      : NetworkAddress,
     .network      : &Network,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(UdpSocket, UdpSocketInitArgs) (
@@ -496,14 +464,9 @@ implement Init#(UdpSocket, UdpSocketInitArgs) (
     }
 )
 
-_close_UdpSocket := (
-    .self         : $&UdpSocket,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..socket_close_failed))) {
+_close_UdpSocket := (.self: $&UdpSocket, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..socket_close_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -520,20 +483,20 @@ _close_UdpSocket := (
 
 implement Deinit#(UdpSocket) (
     .deinit = (.self: $&UdpSocket) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         _ = close(self)
     }
 )
 
 _is_open_UdpSocket := (.self: &UdpSocket) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_local_address_UdpSocket := (
-    .self         : &UdpSocket,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(NetworkAddress, (..socket_option_failed))) {
+_local_address_UdpSocket := (.self: &UdpSocket, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(NetworkAddress, (..socket_option_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -547,14 +510,9 @@ _local_address_UdpSocket := (
     result = ..ok(._native = native, ._datagram = true)
 }
 
-accept := (
-    .self         : $&TcpListener,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(TcpConnection, (..socket_accept_failed, ..out_of_memory))) {
+accept := (.self: $&TcpListener, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(TcpConnection, (..socket_accept_failed, ..out_of_memory))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -575,13 +533,7 @@ accept := (
 }
 
 _set_timeout_TcpConnection := (
-    .self         : $&TcpConnection,
-    .milliseconds : UInt32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&TcpConnection, .milliseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..socket_option_failed))) {
     assume error_tracer
 
@@ -596,13 +548,7 @@ _set_timeout_TcpConnection := (
 }
 
 _set_timeout_UdpSocket := (
-    .self         : $&UdpSocket,
-    .milliseconds : UInt32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&UdpSocket, .milliseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..socket_option_failed))) {
     assume error_tracer
 
@@ -619,11 +565,7 @@ _set_timeout_UdpSocket := (
 _read_tcp := (
     .self         : $&TcpConnection,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..socket_read_failed))) {
     assume error_tracer
 
@@ -655,11 +597,7 @@ _read_tcp := (
 _tcp_write := (
     .self         : $&TcpConnection,
     .value        : ArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..socket_write_failed))) {
     assume error_tracer
 
@@ -692,14 +630,9 @@ implement WriteValue#(TcpConnection, ArrayView#(.t: UInt8)) (
     .write_value = _tcp_write
 )
 
-shutdown_write := (
-    .self         : $&TcpConnection,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..socket_write_failed))) {
+shutdown_write := (.self: $&TcpConnection, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..socket_write_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._network&._ffi
@@ -720,11 +653,7 @@ send_to := (
     .self         : $&UdpSocket,
     .peer         : NetworkAddress,
     .buffer       : ArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         UIntNative, (..invalid_network_argument, ..datagram_too_large, ..socket_write_failed)
@@ -770,11 +699,7 @@ send_to := (
 receive_from := (
     .self         : $&UdpSocket,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DatagramReceived, (..datagram_truncated, ..socket_read_failed))) {
     assume error_tracer
 
@@ -807,14 +732,9 @@ receive_from := (
 }
 
 implement Reader#(TcpConnection) (
-    .read_byte = (
-        .self         : $&TcpConnection,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (.self: $&TcpConnection, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume error_tracer
 
         buffer :: [1]UInt8 = (0)
@@ -832,11 +752,7 @@ implement BlockReader#(TcpConnection) (
     .read_block = (
         .self         : $&TcpConnection,
         .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
         assume error_tracer
 
@@ -851,11 +767,7 @@ implement BlockWriter#(TcpConnection) (
     .write_block = (
         .self         : $&TcpConnection,
         .buffer       : ArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -867,15 +779,9 @@ implement BlockWriter#(TcpConnection) (
 )
 
 implement Writer#(TcpConnection) (
-    .write_byte = (
-        .self         : $&TcpConnection,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&TcpConnection, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         buffer: [1]UInt8 = (byte)
@@ -886,14 +792,9 @@ implement Writer#(TcpConnection) (
         }
     }
 
-    .flush = (
-        .self         : $&TcpConnection,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&TcpConnection, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         if self&._handle == 0 {

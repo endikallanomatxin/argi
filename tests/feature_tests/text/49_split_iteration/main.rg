@@ -1,10 +1,14 @@
-count_computed := #(.t: Type) (.text: t) -> (.count: UIntNative = 0) {
+count_computed := #(.t: Type) (.text: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .count : UIntNative = 0
+) {
+    assume error_tracer
     for segment in unwrap_or_abort(.value = split(text, .separator = ",")) {
         count = count + 1
     }
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     if count_computed(",a,").count != 3 { abort }
 

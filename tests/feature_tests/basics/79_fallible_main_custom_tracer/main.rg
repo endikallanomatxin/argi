@@ -3,7 +3,7 @@
 CustomTracer := (.marker: UInt8 = 0)
 
 custom_tracer_storage :: CustomTracer = (.marker = 0)
-custom_tracer_virtual :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
+custom_tracer_virtual :: Virtual#(ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
     .value = $&custom_tracer_storage
 )
 
@@ -13,6 +13,7 @@ check_fallible_result := () -> !Void = ..ok Void() {
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     check_fallible_result()!!!
     status_code = 0
@@ -27,11 +28,7 @@ implement ErrorTracer#(CustomTracer) (
     .report = (
         .self         : $&CustomTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer ::= $&noop_error_tracer
         write_trace_text(.writer = writer, .text = "custom trace\n")!

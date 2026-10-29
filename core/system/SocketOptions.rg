@@ -1,33 +1,17 @@
 SocketAddress#(.Socket: Type): Contract = (
-    .local : (
-        .self         : &Socket,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(NetworkAddress, (..socket_option_failed)))
+    .local : (.self: &Socket, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(NetworkAddress, (..socket_option_failed))
+    )
 )
 
 SocketTimeout#(.Socket: Type): Contract = (
     .configure_timeout : (
-        .self         : $&Socket,
-        .milliseconds : UInt32,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&Socket, .milliseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..socket_option_failed)))
 )
 
 local_address := #(.Socket: Type: SocketAddress#(Socket)) (
-    .self         : &Socket,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Socket, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(NetworkAddress, (..socket_option_failed))) {
     assume error_tracer
 
@@ -35,13 +19,7 @@ local_address := #(.Socket: Type: SocketAddress#(Socket)) (
 }
 
 set_timeout := #(.Socket: Type: SocketTimeout#(Socket)) (
-    .self         : $&Socket,
-    .milliseconds : UInt32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Socket, .milliseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..socket_option_failed))) {
     assume error_tracer
 

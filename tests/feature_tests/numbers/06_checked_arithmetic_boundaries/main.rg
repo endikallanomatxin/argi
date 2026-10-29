@@ -11,14 +11,14 @@ expect_range_Int16 := (.actual: Errable#(.t: Int16, .reasons: (..out_of_range)))
 }
 
 expect_division_Int16 := (
-    .actual: Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : Int16
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_Int16 := (
-    .actual: Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -26,7 +26,7 @@ expect_division_range_Int16 := (
 }
 
 expect_zero_Int16 := (
-    .actual: Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -48,14 +48,14 @@ expect_range_Int32 := (.actual: Errable#(.t: Int32, .reasons: (..out_of_range)))
 }
 
 expect_division_Int32 := (
-    .actual: Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : Int32
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_Int32 := (
-    .actual: Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -63,7 +63,7 @@ expect_division_range_Int32 := (
 }
 
 expect_zero_Int32 := (
-    .actual: Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -85,14 +85,14 @@ expect_range_Int64 := (.actual: Errable#(.t: Int64, .reasons: (..out_of_range)))
 }
 
 expect_division_Int64 := (
-    .actual: Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : Int64
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_Int64 := (
-    .actual: Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -100,7 +100,7 @@ expect_division_range_Int64 := (
 }
 
 expect_zero_Int64 := (
-    .actual: Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -122,14 +122,14 @@ expect_range_UInt16 := (.actual: Errable#(.t: UInt16, .reasons: (..out_of_range)
 }
 
 expect_division_UInt16 := (
-    .actual: Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : UInt16
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_UInt16 := (
-    .actual: Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -137,7 +137,7 @@ expect_division_range_UInt16 := (
 }
 
 expect_zero_UInt16 := (
-    .actual: Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -159,14 +159,14 @@ expect_range_UInt32 := (.actual: Errable#(.t: UInt32, .reasons: (..out_of_range)
 }
 
 expect_division_UInt32 := (
-    .actual: Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : UInt32
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_UInt32 := (
-    .actual: Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -174,7 +174,7 @@ expect_division_range_UInt32 := (
 }
 
 expect_zero_UInt32 := (
-    .actual: Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -196,14 +196,14 @@ expect_range_UInt64 := (.actual: Errable#(.t: UInt64, .reasons: (..out_of_range)
 }
 
 expect_division_UInt64 := (
-    .actual: Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : UInt64
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_UInt64 := (
-    .actual: Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -211,7 +211,7 @@ expect_division_range_UInt64 := (
 }
 
 expect_zero_UInt64 := (
-    .actual: Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -233,14 +233,14 @@ expect_range_UIntNative := (.actual: Errable#(.t: UIntNative, .reasons: (..out_o
 }
 
 expect_division_UIntNative := (
-    .actual: Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero)),
+    .actual   : Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero)),
     .expected : UIntNative
 ) -> () {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
 expect_division_range_UIntNative := (
-    .actual: Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
@@ -248,7 +248,7 @@ expect_division_range_UIntNative := (
 }
 
 expect_zero_UIntNative := (
-    .actual: Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero))
+    .actual : Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero))
 ) -> () {
     match actual {
         ..ok unexpected { abort } ..error error {
@@ -257,7 +257,8 @@ expect_zero_UIntNative := (
     }
 }
 
-check_int16 := () -> () {
+check_int16 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: Int16 = -32768
     maximum :: Int16 = 32767
     zero :: Int16 = 0
@@ -332,7 +333,8 @@ check_int16 := () -> () {
     )
 }
 
-check_int32 := () -> () {
+check_int32 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: Int32 = -2147483648
     maximum :: Int32 = 2147483647
     zero :: Int32 = 0
@@ -407,7 +409,8 @@ check_int32 := () -> () {
     )
 }
 
-check_int64 := () -> () {
+check_int64 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: Int64 = -9223372036854775808
     maximum :: Int64 = 9223372036854775807
     zero :: Int64 = 0
@@ -482,7 +485,8 @@ check_int64 := () -> () {
     )
 }
 
-check_uint16 := () -> () {
+check_uint16 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: UInt16 = 0
     maximum :: UInt16 = 65535
     zero :: UInt16 = 0
@@ -517,7 +521,8 @@ check_uint16 := () -> () {
     )
 }
 
-check_uint32 := () -> () {
+check_uint32 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: UInt32 = 0
     maximum :: UInt32 = 4294967295
     zero :: UInt32 = 0
@@ -552,7 +557,8 @@ check_uint32 := () -> () {
     )
 }
 
-check_uint64 := () -> () {
+check_uint64 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: UInt64 = 0
     maximum :: UInt64 = 18446744073709551615
     zero :: UInt64 = 0
@@ -587,7 +593,8 @@ check_uint64 := () -> () {
     )
 }
 
-check_uintnative := () -> () {
+check_uintnative := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     minimum :: UIntNative = 0
     maximum :: UIntNative = 0
     bytes ::= size_of(.type = UIntNative)
@@ -629,6 +636,7 @@ check_uintnative := () -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     check_int16()
     check_int32()
     check_int64()

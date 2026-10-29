@@ -1,6 +1,7 @@
 math := import ("math/linear_algebra")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     a: math.Vector#(.n = 3, .t: Float64) = (.values = (1.0, 2.0, 3.0))
     b: math.Vector#(.n = 3, .t: Float64) = (.values = (4.0, 5.0, 6.0))
     expected_dot: Float64 = 32.0

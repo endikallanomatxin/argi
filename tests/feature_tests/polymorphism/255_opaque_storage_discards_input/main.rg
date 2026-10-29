@@ -21,6 +21,7 @@ _impl_put_Cell := (.self: &Cell, .storage: $&Allocation, .value: Tracked) -> () 
 }
 
 main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
     storage ::= unwrap_or_abort(allocate_bytes(allocator, .size = 1))

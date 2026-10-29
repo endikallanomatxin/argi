@@ -13,6 +13,7 @@ replace := (.targets: [2] $&Resource) -> () {
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     {
         first :: Resource = Resource(.value = 1)
         second :: Resource = Resource(.value = 2)

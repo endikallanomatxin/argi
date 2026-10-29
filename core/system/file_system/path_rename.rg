@@ -1,25 +1,27 @@
 -- Path representation selects one operation identity; allocation is explicit.
 PathRenaming#(.PathValue: Type): Contract = (
     .Result : Type
-    .rename : (.self: &FileSystem, .from: PathValue, .to: PathValue) -> (.result: Result)
+    .rename : (
+        .self         : &FileSystem,
+        .from         : PathValue,
+        .to           : PathValue,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
 AllocatingPathRenaming#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .rename : (.self: &FileSystem, .from: PathValue, .to: PathValue, .allocator: $&Provider) -> (
-        .result : Result
-    )
+    .rename : (
+        .self         : &FileSystem,
+        .from         : PathValue,
+        .to           : PathValue,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
 _path_rename_c := (
-    .self         : &FileSystem,
-    .from         : &CChar,
-    .to           : &CChar,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .from: &CChar, .to: &CChar, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..path_rename_failed))) {
     assume error_tracer
 
@@ -34,14 +36,7 @@ _path_rename_c := (
 }
 
 _path_rename_string := (
-    .self         : &FileSystem,
-    .from         : &String,
-    .to           : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .from: &String, .to: &String, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..path_rename_failed))) {
     assume error_tracer
 
@@ -57,11 +52,7 @@ _path_rename_view := #(.Provider: Type: Allocator#(Provider)) (
     .from         : StringView,
     .to           : StringView,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..path_rename_failed, ..out_of_memory))) {
     assume error_tracer
 
@@ -88,14 +79,7 @@ _path_rename_view := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 _path_rename_owned := (
-    .self         : &FileSystem,
-    .from         : &Path,
-    .to           : &Path,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .from: &Path, .to: &Path, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..path_rename_failed))) {
     assume error_tracer
 

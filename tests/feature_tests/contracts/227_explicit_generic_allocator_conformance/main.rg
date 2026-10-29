@@ -2,21 +2,16 @@ ConstructionArgs := #(.Provider: Type) (.allocator: $&Provider, .length: UIntNat
 
 Construct#(.Target: Type, .Args: Type): Contract = (
     .Result    : Type
-    .construct : (.args: Args) -> (.result: Result)
+    .construct : (.args: Args, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result)
 )
 
 Owner := (.allocation: Allocation)
 
 implement#(.A: Type: Allocator) Construct#(Owner, ConstructionArgs#(A)) (
     .Result    : Type = Errable#(Owner, (..out_of_memory))
-    .construct = (
-        .args         : ConstructionArgs#(A),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Result) {
+    .construct = (.args: ConstructionArgs#(A), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    ) {
         assume error_tracer
 
         allocation ::= Allocator#(
@@ -31,6 +26,7 @@ implement Deinit#(Owner) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     args :: ConstructionArgs#(PageAllocator) = (
         .allocator = system.page_allocator
         .length    = 4

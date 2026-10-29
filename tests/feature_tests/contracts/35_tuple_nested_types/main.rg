@@ -13,6 +13,7 @@ _multiply := (.left: &Cell#(Int32), .right: &Cell#(Int64)) -> (.value: Int32) {
 }
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     left ::= Cell#(Int32)(42)
     right ::= Cell#(Int64)(7)
     if multiply(&left, &right).value != 42 { abort }

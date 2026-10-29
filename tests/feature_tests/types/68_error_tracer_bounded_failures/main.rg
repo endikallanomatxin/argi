@@ -4,13 +4,7 @@ CountAllocator := (.backing: $&PageAllocator, .calls: UIntNative = 0, .fail: Boo
 
 ProbeWriter := (.count: UIntNative = 0, .fail: Bool = false)
 
-fail := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !Void {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void {
     assume error_tracer
     result = ..error(.reason = ..bounded_test_failure)
 }
@@ -60,7 +54,9 @@ main := (.system: System) -> (.status_code: Int32) {
                 return
             }
             writer.fail = true
-            broken ::= report_trace(.tracer = err&.tracer, .writer = $&writer)
+            broken ::= report_trace(
+                .tracer = err&.tracer, .writer = $&writer, .error_tracer = $&noop_error_tracer
+            )
             match broken {
                 ..ok _ {
                     status_code = 7
@@ -101,15 +97,9 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Writer#(ProbeWriter) (
-    .write_byte = (
-        .self         : $&ProbeWriter,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&ProbeWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         self&.count = self&.count + 1
@@ -120,14 +110,9 @@ implement Writer#(ProbeWriter) (
         }
     }
 
-    .flush = (
-        .self         : $&ProbeWriter,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&ProbeWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
         result = ..ok Void()
     }
@@ -138,11 +123,7 @@ implement Allocator#(CountAllocator) (
         .self         : $&CountAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

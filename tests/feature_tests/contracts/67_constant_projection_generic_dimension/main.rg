@@ -8,11 +8,14 @@ implement Shape#(Cell) (.Count: Int = 2)
 
 Box := #(.T: Type) (.values: Array#(.n = Shape#(T).Count, .t: Int32))
 
-sum := #(.T: Type) (.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (.value: Int32) {
+sum := #(.T: Type) (.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (
+    .value : Int32
+) {
     value = [values&[0] + values&[1]]
 }
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     box ::= Box#(Cell)((20, 22))
     if sum(Cell(), &box.values).value != 42 { abort }
 }

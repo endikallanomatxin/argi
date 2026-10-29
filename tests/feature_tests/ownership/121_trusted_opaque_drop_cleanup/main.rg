@@ -21,10 +21,11 @@ implement Deinit#(Tracked) (
 )
 
 store_wrapper := (.slot: $&Tracked, .value: Tracked) -> () {
-    trusted_opaque_move#(.t: Tracked) (.destination = slot, .source = ~value)
+    trusted_opaque_move#(.t: Tracked)(.destination = slot, .source = ~value)
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -55,9 +56,9 @@ main := (.system: System) -> (.status_code: Int32) {
             store_wrapper(.slot = second_slot, .value = ~second)
             store_wrapper(.slot = third_slot, .value = ~third)
 
-            trusted_opaque_drop#(.t: Tracked) (.slot = second_slot)
-            trusted_opaque_drop#(.t: Tracked) (.slot = first_slot)
-            trusted_opaque_drop#(.t: Tracked) (.slot = third_slot)
+            trusted_opaque_drop#(.t: Tracked)(.slot = second_slot)
+            trusted_opaque_drop#(.t: Tracked)(.slot = first_slot)
+            trusted_opaque_drop#(.t: Tracked)(.slot = third_slot)
             deinit(.self = $&slots)
 
             if first_drops == 1 and second_drops == 1 and third_drops == 1 {

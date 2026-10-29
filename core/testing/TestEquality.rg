@@ -4,11 +4,7 @@ TestEquality#(.Value: Type): Contract = (
         .expected     : Value,
         .actual       : Value,
         .message      : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..test_failed)))
 )
 
@@ -17,12 +13,8 @@ implement#(.Value: Type) TestEquality#(Value) (.check_equal = _assert_equal_gene
 expect_equal := #(.Value: Type: TestEquality#(Value)) (
     .expected     : Value,
     .actual       : Value,
-    .message      : StringView = "",
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .message      : StringView              = "",
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..test_failed))) {
     assume error_tracer
 
@@ -104,12 +96,8 @@ implement _TestTextEquality#(&String) ()
 expect_equal_strings := #(.Value: Type: _TestTextEquality#(Value)) (
     .expected     : Value,
     .actual       : Value,
-    .message      : StringView = "",
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .message      : StringView              = "",
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..test_failed))) {
     assume error_tracer
 

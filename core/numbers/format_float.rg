@@ -897,6 +897,7 @@ _float_text_view := (.self: &_FloatText) -> (.view: StringView) {
 }
 
 _float_render := (.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _FloatText) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     text = _FloatText()
 
     if negative { _float_text_byte(.text = $&text, .byte = 45) }
@@ -969,6 +970,7 @@ _float_render := (.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.tex
 }
 
 _float_encode := #(.t: Type: Float) (.value: t) -> (.text: _FloatText) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     encoding ::= _float_encoding(.value = value)
     sign_unit ::= encoding.fraction_unit * encoding.exponent_limit
     negative ::= encoding.bits >= sign_unit

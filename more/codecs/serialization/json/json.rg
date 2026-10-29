@@ -1,6 +1,7 @@
 JsonReasons: Type = (..invalid_json, ..json_depth_exceeded)
 
 _byte := (.text: StringView, .position: UIntNative) -> (.value: UInt8) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     value = unwrap_or_abort(.value = bytes_get(.view = &text, .index = position))
 }
 
@@ -15,6 +16,7 @@ _space := (.text: StringView, .position: UIntNative) -> (.next: UIntNative) {
 }
 
 _hex := (.byte: UInt8) -> (.value: UInt32 = 16) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if byte >= 48 and byte <= 57 {
         value = [byte - 48] | convert#(.to: UInt32)(_)
         return
@@ -28,15 +30,9 @@ _hex := (.byte: UInt8) -> (.value: UInt32 = 16) {
     if byte >= 97 and byte <= 102 { value = [byte - 87] | convert#(.to: UInt32)(_) }
 }
 
-_quad := (
-    .text         : StringView,
-    .position     : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UInt32, JsonReasons)) {
+_quad := (.text: StringView, .position: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UInt32, JsonReasons)
+) {
     assume error_tracer
 
     if position > byte_length(&text).count or byte_length(&text).count - position < 4 {
@@ -63,13 +59,7 @@ _quad := (
 -- Return the byte after a closing quote. Reject isolated UTF-16 surrogates:
 -- the accepted profile always denotes Unicode scalar values.
 _string_end := (
-    .text         : StringView,
-    .position     : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .position: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, JsonReasons)) {
     assume error_tracer
 
@@ -143,13 +133,7 @@ _string_end := (
 _digit := (.byte: UInt8) -> (.value: Bool) { value = byte >= 48 and byte <= 57 }
 
 _number_end := (
-    .text         : StringView,
-    .position     : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .position: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, JsonReasons)) {
     assume error_tracer
 
@@ -224,11 +208,7 @@ _literal := (
     .text         : StringView,
     .position     : UIntNative,
     .expected     : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, JsonReasons)) {
     assume error_tracer
 
@@ -260,11 +240,7 @@ _value_end := (
     .position     : UIntNative,
     .depth        : UIntNative,
     .maximum      : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, JsonReasons)) {
     assume error_tracer
 
@@ -370,13 +346,7 @@ _value_end := (
 -- Duplicate object keys are accepted. Recursion is bounded to at most 256
 -- containers, independently of the caller's requested limit.
 validate := (
-    .text          : StringView,
-    .maximum_depth : UIntNative                         = 64,
-    .error_tracer  : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .maximum_depth: UIntNative = 64, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, JsonReasons) = ..ok Void()) {
     assume error_tracer
 
@@ -403,12 +373,8 @@ JsonCursor := (._text: StringView, ._position: UIntNative)
 
 JsonCursorInitArgs: Type = (
     .text          : StringView,
-    .maximum_depth : UIntNative                         = 64,
-    .error_tracer  : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .maximum_depth : UIntNative              = 64,
+    .error_tracer  : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(JsonCursor, JsonCursorInitArgs) (
@@ -426,14 +392,9 @@ implement Init#(JsonCursor, JsonCursorInitArgs) (
     }
 )
 
-next := (
-    .self         : $&JsonCursor,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(?JsonToken, JsonReasons)) {
+next := (.self: $&JsonCursor, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(?JsonToken, JsonReasons)
+) {
     assume error_tracer
 
     start ::= _space(.text = self&._text, .position = self&._position).next
@@ -476,13 +437,7 @@ next := (
 
 -- Decode exactly one JSON string into independent UTF-8 storage.
 decode_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text         : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         String, (..invalid_json, ..json_depth_exceeded, ..invalid_utf8, ..out_of_memory)
@@ -580,13 +535,7 @@ _hex_ascii := (.value: UInt8) -> (.byte: UInt8) {
 
 -- Input is already valid text; native writer failures can leave a prefix.
 write_string := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer       : $&WriterType,
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .writer: $&WriterType, .text: StringView, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
     assume error_tracer
 

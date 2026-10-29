@@ -17,13 +17,7 @@ implement Deinit#(Tracked) (
 )
 
 make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator    : $&AllocatorType,
-    .id           : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .allocator: $&AllocatorType, .id: Int32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
     assume error_tracer
 
@@ -59,6 +53,7 @@ implement Init#(BackingAllocator, BackingAllocatorInitArgs) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -118,12 +113,8 @@ implement Allocator#(BackingAllocator) (
     .allocate = (
         .self         : $&BackingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

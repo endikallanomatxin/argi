@@ -4,11 +4,7 @@ ErrorTracer#(.Tracer: Type): Contract = (
     .report        : (
         .self         : $&Tracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) where {
         on result ..ok {}
         on result ..error { depends_on(result, error_tracer) }
@@ -17,24 +13,16 @@ ErrorTracer#(.Tracer: Type): Contract = (
 
 add_context := (
     .context      : StringView,
-    .location     : SourceLocationId                   = error_location_id(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ],
+    .location     : SourceLocationId         = error_location_id(),
+    .error_tracer : $&Virtual#(ErrorTracer),
 ) -> () {
     ErrorTracer#().add_context(.self = error_tracer, .location = location, .context = context)
 }
 
 add_context_text := (
     .context      : &CChar,
-    .location     : SourceLocationId = error_location_id(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ],
+    .location     : SourceLocationId         = error_location_id(),
+    .error_tracer : $&Virtual#(ErrorTracer),
 ) -> () {
     ErrorTracer#(
     ).add_context(
@@ -44,14 +32,9 @@ add_context_text := (
     )
 }
 
-capture_error_tracer := (
-    .location     : SourceLocationId,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ],
-) -> (.tracer: $&Virtual#(.contract: ErrorTracer)) {
+capture_error_tracer := (.location: SourceLocationId, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .tracer : $&Virtual#(ErrorTracer)
+) {
     add_context(.context = "", .location = location, .error_tracer = error_tracer)
     tracer = error_tracer
 }
@@ -59,15 +42,13 @@ capture_error_tracer := (
 -- Propagation binds the original capability explicitly. The text/view
 -- helpers keep length-delimited views separate from zero-terminated text.
 _add_error_context := (
-    .tracer   : $&Virtual#(.contract: ErrorTracer),
-    .location : SourceLocationId,
-    .context  : StringView
+    .tracer: $&Virtual#(ErrorTracer), .location: SourceLocationId, .context: StringView
 ) -> () {
     add_context(.context = context, .location = location, .error_tracer = tracer)
 }
 
 _add_error_context_text := (
-    .tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar
+    .tracer: $&Virtual#(ErrorTracer), .location: SourceLocationId, .context: &CChar
 ) -> () {
     add_context_text(.context = context, .location = location, .error_tracer = tracer)
 }

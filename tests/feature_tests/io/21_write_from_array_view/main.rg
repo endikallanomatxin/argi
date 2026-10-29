@@ -2,7 +2,8 @@ DummyOutput := (
     .write_count : UIntNative = 0
 )
 
-main := () -> (.status_code: Int32) {
+main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32) {
+    assume error_tracer
     bytes: Array#(.n = 3, .t: UInt8) = (0, 0, 0)
     buffer ::= view(.self = $&bytes)
     first_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 0, .value = 2).result
@@ -45,29 +46,18 @@ main := () -> (.status_code: Int32) {
 }
 
 implement Writer#(DummyOutput) (
-    .write_byte = (
-        .self         : $&DummyOutput,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&DummyOutput, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         self&.write_count = self&.write_count + 1
         result = ..ok Void()
     }
 
-    .flush = (
-        .self         : $&DummyOutput,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&DummyOutput, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         result = ..ok Void()

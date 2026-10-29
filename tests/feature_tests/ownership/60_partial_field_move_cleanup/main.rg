@@ -13,14 +13,9 @@ Outer := (
     .pair : Pair
 )
 
-make_pair := (
-    .allocator    : $&CountingAllocator,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Pair, .reasons: (..out_of_memory))) {
+make_pair := (.allocator: $&CountingAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Pair, .reasons: (..out_of_memory))
+) {
     assume error_tracer
 
     assume allocator
@@ -45,13 +40,7 @@ make_pair := (
 }
 
 run_branch := (
-    .allocator    : $&CountingAllocator,
-    .condition    : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .allocator: $&CountingAllocator, .condition: Bool, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
     assume error_tracer
 
@@ -79,6 +68,7 @@ run_branch := (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage :: CountingAllocator = CountingAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
 
@@ -153,12 +143,8 @@ implement Allocator#(CountingAllocator) (
     .allocate = (
         .self         : $&CountingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

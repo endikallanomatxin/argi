@@ -3,13 +3,7 @@
 -- containment proof. Relative leading parents remain, rooted parents clamp
 -- at the root, and Windows drive-relative prefixes retain their meaning.
 normalize_path := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .view         : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .view: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Path, (..invalid_path, ..out_of_memory))) {
     assume error_tracer
 

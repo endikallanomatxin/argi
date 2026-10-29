@@ -47,7 +47,7 @@ held by the configured tracer, not embedded in each error value.
 ```rg
 Error := #(.reasons: Choice) (
     .reason: reasons
-    .tracer: $&Virtual#(.contract: ErrorTracer)
+    .tracer: $&Virtual#(ErrorTracer)
 )
 ```
 
@@ -80,11 +80,13 @@ Example:
 ..file_not_found
 ..permission_denied
 
-read_file := () -> (.result: Errable#(Int32, (..file_not_found)))  {
+read_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Int32, (..file_not_found)))  {
+    assume error_tracer
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file := () -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied)))  {
+load_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied)))  {
+    assume error_tracer
     value := read_file()!
     result = ..ok value
 }
@@ -93,7 +95,8 @@ load_file := () -> (.result: Errable#(Int32, (..file_not_found, ..permission_den
 For the common single-result case there is also shorthand syntax:
 
 ```rg
-load_file() -> !Int32 := {
+load_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
+    assume error_tracer
     value := read_file()!
     result = ..ok value
 }
@@ -106,7 +109,8 @@ body and closes the return `Errable` after semantic analysis.
 The shorthand can declare an explicit default for its `result` binding:
 
 ```rg
-work() -> !Void = ..ok Void() := {
+work := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void = ..ok Void() {
+    assume error_tracer
     perform_step()!
 }
 ```
@@ -126,7 +130,8 @@ The same inference path is also available when the output is written
 explicitly as `Errable#(T)` and omits `.reasons`:
 
 ```rg
-load_file := () -> (.result: Errable#(Int32))  {
+load_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Int32))  {
+    assume error_tracer
     value := read_file()!
     result = ..ok value
 }
@@ -156,19 +161,19 @@ stream failures:
 ..stream_close_failed
 ..out_of_memory
 
-open(.p: $&File, .path: &CChar, .mode: FileOpenMode)
+open(.p: $&File, .path: &CChar, .mode: FileOpenMode, .error_tracer: $&Virtual#(ErrorTracer))
     -> (.result: Errable#(Bool, (..file_open_failed)))
 
-read_file(.self: &FileSystem, .path: StringView)
+read_file(.self: &FileSystem, .path: StringView, .error_tracer: $&Virtual#(ErrorTracer))
     -> (.result: Errable#(
         String,
         (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory)
     ))
 
-read_byte(.self: $&Reader)
+read_byte(.self: $&Reader, .error_tracer: $&Virtual#(ErrorTracer))
     -> (.result: Errable#(ReadByte, (..stream_read_failed)))
 
-write_byte(.self: $&Writer, .byte: UInt8)
+write_byte(.self: $&Writer, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer))
     -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)))
 ```
 
@@ -244,6 +249,7 @@ the containing function returns:
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
 }
@@ -284,11 +290,19 @@ the location and context. `add_context` cannot return an error: propagation must
 still succeed when tracing cannot retain or emit an entry. A policy may
 allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
-The capability has type `$&Virtual#(.contract: ErrorTracer)`. A tracer may
+The capability has type `$&Virtual#(ErrorTracer)`. A tracer may
 be supplied through an explicit `error_tracer` input or lexical `assume`.
 Intermediate functions must declare that input to forward the caller's tracer;
-there is no propagation through undeclared parameters. Tracing helpers use the
-caller-scoped noop tracer as an ordinary default when no tracer is supplied.
+there is no propagation through undeclared parameters. The input is required
+and has no default. To disable tracing explicitly, enable
+`assume error_tracer ::= $&noop_error_tracer` in the calling scope.
+Compile-time entry bodies create their own local noop tracer instead of borrowing
+the program's mutable global storage:
+
+```rg
+assume error_tracer ::= NoopErrorTracer() | to_virtual#(ErrorTracer)($&_) | $&_
+```
+
 This capability selects the tracer when an error is created. Later propagation
 and reporting use the reference in that error. Returning an error that retains a
 function-local tracer is rejected by ordinary reference lifetime rules. A tracer
@@ -304,7 +318,7 @@ run()
 ```
 
 The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
-contract. Alternatively, a declared `$&Virtual#(.contract: ErrorTracer)`
+contract. Alternatively, a declared `$&Virtual#(ErrorTracer)`
 capability type permits `to_virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
@@ -356,10 +370,11 @@ Tracer initialization uses an already available tracer. At bootstrap, a
 allocation. If a new tracer's initialization fails, its error retains the
 previous tracer; the partially initialized tracer is never published.
 
-`report` returns ordinary I/O errors, but errors created by the reporting
-operation use the program-lifetime `NoopErrorTracer`. Reporting must not
-automatically report its own failures or invoke the failing tracer again.
-The caller decides whether to propagate, inspect, or ignore a report failure.
+`report` returns ordinary I/O errors using its required `error_tracer` input.
+Callers can explicitly supply the program-lifetime `NoopErrorTracer` to avoid
+recording failures into the tracer being reported. Reporting never automatically
+reports its own failures. The caller decides whether to propagate, inspect, or
+ignore a report failure.
 
 > [!IDEA]
 > An allocating tracer could retain complete traces, growing storage during
@@ -372,8 +387,8 @@ The caller decides whether to propagate, inspect, or ignore a report failure.
 > later `report`. Because `add_context` is infallible, write failures during these
 > flushes must be ignored or recorded for a later fallible `report`.
 
-Fallible core virtual methods declare an ordinary `error_tracer` input with a
-noop default, including implementations whose bodies always succeed. Their
+Fallible core virtual methods declare a required ordinary `error_tracer` input,
+including implementations whose bodies always succeed. Their
 implementations enable that input with `assume error_tracer` when forwarding it.
 `source_location(.id)` resolves a recorded ID to immutable source metadata;
 IDs that were not produced by `error_location_id()` abort.

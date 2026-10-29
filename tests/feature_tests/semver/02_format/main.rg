@@ -17,6 +17,7 @@ RecordingWriter := (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     version ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha+001")).result
     output ::= unwrap_or_abort(
@@ -63,13 +64,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
 implement Writer#(RecordingWriter) (
     .write_byte = (
-        .self         : $&RecordingWriter,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&RecordingWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -92,14 +87,9 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (
-        .self         : $&RecordingWriter,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&RecordingWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         self&.flush_calls = self&.flush_calls + 1
@@ -111,12 +101,8 @@ implement Allocator#(RecordingAllocator) (
     .allocate = (
         .self         : $&RecordingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 
@@ -157,7 +143,10 @@ CountingDestination := (.bytes: UIntNative = 0)
 
 implement WriteValue#(CountingDestination, StringView) (
     .Result      : Type = UIntNative
-    .write_value = (.self: $&CountingDestination, .value: StringView) -> (.result: UIntNative) {
+    .write_value = (
+        .self: $&CountingDestination, .value: StringView, .error_tracer: $&Virtual#(ErrorTracer)
+    ) -> (.result: UIntNative) {
+        assume error_tracer
         self&.bytes = self&.bytes + byte_length(&value).count
         result = byte_length(&value).count
     }

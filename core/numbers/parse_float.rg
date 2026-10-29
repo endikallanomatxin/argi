@@ -5,11 +5,7 @@ _float_parse := #(.t: Type: Float) (
     .precision        : Int32,
     .maximum_exponent : Int32,
     .minimum_exponent : Int32,
-    .error_tracer     : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer     : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..invalid_input, ..out_of_range))) {
     assume error_tracer
 
@@ -250,14 +246,9 @@ _float_parse := #(.t: Type: Float) (
     result = ..ok value
 }
 
-parse_float16 := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Float16, (..invalid_input, ..out_of_range))) {
+parse_float16 := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Float16, (..invalid_input, ..out_of_range))
+) {
     assume error_tracer
 
     result = _float_parse#(.t: Float16)(
@@ -265,14 +256,9 @@ parse_float16 := (
     ).result
 }
 
-parse_float32 := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Float32, (..invalid_input, ..out_of_range))) {
+parse_float32 := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Float32, (..invalid_input, ..out_of_range))
+) {
     assume error_tracer
 
     result = _float_parse#(.t: Float32)(
@@ -280,14 +266,9 @@ parse_float32 := (
     ).result
 }
 
-parse_float64 := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Float64, (..invalid_input, ..out_of_range))) {
+parse_float64 := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Float64, (..invalid_input, ..out_of_range))
+) {
     assume error_tracer
 
     result = _float_parse#(.t: Float64)(

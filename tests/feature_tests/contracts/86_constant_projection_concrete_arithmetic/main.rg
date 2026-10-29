@@ -12,11 +12,15 @@ sum := (.values: &Array#(.n = Shape#(Cell).Count + 1, .t: Int32)) -> (.value: In
     value = [values&[0] + values&[1]]
 }
 
-read_buffer := (.buffer: &Buffer#(.n = Shape#(Cell).Count + 1)) -> (.value: Int32) {
+read_buffer := (
+    .buffer: &Buffer#(.n = Shape#(Cell).Count + 1), .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.value: Int32) {
+    assume error_tracer
     value = sum(&buffer&.values).value
 }
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     buffer ::= Buffer#(.n = Shape#(Cell).Count + 1)((20, 22))
     if read_buffer(&buffer).value != 42 { abort }
 }

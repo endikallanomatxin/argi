@@ -3,11 +3,7 @@ replace := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .pattern      : StringView,
     .replacement  : StringView,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))) {
     assume error_tracer
 

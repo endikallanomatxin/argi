@@ -1,4 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     bytes :: [6]UInt8 = (0, 255, 1, 0, 255, 1)
     pattern :: [3]UInt8 = (0, 255, 1)
     a ::= view(.self = &bytes)

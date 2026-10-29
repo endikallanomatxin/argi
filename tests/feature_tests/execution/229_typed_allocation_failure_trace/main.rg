@@ -7,11 +7,7 @@ implement Allocator#(FailingAllocator) (
         .self         : $&FailingAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
         assume error_tracer
         result = ..error(.reason = ..out_of_memory)
@@ -27,11 +23,7 @@ implement ErrorTracer#(ProbeTracer) (
     .report        = (
         .self         : $&ProbeTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
         result = ..ok Void()

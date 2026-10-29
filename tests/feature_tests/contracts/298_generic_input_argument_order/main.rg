@@ -1,14 +1,14 @@
 Packet := #(.T: Type, .N: UIntNative) (.items: Array#(.n = N, .t: T))
 
-first_named := #(.T: Type: ImplicitlyCopyable, .N: UIntNative) (.packet: &Packet#(.N = N, .T: T)) -> (
-    .value: T, .count: UIntNative
-) {
+first_named := #(.T: Type: ImplicitlyCopyable, .N: UIntNative) (
+    .packet : &Packet#(.N = N, .T: T)
+) -> (.value: T, .count: UIntNative) {
     value = packet&.items[0]
     count = N
 }
 
 first_ordered := #(.T: Type: ImplicitlyCopyable, .N: UIntNative) (
-    .packet: &Packet#(.T: T, .N = N)
+    .packet : &Packet#(.T: T, .N = N)
 ) -> (.value: T, .count: UIntNative) {
     value = packet&.items[0]
     count = N
@@ -21,7 +21,7 @@ left_positional := #(.Left: Type: ImplicitlyCopyable, .Right: Type) (.pair: &Pai
 ) { value = pair&.left }
 
 left_named := #(.Left: Type: ImplicitlyCopyable, .Right: Type) (
-    .pair: &Pair#(.Right: Right, .Left: Left)
+    .pair : &Pair#(.Right: Right, .Left: Left)
 ) -> (.value: Left) { value = pair&.left }
 
 main := () -> (.status_code: Int32 = 0) {

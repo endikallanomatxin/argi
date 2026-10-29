@@ -36,6 +36,7 @@ forward_again := (.relay: &Virtual#(Relay), .source: $&Virtual#(Source)) -> (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(41)
     relay_cell ::= RelayCell(0)
     relay ::= to_virtual#(Relay)(&relay_cell)

@@ -26,7 +26,7 @@ in_generic := #(.t: Type) (.value: $&t) -> () {
 }
 
 run := (.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
-    assume error_tracer: $&Virtual#(.contract: ErrorTracer) = [
+    assume error_tracer: $&Virtual#(ErrorTracer) = [
         FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
         | to_virtual($&_)
         | $&_
@@ -41,11 +41,7 @@ run := (.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_mem
 FailTracer := (.marker: UInt8)
 
 FailTracerInitArgs: Type = (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(FailTracer, FailTracerInitArgs) (
@@ -60,14 +56,10 @@ implement Init#(FailTracer, FailTracerInitArgs) (
     }
 )
 
-failed_init := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
-    assume error_tracer: $&Virtual#(.contract: ErrorTracer) = [
+failed_init := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+) {
+    assume error_tracer: $&Virtual#(ErrorTracer) = [
         FailTracer(.error_tracer = error_tracer)!
         | to_virtual($&_)
         | $&_
@@ -76,6 +68,7 @@ failed_init := (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     positional_count :: UIntNative = 0
     record#(Int32)(.value = 7, .counter = $&positional_count)
     if positional_count != 1 {
@@ -144,11 +137,7 @@ implement ErrorTracer#(FailTracer) (
     .report = (
         .self         : $&FailTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 

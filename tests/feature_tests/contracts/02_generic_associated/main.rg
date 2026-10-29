@@ -12,13 +12,15 @@ _cell_get := #(.item: Type) (.self: &Cell#(item)) -> (.value: &item) {
     value = &self&.value
 }
 
-read := #(.item: Type, .source_type: Type: Source#(.item: item)) (.source: &source_type) -> (
-    .value : &item
-) {
+read := #(.item: Type, .source_type: Type: Source#(.item: item)) (
+    .source: &source_type, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.value: &item) {
+    assume error_tracer
     value = get(source)
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell#(Int32)(42)
     value ::= read#(Int32, Cell#(Int32))(&cell)
     if value&!= 42 { status_code = 1 }

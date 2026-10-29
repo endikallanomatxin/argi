@@ -1,6 +1,7 @@
-helper := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
-    .ok : Bool
-) {
+helper := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+    .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.ok: Bool) {
+    assume error_tracer
     assume allocator
 
     text ::= unwrap_or_abort(
@@ -26,6 +27,7 @@ helper := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&Allo
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     if helper(.allocator = $&allocator_storage).ok {
         status_code = 0

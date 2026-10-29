@@ -22,14 +22,7 @@ _bit_set_combine := (.left: UInt8, .right: UInt8, .mode: UInt8) -> (.value: UInt
 }
 
 _bit_set_combine_into := (
-    .self         : $&BitSet,
-    .other        : &BitSet,
-    .mode         : UInt8,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&BitSet, .other: &BitSet, .mode: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..bit_set_size_mismatch)) = ..ok Void()) {
     assume error_tracer
 
@@ -50,43 +43,25 @@ _bit_set_combine_into := (
     }
 }
 
-union_with := (
-    .self         : $&BitSet,
-    .other        : &BitSet,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..bit_set_size_mismatch))) {
+union_with := (.self: $&BitSet, .other: &BitSet, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..bit_set_size_mismatch))
+) {
     assume error_tracer
 
     result = _bit_set_combine_into(self, .other = other, .mode = 0)
 }
 
-intersect_with := (
-    .self         : $&BitSet,
-    .other        : &BitSet,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..bit_set_size_mismatch))) {
+intersect_with := (.self: $&BitSet, .other: &BitSet, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..bit_set_size_mismatch))
+) {
     assume error_tracer
 
     result = _bit_set_combine_into(self, .other = other, .mode = 1)
 }
 
-difference_with := (
-    .self         : $&BitSet,
-    .other        : &BitSet,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..bit_set_size_mismatch))) {
+difference_with := (.self: $&BitSet, .other: &BitSet, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..bit_set_size_mismatch))
+) {
     assume error_tracer
 
     result = _bit_set_combine_into(self, .other = other, .mode = 2)

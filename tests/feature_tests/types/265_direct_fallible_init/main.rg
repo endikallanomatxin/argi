@@ -2,11 +2,7 @@ Widget := (.value: Int32)
 
 WidgetInitArgs: Type = (
     .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(Widget, WidgetInitArgs) (
@@ -29,6 +25,7 @@ implement Init#(Widget, WidgetInitArgs) (
 )
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     widget :: Widget
     outcome ::= Widget(.fail = false)
     match outcome {

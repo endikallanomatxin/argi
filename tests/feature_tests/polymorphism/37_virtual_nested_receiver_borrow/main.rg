@@ -25,6 +25,7 @@ register_other := (.value: $&Other) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     other :: Other = (.cell = (.value = 2))
     register_other(.value = $&other)
     holder :: Holder = (.cell = (.value = 1))

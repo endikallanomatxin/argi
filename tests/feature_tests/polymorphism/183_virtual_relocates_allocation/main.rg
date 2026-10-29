@@ -1,6 +1,8 @@
 Mover#(.Participant: Type): Contract = (
     .transfer : (
-        .self: &Participant, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)
+        .self        : &Participant,
+        .source      : $&DynamicArray#(Int32),
+        .destination : $&DynamicArray#(Int32)
     ) -> ()
     where relocates(destination, source)
 )
@@ -16,12 +18,15 @@ _impl_transfer_Manager := (
 }
 
 transfer_owned := (
-    .mover: &Virtual#(Mover), .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)
+    .mover       : &Virtual#(Mover),
+    .source      : $&DynamicArray#(Int32),
+    .destination : $&DynamicArray#(Int32)
 ) -> () {
     transfer(mover, source, destination)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)

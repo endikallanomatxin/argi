@@ -5,11 +5,7 @@ implement ImplicitlyCopyable#(UnicodeScalar) ()
 
 UnicodeScalarInitArgs: Type = (
     .value        : UInt32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(UnicodeScalar, UnicodeScalarInitArgs) (
@@ -42,6 +38,7 @@ implement ImplicitlyCopyable#(_Utf8Decode) ()
 -- Keep the proven decoder infallible so validated iteration has no error-tracer
 -- dependency. Public operations translate these outcomes into their Errable contract.
 _utf8_decode_bytes := (.bytes: ArrayView#(UInt8), .offset: UIntNative) -> (.result: _Utf8Decode) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if offset >= length(&bytes).count {
         result = ..outside
         return
@@ -114,14 +111,9 @@ _utf8_decode := (.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decod
 }
 
 -- Validation of arbitrary bytes does not publish a borrowed text view.
-validate_utf8_bytes := (
-    .bytes        : ArrayView#(UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UIntNative, (..invalid_utf8))) {
+validate_utf8_bytes := (.bytes: ArrayView#(UInt8), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UIntNative, (..invalid_utf8))
+) {
     assume error_tracer
 
     offset :: UIntNative = 0
@@ -142,13 +134,7 @@ validate_utf8_bytes := (
 }
 
 utf8_decode := (
-    .text         : StringView,
-    .offset       : UIntNative                         = 0,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .offset: UIntNative = 0, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))) {
     assume error_tracer
 
@@ -185,12 +171,8 @@ utf8_encoded_length := (.scalar: UnicodeScalar) -> (.count: UIntNative) {
 utf8_encode := (
     .scalar       : UnicodeScalar,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .offset       : UIntNative                         = 0,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .offset       : UIntNative                    = 0,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..out_of_bounds))) {
     assume error_tracer
 
@@ -239,14 +221,9 @@ Utf8Decoder := (._bytes: ArrayView#(UInt8), ._offset: UIntNative)
 
 position := (.self: &Utf8Decoder) -> (.count: UIntNative) { count = self&._offset }
 
-next_codepoint := (
-    .self         : $&Utf8Decoder,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(?UnicodeScalar, (..invalid_utf8))) {
+next_codepoint := (.self: $&Utf8Decoder, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(?UnicodeScalar, (..invalid_utf8))
+) {
     assume error_tracer
 
     if self&._offset == length(&self&._bytes).count {
@@ -346,13 +323,7 @@ implement Iterator#(CodepointIterator) (
 )
 
 utf8_decode_bytes := (
-    .bytes        : ArrayView#(UInt8),
-    .offset       : UIntNative                         = 0,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .bytes: ArrayView#(UInt8), .offset: UIntNative = 0, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))) {
     assume error_tracer
 

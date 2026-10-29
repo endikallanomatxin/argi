@@ -87,13 +87,9 @@ _tuple_set(
 
 PythonInitArgs: Type = (
     .ffi          : $&ForeignFunctionInterface,
-    .program_name : StringView                         = "python3",
-    .home         : StringView                         = "",
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .program_name : StringView                  = "python3",
+    .home         : StringView                  = "",
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(Python, PythonInitArgs) (
@@ -138,13 +134,7 @@ implement Deinit#(Object) (
 )
 
 _owned := (
-    .self         : &Python,
-    .handle       : RawPointer#(.t: _PyObject),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .handle: RawPointer#(.t: _PyObject), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -156,15 +146,9 @@ _owned := (
     result = ..ok(._handle = handle, ._python = self)
 }
 
-import_module := (
-    .self         : &Python,
-    .name         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+import_module := (.self: &Python, .name: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -179,15 +163,9 @@ import_module := (
     )
 }
 
-string := (
-    .self         : &Python,
-    .value        : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+string := (.self: &Python, .value: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -202,15 +180,9 @@ string := (
     )
 }
 
-bytes := (
-    .self         : &Python,
-    .value        : ArrayView#(UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+bytes := (.self: &Python, .value: ArrayView#(UInt8), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -224,14 +196,9 @@ bytes := (
     )
 }
 
-_python_object_clone := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_python_object_clone := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -242,15 +209,9 @@ _python_object_clone := (
     )
 }
 
-attribute := (
-    .self         : &Object,
-    .name         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+attribute := (.self: &Object, .name: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -266,15 +227,9 @@ attribute := (
     )
 }
 
-get_item := (
-    .self         : &Object,
-    .key          : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+get_item := (.self: &Object, .key: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -287,14 +242,9 @@ get_item := (
     )
 }
 
-repr := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+repr := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -305,14 +255,9 @@ repr := (
     )
 }
 
-to_int64 := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Int64, (..python_error))) {
+to_int64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Int64, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -331,14 +276,9 @@ to_int64 := (
     result = ..ok value
 }
 
-to_uint64 := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UInt64, (..python_error))) {
+to_uint64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UInt64, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -357,14 +297,9 @@ to_uint64 := (
     result = ..ok value
 }
 
-to_float64 := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Float64, (..python_error))) {
+to_float64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Float64, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -393,11 +328,7 @@ _call_from_view := (
     .self         : &Object,
     .arguments    : ArrayView#(.t: &Object) = _no_arguments(),
     .keywords     : ?&Object                = _no_keywords(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -497,14 +428,9 @@ _error_copy(.context: UIntNative, .destination: RawPointer#(.t: UInt8), .length:
     .status : Int32
 ): CFunction(.symbol = "_argi_python_error_copy")
 
-none := (
-    .self         : &Python,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+none := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -521,15 +447,9 @@ none := (
     )
 }
 
-boolean := (
-    .self         : &Python,
-    .value        : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+boolean := (.self: &Python, .value: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -547,13 +467,7 @@ boolean := (
 }
 
 _python_signed_integer := (
-    .self         : &Python,
-    .value        : Int64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: Int64, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -572,13 +486,7 @@ _python_signed_integer := (
 }
 
 _python_unsigned_integer := (
-    .self         : &Python,
-    .value        : UInt64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: UInt64, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -596,15 +504,9 @@ _python_unsigned_integer := (
     )
 }
 
-floating := (
-    .self         : &Python,
-    .value        : Float64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+floating := (.self: &Python, .value: Float64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -621,14 +523,9 @@ floating := (
     )
 }
 
-list := (
-    .self         : &Python,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+list := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -645,14 +542,9 @@ list := (
     )
 }
 
-dictionary := (
-    .self         : &Python,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+dictionary := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -673,14 +565,9 @@ _boolean_int := (.value: Bool) -> (.number: Int64) {
     if value { number = 1 } else { number = 0 }
 }
 
-to_bool := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Bool, (..python_error))) {
+to_bool := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Bool, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -696,14 +583,9 @@ to_bool := (
     result = ..ok value
 }
 
-is_none := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Bool, (..python_error))) {
+is_none := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Bool, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -719,14 +601,9 @@ is_none := (
     result = ..ok value
 }
 
-length := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UIntNative, (..python_error))) {
+length := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UIntNative, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -745,15 +622,9 @@ length := (
     result = ..ok count
 }
 
-append := (
-    .self         : &Object,
-    .value        : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..python_error))) {
+append := (.self: &Object, .value: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -772,14 +643,7 @@ append := (
 }
 
 set_item := (
-    .self         : &Object,
-    .key          : &Object,
-    .value        : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Object, .key: &Object, .value: &Object, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..python_error))) {
     assume error_tracer
 
@@ -805,11 +669,7 @@ _copy_python_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : &Object,
     .kind         : Int32,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
     assume error_tracer
 
@@ -850,13 +710,7 @@ _copy_python_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 to_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Object,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Object, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
     assume error_tracer
 
@@ -866,13 +720,7 @@ to_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 to_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Object,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Object, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
     assume error_tracer
 
@@ -880,13 +728,7 @@ to_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 error_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Python,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
     assume error_tracer
 

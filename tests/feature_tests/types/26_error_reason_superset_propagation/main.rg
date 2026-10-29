@@ -1,25 +1,17 @@
 ..file_not_found
 ..permission_denied
 
-read_file := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) {
+read_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..file_not_found))
+) {
     assume error_tracer
 
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) {
+load_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))
+) {
     assume error_tracer
 
     value := read_file()!
@@ -27,6 +19,7 @@ load_file := (
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     result := load_file()
     if is(.value = result, .variant = ..error) {
         err ::= &result ..error

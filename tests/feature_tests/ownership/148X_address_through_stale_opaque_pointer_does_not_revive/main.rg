@@ -11,6 +11,7 @@ implement Deinit#(Value) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Value))
     match first_result {
@@ -23,7 +24,7 @@ main := (.system: System) -> (.status_code: Int32) {
                 ).reference
             ).reference
             value :: Value = (.number = 7)
-            trusted_opaque_move_in#(.t: Value, .storage_type: Allocation) (
+            trusted_opaque_move_in#(.t: Value, .storage_type: Allocation)(
                 .storage = $&slots, .destination = stale_slot, .source = ~value
             )
             trusted_opaque_drop(.slot = stale_slot)

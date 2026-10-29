@@ -1,12 +1,5 @@
 -- Transfer binary input through one buffered output stream.
-main := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.status_code: Int32 = 0) {
+main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
     assume error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator

@@ -18,11 +18,15 @@ _impl_reset_Cell := (.self: $&Cell) -> () {
     self&.value = 42
 }
 
-borrow := #(.source_type: Type: Source) (.source: &source_type) -> (.value: &Int32) {
+borrow := #(.source_type: Type: Source) (
+    .source: &source_type, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.value: &Int32) {
+    assume error_tracer
     value = get(source)
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(41, 9)
     before ::= borrow(&cell)
     if before&!= 41 { status_code = 1 }

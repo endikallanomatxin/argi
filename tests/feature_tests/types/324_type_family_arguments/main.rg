@@ -15,7 +15,9 @@ with_default := #(.Family: #(.Element: Type) Type = Box) (.value: Bool) -> (.res
 
 Outer := #(.Nested: #(.Item: Type) Type) (.flag: Bool)
 
-nested_flag := #(.Family: #(.Nested: #(.Item: Type) Type) Type) (.value: Bool) -> (.result: Bool) {
+nested_flag := #(.Family: #(.Nested: #(.Item: Type) Type) Type) (.value: Bool) -> (
+    .result : Bool
+) {
     box: Family#(Box) = (.flag = value)
     result = box.flag
 }

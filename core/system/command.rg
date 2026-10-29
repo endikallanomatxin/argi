@@ -39,6 +39,7 @@ CliReasons: Type = (
 )
 
 _valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     index :: UIntNative = 0
     while index < byte_length(&name).count {
         byte ::= unwrap_or_abort(.value = bytes_get(.view = &name, .index = index))
@@ -59,11 +60,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
     .specs        : ArrayView#(.t: CliSpec),
     .start        : UIntNative               = 0,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(CliMatches, CliReasons)) {
     assume error_tracer
 
@@ -216,11 +213,7 @@ write_cli_help := #(.WriterType: Type: Writer#(WriterType)) (
     .program      : StringView,
     .about        : StringView,
     .specs        : ArrayView#(.t: CliSpec),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
     assume error_tracer
 

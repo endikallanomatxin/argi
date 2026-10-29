@@ -6,14 +6,12 @@ implement Deinit#(Buffer) (
     }
 )
 
-main := (.system: System) -> (.status_code: Int32 = 0)  {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     buffer ::= Buffer(.bytes = zeroed#(.t: [288]UInt8)())
     tracer ::= FixedSizeErrorTracer(.buffer = view($&buffer.bytes))
     deinit(.self = $&buffer)
-    ErrorTracer#().add_context(
-        .self     = $&tracer
-        .location = error_location_id()
-        .context  = "expired"
-    )
+    ErrorTracer#(
+    ).add_context(.self = $&tracer, .location = error_location_id(), .context = "expired")
 }

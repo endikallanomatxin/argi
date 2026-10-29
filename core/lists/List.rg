@@ -3,13 +3,7 @@ Indexable#(.Collection: Type): Contract = (
     .Item          : Type
     .length        : (.self: &Collection) -> (.count: UIntNative)
     .get_reference : (
-        .self         : &Collection,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &Collection, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(&Item, (..out_of_bounds)))
 )
 
@@ -18,51 +12,28 @@ MutableIndexable#(.Collection: Type): Contract = (
     .Item : Type
     Indexable#(.Collection: Collection, .Item: Item)
     .get_mutable_reference : (
-        .self         : $&Collection,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&Collection, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#($&Item, (..out_of_bounds)))
 )
 
 IndexableValue#(.Collection: Type): Contract = (
     .Item : Type: ImplicitlyCopyable
     Indexable#(.Collection: Collection, .Item: Item)
-    .get : (
-        .self         : &Collection,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Item, (..out_of_bounds)))
+    .get : (.self: &Collection, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Item, (..out_of_bounds))
+    )
 )
 
 -- Removal needs no allocation capability; its identity has one participant.
 Removable#(.Collection: Type): Contract = (
     .Item : Type
     MutableIndexable#(.Collection: Collection, .Item: Item)
-    .pop : (
-        .self         : $&Collection,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Item, (..empty)))
-    .remove : (
-        .self         : $&Collection,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Item, (..out_of_bounds)))
+    .pop : (.self: $&Collection, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Item, (..empty))
+    )
+    .remove : (.self: $&Collection, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Item, (..out_of_bounds))
+    )
 )
 
 -- Growth depends on both the collection and the allocation provider. The
@@ -74,21 +45,13 @@ Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract =
         .self         : $&Collection,
         .value        : Item,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_memory)))
     .insert : (
         .self         : $&Collection,
         .index        : UIntNative,
         .value        : Item,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds)))
 )

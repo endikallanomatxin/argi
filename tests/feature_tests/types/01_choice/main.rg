@@ -1,4 +1,4 @@
-Direction : Type = (
+Direction: Type = (
     ..north,
     ..east,
     ..south,
@@ -40,10 +40,29 @@ payload_match := (.result: Result) -> (.value: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    if choice_equality() == false { status_code = 1 return }
-    if payload_extraction() != 7 { status_code = 2 return }
-    if payloadless_match(.direction = ..north) != 1 { status_code = 3 return }
-    if payloadless_match(.direction = ..south) != 3 { status_code = 4 return }
-    if payload_match(.result = ..ok(.value = 9)) != 9 { status_code = 5 return }
-    if payload_match(.result = ..error(.code = 120)) != 10 { status_code = 6 return }
+    assume error_tracer ::= $&noop_error_tracer
+    if choice_equality() == false {
+        status_code = 1
+        return
+    }
+    if payload_extraction() != 7 {
+        status_code = 2
+        return
+    }
+    if payloadless_match(.direction = ..north) != 1 {
+        status_code = 3
+        return
+    }
+    if payloadless_match(.direction = ..south) != 3 {
+        status_code = 4
+        return
+    }
+    if payload_match(.result = ..ok(.value = 9)) != 9 {
+        status_code = 5
+        return
+    }
+    if payload_match(.result = ..error(.code = 120)) != 10 {
+        status_code = 6
+        return
+    }
 }

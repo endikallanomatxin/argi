@@ -22,11 +22,7 @@ maybe_retarget := (
     .other        : $&Resource,
     .counter      : $&Counter,
     .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Resource, (..stop))) {
     assume error_tracer
 
@@ -43,11 +39,7 @@ replace := (
     .other        : $&Resource,
     .counter      : $&Counter,
     .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..stop))) {
     assume error_tracer
 

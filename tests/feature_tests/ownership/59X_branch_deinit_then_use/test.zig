@@ -5,7 +5,7 @@ pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/ownership/59X_branch_deinit_then_use" {
     try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
-        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:13:27: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:14:27: error: place rooted at 'allocation' is maybe_initialized and cannot be used
         \\              if allocation.size == 1 {
         \\                            ^
         \\

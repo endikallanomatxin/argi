@@ -1,4 +1,7 @@
-sum_iterator := #(.T: Type: Iterator#(T)) (.it: $&T) -> (.sum: Int32) {
+sum_iterator := #(.T: Type: Iterator#(T)) (.it: $&T, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .sum : Int32
+) {
+    assume error_tracer
     sum = 0
     while has_next(.self = it) {
         value :: Int32 = next(.self = it)
@@ -7,6 +10,7 @@ sum_iterator := #(.T: Type: Iterator#(T)) (.it: $&T) -> (.sum: Int32) {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     values: Array#(.n = 3, .t: Int32) = (2, 4, 6)

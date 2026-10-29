@@ -21,6 +21,7 @@ accept_id := (.value: VertexId) -> (.result: VertexId) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     if accept_id(.value = 3) != 3 { status_code = 10 }
     if identity#(VertexId)(.value = 4) != 4 { status_code = 11 }
     enabled: Enabled = true

@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first ::= allocate_bytes(.self = $&allocator, .size = 8, .alignment = 8)
     match first {
@@ -12,7 +13,8 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..ok ~second_payload {
                     second_allocation ::= ~second_payload
                     deinit(.self = $&first_allocation)
-                    Deallocator#().deallocate(
+                    Deallocator#(
+                    ).deallocate(
                         .self = $&allocator, .data = first_data, .size = 8, .alignment = 8
                     )
                     status_code = 0

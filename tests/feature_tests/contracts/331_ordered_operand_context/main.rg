@@ -5,13 +5,13 @@ Rank := (.value: Int32, .policy: &OrderPolicy)
 implement Compare#(&Rank, &Rank) (
     .compare = (.left: &Rank, .right: &Rank) -> (.order: Ordering) {
         if left&.policy&.reversed {
-            order = Compare#(Int32, Int32).compare(
-                .left = right&.value, .right = left&.value
-            ).order
+            order = Compare#(
+                Int32, Int32
+            ).compare(.left = right&.value, .right = left&.value).order
         } else {
-            order = Compare#(Int32, Int32).compare(
-                .left = left&.value, .right = right&.value
-            ).order
+            order = Compare#(
+                Int32, Int32
+            ).compare(.left = left&.value, .right = right&.value).order
         }
     }
 )

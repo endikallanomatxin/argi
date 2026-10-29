@@ -13,6 +13,7 @@ implement ImplicitlyCopyable#(VersionView) ()
 _digit := (.byte: UInt8) -> (.ok: Bool) { ok = byte >= 48 and byte <= 57 }
 
 _numeric_end := (.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: Bool) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     end = start
 
     while end < byte_length(&text&).count {
@@ -33,6 +34,7 @@ _numeric_end := (.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .
 }
 
 _identifiers_valid := (.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     ok = false
 
     if byte_length(&text).count == 0 { return }
@@ -72,14 +74,9 @@ _identifiers_valid := (.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: 
     ok = true
 }
 
-parse := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(VersionView, (..invalid_input))) {
+parse := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(VersionView, (..invalid_input))
+) {
     assume error_tracer
 
     first ::= _numeric_end(.text = &text, .start = 0)
@@ -163,11 +160,7 @@ parse := (
 
 VersionViewInitArgs: Type = (
     .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(VersionView, VersionViewInitArgs) (
@@ -234,6 +227,7 @@ build_metadata := (.self: &VersionView) -> (.text: StringView) {
 }
 
 _lexical_compare := (.left: StringView, .right: StringView) -> (.order: Int32) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     i :: UIntNative = 0
 
     while i < byte_length(&left).count and i < byte_length(&right).count {
@@ -275,6 +269,7 @@ _numeric_compare := (.left: StringView, .right: StringView) -> (.order: Int32) {
 _identifier_end := (.text: &StringView, .start: UIntNative) -> (
     .end: UIntNative, .numeric: Bool
 ) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     end = start
     numeric = true
 
@@ -368,13 +363,7 @@ implement Equal#(&VersionView, &VersionView) (
 
 implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
     .render = (
-        .value        : &VersionView,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .value: &VersionView, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(String, (..out_of_memory))) {
         assume error_tracer
 
@@ -384,11 +373,7 @@ implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider)
         .out          : $&String,
         .value        : &VersionView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_memory))) {
         assume error_tracer
 
@@ -400,7 +385,10 @@ implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider)
 
 implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
     .Result      : Type = WriteValue#(Stream, StringView).Result
-    .write_value = (.self: $&Stream, .value: &VersionView) -> (.result: Result) {
+    .write_value = (
+        .self: $&Stream, .value: &VersionView, .error_tracer: $&Virtual#(ErrorTracer)
+    ) -> (.result: Result) {
+        assume error_tracer
         result = ~write(.self = self, .value = view(.self = value).view)
     }
 )

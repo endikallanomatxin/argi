@@ -1,4 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     bytes ::= zeroed#(.t: [4096]UInt8)()
     writable ::= view($&bytes)
     readonly ::= view(&bytes)

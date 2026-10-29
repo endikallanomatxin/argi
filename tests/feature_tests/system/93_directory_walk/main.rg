@@ -5,11 +5,7 @@ implement Allocator#(RefusingAllocator) (
         .self         : $&RefusingAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
         assume error_tracer
 
@@ -18,6 +14,7 @@ implement Allocator#(RefusingAllocator) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     walker ::= DirectoryWalker(

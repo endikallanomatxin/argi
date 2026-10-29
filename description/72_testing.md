@@ -6,7 +6,8 @@ Tests are declared explicitly at top level with the same named-function syntax
 used by `main`, prefixed with `test`. The assignment precedes the signature:
 
 ```rg
-test my_test := () -> !() {
+test my_test := (.error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+    assume error_tracer
     testing.expect(true)!
 }
 ```
@@ -14,7 +15,9 @@ test my_test := () -> !() {
 The test entry contract requires:
 
 - top-level only
-- no inputs, or one `.system: System` input supplied by the checked entry wrapper
+- optional `.system: System` input supplied by the checked entry wrapper
+- ordinary auxiliary inputs, including the required `error_tracer` used by
+  testing helpers, resolved from the wrapper's lexical assumptions
 - return: `-> !()`
 
 As with `main` and `#run`, requesting `System` is optional. Input types are
@@ -74,13 +77,15 @@ They compose with Argi’s existing `Errable` and `!` flow.
 Examples:
 
 ```rg
-test simple_pass := (.system: System) -> !() {
+test simple_pass := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+    assume error_tracer
     testing.expect(true)!
 }
 ```
 
 ```rg
-test equality := (.system: System) -> !() {
+test equality := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+    assume error_tracer
     testing.expect_equal(.expected = 1, .actual = 1)!
 }
 ```
@@ -88,11 +93,13 @@ test equality := (.system: System) -> !() {
 ```rg
 ..some_reason
 
-some_fallible_call := () -> (.result: Errable#(Int32, (..some_reason)))  {
+some_fallible_call := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Int32, (..some_reason)))  {
+    assume error_tracer
     result = ..error(.reason = ..some_reason)
 }
 
-test expected_error := (.system: System) -> !() {
+test expected_error := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+    assume error_tracer
     call_result := some_fallible_call()
     testing.expect_error(.expected_reason = ..some_reason, .actual_result = call_result)!
 }

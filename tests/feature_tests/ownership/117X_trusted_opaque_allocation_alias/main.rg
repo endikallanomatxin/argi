@@ -1,10 +1,11 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 store_wrapper := #(.t: Type) (.slot: $&t, .value: t) -> () {
-    trusted_opaque_move#(.t: t) (.destination = slot, .source = ~value)
+    trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     source_result ::= allocate_bytes(.self = system.page_allocator, .size = 1)
     slot_result ::= allocate_bytes(
         .self = system.page_allocator, .size = size_of(.type = Allocation)
@@ -28,7 +29,7 @@ main := (.system: System) -> (.status_code: Int32) {
                             .allocation = $&slot_allocation, .offset = 0
                         ).reference
                     ).reference
-                    store_wrapper#(.t: Allocation) (.slot = slot, .value = ~allocation)
+                    store_wrapper#(.t: Allocation)(.slot = slot, .value = ~allocation)
                     alias&= 0
                     status_code = 0
                 }

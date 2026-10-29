@@ -1,17 +1,26 @@
 -- Expected values are exact binary rationals rounded from the input decimal.
 -- Cases cover each IEEE width, deterministic varied significands, boundaries,
 -- and decimal exponents cancelled by long leading or trailing zero sequences.
-expect_float16 := (.text: StringView, .expected: Float16) -> () {
+expect_float16 := (
+    .text: StringView, .expected: Float16, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     actual ::= unwrap_or_abort(.value = parse_float16(.text = text)).result
     if actual != expected { abort }
 }
 
-expect_float32 := (.text: StringView, .expected: Float32) -> () {
+expect_float32 := (
+    .text: StringView, .expected: Float32, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     actual ::= unwrap_or_abort(.value = parse_float32(.text = text)).result
     if actual != expected { abort }
 }
 
-expect_float64 := (.text: StringView, .expected: Float64) -> () {
+expect_float64 := (
+    .text: StringView, .expected: Float64, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     actual ::= unwrap_or_abort(.value = parse_float64(.text = text)).result
     if actual != expected { abort }
 }
@@ -26,6 +35,7 @@ expect_error := #(.t: Type: Float, .Reasons: Type) (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     expect_float16(.text = "0", .expected = 0.0)
     expect_float16(.text = "-0", .expected = 0.0)
     expect_float16(.text = "+0", .expected = 0.0)

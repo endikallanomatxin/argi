@@ -15,6 +15,7 @@ observe_on_exit := (.reference: $&UInt8) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match result {

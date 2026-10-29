@@ -1,37 +1,25 @@
 ..test_error
 
-fail := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..test_error))
+) {
     assume error_tracer
 
     result = ..error(.reason = ..test_error)
 }
 
-middle := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+middle := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..test_error))
+) {
     assume error_tracer
 
     value := fail()!
     result = ..ok value
 }
 
-top := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+top := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..test_error))
+) {
     assume error_tracer
 
     value := middle()!! "reading config"

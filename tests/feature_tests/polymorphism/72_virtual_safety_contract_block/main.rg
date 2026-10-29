@@ -16,6 +16,7 @@ _impl_get_Cell := (.self: &Cell, .other: &Int32) -> (.first: &Int32, .second: &I
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(40)
     other :: Int32 = 2
     source ::= to_virtual#(Source)(&cell)

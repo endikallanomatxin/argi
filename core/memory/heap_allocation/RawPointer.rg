@@ -49,6 +49,9 @@ _reference_offset_address := (
 }
 
 trusted_reference_offset := #(.t: Type) (.base: &t, .elements: UIntNative) -> (.reference: &t) {
+    -- Address conversion is infallible. Keep this policy local so the helper
+    -- also works inside compile-time execution without runtime globals.
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     address ::= _reference_offset_address(
         .address      = base | convert#(.to: UIntNative)(_)
         .elements     = elements
@@ -58,12 +61,14 @@ trusted_reference_offset := #(.t: Type) (.base: &t, .elements: UIntNative) -> (.
 }
 
 trusted_reinterpret_reference := #(.from: Type, .to: Type) (.base: &from) -> (.reference: &to) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     reference = __trusted_reference_from_address#(.to: &to)(
         .address = [base | convert#(.to: UIntNative)(_)]
     )
 }
 
 read_reference := #(.t: Type) (.base: $&t) -> (.reference: &t) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     reference = __trusted_reference_from_address#(.to: &t)(
         .address = [base | convert#(.to: UIntNative)(_)]
     )
@@ -72,6 +77,7 @@ read_reference := #(.t: Type) (.base: $&t) -> (.reference: &t) {
 trusted_mutable_reinterpret_reference := #(.from: Type, .to: Type) (.base: $&from) -> (
     .reference : $&to
 ) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     reference = __trusted_reference_from_address#(.to: $&to)(
         .address = [base | convert#(.to: UIntNative)(_)]
     )
@@ -80,6 +86,7 @@ trusted_mutable_reinterpret_reference := #(.from: Type, .to: Type) (.base: $&fro
 trusted_mutable_reference_offset := #(.t: Type) (.base: $&t, .elements: UIntNative) -> (
     .reference : $&t
 ) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     address ::= _reference_offset_address(
         .address      = base | convert#(.to: UIntNative)(_)
         .elements     = elements

@@ -17,6 +17,7 @@ _impl_multiply_289 := (.left: &Row, .right: &Column) -> (.value: Product#(Row, C
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     row ::= Row(6)
     column ::= Column(7)
     answer ::= multiply(&row, &column)

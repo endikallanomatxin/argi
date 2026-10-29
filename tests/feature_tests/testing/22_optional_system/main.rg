@@ -1,10 +1,4 @@
-test without_system := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test without_system := (.error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     testing.expect_equal(
@@ -15,14 +9,7 @@ test without_system := (
     )!
 }
 
-test with_system := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test with_system := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     testing.expect(true)!

@@ -3,7 +3,8 @@ Result: Type = (
     ..error(.code: UnicodeScalar),
 )
 
-main := () -> (.status_code: Int32)  {
+main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     value: Result = ..error(.code = 'x')
 
     if is(.value = value, .variant = ..error) {

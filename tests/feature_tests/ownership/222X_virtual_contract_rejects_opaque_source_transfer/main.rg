@@ -31,7 +31,7 @@ _impl_store_Keeping := (
 _impl_store_Consuming := (
     .self: $&Consuming, .storage: $&Container, .slot: $&Borrowing, .source: $&Borrowing
 ) -> () {
-    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container) (
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage = storage, .destination = slot, .source = ~source&
     )
 }
@@ -41,6 +41,7 @@ register_keeping := (.value: $&Keeping) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     slot_result ::= allocate_bytes(
@@ -54,7 +55,9 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..error _ { status_code = 2 }
                 ..ok ~slot_payload {
                     slot_storage ::= ~slot_payload
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(
+                    slot ::= trusted_mutable_reinterpret_reference#(
+                        .from: UInt8, .to: Borrowing
+                    )(
                         .base = unsafe_allocation.trusted_allocation_byte_rw(
                             .allocation = $&slot_storage, .offset = 0
                         ).reference

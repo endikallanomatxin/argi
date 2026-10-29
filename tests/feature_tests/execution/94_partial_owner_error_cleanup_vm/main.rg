@@ -16,14 +16,9 @@ implement Deinit#(Parent) (
     .deinit = (.self: $&Parent) -> () { abort }
 )
 
-fail := (
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Int32, (..partial_construction_failed))) {
+fail := (.tracer: $&Virtual#(ErrorTracer), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Int32, (..partial_construction_failed))
+) {
     assume error_tracer
 
     result = ..error(.reason = ..partial_construction_failed, .tracer = tracer)
@@ -31,12 +26,8 @@ fail := (
 
 build_partial := (
     .counter      : $&Counter,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .tracer       : $&Virtual#(ErrorTracer),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..partial_construction_failed))) {
     assume error_tracer
 
@@ -51,6 +42,7 @@ probe := () -> (.result: Int32) {
     counter :: Counter = (.count = 0)
     tracer :: NoopErrorTracer = (.marker = 0)
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&erased
     build_partial(.counter = $&counter, .tracer = $&erased) handle error {
         match error.reason { ..partial_construction_failed {} }
     }
@@ -59,6 +51,7 @@ probe := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     if #run () -> (.value: Int32) { value = probe() } != 42 { abort }
     #if probe() == 42 {
         status_code = probe()

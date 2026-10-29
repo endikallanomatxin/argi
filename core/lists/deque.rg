@@ -6,11 +6,7 @@ DequeInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
     .capacity  : UIntNative = 8,
     .allocator : $&Provider
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(
@@ -46,11 +42,7 @@ reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&Deque#(.t: t),
     .capacity     : UIntNative,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -91,13 +83,7 @@ reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 _deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : $&Deque#(.t: t),
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Deque#(.t: t), .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -122,11 +108,7 @@ push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&Deque#(.t: t),
     .value        : t,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -152,11 +134,7 @@ push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&Deque#(.t: t),
     .value        : t,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -186,27 +164,17 @@ push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok Void()
 }
 
-pop_front := #(.t: Type) (
-    .self         : $&Deque#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(t, (..empty))) {
+pop_front := #(.t: Type) (.self: $&Deque#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(t, (..empty))
+) {
     assume error_tracer
 
     result = pop($&self&._ring)
 }
 
-pop_back := #(.t: Type) (
-    .self         : $&Deque#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(t, (..empty))) {
+pop_back := #(.t: Type) (.self: $&Deque#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(t, (..empty))
+) {
     assume error_tracer
 
     if self&._ring._length == 0 {
@@ -229,13 +197,7 @@ pop_back := #(.t: Type) (
 }
 
 get := #(.t: Type: ImplicitlyCopyable) (
-    .self         : &Deque#(.t: t),
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Deque#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
     assume error_tracer
 
@@ -258,13 +220,7 @@ implement#(.t: Type) Indexable#(Deque#(.t: t)) (
     }
 
     .get_reference = (
-        .self         : &Deque#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &Deque#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(&t, (..out_of_bounds))) {
         assume error_tracer
 
@@ -276,13 +232,7 @@ implement#(.t: Type) MutableIndexable#(Deque#(.t: t)) (
     .Item : Type = t
 
     .get_mutable_reference = (
-        .self         : $&Deque#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&Deque#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#($&t, (..out_of_bounds))) {
         assume error_tracer
 

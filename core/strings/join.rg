@@ -1,4 +1,5 @@
 _string_copy_view_into := (.output: $&String, .offset: UIntNative, .source: StringView) -> () {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     index :: UIntNative = 0
 
     while index < source._length {
@@ -15,11 +16,7 @@ join := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .parts        : ArrayView#(.t: StringView),
     .separator    : StringView,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) {
     assume error_tracer
 

@@ -5,6 +5,7 @@ borrow := #(.Source: Type: Viewable#(Source)) (.array: Source) -> (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= system.page_allocator
     values ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
     empty ::= borrow(.array = &values)

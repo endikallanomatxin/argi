@@ -1,4 +1,5 @@
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     data: Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
     values ::= view(.self = $&data)
 

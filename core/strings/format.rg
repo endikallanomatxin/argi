@@ -16,11 +16,7 @@ format_unsigned_decimal_into_u64 := #(.AllocatorType: Type: Allocator#(Allocator
     .out          : $&String,
     .value        : UInt64,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -31,11 +27,7 @@ format_unsigned_decimal_into_u32 := #(.AllocatorType: Type: Allocator#(Allocator
     .out          : $&String,
     .value        : UInt32,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -46,11 +38,7 @@ format_signed_decimal_into_i64 := #(.AllocatorType: Type: Allocator#(AllocatorTy
     .out          : $&String,
     .value        : Int64,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -61,11 +49,7 @@ format_signed_decimal_into_i32 := #(.AllocatorType: Type: Allocator#(AllocatorTy
     .out          : $&String,
     .value        : Int32,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -76,11 +60,7 @@ _format_text_into := #(.Provider: Type: Allocator) (
     .out          : $&String,
     .value        : StringView,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -90,14 +70,7 @@ _format_text_into := #(.Provider: Type: Allocator) (
 }
 
 _format_bool_into := #(.Provider: Type: Allocator) (
-    .out          : $&String,
-    .value        : Bool,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .out: $&String, .value: Bool, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -111,13 +84,7 @@ _format_bool_into := #(.Provider: Type: Allocator) (
 }
 
 _format_text_owned := #(.Provider: Type: Allocator) (
-    .value        : StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: StringView, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -130,13 +97,7 @@ _format_text_owned := #(.Provider: Type: Allocator) (
 }
 
 _format_bool_owned := #(.Provider: Type: Allocator) (
-    .value        : Bool,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: Bool, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -149,14 +110,7 @@ _format_bool_owned := #(.Provider: Type: Allocator) (
 }
 
 _format_integer_into := #(.t: Type: Int, .Provider: Type: Allocator) (
-    .out          : $&String,
-    .value        : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .out: $&String, .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -166,13 +120,7 @@ _format_integer_into := #(.t: Type: Int, .Provider: Type: Allocator) (
 }
 
 _format_integer_owned := #(.t: Type: Int, .Provider: Type: Allocator) (
-    .value        : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -184,14 +132,7 @@ _format_integer_owned := #(.t: Type: Int, .Provider: Type: Allocator) (
 }
 
 _format_float_into := #(.t: Type: Float, .Provider: Type: Allocator) (
-    .out          : $&String,
-    .value        : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .out: $&String, .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -201,13 +142,7 @@ _format_float_into := #(.t: Type: Float, .Provider: Type: Allocator) (
 }
 
 _format_float_owned := #(.t: Type: Float, .Provider: Type: Allocator) (
-    .value        : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 

@@ -24,11 +24,7 @@ apply_edit := (
     .editor       : &Virtual#(SimpleEditor),
     .target       : $&Int32,
     .mode         : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?Int32, (..failed))) {
     assume error_tracer
 
@@ -36,6 +32,7 @@ apply_edit := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target

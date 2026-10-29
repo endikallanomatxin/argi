@@ -2,11 +2,7 @@ count_text := (
     .self         : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .text         : StringView,
     .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> !Void = ..ok Void() {
     assume error_tracer
     assume allocator
@@ -31,11 +27,7 @@ count_directory := (
     .buffer       : MutableArrayView#(.t: UInt8),
     .file_system  : $&FileSystem,
     .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> !Void = ..ok Void() {
     assume error_tracer
     assume allocator

@@ -298,6 +298,33 @@ test "compact syntaxing preserves generic parameter indices across extra data gr
     try std.testing.expectEqual(syntax_tree.Node.Tag.type_name, tree.tag(parameter.type_node.?));
 }
 
+test "implementation parameter ranges survive syntax storage growth" {
+    var prefix: std.ArrayList(u8) = .empty;
+    defer prefix.deinit(std.testing.allocator);
+    for (0..64) |_| {
+        const source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "{s}\n" ++
+                "implement#(.T: Type, .U: Type) Operation#(T, U) (\n" ++
+                "    .apply = (.value: T) -> (.result: T) {{ result = value }}\n" ++
+                ")\n",
+            .{prefix.items},
+        );
+        defer std.testing.allocator.free(source);
+        var tree = try parseTestSource("implementation_parameters.rg", source);
+        defer tree.deinit(std.testing.allocator);
+        for (tree.nodes.items(.tag), 0..) |tag, index| {
+            if (tag != .parameter_list) continue;
+            const parameters = tree.parameterList(@enumFromInt(index)).?;
+            for (parameters.fields) |field| {
+                try std.testing.expect(@intFromEnum(field) < tree.nodes.len);
+                try std.testing.expectEqual(syntax_tree.Node.Tag.struct_type_field, tree.tag(field));
+            }
+        }
+        try prefix.appendSlice(std.testing.allocator, "Padding := (.value: Int32)\n");
+    }
+}
+
 test "compact syntaxing preserves adversarial grammar distinctions" {
     try expectTags("tests/feature_tests/collections/03_arrays/main.rg", &.{
         .index_access,

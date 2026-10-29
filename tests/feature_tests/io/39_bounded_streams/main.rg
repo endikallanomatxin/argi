@@ -1,14 +1,9 @@
 Source := (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
 implement Reader#(Source) (
-    .read_byte = (
-        .self         : $&Source,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) {
+    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
         assume error_tracer
 
         if self&.position == length(.self = &self&.bytes).count {
@@ -27,11 +22,7 @@ implement BlockReader#(Source) (
     .read_block = (
         .self         : $&Source,
         .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) {
         assume error_tracer
 
@@ -57,13 +48,7 @@ Sink := (.bytes: MutableArrayView#(.t: UInt8), .position: UIntNative, .stalled: 
 
 implement BlockWriter#(Sink) (
     .write_block = (
-        .self         : $&Sink,
-        .buffer       : ArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&Sink, .buffer: ArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (
         .result : Errable#(
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
@@ -86,6 +71,7 @@ implement BlockWriter#(Sink) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     input :: [4]UInt8 = (65, 0, 66, 10)

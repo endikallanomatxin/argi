@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     erased ::= to_virtual#(.contract: Allocator)(.value = system.page_allocator)
     allocation ::= unwrap_or_abort(allocate#(UInt32)($&erased, .count = 2))
     if allocation.size != 8 or allocation.alignment < 4 { abort }

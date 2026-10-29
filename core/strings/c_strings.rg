@@ -20,13 +20,7 @@ as_c_string := (.self: &String) -> (.text: &CChar) {
 }
 
 copy_c_string := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: StringView, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(OwnedCString, (..out_of_memory))) {
     assume error_tracer
 
@@ -87,13 +81,7 @@ _c_string_bytes := (.text: &CChar) -> (.bytes: ArrayView#(UInt8)) {
 }
 
 string_from_c_string := #(.Provider: Type: Allocator) (
-    .text         : &CChar,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: &CChar, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
     assume error_tracer
 

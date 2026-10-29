@@ -1,4 +1,7 @@
 probe := () -> (.result: Int32) {
+    tracer_storage :: NoopErrorTracer = (.marker = 0)
+    tracer_handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer_storage)
+    assume error_tracer ::= $&tracer_handle
     fraction := 0.123123
     if fraction + fraction != 0.246246 { abort }
     single :: Float32 = 16777216.0
@@ -28,6 +31,7 @@ single_identity := (.value: Float32) -> (.result: Float32) { result = value }
 double_identity := (.value: Float64) -> (.result: Float64) { result = value }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     if [#run () -> (.value: Int32) { value = probe() }] != 42 { abort }
     if [#run () -> (.value: Float32) { value = fraction() }] != 0.123123 { abort }
     if [#run () -> (.value: Float16) { value = half_identity(.value = 1.5) }] != 1.5 { abort }

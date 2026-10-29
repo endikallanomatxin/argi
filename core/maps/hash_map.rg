@@ -30,13 +30,7 @@ HashMap := #(
 )
 
 _hash_slots := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .capacity     : UIntNative,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .capacity: UIntNative, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicArray#(.t: _HashSlot), (..out_of_memory))) {
     assume error_tracer
 
@@ -60,11 +54,7 @@ _init_hash_map := #(
     .policy       : policy,
     .allocator    : $&Provider,
     .capacity     : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))) {
     assume error_tracer
 
@@ -98,11 +88,7 @@ HashMapInitArgs: Type = #(
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(
@@ -134,11 +120,7 @@ StandardHashMapInitArgs: Type = #(
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.key: Type: _StandardHashKey#(key), .value: Type, .Provider: Type: Allocator) Init#(
@@ -272,11 +254,7 @@ _map_reserve_hash_map := #(
     .self         : $&HashMap#(.key: key, .value: value, .policy: policy),
     .capacity     : UIntNative,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -341,11 +319,7 @@ _map_put_hash_map := #(
     .key          : key,
     .value        : value,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)                     = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 

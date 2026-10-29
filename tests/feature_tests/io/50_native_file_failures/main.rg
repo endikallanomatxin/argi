@@ -19,6 +19,7 @@ interrupted_writes() -> (.count: UIntNative): CFunction(
 )
 
 main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     first ::= failed_stream().address
     if first == 0 { abort }

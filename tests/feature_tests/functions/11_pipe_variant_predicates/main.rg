@@ -1,6 +1,7 @@
 Result: Type = (..ok(.value: Int32), ..error(.code: UnicodeScalar))
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     failed: Result = ..error(.code = 'x')
     named ::= failed | is(.value = _, .variant = ..error)
     positional ::= failed | is(_, ..error)

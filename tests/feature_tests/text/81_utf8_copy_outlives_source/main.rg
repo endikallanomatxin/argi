@@ -1,11 +1,6 @@
-copy_local := (
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
+copy_local := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(String, (..invalid_utf8, ..out_of_memory))
+) {
     assume error_tracer
 
     bytes: [2]UInt8 = (195, 169)
@@ -13,6 +8,7 @@ copy_local := (
 }
 
 main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     text ::= unwrap_or_abort(.value = copy_local(.allocator = system.page_allocator))
     if view(&text) != "é" { abort }
 }

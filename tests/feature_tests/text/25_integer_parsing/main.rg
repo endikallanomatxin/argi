@@ -8,6 +8,7 @@ expect_error := #(.t: Type: Int, .Reasons: Type) (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     if unwrap_or_abort(.value = parse_uint8(.text = "0")).result != 0 { abort }
     if unwrap_or_abort(.value = parse_uint8(.text = "0")).result != 0 { abort }
     if unwrap_or_abort(.value = parse_uint8(.text = "255")).result != 255 { abort }

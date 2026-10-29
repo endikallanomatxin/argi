@@ -2,38 +2,24 @@
 
 CountingTracer := (.count: UIntNative = 0)
 
-fail := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..tracer_test_failure))) {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..tracer_test_failure))
+) {
     assume error_tracer
 
     result = ..error(.reason = ..tracer_test_failure)
 }
 
-propagate := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32, .reasons: (..tracer_test_failure))) {
+propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int32, .reasons: (..tracer_test_failure))
+) {
     assume error_tracer
 
     value := fail()!! "custom context"
     result = ..ok value
 }
 
-ok := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !Int32 {
+ok := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
     assume error_tracer
     result = ..ok 7
 }
@@ -43,14 +29,7 @@ context_text := (.counter: $&UIntNative) -> (.view: StringView) {
     view = "lazy context"
 }
 
-success := (
-    .counter      : $&UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !Int32 {
+success := (.counter: $&UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
     assume error_tracer
 
     value := ok()!! context_text(.counter = counter)
@@ -59,11 +38,7 @@ success := (
 
 forward := #(.t: Type) (
     .value        : Errable#(.t: t, .reasons: (..tracer_test_failure)),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)                  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(.t: t, .reasons: (..tracer_test_failure))) {
     assume error_tracer
 
@@ -141,11 +116,7 @@ implement ErrorTracer#(CountingTracer) (
     .report = (
         .self         : $&CountingTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 

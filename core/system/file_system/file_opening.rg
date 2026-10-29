@@ -3,12 +3,8 @@ FileOpening#(.PathValue: Type): Contract = (
     .open_file : (
         .file_system  : &FileSystem,
         .path         : PathValue,
-        .mode         : FileOpenMode                       = ..read,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .mode         : FileOpenMode            = ..read,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(File, (..path_open_failed)))
 )
 
@@ -16,13 +12,9 @@ AllocatingFileOpening#(.PathValue: Type, .Provider: Type: Allocator#(Provider)):
     .open_file : (
         .file_system  : &FileSystem,
         .path         : PathValue,
-        .mode         : FileOpenMode                       = ..read,
+        .mode         : FileOpenMode            = ..read,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory)))
 )
 
@@ -30,11 +22,7 @@ _open_c_file := (
     .file_system  : &FileSystem,
     .path         : &CChar,
     .mode         : FileOpenMode,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(File, (..path_open_failed))) {
     assume error_tracer
 
@@ -52,12 +40,8 @@ implement FileOpening#(&CChar) (
     .open_file = (
         .file_system  : &FileSystem,
         .path         : &CChar,
-        .mode         : FileOpenMode = ..read,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .mode         : FileOpenMode            = ..read,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(File, (..path_open_failed))) {
         assume error_tracer
 
@@ -69,12 +53,8 @@ implement FileOpening#(&String) (
     .open_file = (
         .file_system  : &FileSystem,
         .path         : &String,
-        .mode         : FileOpenMode = ..read,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .mode         : FileOpenMode            = ..read,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(File, (..path_open_failed))) {
         assume error_tracer
 
@@ -88,12 +68,8 @@ implement FileOpening#(&Path) (
     .open_file = (
         .file_system  : &FileSystem,
         .path         : &Path,
-        .mode         : FileOpenMode = ..read,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .mode         : FileOpenMode            = ..read,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(File, (..path_open_failed))) {
         assume error_tracer
 
@@ -107,13 +83,9 @@ implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileOpening#(StringV
     .open_file = (
         .file_system  : &FileSystem,
         .path         : StringView,
-        .mode         : FileOpenMode                       = ..read,
+        .mode         : FileOpenMode            = ..read,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory))) {
         assume error_tracer
 

@@ -1,6 +1,7 @@
 FailingAllocator := (.attempts: UIntNative = 0)
 
-main := () -> (.status_code: Int32 = 0) {
+main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
+    assume error_tracer
     allocator :: FailingAllocator = (.attempts = 0)
     parts: [2]StringView = ("a", "b")
     match join(.parts = view(.self = &parts), .separator = ",", .allocator = $&allocator) {
@@ -15,12 +16,8 @@ implement Allocator#(FailingAllocator) (
     .allocate = (
         .self         : $&FailingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

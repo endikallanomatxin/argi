@@ -2,11 +2,7 @@ window := (
     .array        : $&DynamicArray#(.t: UIntNative),
     .start        : UIntNative,
     .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))) {
     assume error_tracer
 
@@ -14,9 +10,10 @@ window := (
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
-exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
-    .status : Int32 = 0
-) {
+exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+    .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.status: Int32 = 0) {
+    assume error_tracer
     array ::= unwrap_or_abort(
         .value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8)
     )
@@ -67,6 +64,7 @@ exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&Al
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     direct ::= exercise(.allocator = system.page_allocator).status
     if direct != 0 { status_code = direct }
     arena :: ArenaAllocator

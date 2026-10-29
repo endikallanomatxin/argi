@@ -8,7 +8,10 @@ implement CollectionCapacity#(Counter) (
     .measure_capacity = (.self: &Counter) -> (.count: UIntNative) { count = self&.count + 1 }
 )
 
-query := #(.Value: Type: CollectionLength#(Value)) (.self: &Value) -> (.count: UIntNative) {
+query := #(.Value: Type: CollectionLength#(Value)) (
+    .self: &Value, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.count: UIntNative) {
+    assume error_tracer
     count = length(self)
 }
 
@@ -17,6 +20,7 @@ read_maximum := #(.Value: Type: IntegerBounds#(Value)) (.value: Value) -> (.maxi
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     counter ::= Counter(7)
     if query(&counter) != 7 or capacity(&counter) != 8 { status_code = 1 }
     byte :: UInt8 = 0

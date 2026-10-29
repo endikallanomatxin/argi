@@ -7,11 +7,7 @@ ByteLine := (.bytes: ArrayView#(.t: UInt8), .terminated: Bool)
 read_line := #(.SelfType: Type: Reader#(SelfType)) (
     .self         : $&SelfType,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?ByteLine, (..stream_read_failed, ..line_too_long))) {
     assume error_tracer
 

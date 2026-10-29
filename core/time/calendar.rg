@@ -42,14 +42,9 @@ valid_utc_date := (.date: UtcDateTime) -> (.ok: Bool) {
     ]
 }
 
-unix_timestamp := (
-    .date         : UtcDateTime,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) {
+unix_timestamp := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UnixTimestamp, (..out_of_range))
+) {
     assume error_tracer
 
     if valid_utc_date(.date = date).ok == false {
@@ -83,14 +78,9 @@ unix_timestamp := (
     result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
-utc_date := (
-    .timestamp    : UnixTimestamp,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UtcDateTime, (..out_of_range))) {
+utc_date := (.timestamp: UnixTimestamp, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UtcDateTime, (..out_of_range))
+) {
     assume error_tracer
 
     seconds ::= unix_seconds(&timestamp).value
@@ -141,14 +131,9 @@ utc_date := (
 }
 
 -- Sunday is zero, matching conventional civil weekday numbering.
-weekday := (
-    .date         : UtcDateTime,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UInt32, (..out_of_range))) {
+weekday := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UInt32, (..out_of_range))
+) {
     assume error_tracer
 
     timestamp ::= unix_timestamp(.date = date)!

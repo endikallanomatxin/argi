@@ -1,6 +1,7 @@
 FailingAllocator := (.attempts: UIntNative = 0)
 
-main := (.system: System) -> (.status_code: Int32 = 0) {
+main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
+    assume error_tracer
     maximum :: UIntNative = 0
     index :: UIntNative = 0
     while index < size_of(.type = UIntNative) {
@@ -67,12 +68,8 @@ implement Allocator#(FailingAllocator) (
     .allocate = (
         .self         : $&FailingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

@@ -1,4 +1,5 @@
-main := (.system: System) -> ()  {
+main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator := system.page_allocator
     field ::= unwrap_or_abort(.value = DynamicArray#(UInt8)(.capacity = 1))
     unwrap_or_abort(.value = push($&field, .value = 65))

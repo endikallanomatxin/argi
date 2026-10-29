@@ -5,11 +5,7 @@ Allocator#(.Provider: Type): Contract = (
         .self         : $&Provider,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) where {
         on result ..ok {
             owns(result)
@@ -23,12 +19,8 @@ Allocator#(.Provider: Type): Contract = (
 allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
     .self         : $&SelfType,
     .size         : UIntNative,
-    .alignment    : UIntNative                         = 1,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .alignment    : UIntNative              = 1,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
     assume error_tracer
 
@@ -38,13 +30,7 @@ allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
 -- Validate the complete typed reservation before calling the provider, including
 -- element bytes and companion metadata. Containers need only check their shape.
 allocate := #(.t: Type, .SelfType: Type: Allocator#(SelfType)) (
-    .self         : $&SelfType,
-    .count        : UIntNative                         = 1,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&SelfType, .count: UIntNative = 1, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
     assume error_tracer
 

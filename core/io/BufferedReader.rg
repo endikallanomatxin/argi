@@ -24,12 +24,7 @@ implement#(.base_type: Type: Reader#(base_type)) Init#(
 
 implement#(.base_type: Type: Reader#(base_type)) Reader#(BufferedReader#(.base_type: base_type)) (
     .read_byte = (
-        .self         : $&BufferedReader#(.base_type: base_type),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer)        = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&BufferedReader#(.base_type: base_type), .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
         assume error_tracer
 

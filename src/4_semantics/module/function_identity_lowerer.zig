@@ -156,8 +156,8 @@ test "trace helper metadata requires the registered core path and keeps ordinary
         "ErrorTracer#(.T: Type): Contract = ()\n" ++
         "SourceLocationId := (.value: UInt32)\n" ++
         "StringView := (.length: UIntNative)\n" ++
-        "_add_error_context := (.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: StringView) -> ()  {}\n" ++
-        "_add_error_context_text := (.tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar) -> ()  {}\n";
+        "_add_error_context := (.tracer: $&Virtual#(ErrorTracer), .location: SourceLocationId, .context: StringView) -> ()  {}\n" ++
+        "_add_error_context_text := (.tracer: $&Virtual#(ErrorTracer), .location: SourceLocationId, .context: &CChar) -> ()  {}\n";
     const cases = [_]struct { path: []const u8, trusted: bool, selected: bool }{
         .{ .path = "core/errors/error_tracer.rg", .trusted = true, .selected = true },
         .{ .path = "core/errors/unrelated.rg", .trusted = true, .selected = false },

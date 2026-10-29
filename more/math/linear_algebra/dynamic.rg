@@ -7,15 +7,9 @@ DynamicMatrix := #(.t: Type: Scalar) (
 
 ..dimension_mismatch
 
-_extent := (
-    .rows         : UIntNative,
-    .cols         : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UIntNative, (..dimension_mismatch))) {
+_extent := (.rows: UIntNative, .cols: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UIntNative, (..dimension_mismatch))
+) {
     assume error_tracer
 
     maximum ::= integer_limits(.value = rows).maximum
@@ -35,11 +29,7 @@ DynamicMatrixInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
     .cols         : UIntNative,
     .values       : ArrayView#(.t: t),
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
@@ -86,11 +76,7 @@ _math_get_dynamic_matrix := #(.t: Type: Scalar) (
     .self         : &DynamicMatrix#(.t: t),
     .row          : UIntNative,
     .col          : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
     assume error_tracer
 
@@ -107,11 +93,7 @@ _math_set_dynamic_matrix := #(.t: Type: Scalar) (
     .row          : UIntNative,
     .col          : UIntNative,
     .value        : t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 
@@ -132,11 +114,7 @@ implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)
         .left         : &DynamicMatrix#(.t: t),
         .right        : &DynamicMatrix#(.t: t),
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -168,11 +146,7 @@ implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.
         .left         : &DynamicMatrix#(.t: t),
         .right        : &DynamicMatrix#(.t: t),
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -221,11 +195,7 @@ implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.
 _math_transpose_dynamic_matrix := #(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) (
     .self         : &DynamicMatrix#(.t: t),
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicMatrix#(.t: t), (..out_of_memory))) {
     assume error_tracer
 
@@ -258,11 +228,7 @@ DynamicVectorInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
     .values    : ArrayView#(.t: t),
     .allocator : $&Provider
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
@@ -295,13 +261,7 @@ length := #(.t: Type: Scalar) (.self: &DynamicVector#(.t: t)) -> (.count: UIntNa
 }
 
 _math_get_dynamic_vector := #(.t: Type: Scalar) (
-    .self         : &DynamicVector#(.t: t),
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &DynamicVector#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
     assume error_tracer
 
@@ -312,11 +272,7 @@ _math_set_dynamic_vector := #(.t: Type: Scalar) (
     .self         : $&DynamicVector#(.t: t),
     .index        : UIntNative,
     .value        : t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 
@@ -329,11 +285,7 @@ _math_set_dynamic_vector := #(.t: Type: Scalar) (
 _math_dot_dynamic_vector := #(.t: Type: Scalar) (
     .left         : &DynamicVector#(.t: t),
     .right        : &DynamicVector#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..dimension_mismatch))) {
     assume error_tracer
 
@@ -363,11 +315,7 @@ implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)
         .left         : &DynamicVector#(.t: t),
         .right        : &DynamicVector#(.t: t),
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -398,11 +346,7 @@ _math_scale_dynamic_vector := #(.t: Type: Scalar, .Provider: Type: Allocator#(Pr
     .self         : &DynamicVector#(.t: t),
     .factor       : t,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicVector#(.t: t), (..out_of_memory))) {
     assume error_tracer
 

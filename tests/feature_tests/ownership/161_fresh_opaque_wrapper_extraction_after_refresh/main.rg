@@ -17,6 +17,7 @@ extract := (.slot: $&Borrowing) -> (.result: $&UInt8) {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first_result ::= allocate_bytes(
         .self = $&allocator_storage, .size = size_of(.type = Borrowing)
@@ -31,7 +32,7 @@ main := (.system: System) -> (.status_code: Int32) {
                 ).reference
             ).reference
             first_value :: Borrowing = (.reference = $&external)
-            trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+            trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                 .storage = $&storage, .destination = first_slot, .source = ~first_value
             )
             trusted_opaque_drop(.slot = first_slot)
@@ -52,7 +53,7 @@ main := (.system: System) -> (.status_code: Int32) {
                         ).reference
                     ).reference
                     second_value :: Borrowing = (.reference = $&external)
-                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage     = $&storage
                         .destination = second_slot
                         .source      = ~second_value

@@ -10,6 +10,7 @@ implement Add#(&Left, &Right) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     left ::= Left(1)
     right ::= Right(2)
     value ::= Add#(&Left, &Right).add(.left = &left, .right = &right, .bias = 5)

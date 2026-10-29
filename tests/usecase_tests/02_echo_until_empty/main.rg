@@ -1,5 +1,6 @@
 -- Echo complete lines until an empty line or EOF, including a final line without LF.
-main := (.system: System) -> (.status_code: Int32 = 0)  {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     output ::= $&system.terminal&.stdout

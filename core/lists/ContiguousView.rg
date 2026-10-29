@@ -6,11 +6,7 @@ ContiguousView#(.View: Type): Contract = (
         .self         : &View,
         .start        : UIntNative,
         .count        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(View, (..out_of_bounds)))
 )
 
@@ -21,14 +17,7 @@ data := #(.View: Type: ContiguousView#(View)) (.self: &View) -> (
 }
 
 slice := #(.View: Type: ContiguousView#(View)) (
-    .self         : &View,
-    .start        : UIntNative,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &View, .start: UIntNative, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(View, (..out_of_bounds))) {
     assume error_tracer
 

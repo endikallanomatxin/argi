@@ -4,11 +4,7 @@ OwnerInitArgs: Type = #(.A: Type: Allocator) (
     .allocator : $&A,
     .length    : UIntNative = 4
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.A: Type: Allocator) Init#(Owner, OwnerInitArgs#(A)) (
@@ -26,9 +22,15 @@ implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () { deinit(.self = $&self&.allocation) }
 )
 
-escape := (.allocator: $&PageAllocator) -> (.result: Owner) {
+escape := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Owner
+) {
+    assume error_tracer
     storage ::= GeneralPurposeAllocator(.allocator = allocator)
     result = ~unwrap_or_abort(Owner(.allocator = $&storage))
 }
 
-main := (.system: System) -> () { owner ::= escape(system.page_allocator) }
+main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
+    owner ::= escape(system.page_allocator)
+}

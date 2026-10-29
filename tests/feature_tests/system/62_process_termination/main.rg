@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     if length(.self = system.args).count > 1 {
         unwrap_or_abort(.value = close(.self = $&system.terminal&.stdin))
         unwrap_or_abort(.value = write(.self = $&system.terminal&.stdout, .value = "R"))

@@ -47,6 +47,7 @@ verify := (.counter: $&Int32, .status: $&Int32, .ffi: $&ForeignFunctionInterface
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage

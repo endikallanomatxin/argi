@@ -37,11 +37,7 @@ implement Init#(RandomNumberGenerator, RandomNumberGeneratorInitArgs) (
 fill_random_bytes := (
     .self         : $&RandomNumberGenerator,
     .destination  : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..entropy_unavailable))) {
     assume error_tracer
 

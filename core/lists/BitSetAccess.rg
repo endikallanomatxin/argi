@@ -1,34 +1,15 @@
 BitSetAccess#(.Set: Type): Contract = (
-    .read_bit : (
-        .self         : &Set,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Bool, (..out_of_bounds)))
+    .read_bit : (.self: &Set, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Bool, (..out_of_bounds))
+    )
     .write_bit : (
-        .self         : $&Set,
-        .index        : UIntNative,
-        .value        : Bool,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&Set, .index: UIntNative, .value: Bool, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_bounds)))
     .population : (.self: &Set) -> (.count: UIntNative)
 )
 
 contains_bit := #(.Set: Type: BitSetAccess#(Set)) (
-    .self         : &Set,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Set, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..out_of_bounds))) {
     assume error_tracer
 
@@ -38,12 +19,8 @@ contains_bit := #(.Set: Type: BitSetAccess#(Set)) (
 set_bit := #(.Set: Type: BitSetAccess#(Set)) (
     .self         : $&Set,
     .index        : UIntNative,
-    .value        : Bool        = true,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value        : Bool                    = true,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 

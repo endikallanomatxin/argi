@@ -1,24 +1,13 @@
 ..copy_test_failure
 
-fail := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !Void {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void {
     assume error_tracer
     result = ..error(.reason = ..copy_test_failure)
 }
 
-context_failure := (
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Void, .reasons: (..copy_test_failure))) {
+context_failure := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Void, .reasons: (..copy_test_failure))
+) {
     assume error_tracer
 
     text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 3))

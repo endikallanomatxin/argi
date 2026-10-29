@@ -1,23 +1,24 @@
 -- Path representation selects one operation identity; allocation is explicit.
 PathRemoval#(.PathValue: Type): Contract = (
     .Result : Type
-    .remove : (.self: &FileSystem, .path: PathValue) -> (.result: Result)
+    .remove : (.self: &FileSystem, .path: PathValue, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    )
 )
 
 AllocatingPathRemoval#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .remove : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (.result: Result)
+    .remove : (
+        .self         : &FileSystem,
+        .path         : PathValue,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
-_path_remove_c := (
-    .self         : &FileSystem,
-    .path         : &CChar,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Bool, (..path_remove_failed))) {
+_path_remove_c := (.self: &FileSystem, .path: &CChar, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Bool, (..path_remove_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -31,13 +32,7 @@ _path_remove_c := (
 }
 
 _path_remove_string := (
-    .self         : &FileSystem,
-    .path         : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .path: &String, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..path_remove_failed))) {
     assume error_tracer
 
@@ -51,11 +46,7 @@ _path_remove_view := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &FileSystem,
     .path         : StringView,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..path_remove_failed, ..out_of_memory))) {
     assume error_tracer
 
@@ -75,15 +66,9 @@ _path_remove_view := #(.Provider: Type: Allocator#(Provider)) (
     }
 }
 
-_path_remove_owned := (
-    .self         : &FileSystem,
-    .path         : &Path,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Bool, (..path_remove_failed))) {
+_path_remove_owned := (.self: &FileSystem, .path: &Path, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Bool, (..path_remove_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi

@@ -6,7 +6,12 @@ PathExistence#(.PathValue: Type): Contract = (
 
 AllocatingPathExistence#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .exists : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (.result: Result)
+    .exists : (
+        .self         : &FileSystem,
+        .path         : PathValue,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
 _path_exists_c := (.self: &FileSystem, .path: &CChar) -> (.ok: Bool) {
@@ -24,11 +29,7 @@ _path_exists_view := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &FileSystem,
     .path         : StringView,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..out_of_memory))) {
     assume error_tracer
 

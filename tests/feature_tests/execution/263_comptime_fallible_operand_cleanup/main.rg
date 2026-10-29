@@ -15,12 +15,8 @@ implement Deinit#(Resource) (
 maybe_resource := (
     .counter      : $&Counter,
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .tracer       : $&Virtual#(ErrorTracer),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Resource, (..stop))) {
     assume error_tracer
 
@@ -34,12 +30,8 @@ maybe_resource := (
 build_owned := (
     .counter      : $&Counter,
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .tracer       : $&Virtual#(ErrorTracer),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Choice, (..stop))) {
     assume error_tracer
 
@@ -61,12 +53,8 @@ consume_pair := (.left: Resource, .right: Resource) -> (.result: Int32) {
 build_call := (
     .counter      : $&Counter,
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .tracer       : $&Virtual#(ErrorTracer),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..stop))) {
     assume error_tracer
 
@@ -79,12 +67,8 @@ build_call := (
 build_array := (
     .counter      : $&Counter,
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .tracer       : $&Virtual#(ErrorTracer),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..stop))) {
     assume error_tracer
 
@@ -113,12 +97,8 @@ build_virtual := (
     .handle       : $&Virtual#(.contract: Consumer),
     .counter      : $&Counter,
     .fail         : Bool,
-    .tracer       : $&Virtual#(.contract: ErrorTracer),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .tracer       : $&Virtual#(ErrorTracer),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..stop))) {
     assume error_tracer
 
@@ -134,6 +114,7 @@ probe := () -> (.result: Int32) {
     counter :: Counter = Counter()
     tracer :: NoopErrorTracer = (.marker = 0)
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&erased
     failed ::= build_owned(.counter = $&counter, .fail = true, .tracer = $&erased)
     if counter.drops != 7 { abort }
     succeeded ::= build_owned(.counter = $&counter, .fail = false, .tracer = $&erased)
@@ -160,6 +141,7 @@ probe := () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     if #run () -> (.value: Int32) { value = probe() } != 112 { abort }
     if probe() != 112 { abort }
     status_code = 42

@@ -1,13 +1,7 @@
 Output#(.Stream: Type): Contract = (
-    .write_byte : (
-        .self         : $&Stream,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed))) where {
+    .write_byte : (.self: $&Stream, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed))
+    ) where {
         on result ..ok {}
         on result ..error { depends_on(result, error_tracer) }
     }
@@ -17,29 +11,15 @@ Output#(.Stream: Type): Contract = (
 Sink := (.last: UInt8 = 0, .flushed: Bool = false)
 
 implement Output#(Sink) (
-    .write_byte = (
-        .self         : $&Sink,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed))) {
+    .write_byte = (.self: $&Sink, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed))
+    ) {
         assume error_tracer
 
         self&.last = byte
         result = ..ok Void()
     }
-    .flush = (
-        .self         : $&Sink,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> () {
-        assume error_tracer
+    .flush = (.self: $&Sink) -> () {
         self&.flushed = true
     }
 )
@@ -48,6 +28,7 @@ implement Output#(Sink) (
 flush := (.self: $&Sink) -> () { abort }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     sink ::= Sink()
     erased ::= to_virtual#(.contract: Output)(.value = $&sink)
     match Output#().write_byte($&erased, .byte = 42) { ..ok _ {} ..error _ { abort } }

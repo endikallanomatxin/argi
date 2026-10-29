@@ -23,7 +23,8 @@ _impl_transfer_Manager := (.self: &Manager, .source: $&Resource, .destination: $
     relocate(source, destination)
 }
 
-transfer_owned := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource) -> () {
+transfer_owned := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource) -> (
+) {
     transfer(mover, source, destination)
 }
 

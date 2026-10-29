@@ -19,12 +19,13 @@ store_local := (.storage: $&Allocation, .slot: $&TrackedBorrowing, .target: &UIn
         .id        = 1
         .reference = target
     )
-    trusted_opaque_move_in#(.t: TrackedBorrowing, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: TrackedBorrowing, .storage_type: Allocation)(
         .storage = storage, .destination = slot, .source = ~local
     )
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     slots_result ::= allocate_bytes(
         .self = $&allocator_storage, .size = size_of(.type = TrackedBorrowing)

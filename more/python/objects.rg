@@ -15,14 +15,7 @@ _next(.context: UIntNative, .object: RawPointer#(.t: _PyObject), .exhausted: $&I
 ): CFunction(.symbol = "_argi_python_next")
 
 set_attribute := (
-    .self         : &Object,
-    .name         : StringView,
-    .value        : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Object, .name: StringView, .value: &Object, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..python_error))) {
     assume error_tracer
 
@@ -48,11 +41,7 @@ set_attribute := (
 tuple := (
     .self         : &Python,
     .values       : ArrayView#(.t: &Object) = _no_arguments(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -64,14 +53,9 @@ tuple := (
 -- the core Iterator contract's infallible next/has_next protocol.
 PythonIterator := (._object: Object)
 
-iterate := (
-    .self         : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(PythonIterator, (..python_error))) {
+iterate := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(PythonIterator, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._python&._ffi
@@ -83,14 +67,9 @@ iterate := (
     result = ..ok(._object = ~object)
 }
 
-next := (
-    .self         : $&PythonIterator,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(?Object, (..python_error))) {
+next := (.self: $&PythonIterator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(?Object, (..python_error))
+) {
     assume error_tracer
 
     assume ffi := self&._object._python&._ffi

@@ -3,7 +3,8 @@ FailingAllocator := (
     .deallocations : Int32
 )
 
-main := () -> (.status_code: Int32) {
+main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32) {
+    assume error_tracer
     allocator_storage :: FailingAllocator = (
         .allocations   = 0
         .deallocations = 0
@@ -21,12 +22,8 @@ implement Allocator#(FailingAllocator) (
     .allocate = (
         .self         : $&FailingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

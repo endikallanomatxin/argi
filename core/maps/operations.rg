@@ -39,11 +39,7 @@ MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
         .key          : Key,
         .value        : Value,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_memory)))
 )
 
@@ -56,14 +52,7 @@ MapRemoval#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
 SetInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Key    : Type
     .insert : (
-        .self         : $&Map,
-        .key          : Key,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&Map, .key: Key, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Bool, (..out_of_memory)))
 )
 
@@ -72,11 +61,7 @@ MapReservation#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
         .self         : $&Map,
         .capacity     : UIntNative,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_memory)))
 )
 

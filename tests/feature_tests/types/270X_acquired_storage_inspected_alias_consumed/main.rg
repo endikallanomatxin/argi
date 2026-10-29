@@ -3,6 +3,7 @@ inspect := (.storage: &AcquiredStorage) -> (.address: UIntNative) {
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)

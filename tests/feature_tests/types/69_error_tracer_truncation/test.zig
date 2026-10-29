@@ -9,11 +9,11 @@ test "feature_tests/types/69_error_tracer_truncation" {
     try expectSuccessfulBuild(path);
     try runExpectStderr(path, 0,
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:20:5: latest
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:14:5: latest
         \\        add_context_text(.context = "latest")
         \\        ^
         \\  <context truncated>
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:11:14
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:5:14
         \\        result = ..error(.reason = ..truncated_test_failure)
         \\                 ^
         \\

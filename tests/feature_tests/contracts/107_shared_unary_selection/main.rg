@@ -42,12 +42,14 @@ main := () -> (.status_code: Int32 = 0) {
     generic_other ::= Cell#(Int32)(8)
     generic ::= Cell#(Int32)(43)
     if consume#(.item: Int32, .n = 2, .T: Direct)(&direct_other, &direct)&!= 42 { abort }
-    if consume#(.item: Int32, .n = 2, .T: Cell#(Int32))(&generic_other, &generic)&!= 43 { abort }
-    direct_handle ::= to_virtual#(.contract: Readable#(.item: Int32, .Count = 2, .Other: Direct))(
-        .value = &direct
-    )
+    if consume#(.item: Int32, .n = 2, .T: Cell#(Int32))(&generic_other, &generic)&!= 43 {
+        abort
+    }
+    direct_handle ::= to_virtual#(
+        .contract : Readable#(.item: Int32, .Count = 2, .Other: Direct)
+    )(.value = &direct)
     generic_handle ::= to_virtual#(
-        .contract: Readable#(.Other: Cell#(Int32), .item: Int32, .Count = 2)
+        .contract : Readable#(.Other: Cell#(Int32), .item: Int32, .Count = 2)
     )(.value = &generic)
     if read(&direct_other, &direct_handle)&!= 42 { abort }
     if read(&generic_other, &generic_handle)&!= 43 { abort }

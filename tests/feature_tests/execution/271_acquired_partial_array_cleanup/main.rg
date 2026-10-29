@@ -8,14 +8,9 @@ implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { drops = drops + self&.id }
 )
 
-fail_when := (
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Int32, (..stop))) {
+fail_when := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Int32, (..stop))
+) {
     assume error_tracer
 
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok 42 }

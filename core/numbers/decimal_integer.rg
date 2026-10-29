@@ -355,6 +355,7 @@ _float_integer_nonzero := (.self: &_FloatDecimalInteger) -> (.value: Bool) {
 }
 
 _float_integer_from_u64 := (.value: UInt64) -> (.integer: _FloatDecimalInteger) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     integer = _FloatDecimalInteger()
     remaining ::= value
     integer.used = 0

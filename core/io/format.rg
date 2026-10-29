@@ -1,13 +1,7 @@
 -- Numeric stream formatting has one scoped operation identity. It never flushes
 -- implicitly; a failed byte stops emission and preserves preceding writes.
 _write_integer_value := #(.Stream: Type: Writer#(Stream), .Value: Type: Int) (
-    .self         : $&Stream,
-    .value        : Value,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Stream, .value: Value, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -16,13 +10,7 @@ _write_integer_value := #(.Stream: Type: Writer#(Stream), .Value: Type: Int) (
 }
 
 _write_float_value := #(.Stream: Type: Writer#(Stream), .Value: Type: Float) (
-    .self         : $&Stream,
-    .value        : Value,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Stream, .value: Value, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 

@@ -1,6 +1,12 @@
-forward := #(.t: Type) (.slot: MaybeUninit#(.t: t)) -> (.result: MaybeUninit#(.t: t))  { result = slot }
-main := (.system: System) -> (.status_code: Int32 = 0)  {
-    allocation ::= unwrap_or_abort(.value = allocate_bytes(.self = system.page_allocator, .size = 32, .alignment = 8))
+forward := #(.t: Type) (.slot: MaybeUninit#(.t: t)) -> (.result: MaybeUninit#(.t: t)) {
+    result = slot
+}
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
+    allocation ::= unwrap_or_abort(
+        .value = allocate_bytes(.self = system.page_allocator, .size = 32, .alignment = 8)
+    )
     slot ::= allocation_slot#(.t: UIntNative)(.allocation = &allocation, .index = 3).slot
     forwarded ::= forward#(.t: UIntNative)(.slot = slot).result
     address ::= uninit_slot_address#(.t: UIntNative)(.slot = forwarded).address

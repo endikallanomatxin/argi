@@ -7,12 +7,7 @@ implement OrderPolicy#(SmallOrder, UInt8) (
 )
 
 take_queue := #(.Collection: Type: Queue#(Collection)) (
-    .self         : $&Collection,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Collection, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Queue#(Collection).Result) {
     assume error_tracer
 
@@ -20,6 +15,7 @@ take_queue := #(.Collection: Type: Queue#(Collection)) (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator := system.page_allocator
     ring ::= unwrap_or_abort(.value = RingBuffer#(UInt8)(.capacity = 1, .allocator = allocator))
     unwrap_or_abort(.value = push(.self = $&ring, .value = 250))

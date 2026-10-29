@@ -21,13 +21,7 @@ implement Init#(UnixTimestamp, UnixTimestampInitArgs) (
 )
 
 unix_timestamp_precise := (
-    .seconds      : Int64,
-    .nanoseconds  : UInt32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .seconds: Int64, .nanoseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) {
     assume error_tracer
 
@@ -51,13 +45,7 @@ implement NanosecondCount#(UnixTimestamp) (
 )
 
 elapsed := (
-    .start        : MonotonicInstant,
-    .end          : MonotonicInstant,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .start: MonotonicInstant, .end: MonotonicInstant, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Duration, (..out_of_range))) {
     assume error_tracer
 
@@ -126,14 +114,9 @@ implement Init#(Clock, ClockInitArgs) (
     .init = _acquire_clock
 )
 
-monotonic_now := (
-    .self         : &Clock,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(MonotonicInstant, (..clock_read_failed, ..out_of_range))) {
+monotonic_now := (.self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(MonotonicInstant, (..clock_read_failed, ..out_of_range))
+) {
     assume error_tracer
 
     assume ffi ::= self&._ffi
@@ -155,14 +138,9 @@ monotonic_now := (
     result = ..ok(._nanoseconds = reading.seconds * 1000000000 + fraction)
 }
 
-wall_now := (
-    .self         : &Clock,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UnixTimestamp, (..clock_read_failed, ..out_of_range))) {
+wall_now := (.self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UnixTimestamp, (..clock_read_failed, ..out_of_range))
+) {
     assume error_tracer
 
     assume ffi ::= self&._ffi
@@ -181,15 +159,9 @@ wall_now := (
     result = ..ok(._seconds = reading.seconds, ._nanoseconds = reading.nanoseconds)
 }
 
-sleep := (
-    .duration     : Duration,
-    .self         : &Clock,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..sleep_failed))) {
+sleep := (.duration: Duration, .self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..sleep_failed))
+) {
     assume error_tracer
 
     assume ffi ::= self&._ffi

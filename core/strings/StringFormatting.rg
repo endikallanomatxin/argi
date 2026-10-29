@@ -4,32 +4,18 @@ StringFormatting#(.Value: Type, .Provider: Type): Contract = (
         .out          : $&String,
         .value        : Value,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_memory)))
-    .render : (
-        .value        : Value,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(String, (..out_of_memory)))
+    .render : (.value: Value, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(String, (..out_of_memory))
+    )
 )
 
 format_into := #(.Value: Type, .Provider: Type: Allocator) (
     .out          : $&String,
     .value        : Value,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -39,13 +25,7 @@ format_into := #(.Value: Type, .Provider: Type: Allocator) (
 }
 
 format := #(.Value: Type, .Provider: Type: Allocator) (
-    .value        : Value,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: Value, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 

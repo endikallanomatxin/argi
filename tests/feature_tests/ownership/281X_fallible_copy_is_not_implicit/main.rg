@@ -5,13 +5,7 @@ FallibleValue := (
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider) (
     .reasons : Type = (..copy_failed)
     .copy    = (
-        .self         : &FallibleValue,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &FallibleValue, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) {
         assume error_tracer
 

@@ -12,11 +12,7 @@ implement ErrorTracer#(CountingTracer) (
     .report        = (
         .self         : $&CountingTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -25,6 +21,7 @@ implement ErrorTracer#(CountingTracer) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     tracer :: CountingTracer = (.count = 0, .location = 0)
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     captured ::= capture_error_tracer(.location = (.value = 17), .error_tracer = $&erased)

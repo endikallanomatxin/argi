@@ -74,11 +74,7 @@ open := (
     .ffi          : $&ForeignFunctionInterface,
     .path         : &CChar,
     .mode         : FileOpenMode,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..file_open_failed))) {
     assume error_tracer
 
@@ -138,14 +134,9 @@ init_stderr := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
     )
 }
 
-_close_File := (
-    .self         : $&File,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..stream_close_failed))) {
+_close_File := (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..stream_close_failed))
+) {
     assume error_tracer
 
     assume ffi := self&._ffi
@@ -177,14 +168,9 @@ _close_File := (
 }
 
 implement Reader#(File) (
-    .read_byte = (
-        .self         : $&File,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume error_tracer
 
         assume ffi := self&._ffi
@@ -221,13 +207,7 @@ implement Reader#(File) (
 )
 
 _read_file := (
-    .self         : $&File,
-    .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&File, .buffer: MutableArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
     assume error_tracer
 
@@ -252,13 +232,7 @@ _read_file := (
 }
 
 _file_write_block := (
-    .self         : $&File,
-    .buffer       : ArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&File, .buffer: ArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -283,13 +257,7 @@ _file_write_block := (
 }
 
 _file_write := (
-    .self         : $&File,
-    .value        : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&File, .value: MutableArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -306,14 +274,9 @@ implement BlockWriter#(File) (
 )
 
 implement Writer#(File) (
-    .flush = (
-        .self         : $&File,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         assume ffi := self&._ffi
@@ -331,15 +294,9 @@ implement Writer#(File) (
         result = ..ok Void()
     }
 
-    .write_byte = (
-        .self         : $&File,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&File, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         assume ffi := self&._ffi

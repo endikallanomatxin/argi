@@ -26,7 +26,7 @@ implement Deinit#(Tracked) (
 _impl_store_First := (
     .self: $&First, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked
 ) -> () {
-    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
         .storage = storage, .destination = slot, .source = ~source&
     )
 }
@@ -34,7 +34,7 @@ _impl_store_First := (
 _impl_store_Second := (
     .self: $&Second, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked
 ) -> () {
-    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
         .storage = storage, .destination = slot, .source = ~source&
     )
 }
@@ -52,6 +52,7 @@ verify := (.status: $&Int32) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     status_code = 9
     defer verify(.status = $&status_code)
@@ -73,7 +74,7 @@ main := (.system: System) -> (.status_code: Int32) {
             virtual ::= to_virtual#(.contract: OpaqueStorer)(.value = $&implementation)
             source :: Tracked = (.id = 1)
             store(.self = $&virtual, .storage = $&storage, .slot = slot, .source = $&source)
-            trusted_opaque_drop#(.t: Tracked) (.slot = slot)
+            trusted_opaque_drop#(.t: Tracked)(.slot = slot)
             deinit(.self = $&storage)
         }
     }

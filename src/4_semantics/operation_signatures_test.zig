@@ -152,3 +152,33 @@ test "a losing invalid signature specialization cannot poison a valid operation"
     ++ caller;
     try std.testing.expectEqual(@as(i128, 42), try environment.execute(.{ .name = "invalid_losing_signature", .files = &.{.{ .path = "main.rg", .code = source }} }, .{}));
 }
+
+test "fallible core operations require an ordinary tracer input" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    _ = try environment.check(.{ .name = "missing_error_tracer", .files = &.{.{ .path = "main.rg", .code =
+        \\main := () -> () {
+        \\    text ::= "hello"
+        \\    bytes_get(.view = &text, .index = 0)
+        \\}
+    }}, .diagnostic = .{ .message = "no generic function named 'bytes_get' accepts arguments" } });
+    _ = try environment.check(.{ .name = "intermediate_tracer_is_required", .files = &.{.{ .path = "main.rg", .code =
+        \\read := (.text: StringView) -> (.result: UInt8) {
+        \\    result = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
+        \\}
+        \\main := () -> () {
+        \\    assume error_tracer ::= $&noop_error_tracer
+        \\    read(.text = "hello")
+        \\}
+    }}, .diagnostic = .{ .message = "no generic function named 'bytes_get' accepts arguments" } });
+    _ = try environment.check(.{ .name = "explicit_tracer_forwarding", .files = &.{.{ .path = "main.rg", .code =
+        \\read := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: UInt8) {
+        \\    assume error_tracer
+        \\    result = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
+        \\}
+        \\main := () -> (.status_code: Int32) {
+        \\    assume error_tracer ::= $&noop_error_tracer
+        \\    status_code = read(.text = "hello") | convert#(.to: Int32)(_)
+        \\}
+    }} });
+}

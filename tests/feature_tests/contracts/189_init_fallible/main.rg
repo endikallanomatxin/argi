@@ -2,11 +2,7 @@ Point := (._x: Int32)
 
 PointInitArgs: Type = (
     .x            : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(Point, PointInitArgs) (
@@ -24,6 +20,7 @@ implement Init#(Point, PointInitArgs) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     point ::= unwrap_or_abort(.value = Point(.x = 10))
     if point._x != 10 { abort }
     match Point(.x = -1) {

@@ -29,6 +29,10 @@ main := (.system: System) -> (.status_code: Int32 = 0)  {
 }
 ```
 
+Fallible APIs require an `error_tracer` argument. Declare it in intermediate
+functions and use `assume error_tracer` to forward it. To explicitly disable
+tracing in a scope, use `assume error_tracer ::= $&noop_error_tracer`.
+
 ## Commands
 
 | Command | Purpose |

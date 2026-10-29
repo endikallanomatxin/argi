@@ -6,11 +6,7 @@ Mover#(.Participant: Type): Contract = (
         .source       : $&Resource,
         .destination  : $&Resource,
         .move         : Bool,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             relocates(destination, source)
@@ -40,11 +36,7 @@ _impl_transfer_Manager := (
     .source       : $&Resource,
     .destination  : $&Resource,
     .move         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?Int32, (..failed))) {
     assume error_tracer
 
@@ -63,11 +55,7 @@ transfer_owned := (
     .source       : $&Resource,
     .destination  : $&Resource,
     .move         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?Int32, (..failed))) {
     assume error_tracer
 
@@ -75,6 +63,7 @@ transfer_owned := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

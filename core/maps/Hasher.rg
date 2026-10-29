@@ -36,6 +36,7 @@ _hash_xor_window := (.left: UInt64, .right: UInt64) -> (.result: UInt64) {
 }
 
 _hash_fnv_byte := (.state: UInt64, .byte: UInt8) -> (.result: UInt64) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     low_byte ::= state % 256
     digit ::= byte | convert#(.to: UInt64)(_)
     mixed ::= state - low_byte + _hash_xor_window(.left = low_byte, .right = digit).result
@@ -49,6 +50,11 @@ _hash_fnv_byte := (.state: UInt64, .byte: UInt8) -> (.result: UInt64) {
 
 implement Hasher#(StandardHasher) (
     .write_bytes = (.self: $&StandardHasher, .bytes: ArrayView#(UInt8)) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         index :: UIntNative = 0
         while index < length(&bytes) {
             byte ::= unwrap_or_abort(.value = get_reference(&bytes, .index = index))
@@ -57,6 +63,11 @@ implement Hasher#(StandardHasher) (
         }
     }
     .finish = (.self: &StandardHasher) -> (.hash: UIntNative) {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         #if target_pointer_bits(64) {
             hash = self&._state | convert#(.to: UIntNative)(_)
         } #else {

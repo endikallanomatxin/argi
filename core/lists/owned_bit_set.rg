@@ -6,11 +6,7 @@ BitSetInitArgs: Type = #(.Provider: Type: Allocator) (
     .count     : UIntNative,
     .allocator : $&Provider
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.Provider: Type: Allocator) Init#(BitSet, BitSetInitArgs#(Provider)) (
@@ -60,13 +56,7 @@ implement Viewable#($&BitSet) (
 )
 
 _bit_query_BitSet := (
-    .self         : &BitSet,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &BitSet, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..out_of_bounds))) {
     assume error_tracer
 
@@ -84,12 +74,8 @@ _bit_query_BitSet := (
 _bit_write_BitSet := (
     .self         : $&BitSet,
     .index        : UIntNative,
-    .value        : Bool        = true,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value        : Bool                    = true,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 

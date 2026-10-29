@@ -26,6 +26,7 @@ known ::= #run () -> (.result: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     small ::= Small(4)
     large ::= Large(8)
     if with_provider(&small) != 7 or with_provider(&large) != 11 { status_code = 1 }

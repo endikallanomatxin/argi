@@ -17,6 +17,7 @@ Values: CStruct = (.left: CDouble, .right: CFloat, .expected: CDouble)
 _get_values() -> (.result: Values): CFunction(.symbol = "argi_get_values")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     narrow := _get_narrow()
     floating := _get_floating()

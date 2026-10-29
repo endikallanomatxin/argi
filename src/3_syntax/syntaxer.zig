@@ -2284,7 +2284,7 @@ pub const Syntaxer = struct {
         var generic_params_struct: ?syn.NodeIndex = null;
         if (self.tokenIs(.hash) and (std.mem.eql(u8, name.text, "implement") or self.startsNamedParameterList())) {
             const parameters = try self.parseGenericParamsStruct();
-            generic_params = try self.addNodeRange(self.file.parameterList(parameters).?.fields);
+            generic_params = self.file.data(parameters).extra_range;
             generic_params_struct = parameters;
         }
 

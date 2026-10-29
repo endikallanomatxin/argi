@@ -3,14 +3,9 @@ LocalAllocator := (
     .deallocations : Int32
 )
 
-make := (
-    .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+make := (.ffi: $&ForeignFunctionInterface, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+) {
     assume error_tracer
 
     allocator_storage :: LocalAllocator = (.ffi = ffi, .deallocations = 0)
@@ -19,6 +14,7 @@ make := (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     escaped ::= make(.ffi = system.ffi)
     status_code = 0
 }
@@ -27,12 +23,8 @@ implement Allocator#(LocalAllocator) (
     .allocate = (
         .self         : $&LocalAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

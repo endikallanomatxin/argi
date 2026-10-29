@@ -60,7 +60,9 @@ implement#(.n: UIntNative, .t: Type: Scalar) Add#(
 )
 
 _math_dot_fixed_vector := #(.n: UIntNative, .t: Type: Scalar) (
-    .left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t)
+    .left         : &Vector#(.n = n, .t: t),
+    .right        : &Vector#(.n = n, .t: t),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: t) {
     result = zeroed#(.t: t)()
     i :: UIntNative = 0

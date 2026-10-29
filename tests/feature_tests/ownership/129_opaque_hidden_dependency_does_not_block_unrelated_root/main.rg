@@ -13,6 +13,7 @@ implement Deinit#(Borrowing) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     unrelated_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     slots_result ::= allocate_bytes(
@@ -26,13 +27,15 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..error _ { status_code = 2 }
                 ..ok ~slots_payload {
                     slots ::= ~slots_payload
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(
+                    slot ::= trusted_mutable_reinterpret_reference#(
+                        .from: UInt8, .to: Borrowing
+                    )(
                         .base = unsafe_allocation.trusted_allocation_byte_rw(
                             .allocation = $&slots, .offset = 0
                         ).reference
                     ).reference
                     hidden :: Borrowing = (.reference = &external)
-                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage = $&slots, .destination = slot, .source = ~hidden
                     )
 

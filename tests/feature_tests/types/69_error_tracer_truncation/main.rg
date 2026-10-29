@@ -1,12 +1,6 @@
 ..truncated_test_failure
 
-fail := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !Void {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void {
     assume error_tracer
     result = ..error(.reason = ..truncated_test_failure)
 }

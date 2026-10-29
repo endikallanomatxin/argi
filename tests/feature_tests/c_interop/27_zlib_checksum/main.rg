@@ -1,6 +1,7 @@
 zlib := import ("codecs/checksum/zlib")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     bytes: [9]UInt8 = (49, 50, 51, 52, 53, 54, 55, 56, 57)
     source := view(&bytes)

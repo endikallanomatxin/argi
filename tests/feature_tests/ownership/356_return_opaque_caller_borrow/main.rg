@@ -1,6 +1,7 @@
 make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .value: &Int32
+    .allocator: $&AllocatorType, .value: &Int32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: DynamicArray#(&Int32)) {
+    assume error_tracer
     assume allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
 
@@ -9,6 +10,7 @@ make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     local :: Int32 = 7
     array ::= make(allocator, &local)

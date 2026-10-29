@@ -25,6 +25,7 @@ release_on_exit := (.storage: $&Container) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     storage_result ::= allocate_bytes(
@@ -39,7 +40,9 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..ok ~storage_payload {
                     storage ::= ~storage_payload
                     container ::= Container(.marker = 0)
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(
+                    slot ::= trusted_mutable_reinterpret_reference#(
+                        .from: UInt8, .to: Borrowing
+                    )(
                         .base = unsafe_allocation.trusted_allocation_byte_rw(
                             .allocation = $&storage, .offset = 0
                         ).reference
@@ -49,7 +52,7 @@ main := (.system: System) -> (.status_code: Int32) {
                             .allocation = $&target, .offset = 0
                         ).reference
                     )
-                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container) (
+                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
                         .storage = $&container, .destination = slot, .source = ~value
                     )
                     trusted_opaque_drop(.slot = slot)

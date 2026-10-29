@@ -8,15 +8,9 @@ implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () { record_drop() })
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(Owner, Provider) (
     .reasons : Type = (..copy_failed)
-    .copy    = (
-        .self         : &Owner,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Owner, reasons)) {
+    .copy    = (.self: &Owner, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Owner, reasons)
+    ) {
         assume error_tracer
 
         if self&.value == 13 {
@@ -27,7 +21,8 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(Owner, Provider) (
     }
 )
 
-check_failure := (.allocator: $&PageAllocator) -> () {
+check_failure := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     assume allocator
     source ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 2))
     first ::= Owner(1)
@@ -46,6 +41,7 @@ check_failure := (.allocator: $&PageAllocator) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator := system.page_allocator
     value :: Int32 = 42
     copied ::= unwrap_or_abort(

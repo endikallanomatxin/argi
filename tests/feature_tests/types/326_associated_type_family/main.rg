@@ -31,6 +31,7 @@ known ::= #run () -> (.result: Bool) {
 }
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     owner: Owner = (.flag = true)
     if InlineFactory#(Owner).get_flag#(Bool)(.owner = &owner, .value = true).result {
     } else {
@@ -45,9 +46,9 @@ main := () -> () {
     if same.value {} else { abort }
     inline_args: InlineFactory#(Owner).Args#(Int32) = (.owner = &owner, .value = 42)
     if inline_args.value != 42 { abort }
-    if InlineFactory#(Owner).get_flag#(Int32)(
-        .owner = inline_args.owner, .value = inline_args.value
-    ).result {
+    if InlineFactory#(
+        Owner
+    ).get_flag#(Int32)(.owner = inline_args.owner, .value = inline_args.value).result {
     } else {
         abort
     }

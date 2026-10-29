@@ -6,11 +6,7 @@
 read_exact := #(.SelfType: Type: BlockReader#(SelfType)) (
     .self         : $&SelfType,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_read_failed, ..unexpected_eof))) {
     assume error_tracer
 
@@ -34,13 +30,7 @@ read_exact := #(.SelfType: Type: BlockReader#(SelfType)) (
 }
 
 write_all := #(.SelfType: Type: BlockWriter#(SelfType)) (
-    .self         : $&SelfType,
-    .buffer       : ArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -69,11 +59,7 @@ copy_stream := #(
     .reader       : $&ReaderType,
     .writer       : $&WriterType,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         UIntNative,
@@ -128,11 +114,7 @@ read_until := #(.SelfType: Type: Reader#(SelfType)) (
     .self         : $&SelfType,
     .buffer       : MutableArrayView#(.t: UInt8),
     .delimiter    : UInt8,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(ReadUntil, (..stream_read_failed))) {
     assume error_tracer
 

@@ -1,7 +1,9 @@
 -- Each operation belongs to a capability; allocation is an explicit input.
 DotProduct#(.Left: Type, .Right: Type): Contract = (
     .Result : Type
-    .dot    : (.left: &Left, .right: &Right) -> (.result: Result)
+    .dot    : (.left: &Left, .right: &Right, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    )
 )
 
 VectorScaling#(.Value: Type): Contract = (
@@ -13,7 +15,12 @@ VectorScaling#(.Value: Type): Contract = (
 AllocatingVectorScaling#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Element : Type
     .Result  : Type
-    .scale   : (.self: &Value, .factor: Element, .allocator: $&Provider) -> (.result: Result)
+    .scale   : (
+        .self         : &Value,
+        .factor       : Element,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
 MatrixTransposition#(.Value: Type): Contract = (
@@ -23,7 +30,9 @@ MatrixTransposition#(.Value: Type): Contract = (
 
 AllocatingMatrixTransposition#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result    : Type
-    .transpose : (.self: &Value, .allocator: $&Provider) -> (.result: Result)
+    .transpose : (.self: &Value, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    )
 )
 
 MatrixAccess#(.Value: Type): Contract = (
@@ -32,45 +41,27 @@ MatrixAccess#(.Value: Type): Contract = (
         .self         : &Value,
         .row          : UIntNative,
         .col          : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Element, (..out_of_bounds)))
     .set : (
         .self         : $&Value,
         .row          : UIntNative,
         .col          : UIntNative,
         .value        : Element,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_bounds)))
 )
 
 VectorAccess#(.Value: Type): Contract = (
     .Element : Type
-    .get     : (
-        .self         : &Value,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Element, (..out_of_bounds)))
+    .get     : (.self: &Value, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Element, (..out_of_bounds))
+    )
     .set : (
         .self         : $&Value,
         .index        : UIntNative,
         .value        : Element,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..out_of_bounds)))
 )
 

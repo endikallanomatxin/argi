@@ -18,13 +18,7 @@ implement ArgumentSource#(CliArgumentViews) (
     }
 
     .get = (
-        .self         : &CliArgumentViews,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &CliArgumentViews, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) {
         assume error_tracer
 

@@ -16,6 +16,7 @@ _impl_put_Cell := (
 }
 
 main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     storage ::= unwrap_or_abort(allocate#(Allocation)(allocator))
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(

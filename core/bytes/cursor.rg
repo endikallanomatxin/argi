@@ -42,13 +42,7 @@ _byte_writer_remaining := (.self: &ByteWriter) -> (.count: UIntNative) {
 }
 
 _byte_reader_skip := (
-    .self         : $&ByteReader,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&ByteReader, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 
@@ -63,13 +57,7 @@ _byte_reader_skip := (
 }
 
 _read_uint_cursor := #(.Value: Type: UInt) (
-    .self         : $&ByteReader,
-    .order        : ByteOrder,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&ByteReader, .order: ByteOrder, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Value, (..out_of_bounds))) {
     assume error_tracer
 
@@ -86,13 +74,7 @@ read_uint32 := _read_uint_cursor#(.Value: UInt32)
 read_uint64 := _read_uint_cursor#(.Value: UInt64)
 
 _byte_writer_skip := (
-    .self         : $&ByteWriter,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&ByteWriter, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 
@@ -110,11 +92,7 @@ _write_uint_cursor := #(.Value: Type: UInt) (
     .self         : $&ByteWriter,
     .value        : Value,
     .order        : ByteOrder,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 

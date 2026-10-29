@@ -19,7 +19,9 @@ implement Constrained#(Owner) (
 )
 
 implement Open#(Owner) (
-    .route = #(.Item: Type) (.owner: &Owner, .value: Item) -> (.result: Bool) { result = false }
+    .route = #(.Item: Type) (.owner: &Owner, .value: Item) -> (.result: Bool) {
+        result = false
+    }
 )
 
 computed ::= #run () -> (.result: Bool) {

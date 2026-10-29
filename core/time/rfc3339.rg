@@ -6,11 +6,7 @@ _date_digits := (
     .text         : StringView,
     .start        : UIntNative,
     .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UInt32, (..invalid_datetime))) {
     assume error_tracer
 
@@ -30,14 +26,9 @@ _date_digits := (
     result = ..ok value
 }
 
-parse_utc := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) {
+parse_utc := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UtcDateTime, (..invalid_datetime))
+) {
     assume error_tracer
 
     if text._length < 20 or text._length > 30 {
@@ -104,6 +95,7 @@ _write_date_digits := (
     .count  : UIntNative,
     .value  : UInt32
 ) -> () {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     index ::= count
     remaining ::= value
 
@@ -122,11 +114,7 @@ _write_date_digits := (
 format_utc_into := (
     .date         : UtcDateTime,
     .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))) {
     assume error_tracer
 

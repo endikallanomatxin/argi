@@ -17,11 +17,7 @@ copy_stream_limited := #(
     .writer       : $&WriterType,
     .buffer       : MutableArrayView#(.t: UInt8),
     .limit        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         StreamCopyResult,
@@ -76,11 +72,7 @@ read_all_limited := #(
     .buffer       : MutableArrayView#(.t: UInt8),
     .limit        : UIntNative,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         DynamicArray#(UInt8),

@@ -20,11 +20,15 @@ _impl_get_Other := (.self: &Other) -> (.value: Int32) {
     value = self&.value + 1
 }
 
-read_source := (.source: &Virtual#(Source#(Int32))) -> (.value: Int32) {
+read_source := (.source: &Virtual#(Source#(Int32)), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .value : Int32
+) {
+    assume error_tracer
     value = get(source)
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(42)
     other ::= Other(41)
     first ::= to_virtual#(Source#(Int32))(&cell)

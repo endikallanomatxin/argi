@@ -1,14 +1,9 @@
 -- Memory cursors implement the stream protocols without acquiring capabilities
 -- or storage. They retain the same backing-view lifetime as binary operations.
 implement Reader#(ByteReader) (
-    .read_byte = (
-        .self         : $&ByteReader,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (.self: $&ByteReader, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume error_tracer
 
         if remaining(self).count == 0 {
@@ -29,11 +24,7 @@ implement BlockReader#(ByteReader) (
     .read_block = (
         .self         : $&ByteReader,
         .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
         assume error_tracer
 
@@ -62,11 +53,7 @@ implement BlockWriter#(ByteWriter) (
     .write_block = (
         .self         : $&ByteWriter,
         .buffer       : ArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -99,15 +86,9 @@ implement BlockWriter#(ByteWriter) (
 )
 
 implement Writer#(ByteWriter) (
-    .write_byte = (
-        .self         : $&ByteWriter,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+    .write_byte = (.self: $&ByteWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+    ) {
         assume error_tracer
 
         if remaining(self).count == 0 {
@@ -122,14 +103,9 @@ implement Writer#(ByteWriter) (
         self&._position = self&._position + 1
     }
 
-    .flush = (
-        .self         : $&ByteWriter,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+    .flush = (.self: $&ByteWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+    ) {
         assume error_tracer
     }
 )

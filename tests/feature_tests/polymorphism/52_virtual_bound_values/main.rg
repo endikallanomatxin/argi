@@ -17,7 +17,9 @@ _impl_read_Integer := (.self: &Integer) -> (.value: Int32) { value = self&.value
 
 _impl_read_Floating := (.self: &Floating) -> (.value: Float64) { value = self&.value }
 
-consume_integer := (.input: &Virtual#(.contract: Fixed#(.n = 1, .item: Int32))) -> (.value: Int32) {
+consume_integer := (.input: &Virtual#(.contract: Fixed#(.n = 1, .item: Int32))) -> (
+    .value : Int32
+) {
     value = read(.self = input)
 }
 
@@ -37,7 +39,9 @@ main := () -> (.status_code: Int32 = 0) {
     integer :: Integer = (.value = 17)
     floating :: Floating = (.value = 2.5)
     left ::= wrap(.value = &integer).result
-    right :: Virtual#(.contract: Fixed#(.n = 2, .item: Float64)) = to_virtual(.value = &floating)
+    right :: Virtual#(.contract: Fixed#(.n = 2, .item: Float64)) = to_virtual(
+        .value = &floating
+    )
     if consume_integer(.input = &left).value != 17 { abort }
     if consume_float(.input = &right).value != 2.5 { abort }
 }

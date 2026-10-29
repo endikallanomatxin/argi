@@ -1,15 +1,9 @@
 ByteCursor#(.Cursor: Type): Contract = (
     .cursor_position  : (.self: &Cursor) -> (.count: UIntNative)
     .cursor_remaining : (.self: &Cursor) -> (.count: UIntNative)
-    .cursor_skip      : (
-        .self         : $&Cursor,
-        .count        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..out_of_bounds)))
+    .cursor_skip      : (.self: $&Cursor, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..out_of_bounds))
+    )
 )
 
 position := #(.Cursor: Type: ByteCursor#(Cursor)) (.self: &Cursor) -> (.count: UIntNative) {
@@ -21,13 +15,7 @@ remaining := #(.Cursor: Type: ByteCursor#(Cursor)) (.self: &Cursor) -> (.count: 
 }
 
 skip := #(.Cursor: Type: ByteCursor#(Cursor)) (
-    .self         : $&Cursor,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Cursor, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 

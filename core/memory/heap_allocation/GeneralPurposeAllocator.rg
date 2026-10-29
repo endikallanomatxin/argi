@@ -124,11 +124,7 @@ _general_purpose_bit := (.index: UIntNative) -> (.bit: UIntNative) {
 _general_purpose_small_address := (
     .self         : $&GeneralPurposeAllocator,
     .slot_size    : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) {
     assume error_tracer
 
@@ -216,11 +212,7 @@ _general_purpose_large_address := (
     .self         : $&GeneralPurposeAllocator,
     .size         : UIntNative,
     .alignment    : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) {
     assume error_tracer
 
@@ -277,11 +269,7 @@ implement Allocator#(GeneralPurposeAllocator) (
         .self         : $&GeneralPurposeAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
         assume error_tracer
 

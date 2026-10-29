@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocated ::= allocate_bytes(.self = $&allocator, .size = 5000, .alignment = 4096)
     match allocated {
@@ -7,9 +8,8 @@ main := (.system: System) -> (.status_code: Int32) {
             allocation ::= ~payload
             data ::= allocation.data
             deinit(.self = $&allocation)
-            Deallocator#().deallocate(
-                .self = $&allocator, .data = data, .size = 5000, .alignment = 4096
-            )
+            Deallocator#(
+            ).deallocate(.self = $&allocator, .data = data, .size = 5000, .alignment = 4096)
             status_code = 0
         }
     }

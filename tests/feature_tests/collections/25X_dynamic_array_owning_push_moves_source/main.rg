@@ -9,6 +9,7 @@ implement Deinit#(Tracked) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     allocation_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
@@ -17,7 +18,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         ..ok ~payload {
             value ::= Tracked(.allocation = ~payload)
             array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
-            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~value)
+            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~value)
             deinit(.self = $&value)
             deinit(.self = $&array)
         }

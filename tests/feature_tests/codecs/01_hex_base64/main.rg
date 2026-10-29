@@ -2,6 +2,7 @@ hex := import ("codecs/encoding/hex")
 base64 := import ("codecs/encoding/base64")
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     bytes :: [3]UInt8 = (102, 111, 111)

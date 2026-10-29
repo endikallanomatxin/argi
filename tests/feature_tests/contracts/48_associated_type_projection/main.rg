@@ -15,6 +15,7 @@ _impl_multiply_256 := (.left: &Row, .right: &Column) -> (.value: Product#(Row, C
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     row ::= Row(6)
     column ::= Column(7)
     if multiply(&row, &column).value != 42 { abort }

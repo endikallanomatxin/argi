@@ -7,6 +7,7 @@ Borrowing := (
 external :: UInt8 = 9
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     c_allocator ::= CAllocator(.ffi = system.ffi)
     deallocator ::= to_virtual#(.contract: Deallocator)(.value = $&c_allocator)
 
@@ -23,7 +24,7 @@ main := (.system: System) -> (.status_code: Int32) {
         ).reference
     ).reference
     hidden :: Borrowing = (.reference = &external)
-    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots, .destination = borrowing_slot, .source = ~hidden
     )
 
@@ -43,7 +44,7 @@ main := (.system: System) -> (.status_code: Int32) {
             .allocation = $&owner_slots, .offset = 0
         ).reference
     ).reference
-    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = $&owner_slots, .destination = owner_slot, .source = ~unrelated
     )
 

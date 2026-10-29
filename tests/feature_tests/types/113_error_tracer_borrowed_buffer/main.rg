@@ -2,7 +2,8 @@ Storage := (.aligner: UIntNative, .bytes: [291]UInt8)
 
 ProbeWriter := (.bytes: UIntNative = 0)
 
-main := () -> (.status_code: Int32 = 0) {
+main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
+    assume error_tracer
     -- The numeric prefix aligns bytes; slicing at one deliberately misaligns
     -- slot headers. Sentinels also cover the unused tail and both boundaries.
     storage ::= Storage(.aligner = 0, .bytes = zeroed#(.t: [291]UInt8)())
@@ -63,29 +64,18 @@ main := () -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(ProbeWriter) (
-    .write_byte = (
-        .self         : $&ProbeWriter,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&ProbeWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         self&.bytes = self&.bytes + 1
         result = ..ok Void()
     }
 
-    .flush = (
-        .self         : $&ProbeWriter,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&ProbeWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
         result = ..ok Void()
     }

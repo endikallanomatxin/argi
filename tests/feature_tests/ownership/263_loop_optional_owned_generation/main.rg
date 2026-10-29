@@ -2,7 +2,10 @@ Holder := (
     .buffer : String
 )
 
-HolderInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider)
+HolderInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
+    .allocator    : $&AllocatorProvider,
+    .error_tracer : $&Virtual#(ErrorTracer)
+)
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(
     Holder, HolderInitArgs#(AllocatorProvider)
@@ -10,6 +13,7 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(
     .Result : Type = Holder
 
     .init = HolderInitArgs#(AllocatorProvider) -> (.result: Result) {
+        assume error_tracer
         _init_allocator ::= ~allocator
 
         assume allocator := _init_allocator
@@ -27,14 +31,16 @@ implement Deinit#(Holder) (
 )
 
 append := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Holder, .allocator: $&AllocatorType
+    .self: $&Holder, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> () {
+    assume error_tracer
     assume allocator
 
     _ ::= push_ascii(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

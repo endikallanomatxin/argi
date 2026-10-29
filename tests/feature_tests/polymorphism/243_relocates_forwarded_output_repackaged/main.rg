@@ -43,11 +43,7 @@ forward := (
     .source       : $&Resource,
     .destination  : $&Resource,
     .move         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?Large, (..failed))) {
     assume error_tracer
 
@@ -56,6 +52,7 @@ forward := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

@@ -27,17 +27,17 @@ implement#(.base_type: Type: Writer#(base_type)) Init#(
 
 implement#(.base_type: Type: Writer#(base_type)) Deinit#(BufferedWriter#(.base_type: base_type)) (
     .deinit = (.self: $&BufferedWriter#(.base_type: base_type)) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         buffered_writer_flush(self)
     }
 )
 
 buffered_writer_flush := #(.base_type: Type: Writer#(base_type)) (
-    .self         : $&BufferedWriter#(.base_type: base_type),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)        = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&BufferedWriter#(.base_type: base_type), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -78,11 +78,7 @@ implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_t
     .write_byte = (
         .self         : $&BufferedWriter#(.base_type: base_type),
         .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer)        = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -107,12 +103,7 @@ implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_t
     }
 
     .flush = (
-        .self         : $&BufferedWriter#(.base_type: base_type),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer)        = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&BufferedWriter#(.base_type: base_type), .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 

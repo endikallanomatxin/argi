@@ -2,13 +2,7 @@
 
 -- Multiples may be any positive integer, including non-powers of two.
 round_down := #(.t: Type: UInt) (
-    .value        : t,
-    .multiple     : t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: t, .multiple: t, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..invalid_multiple))) {
     assume error_tracer
 
@@ -20,15 +14,9 @@ round_down := #(.t: Type: UInt) (
     result = ..ok value - value % multiple
 }
 
-round_up := #(.t: Type: UInt) (
-    .value        : t,
-    .multiple     : t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(t, (..invalid_multiple, ..out_of_range))) {
+round_up := #(.t: Type: UInt) (.value: t, .multiple: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(t, (..invalid_multiple, ..out_of_range))
+) {
     assume error_tracer
 
     if multiple == 0 {

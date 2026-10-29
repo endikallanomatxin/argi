@@ -3,7 +3,8 @@ CountingAllocator := (
     .deallocations : Int32
 )
 
-main := (.system: System) -> (.status_code: Int32) {
+main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32) {
+    assume error_tracer
     allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
     assume allocator ::= $&allocator_storage
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 0)
@@ -24,12 +25,8 @@ implement Allocator#(CountingAllocator) (
     .allocate = (
         .self         : $&CountingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

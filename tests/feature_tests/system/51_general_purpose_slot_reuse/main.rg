@@ -4,7 +4,8 @@ TrackingAllocator := (
     .deallocations : UIntNative
 )
 
-main := (.system: System) -> (.status_code: Int32 = 0) {
+main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
+    assume error_tracer
     tracker :: TrackingAllocator = (
         .backing       = system.page_allocator
         .allocations   = 0
@@ -129,11 +130,7 @@ implement Allocator#(TrackingAllocator) (
         .self         : $&TrackingAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

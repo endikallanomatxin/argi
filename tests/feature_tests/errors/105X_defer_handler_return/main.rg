@@ -1,11 +1,8 @@
-fail := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !Void = ..ok Void() {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void = ..ok Void() {
     assume error_tracer
 }
 
-main := () -> () { defer { fail() handle error { return } } }
+main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
+    defer { fail() handle error { return } }
+}

@@ -10,6 +10,7 @@ identity := #(.t: Type) (.value: t) -> (.result: t) { result = value }
 sum := (.values: [2]Int32) -> (.result: Int32) { result = values[0] + values[1] }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     arithmetic ::= [20 + 3 * 4 - 6 / 2 + 7 % 4]
     if arithmetic != 32 { abort }
     nested ::= [[2 + 3] * [4 - 1]]

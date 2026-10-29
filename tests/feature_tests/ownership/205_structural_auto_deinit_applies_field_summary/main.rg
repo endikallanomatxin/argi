@@ -19,6 +19,7 @@ implement Deinit#(Domain) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     storage_result ::= allocate_bytes(
@@ -46,7 +47,7 @@ main := (.system: System) -> (.status_code: Int32) {
                                 .allocation = $&target, .offset = 0
                             ).reference
                         )
-                        trusted_opaque_move_in#(.t: Borrowing, .storage_type: Domain) (
+                        trusted_opaque_move_in#(.t: Borrowing, .storage_type: Domain)(
                             .storage = $&wrapper.domain, .destination = slot, .source = ~value
                         )
                         trusted_opaque_drop(.slot = slot)

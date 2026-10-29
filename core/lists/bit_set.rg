@@ -5,11 +5,7 @@ BitSetView := (._bytes: MutableArrayView#(.t: UInt8), ._count: UIntNative)
 BitSetViewInitArgs: Type = (
     .bytes        : MutableArrayView#(.t: UInt8),
     .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(BitSetView, BitSetViewInitArgs) (
@@ -61,13 +57,7 @@ _bit_set_mask := (.index: UIntNative) -> (.mask: UInt8 = 1) {
 }
 
 _bit_query_BitSetView := (
-    .self         : &BitSetView,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &BitSetView, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Bool, (..out_of_bounds))) {
     assume error_tracer
 
@@ -85,12 +75,8 @@ _bit_query_BitSetView := (
 _bit_write_BitSetView := (
     .self         : $&BitSetView,
     .index        : UIntNative,
-    .value        : Bool          = true,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value        : Bool                    = true,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds)) = ..ok Void()) {
     assume error_tracer
 
@@ -106,6 +92,7 @@ _bit_write_BitSetView := (
 _bit_set_count := (.bytes: ArrayView#(.t: UInt8), .extent: UIntNative) -> (
     .count : UIntNative = 0
 ) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     full ::= extent / 8
     index :: UIntNative = 0
 

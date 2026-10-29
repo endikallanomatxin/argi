@@ -1,25 +1,27 @@
 -- Path representation selects one operation identity; allocation is explicit.
 FileWriting#(.PathValue: Type): Contract = (
     .Result     : Type
-    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String) -> (.result: Result)
+    .write_file : (
+        .self         : &FileSystem,
+        .path         : PathValue,
+        .text         : &String,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
 AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result     : Type
-    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: $&Provider) -> (
-        .result : Result
-    )
+    .write_file : (
+        .self         : &FileSystem,
+        .path         : PathValue,
+        .text         : &String,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Result)
 )
 
 _path_write_file_c := (
-    .self         : &FileSystem,
-    .path         : &CChar,
-    .text         : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .path: &CChar, .text: &String, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         Void,
@@ -88,14 +90,7 @@ _path_write_file_c := (
 }
 
 _path_write_file_string := (
-    .self         : &FileSystem,
-    .path         : &String,
-    .text         : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .path: &String, .text: &String, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         Void,
@@ -120,11 +115,7 @@ _path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
     .path         : StringView,
     .text         : &String,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         Void,
@@ -154,14 +145,7 @@ _path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 _path_write_file_owned := (
-    .self         : &FileSystem,
-    .path         : &Path,
-    .text         : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &FileSystem, .path: &Path, .text: &String, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         Void,

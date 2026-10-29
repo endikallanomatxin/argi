@@ -24,13 +24,7 @@ String := (
 )
 
 string_with_length := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator    : $&AllocatorType,
-    .length       : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .allocator: $&AllocatorType, .length: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -57,13 +51,7 @@ string_with_length := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator    : $&AllocatorType,
-    .capacity     : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .allocator: $&AllocatorType, .capacity: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -93,11 +81,7 @@ StringInitArgs: Type = #(.A: Type: Allocator) (
     .allocator : $&A,
     .length    : UIntNative = 0
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.A: Type: Allocator) Init#(String, StringInitArgs#(A)) (
@@ -118,15 +102,9 @@ implement Deinit#(String) (
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
     .reasons : Type = (..out_of_memory)
-    .copy    = (
-        .self         : &String,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(String, (..out_of_memory))) {
+    .copy    = (.self: &String, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(String, (..out_of_memory))
+    ) {
         assume error_tracer
 
         assume allocator
@@ -165,13 +143,7 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
 
 -- The trailing NUL belongs to C interop, outside the logical byte range.
 string_byte_reference := (
-    .string       : &String,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .string: &String, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(&UInt8, (..out_of_bounds))) {
     assume error_tracer
 
@@ -184,15 +156,9 @@ string_byte_reference := (
     ).reference
 }
 
-_string_get_byte := (
-    .view         : &String,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UInt8, (..out_of_bounds))) {
+_string_get_byte := (.view: &String, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UInt8, (..out_of_bounds))
+) {
     assume error_tracer
 
     reference ::= string_byte_reference(.string = view, .index = index)!
@@ -279,11 +245,7 @@ ensure_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&String,
     .capacity     : UIntNative,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -296,11 +258,7 @@ ensure_capacity_growing := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self            : $&String,
     .target_capacity : UIntNative,
     .allocator       : $&AllocatorType,
-    .error_tracer    : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer    : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -392,11 +350,7 @@ _string_push_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&String,
     .byte         : UInt8,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -432,11 +386,7 @@ push_c_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&String,
     .text         : &CChar,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory, ..invalid_utf8))) {
     assume error_tracer
 
@@ -486,11 +436,7 @@ push_view := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&String,
     .view         : StringView,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -549,6 +495,7 @@ c_string_length := (.text: &CChar) -> (.length: UIntNative) {
 }
 
 _trusted_c_string_view := (.text: &CChar) -> (.view: StringView) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     bytes ::= _c_string_bytes(.text = text)
     _ ::= unwrap_or_abort(.value = validate_utf8_bytes(.bytes = bytes))
     if length(&bytes).count == 0 {
@@ -562,11 +509,7 @@ concat_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .left         : &StringView,
     .right        : &StringView,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -611,11 +554,7 @@ implement Add#(&String, &CChar) (
         .left         : &String,
         .right        : &CChar,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -636,11 +575,7 @@ implement Add#(&String, &StringView) (
         .left         : &String,
         .right        : &StringView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -658,11 +593,7 @@ implement Add#(&String, StringView) (
         .left         : &String,
         .right        : StringView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -678,11 +609,7 @@ implement Add#(&String, &String) (
         .left         : &String,
         .right        : &String,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -701,11 +628,7 @@ implement Add#(&StringView, &CChar) (
         .left         : &StringView,
         .right        : &CChar,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -725,11 +648,7 @@ implement Add#(&StringView, &StringView) (
         .left         : &StringView,
         .right        : &StringView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -745,11 +664,7 @@ implement Add#(&StringView, StringView) (
         .left         : &StringView,
         .right        : StringView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -764,11 +679,7 @@ implement Add#(&StringView, &String) (
         .left         : &StringView,
         .right        : &String,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Result) {
         assume error_tracer
 
@@ -785,11 +696,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(StringView, &String, Provi
         .left         : StringView,
         .right        : &String,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(String, (..out_of_memory))) {
         assume error_tracer
 
@@ -805,11 +712,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(StringView, StringView, Pr
         .left         : StringView,
         .right        : StringView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(String, (..out_of_memory))) {
         assume error_tracer
 
@@ -824,11 +727,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, StringView, Provi
         .left         : &String,
         .right        : StringView,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(String, (..out_of_memory))) {
         assume error_tracer
 
@@ -844,11 +743,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
         .left         : &String,
         .right        : &String,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(String, (..out_of_memory))) {
         assume error_tracer
 
@@ -863,13 +758,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
 -- Copy before validation: allocator callbacks may mutate borrowed input bytes.
 -- Only the independent, fully validated text escapes this function.
 string_from_bytes := #(.Provider: Type: Allocator) (
-    .bytes        : ArrayView#(UInt8),
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .bytes: ArrayView#(UInt8), .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
     assume error_tracer
 
@@ -885,11 +774,7 @@ push_ascii := #(.Provider: Type: Allocator) (
     .self         : $&String,
     .byte         : UInt8,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) {
     assume error_tracer
 
@@ -906,11 +791,7 @@ push_scalar := #(.Provider: Type: Allocator) (
     .self         : $&String,
     .scalar       : UnicodeScalar,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume error_tracer
 
@@ -929,14 +810,9 @@ push_scalar := #(.Provider: Type: Allocator) (
     result = ..ok Void()
 }
 
-_validate_string := (
-    .self         : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..invalid_utf8))) {
+_validate_string := (.self: &String, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Void, (..invalid_utf8))
+) {
     assume error_tracer
 
     if self&._length == 0 {
@@ -954,14 +830,7 @@ _validate_string := (
 }
 
 set_ascii := (
-    .self         : $&String,
-    .index        : UIntNative,
-    .byte         : UInt8,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&String, .index: UIntNative, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_bounds))) {
     assume error_tracer
 
@@ -981,13 +850,7 @@ set_ascii := (
 }
 
 append_ascii_assume_capacity := (
-    .self         : $&String,
-    .byte         : UInt8,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&String, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..invalid_ascii))) {
     assume error_tracer
 

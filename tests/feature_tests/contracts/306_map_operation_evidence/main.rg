@@ -7,6 +7,7 @@ implement HashPolicy#(BytePolicy, UInt8) (
     .query = (.self: &BytePolicy, .key: &UInt8) -> (.query: Query) { query = key }
 
     .hash = (.self: &BytePolicy, .key: &UInt8) -> (.hash: UIntNative) {
+        assume error_tracer ::= $&noop_error_tracer
         hash = [key&| convert#(.to: UIntNative)(_)]
     }
     .equal = (.self: &BytePolicy, .left: &UInt8, .right: &UInt8) -> (.ok: Bool) {
@@ -15,13 +16,15 @@ implement HashPolicy#(BytePolicy, UInt8) (
 )
 
 lookup_byte := #(.Map: Type: MapLookupValue#(.Map: Map, .Query: &UInt8, .Value: UInt8)) (
-    .self : &Map
+    .self: &Map, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: ?UInt8) {
+    assume error_tracer
     query: UInt8 = 250
     result = ~MapLookupValue#(Map).get(.self = self, .key = &query)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     query: UInt8 = 250
     assume allocator := system.page_allocator
     map ::= unwrap_or_abort(

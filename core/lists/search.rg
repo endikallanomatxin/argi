@@ -3,6 +3,7 @@
 find := #(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t)) (
     .self: &Collection, .value: t
 ) -> (.index: ?UIntNative) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     count ::= length(self).count
     position :: UIntNative = 0
 

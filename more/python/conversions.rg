@@ -5,15 +5,9 @@ Keyword := (.name: StringView, .value: &Object)
 
 implement ImplicitlyCopyable#(Keyword) ()
 
-_object_from_int8 := (
-    .self         : &Python,
-    .value        : Int8,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_int8 := (.self: &Python, .value: Int8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value | convert#(.to: Int64)(_))
@@ -21,15 +15,9 @@ _object_from_int8 := (
 
 implement PythonValue#(Int8) (.convert_value = _object_from_int8)
 
-_object_from_int16 := (
-    .self         : &Python,
-    .value        : Int16,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_int16 := (.self: &Python, .value: Int16, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value | convert#(.to: Int64)(_))
@@ -37,15 +25,9 @@ _object_from_int16 := (
 
 implement PythonValue#(Int16) (.convert_value = _object_from_int16)
 
-_object_from_int32 := (
-    .self         : &Python,
-    .value        : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_int32 := (.self: &Python, .value: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value | convert#(.to: Int64)(_))
@@ -53,15 +35,9 @@ _object_from_int32 := (
 
 implement PythonValue#(Int32) (.convert_value = _object_from_int32)
 
-_object_from_int64 := (
-    .self         : &Python,
-    .value        : Int64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_int64 := (.self: &Python, .value: Int64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value)
@@ -69,15 +45,9 @@ _object_from_int64 := (
 
 implement PythonValue#(Int64) (.convert_value = _object_from_int64)
 
-_object_from_uint8 := (
-    .self         : &Python,
-    .value        : UInt8,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_uint8 := (.self: &Python, .value: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
@@ -85,15 +55,9 @@ _object_from_uint8 := (
 
 implement PythonValue#(UInt8) (.convert_value = _object_from_uint8)
 
-_object_from_uint16 := (
-    .self         : &Python,
-    .value        : UInt16,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_uint16 := (.self: &Python, .value: UInt16, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
@@ -101,15 +65,9 @@ _object_from_uint16 := (
 
 implement PythonValue#(UInt16) (.convert_value = _object_from_uint16)
 
-_object_from_uint32 := (
-    .self         : &Python,
-    .value        : UInt32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_uint32 := (.self: &Python, .value: UInt32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
@@ -117,15 +75,9 @@ _object_from_uint32 := (
 
 implement PythonValue#(UInt32) (.convert_value = _object_from_uint32)
 
-_object_from_uint64 := (
-    .self         : &Python,
-    .value        : UInt64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_uint64 := (.self: &Python, .value: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = integer(.self = self, .value = value)
@@ -134,13 +86,7 @@ _object_from_uint64 := (
 implement PythonValue#(UInt64) (.convert_value = _object_from_uint64)
 
 _object_from_uintnative := (
-    .self         : &Python,
-    .value        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -149,15 +95,9 @@ _object_from_uintnative := (
 
 implement PythonValue#(UIntNative) (.convert_value = _object_from_uintnative)
 
-_object_from_bool := (
-    .self         : &Python,
-    .value        : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_bool := (.self: &Python, .value: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = boolean(.self = self, .value = value)
@@ -166,13 +106,7 @@ _object_from_bool := (
 implement PythonValue#(Bool) (.convert_value = _object_from_bool)
 
 _object_from_float64 := (
-    .self         : &Python,
-    .value        : Float64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: Float64, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -182,13 +116,7 @@ _object_from_float64 := (
 implement PythonValue#(Float64) (.convert_value = _object_from_float64)
 
 _object_from_text_view := (
-    .self         : &Python,
-    .value        : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: StringView, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -197,15 +125,9 @@ _object_from_text_view := (
 
 implement PythonValue#(StringView) (.convert_value = _object_from_text_view)
 
-_object_from_object := (
-    .self         : &Python,
-    .value        : &Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_object := (.self: &Python, .value: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = clone(.self = value)
@@ -213,15 +135,9 @@ _object_from_object := (
 
 implement PythonValue#(&Object) (.convert_value = _object_from_object)
 
-_object_from_string := (
-    .self         : &Python,
-    .value        : &String,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Object, (..python_error))) {
+_object_from_string := (.self: &Python, .value: &String, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
     assume error_tracer
 
     result = string(.self = self, .value = view(value).view)
@@ -230,13 +146,7 @@ _object_from_string := (
 implement PythonValue#(&String) (.convert_value = _object_from_string)
 
 _object_from_readonly_view := #(.t: Type) (
-    .self         : &Python,
-    .value        : ArrayView#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: ArrayView#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -260,13 +170,7 @@ implement#(.t: Type) PythonValue#(ArrayView#(.t: t)) (
 )
 
 _object_from_fixed_array := #(.n: UIntNative, .t: Type) (
-    .self         : &Python,
-    .value        : &Array#(.n = n, .t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: &Array#(.n = n, .t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -278,13 +182,7 @@ implement#(.n: UIntNative, .t: Type) PythonValue#(&Array#(.n = n, .t: t)) (
 )
 
 _object_from_dynamic_array := #(.t: Type) (
-    .self         : &Python,
-    .value        : &DynamicArray#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: &DynamicArray#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -296,13 +194,7 @@ implement#(.t: Type) PythonValue#(&DynamicArray#(.t: t)) (
 )
 
 _keywords_from_objects := (
-    .self         : &Python,
-    .values       : ArrayView#(.t: Keyword),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .values: ArrayView#(.t: Keyword), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -324,13 +216,7 @@ _keywords_from_objects := (
 implement _PythonKeywords#(ArrayView#(.t: Keyword)) (.make_keywords = _keywords_from_objects)
 
 _object_from_copyable_reference := #(.t: Type: ImplicitlyCopyable) (
-    .self         : &Python,
-    .value        : &t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: &t, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -346,13 +232,7 @@ _float32(.context: UIntNative, .value: Float32) -> (.handle: RawPointer#(.t: _Py
 )
 
 _object_from_float32 := (
-    .self         : &Python,
-    .value        : Float32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: Float32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -382,13 +262,7 @@ NamedArgument := (.name: StringView, .value: Argument)
 implement ImplicitlyCopyable#(NamedArgument) ()
 
 _object_from_argument := (
-    .self         : &Python,
-    .value        : Argument,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: Argument, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -408,11 +282,7 @@ implement PythonValue#(Argument) (.convert_value = _object_from_argument)
 _keywords_from_values := (
     .self         : &Python,
     .values       : ArrayView#(.t: NamedArgument),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -441,13 +311,7 @@ _as_tuple(.context: UIntNative, .value: RawPointer#(.t: _PyObject)) -> (
 ): CFunction(.symbol = "_argi_python_as_tuple")
 
 positional_arguments := #(.t: Type) (
-    .self         : &Python,
-    .values       : ArrayView#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .values: ArrayView#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -463,12 +327,8 @@ positional_arguments := #(.t: Type) (
 _call_from_tuple := (
     .self         : &Object,
     .arguments    : &Object,
-    .keywords     : ?&Object = _no_keywords(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .keywords     : ?&Object                = _no_keywords(),
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -489,13 +349,7 @@ _call_from_tuple := (
 implement _PythonCall#(&Object) (.invoke = _call_from_tuple)
 
 _object_from_mutable_view := #(.t: Type) (
-    .self         : &Python,
-    .value        : MutableArrayView#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: MutableArrayView#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 
@@ -519,13 +373,7 @@ implement#(.t: Type) PythonValue#(MutableArrayView#(.t: t)) (
 )
 
 _object_from_object_reference := (
-    .self         : &Python,
-    .value        : &&Object,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Python, .value: &&Object, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Object, (..python_error))) {
     assume error_tracer
 

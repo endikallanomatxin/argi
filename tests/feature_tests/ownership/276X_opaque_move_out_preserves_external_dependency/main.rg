@@ -9,6 +9,7 @@ implement Deinit#(BorrowingOwner) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     external_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     slots_result ::= allocate_bytes(
@@ -41,7 +42,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                             ).reference
                             trusted_opaque_move_in#(
                                 .t: BorrowingOwner, .storage_type: Allocation
-                            ) (.storage = $&slots, .destination = slot, .source = ~value)
+                            )(.storage = $&slots, .destination = slot, .source = ~value)
                             moved_out ::= trusted_opaque_move_out#(
                                 .t: BorrowingOwner, .storage_type: Allocation
                             )(.storage = $&slots, .slot = slot)

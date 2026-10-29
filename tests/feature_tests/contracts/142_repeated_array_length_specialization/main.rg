@@ -20,6 +20,10 @@ main := () -> (.status_code: Int32 = 0) {
     two: Array#(2, Int32) = (3, 4)
     other: Array#(2, UInt8) = (5, 6)
     three: Array#(3, Int32) = (3, 4, 5)
-    if ShapePair#(Array#(2, Int32), Array#(2, UInt8)).classify(&two, &other).result != 2 { abort }
-    if ShapePair#(Array#(2, Int32), Array#(3, Int32)).classify(&two, &three).result != 1 { abort }
+    if ShapePair#(Array#(2, Int32), Array#(2, UInt8)).classify(&two, &other).result != 2 {
+        abort
+    }
+    if ShapePair#(Array#(2, Int32), Array#(3, Int32)).classify(&two, &three).result != 1 {
+        abort
+    }
 }

@@ -36,9 +36,9 @@ _impl_transfer_Manager := (
     result = ..none
 }
 
-forward := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
-    .result : ?Large
-) {
+forward := (
+    .mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool
+) -> (.result: ?Large) {
     returned ::= transfer(mover, source, destination, move)
     result = returned.result
 }

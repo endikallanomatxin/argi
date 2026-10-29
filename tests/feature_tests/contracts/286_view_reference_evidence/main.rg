@@ -5,6 +5,7 @@ borrow := #(.Source: Type: Viewable#(Source)) (.array: Source) -> (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     values :: [3]Int32 = (1, 2, 3)
     mutable ::= borrow(.array = $&values)
     pointer ::= unwrap_or_abort(.value = get_mutable_reference(.self = $&mutable, .index = 1))

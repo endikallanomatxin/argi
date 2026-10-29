@@ -4,7 +4,8 @@ identity := #(.t: Type) (.value: t) -> (.result: t) {
 
 Point := (.x: Int32)
 
-main := () -> (.status_code: Int32 = 0) {
+main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
+    assume error_tracer
     a :: Int32 = 2
     b :: Int32 = 3
     c :: Int32 = 4

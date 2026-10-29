@@ -14,6 +14,6 @@ test "feature_tests/basics/83_fallible_main_local_tracer" {
     try std.testing.expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try std.testing.expectEqualStrings("", result.stdout);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:7:" else "83_fallible_main_local_tracer/main.rg:7:";
+    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:6:" else "83_fallible_main_local_tracer/main.rg:6:";
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }

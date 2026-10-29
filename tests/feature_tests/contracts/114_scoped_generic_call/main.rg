@@ -30,11 +30,15 @@ implement OtherProduct#(Row, Column) (
     .multiply = add_row_column
 )
 
-product := #(.A: Type, .B: Type) (.left: &A, .right: &B) -> (.result: Product#(A, B).Result) {
+product := #(.A: Type, .B: Type) (.left: &A, .right: &B, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Product#(A, B).Result
+) {
+    assume error_tracer
     result = Product#(A, B).multiply(left, right).result
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     row ::= Row(6)
     column ::= Column(7)
     if product#(Row, Column)(&row, &column).result != 42 { abort }

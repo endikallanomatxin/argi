@@ -1,15 +1,9 @@
 ..failed
 
 Factory#(.Participant: Type): Contract = (
-    .make : (
-        .self         : &Participant,
-        .mode         : Int32,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(?Owned, (..failed))) where {
+    .make : (.self: &Participant, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(?Owned, (..failed))
+    ) where {
         on result ..ok {
             on result ..some { owns(result) }
             on result ..none {}
@@ -32,15 +26,9 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-_impl_make_Cell := (
-    .self         : &Cell,
-    .mode         : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(?Owned, (..failed))) {
+_impl_make_Cell := (.self: &Cell, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(?Owned, (..failed))
+) {
     assume error_tracer
 
     if mode == 0 {
@@ -56,6 +44,7 @@ _impl_make_Cell := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(0)
     factory ::= to_virtual#(Factory)(&cell)
 

@@ -17,6 +17,7 @@ expect_float64 := (.actual: Float64, .expected: Float64) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     generator ::= Pcg32(.seed = 0)
     reseed(.self = $&generator, .seed = 0)
     expect_word(.self = $&generator, .expected = 3894649422)

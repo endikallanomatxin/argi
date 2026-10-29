@@ -23,11 +23,7 @@ _read_c_file := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &FileSystem,
     .path         : &CChar,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         String,
@@ -112,11 +108,7 @@ _read_string_file := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &FileSystem,
     .path         : &String,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         String,
@@ -143,11 +135,7 @@ _read_view_file := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &FileSystem,
     .path         : StringView,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         String,
@@ -179,11 +167,7 @@ _read_path_file := #(.Provider: Type: Allocator#(Provider)) (
     .self         : &FileSystem,
     .path         : &Path,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(
         String,

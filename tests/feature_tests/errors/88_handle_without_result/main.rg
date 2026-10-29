@@ -11,14 +11,9 @@ implement Deinit#(Owner) (
     }
 )
 
-attempt := (
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Owner, (..missing))) {
+attempt := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Owner, (..missing))
+) {
     assume error_tracer
 
     calls = calls + 1
@@ -31,7 +26,8 @@ discard := #(.t: Type) (.input: Errable#(t, (..missing)), .count: $&Int32) -> ()
     }
 }
 
-early_return := (.fail: Bool) -> (.result: Int32 = 5) {
+early_return := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Int32 = 5) {
+    assume error_tracer
     attempt(fail) handle error {
         result = 9
         return
@@ -39,13 +35,7 @@ early_return := (.fail: Bool) -> (.result: Int32 = 5) {
     result = 6
 }
 
-propagate := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Void, (..missing))) {
+propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Void, (..missing))) {
     assume error_tracer
 
     attempt(true) handle error {
@@ -54,13 +44,9 @@ propagate := (
     result = ..ok Void()
 }
 
-recover_propagation := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Owner, (..missing))) {
+recover_propagation := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Owner, (..missing))
+) {
     assume error_tracer
 
     recovered ::= attempt(true) handle error, value {
@@ -71,6 +57,7 @@ recover_propagation := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     attempt(false) handle error { handled = handled + 1 }
     if calls != 1 or handled != 0 or drops != 1 { abort }
 

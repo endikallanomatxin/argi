@@ -10,11 +10,7 @@ _digit := (.byte: UInt8) -> (.value: UInt8 = 255) {
 encode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .bytes        : ArrayView#(.t: UInt8),
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) {
     assume error_tracer
 
@@ -57,13 +53,7 @@ encode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 
 -- Validate completely before allocating or publishing any decoded bytes.
 decode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text         : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_hex, ..out_of_memory))) {
     assume error_tracer
 

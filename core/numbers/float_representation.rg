@@ -6,6 +6,11 @@ _FloatRepresentation#(.Value: Type): Contract = (
 
 implement _FloatRepresentation#(Float16) (
     .encoding = (.value: Float16) -> (.encoding: _FloatEncoding) {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         bits ::= trusted_reinterpret_reference#(.from: Float16, .to: UInt16)(
             .base = &value
         ).reference&
@@ -18,6 +23,11 @@ implement _FloatRepresentation#(Float16) (
     }
 
     .replace_bits = (.value: Float16, .bits: UInt64) -> (.result: Float16) {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         native ::= unwrap_or_abort(.value = bits | convert#(.to: UInt16)(_))
 
         result = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
@@ -28,6 +38,11 @@ implement _FloatRepresentation#(Float16) (
 
 implement _FloatRepresentation#(Float32) (
     .encoding = (.value: Float32) -> (.encoding: _FloatEncoding) {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         bits ::= trusted_reinterpret_reference#(.from: Float32, .to: UInt32)(
             .base = &value
         ).reference&
@@ -40,6 +55,11 @@ implement _FloatRepresentation#(Float32) (
     }
 
     .replace_bits = (.value: Float32, .bits: UInt64) -> (.result: Float32) {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         native ::= unwrap_or_abort(.value = bits | convert#(.to: UInt32)(_))
 
         result = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(

@@ -3,14 +3,9 @@ Source := (.byte: UInt8)
 Sink := (.byte: UInt8 = 0)
 
 implement Reader#(Source) (
-    .read_byte = (
-        .self         : $&Source,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume error_tracer
 
         result = ..ok ..ok self&.byte
@@ -18,35 +13,27 @@ implement Reader#(Source) (
 )
 
 implement Writer#(Sink) (
-    .write_byte = (
-        .self         : $&Sink,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    .write_byte = (.self: $&Sink, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         self&.byte = byte
         result = ..ok Void()
     }
-    .flush = (
-        .self         : $&Sink,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&Sink, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         result = ..ok Void()
     }
 )
 
-read_default := #(.Stream: Type: Reader#(Stream)) (.source: $&Stream) -> (.result: UInt8) {
+read_default := #(.Stream: Type: Reader#(Stream)) (
+    .source: $&Stream, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.result: UInt8) {
+    assume error_tracer
     reader ::= BufferedReader(.base = source)
     match unwrap_or_abort(.value = Reader#().read_byte($&reader)) {
         ..end { abort }
@@ -55,6 +42,7 @@ read_default := #(.Stream: Type: Reader#(Stream)) (.source: $&Stream) -> (.resul
 }
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     first_source :: Source = (.byte = 65)
     second_source :: Source = (.byte = 66)
     first ::= BufferedReader(.base = $&first_source)

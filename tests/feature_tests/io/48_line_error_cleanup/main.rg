@@ -8,14 +8,9 @@ RecordingAllocator := (
 Source := (.text: StringView, .position: UIntNative = 0, .fail_after: UIntNative = 999)
 
 implement Reader#(Source) (
-    .read_byte = (
-        .self         : $&Source,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume error_tracer
 
         if self&.position == self&.fail_after {
@@ -34,6 +29,7 @@ implement Reader#(Source) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     failed_reader ::= Source(.text = "abc", .fail_after = 1)
@@ -65,12 +61,8 @@ implement Allocator#(RecordingAllocator) (
     .allocate = (
         .self         : $&RecordingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
         assume error_tracer
 

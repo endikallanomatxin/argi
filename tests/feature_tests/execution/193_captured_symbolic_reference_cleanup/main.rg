@@ -19,6 +19,7 @@ replace := (.target: $&Resource, .token: Token) -> () {
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     {
         owner :: Resource = Resource(.value = 1)
         token :: Token = Token(.value = 0)

@@ -1,11 +1,4 @@
-test string_mismatch := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test string_mismatch := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     testing.expect_equal_strings(
@@ -13,40 +6,19 @@ test string_mismatch := (
     )!
 }
 
-test string_prefix := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test string_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     testing.expect_equal_strings(.expected = "abc", .actual = "ab")!
 }
 
-test string_empty := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test string_empty := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     testing.expect_equal_strings(.expected = "", .actual = "x")!
 }
 
-test string_embedded_nul := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test string_embedded_nul := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     expected :: [3]UInt8 = (65, 0, 90)

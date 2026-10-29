@@ -18,6 +18,7 @@ reset_and_replace := (.storage: $&Allocation, .slot: $&Borrowing, .reference: $&
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     storage_result ::= allocate_bytes(
@@ -31,13 +32,15 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..error _ { status_code = 2 }
                 ..ok ~storage_payload {
                     storage ::= ~storage_payload
-                    slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(
+                    slot ::= trusted_mutable_reinterpret_reference#(
+                        .from: UInt8, .to: Borrowing
+                    )(
                         .base = unsafe_allocation.trusted_allocation_byte_rw(
                             .allocation = $&storage, .offset = 0
                         ).reference
                     ).reference
                     initial :: Borrowing = (.reference = $&external)
-                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage = $&storage, .destination = slot, .source = ~initial
                     )
                     trusted_opaque_drop(.slot = slot)

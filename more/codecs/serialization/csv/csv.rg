@@ -4,6 +4,11 @@ CsvRecord := (.fields: DynamicArray#(.t: String))
 
 implement Deinit#(CsvRecord) (
     .deinit = (.self: $&CsvRecord) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         while length(&self&.fields).count > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
         }
@@ -50,13 +55,7 @@ implement Init#(CsvReader, CsvReaderInitArgs) (
 
 -- Errors are terminal, and no partially decoded record escapes.
 next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : $&CsvReader,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&CsvReader, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
     assume error_tracer
 
@@ -165,11 +164,7 @@ next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 write_record := #(.WriterType: Type: Writer#(WriterType)) (
     .writer       : $&WriterType,
     .fields       : ArrayView#(.t: StringView),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
     assume error_tracer
 

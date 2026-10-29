@@ -2,7 +2,7 @@
 NoopErrorTracer := (.marker: UInt8 = 0)
 
 noop_error_tracer_storage :: NoopErrorTracer = (.marker = 0)
-noop_error_tracer :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
+noop_error_tracer :: Virtual#(ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
     .value = $&noop_error_tracer_storage
 )
 
@@ -16,11 +16,7 @@ implement ErrorTracer#(NoopErrorTracer) (
     .report = (
         .self         : $&NoopErrorTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 

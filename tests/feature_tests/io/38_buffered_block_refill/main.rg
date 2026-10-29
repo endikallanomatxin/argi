@@ -1,14 +1,9 @@
 Source := (.count: UIntNative)
 
 implement Reader#(Source) (
-    .read_byte = (
-        .self         : $&Source,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) {
+    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
         assume error_tracer
 
         if self&.count == 4 {
@@ -21,6 +16,7 @@ implement Reader#(Source) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     source :: Source = (.count = 0)
     storage: [3]UInt8 = (0, 0, 0)

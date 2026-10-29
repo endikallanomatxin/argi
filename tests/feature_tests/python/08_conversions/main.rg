@@ -1,6 +1,7 @@
 python := import ("python")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     interpreter ::= unwrap_or_abort(.value = python.Python(.ffi = system.ffi)).result
     values: [3]Int32 = (10, 20, 30)
     converted ::= unwrap_or_abort(

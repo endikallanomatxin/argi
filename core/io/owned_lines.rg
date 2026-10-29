@@ -10,11 +10,7 @@ read_line_owned := #(
     .self         : $&SelfType,
     .maximum      : UIntNative,
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
 ) {
@@ -86,11 +82,7 @@ implement#(.t: Type: Reader#(t)) Init#(OwnedLineReader#(.t: t), OwnedLineReaderI
 next := #(.t: Type: Reader#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
     .self         : $&OwnedLineReader#(.t: t),
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
 ) {

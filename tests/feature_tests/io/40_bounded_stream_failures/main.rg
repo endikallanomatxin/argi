@@ -8,11 +8,7 @@ implement BlockReader#(FaultReader) (
     .read_block = (
         .self         : $&FaultReader,
         .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) {
         assume error_tracer
 
@@ -43,11 +39,7 @@ implement BlockWriter#(FaultWriter) (
     .write_block = (
         .self         : $&FaultWriter,
         .buffer       : ArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (
         .result : Errable#(
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
@@ -70,6 +62,7 @@ implement BlockWriter#(FaultWriter) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     scratch :: [2]UInt8 = (0, 0)

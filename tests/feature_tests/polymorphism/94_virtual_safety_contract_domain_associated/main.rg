@@ -20,7 +20,10 @@ _impl_reset_Cell := (.self: $&Cell) -> () {
     self&.value = 42
 }
 
-borrow := (.source: &Virtual#(Source#(Int32))) -> (.value: &Int32) {
+borrow := (.source: &Virtual#(Source#(Int32)), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .value : &Int32
+) {
+    assume error_tracer
     value = get(source)
 }
 
@@ -29,6 +32,7 @@ reset_source := (.source: $&Virtual#(Source#(Int32))) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(41, 9)
     source ::= to_virtual#(Source#(Int32))($&cell)
     before ::= borrow(&source)

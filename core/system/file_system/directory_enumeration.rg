@@ -2,7 +2,9 @@
 DirectoryEnumeration#(.State: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Item   : Type
     .Result : Type
-    .next   : (.self: $&State, .allocator: $&Provider) -> (.result: Result)
+    .next   : (.self: $&State, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    )
 )
 
 implement#(.Provider: Type: Allocator#(Provider)) DirectoryEnumeration#(Directory, Provider) (

@@ -39,11 +39,7 @@ acquire_heap_storage := (
     .size         : UIntNative,
     .alignment    : UIntNative,
     .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
     assume error_tracer
 
@@ -84,11 +80,7 @@ acquire_page_storage := (
     .memory       : $&Memory,
     .size         : UIntNative,
     .alignment    : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
     assume error_tracer
 

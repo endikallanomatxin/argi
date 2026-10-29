@@ -1,11 +1,4 @@
-test collections_text_array_slice := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test collections_text_array_slice := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     arr :: [3]Int32 = (10, 20, 30)
@@ -16,14 +9,7 @@ test collections_text_array_slice := (
     testing.expect(.condition = arr[1] == 99)!
 }
 
-test collections_text_format_slice := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test collections_text_format_slice := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

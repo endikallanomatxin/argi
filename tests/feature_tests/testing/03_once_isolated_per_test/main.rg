@@ -5,27 +5,13 @@ helper := () -> () {
     setup()
 }
 
-test first := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test first := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     helper()
 }
 
-test second := (
-    .system       : System,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> !() {
+test second := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
     assume error_tracer
 
     helper()

@@ -1,5 +1,6 @@
 -- Byte ordering is unsigned and lexicographic. Equal prefixes compare by length.
 compare := (.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.order: Int32 = 0) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     count ::= length(&left).count
     other ::= length(&right).count
 
@@ -31,6 +32,7 @@ equals := (.left: ArrayView#(.t: UInt8), .right: ArrayView#(.t: UInt8)) -> (.ok:
 _bytes_match_at := (
     .self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8), .start: UIntNative
 ) -> (.ok: Bool = false) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -89,6 +91,7 @@ find_last := (.self: ArrayView#(.t: UInt8), .pattern: ArrayView#(.t: UInt8)) -> 
 }
 
 find_byte := (.self: ArrayView#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..none) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     offset :: UIntNative = 0
 
     while offset < length(&self).count {

@@ -4,11 +4,7 @@ FileReading#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract 
         .self         : &FileSystem,
         .path         : PathValue,
         .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (
         .result : Errable#(
             String,

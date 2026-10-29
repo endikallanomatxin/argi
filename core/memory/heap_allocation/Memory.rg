@@ -36,11 +36,7 @@ _memory_map_aligned := (
     .alignment    : UIntNative,
     .page_size    : UIntNative,
     .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
     assume error_tracer
 
@@ -73,11 +69,7 @@ map_pages := (
     .self         : $&Memory,
     .size         : UIntNative,
     .alignment    : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
     assume error_tracer
 

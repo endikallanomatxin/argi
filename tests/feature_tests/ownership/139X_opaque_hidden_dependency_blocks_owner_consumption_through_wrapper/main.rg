@@ -5,12 +5,13 @@ Borrowing := (
 )
 
 consume_into_storage := (.storage: $&Allocation, .slot: $&Allocation, .owner: Allocation) -> () {
-    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = storage, .destination = slot, .source = ~owner
     )
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     deallocator ::= to_virtual#(.contract: Deallocator)(.value = $&allocator_storage)
 
@@ -36,7 +37,7 @@ main := (.system: System) -> (.status_code: Int32) {
             .allocation = $&target, .offset = 0
         ).reference
     )
-    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots, .destination = borrowing_slot, .source = ~hidden
     )
 

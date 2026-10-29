@@ -10,12 +10,16 @@ implement Deinit#(Owner) (
 
 implement WriteValue#(Sink, Owner) (
     .Result      : Type = Owner
-    .write_value = (.self: $&Sink, .value: Owner) -> (.result: Owner) {
+    .write_value = (.self: $&Sink, .value: Owner, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Owner
+    ) {
+        assume error_tracer
         result = ~value
     }
 )
 
-exercise := () -> () {
+exercise := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     sink ::= Sink()
     owner ::= Owner(42)
     returned ::= ~write(.self = $&sink, .value = ~owner)
@@ -23,6 +27,7 @@ exercise := () -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     exercise()
     if drops != 1 { status_code = 1 }
 }

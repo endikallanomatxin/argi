@@ -25,11 +25,7 @@ implement Allocator#(FailAllocator) (
         .self         : $&FailAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
         assume error_tracer
 
@@ -37,7 +33,8 @@ implement Allocator#(FailAllocator) (
     }
 )
 
-failed := (.allocator: $&FailAllocator) -> () {
+failed := (.allocator: $&FailAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     policy ::= Policy(1)
     outcome ::= HashMap#(.key: Int32, .value: Int32, .policy: Policy)(
         .policy = ~policy, .allocator = allocator
@@ -46,7 +43,8 @@ failed := (.allocator: $&FailAllocator) -> () {
     if drops != 1 { abort }
 }
 
-successful := (.allocator: $&PageAllocator) -> () {
+successful := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
+    assume error_tracer
     policy ::= Policy(2)
     map ::= unwrap_or_abort(
         HashMap#(.key: Int32, .value: Int32, .policy: Policy)(
@@ -59,6 +57,7 @@ successful := (.allocator: $&PageAllocator) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     failing ::= FailAllocator()
     failed($&failing)
     if drops != 1 { abort }

@@ -12,11 +12,7 @@ PriorityQueueInitArgs: Type = #(
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
@@ -62,11 +58,7 @@ _queue_push_priority_queue := #(
     .self         : $&PriorityQueue#(.t: t, .order: order),
     .value        : t,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer)      = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_memory)) = ..ok Void()) {
     assume error_tracer
 
@@ -110,8 +102,9 @@ peek_reference := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
 }
 
 _queue_pop_priority_queue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
-    .self : $&PriorityQueue#(.t: t, .order: order)
+    .self: $&PriorityQueue#(.t: t, .order: order), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: ?t = ..none) {
+    assume error_tracer
     count ::= length(&self&._items).count
 
     if count == 0 { return }
@@ -160,6 +153,7 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allo
 peek := #(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)) (
     .self : &PriorityQueue#(.t: t, .order: order)
 ) -> (.value: ?t = ..none) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if length(&self&._items).count == 0 { return }
     value = ..some(
         .value = unwrap_or_abort(.value = get_reference(&self&._items, .index = 0))&

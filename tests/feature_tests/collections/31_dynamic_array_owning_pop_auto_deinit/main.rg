@@ -11,13 +11,16 @@ implement Deinit#(Tracked) (
     }
 )
 
-take_last := (.array: $&DynamicArray#(.t: Tracked)) -> () {
+take_last := (.array: $&DynamicArray#(.t: Tracked), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+) {
+    assume error_tracer
     popped_result ::= pop(.self = array).result
     if is(.value = popped_result, .variant = ..error) { return }
     popped ::= ~popped_result ..ok
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -27,7 +30,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         ..ok ~payload {
             item ::= Tracked(.allocation = ~payload)
             array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
-            push_assume_capacity#(.t: Tracked) (.self = $&array, .value = ~item)
+            push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~item)
             take_last(.array = $&array)
             if drops != 1 or length(.self = &array).count != 0 {
                 status_code = 2

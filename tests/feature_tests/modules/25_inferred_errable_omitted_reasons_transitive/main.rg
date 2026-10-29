@@ -1,10 +1,4 @@
-run := (
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int32)) {
+run := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(.t: Int32)) {
     assume error_tracer
 
     dep := import ("./dep")
@@ -13,6 +7,7 @@ run := (
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     outcome := run()
 
     match outcome {

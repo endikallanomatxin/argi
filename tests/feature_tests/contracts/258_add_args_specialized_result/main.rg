@@ -14,13 +14,12 @@ implement Add#(&Box#(Int32), &Box#(Int32)) (
     }
 )
 
-sum := #(.T: Type) (.left: &T, .right: &T) -> (
-    .result: Add#(&T, &T).Result
-) {
+sum := #(.T: Type) (.left: &T, .right: &T) -> (.result: Add#(&T, &T).Result) {
     result = ~[left + right]
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     a ::= Box#(Int32)(7)
     b ::= Box#(Int32)(5)
     specialized ::= &a + &b

@@ -1,10 +1,12 @@
 expect_replacement := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text        : StringView,
-    .pattern     : StringView,
-    .replacement : StringView,
-    .expected    : StringView,
-    .allocator   : $&AllocatorType
+    .text         : StringView,
+    .pattern      : StringView,
+    .replacement  : StringView,
+    .expected     : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> () {
+    assume error_tracer
     output ::= unwrap_or_abort(
         .value = replace(
             .self = text, .pattern = pattern, .replacement = replacement, .allocator = allocator
@@ -22,6 +24,7 @@ expect_replacement := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     expect_replacement(
         .text        = ""
         .pattern     = "a"

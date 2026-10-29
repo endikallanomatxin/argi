@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
     file ::= file_from_stream(.stream_address = 0, .should_close = 0 == 1)
     #if target_os("windows") {

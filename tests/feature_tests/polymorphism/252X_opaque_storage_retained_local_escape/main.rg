@@ -47,7 +47,10 @@ forward_take := (.slots: &Virtual#(SlotProtocol), .storage: $&Allocation, .slot:
     value = take(slots, storage, slot)
 }
 
-escape := (.allocator: $&GeneralPurposeAllocator) -> (.result: Allocation) {
+escape := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Allocation
+) {
+    assume error_tracer
     drops :: Int32 = 0
     implementation ::= Slots()
     slots ::= to_virtual#(SlotProtocol)(&implementation)
@@ -64,6 +67,7 @@ escape := (.allocator: $&GeneralPurposeAllocator) -> (.result: Allocation) {
 }
 
 main := (.system: System) -> () {
+    assume error_tracer ::= $&noop_error_tracer
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     escape(.allocator = allocator)
 }

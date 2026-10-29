@@ -5,6 +5,7 @@ Borrowing := (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     external :: Int32 = 7
     value :: Borrowing = (.reference = &external)
@@ -23,7 +24,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
             -- Precision is discarded at the slot boundary, but the dependency
             -- on `external` survives in the storage-level opaque summary.
-            trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation) (
+            trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                 .storage = $&slots, .destination = slot, .source = ~value
             )
             deinit(.self = $&slots)

@@ -5,11 +5,7 @@ implement Allocator#(RefusingAllocator) (
         .self         : $&RefusingAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
         assume error_tracer
 
@@ -18,13 +14,7 @@ implement Allocator#(RefusingAllocator) (
 )
 
 advance_directory := #(.State: Type, .Provider: Type: Allocator#(Provider)) (
-    .self         : $&State,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&State, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: DirectoryEnumeration#(State, Provider).Result) {
     assume error_tracer
 
@@ -32,6 +22,7 @@ advance_directory := #(.State: Type, .Provider: Type: Allocator#(Provider)) (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+    assume error_tracer ::= $&noop_error_tracer
     assume writer := $&system.terminal&.stderr
     assume allocator := system.page_allocator
     root: StringView = "tests/feature_tests/system/86_word_count_consumer/data"

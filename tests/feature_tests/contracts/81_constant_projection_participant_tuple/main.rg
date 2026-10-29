@@ -27,6 +27,7 @@ implement Summation#(Array#(.n = Shape#(Row, Column).Count, .t: Int32)) (.sum = 
 implement Summation#(Array#(.n = Shape#(Column, Row).Count, .t: Int32)) (.sum = _sum_three)
 
 main := () -> () {
+    assume error_tracer ::= $&noop_error_tracer
     two ::= (20, 22)
     three ::= (10, 12, 20)
     if sum(&two).value != 42 { abort }

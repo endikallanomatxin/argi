@@ -9,15 +9,9 @@ StringSplitIterator := (
 
 -- A borrowed traversal starts from the current cursor without advancing it.
 
-split := (
-    .self         : StringView,
-    .separator    : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(StringSplitIterator, (..empty_separator))) {
+split := (.self: StringView, .separator: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(StringSplitIterator, (..empty_separator))
+) {
     assume error_tracer
 
     if separator._length == 0 {

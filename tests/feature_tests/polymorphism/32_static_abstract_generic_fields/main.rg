@@ -41,6 +41,7 @@ call := #(.backend_type: Type: Backend) (.wrapper: &Wrapper#(.backend_type: back
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     a :: BackendA = (.value = 1)
     b :: BackendB = (.value = 2, .extra = 3)
     a_wrapper: Wrapper#(.backend_type: BackendA) = (.backend = $&a)

@@ -1,7 +1,9 @@
 -- Closing preserves each resource's result protocol and native handle effects.
 Closeable#(.Resource: Type): Contract = (
     .Result         : Type
-    .close_resource : (.self: $&Resource) -> (.result: Result)
+    .close_resource : (.self: $&Resource, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Result
+    )
 )
 
 OpenState#(.Resource: Type): Contract = (
@@ -9,12 +11,7 @@ OpenState#(.Resource: Type): Contract = (
 )
 
 close := #(.Resource: Type: Closeable#(Resource)) (
-    .self         : $&Resource,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&Resource, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Closeable#(Resource).Result) {
     assume error_tracer
     result = ~Closeable#(Resource).close_resource(.self = self)

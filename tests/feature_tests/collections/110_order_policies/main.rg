@@ -17,6 +17,7 @@ implement OrderPolicy#(Descending, Int32) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     integers ::= Int32OrderPolicy()
     check_order(.order = &integers, .left = -2147483648, .right = 2147483647)
     native ::= UIntNativeOrderPolicy()
@@ -45,11 +46,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         )
     )
     right ::= view(&right_storage)
-    if OrderPolicy#(StringViewOrderPolicy, StringView).less(
-        .self = &text, .left = &left, .right = &right
-    ).ok { abort }
-    if OrderPolicy#(StringViewOrderPolicy, StringView).less(
-        .self = &text, .left = &right, .right = &left
-    ).ok { abort }
+    if OrderPolicy#(
+        StringViewOrderPolicy, StringView
+    ).less(.self = &text, .left = &left, .right = &right).ok { abort }
+    if OrderPolicy#(
+        StringViewOrderPolicy, StringView
+    ).less(.self = &text, .left = &right, .right = &left).ok { abort }
     check_order(.order = &text, .left = left, .right = "ab")
 }

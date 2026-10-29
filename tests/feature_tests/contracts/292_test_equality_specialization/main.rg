@@ -9,11 +9,7 @@ implement TestEquality#(Token) (
         .expected     : Token,
         .actual       : Token,
         .message      : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..test_failed))) {
         assume error_tracer
 
@@ -27,13 +23,7 @@ implement TestEquality#(Token) (
 )
 
 assert_same := #(.T: Type: TestEquality#(T)) (
-    .expected     : T,
-    .actual       : T,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .expected: T, .actual: T, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..test_failed))) {
     assume error_tracer
 
@@ -41,6 +31,7 @@ assert_same := #(.T: Type: TestEquality#(T)) (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     one ::= Token(1)
     two ::= Token(2)
     unwrap_or_abort(.value = assert_same(.expected = one, .actual = one))

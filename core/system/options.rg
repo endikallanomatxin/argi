@@ -39,12 +39,7 @@ implement#(.t: Type: ArgumentSource#(t)) Init#(CliParser#(.t: t), CliParserInitA
 )
 
 next := #(.t: Type: ArgumentSource#(t)) (
-    .self         : $&CliParser#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&CliParser#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?CliArgument, (..invalid_option, ..invalid_utf8, ..out_of_bounds))) {
     assume error_tracer
 
@@ -121,13 +116,7 @@ next := #(.t: Type: ArgumentSource#(t)) (
 }
 
 take_value := #(.t: Type: ArgumentSource#(t)) (
-    .self         : $&CliParser#(.t: t),
-    .option       : CliOption,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&CliParser#(.t: t), .option: CliOption, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(StringView, (..missing_option_value, ..invalid_utf8, ..out_of_bounds))) {
     assume error_tracer
 

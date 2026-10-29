@@ -1310,7 +1310,7 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
         \\implement#(.t: Type) Deinit#(Box#(.t: t)) (.deinit = (.self: $&Box#(.t: t)) -> () {})
         \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
         \\main := (.system: System) -> (.status_code: Int32 = 0)  {
-        \\    assume writer := $&system.terminal&.stdout
+        \\    assume writer := $&system.terminal&.stdout; assume error_tracer ::= $&noop_error_tracer
         \\    point ::= Point(.x = 2)
         \\    defer {}
         \\    amount := identity(.value = point.x)
@@ -1360,7 +1360,7 @@ test "LSP navigation and hovers use written symbols and source declarations" {
         \\Point := (.x: Int32)
         \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
         \\main := (.system: System) -> (.status_code: Int32 = 0)  {
-        \\    assume writer := $&system.terminal&.stdout
+        \\    assume writer := $&system.terminal&.stdout; assume error_tracer ::= $&noop_error_tracer
         \\    point ::= Point(.x = 2)
         \\    amount := identity(.value = point.x)
         \\    print("Hello world")
@@ -1552,7 +1552,7 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     const code =
         \\MatrixView := (.data_p: &[2][2]Int32)
         \\main := (.system: System) -> (.status_code: Int32 = 0)  {
-        \\    assume writer := $&system.terminal&.stdout
+        \\    assume writer := $&system.terminal&.stdout; assume error_tracer ::= $&noop_error_tracer
         \\    data : [2][2]Int32 = ((1,2), (3,4))
         \\    mv : MatrixView = (.data_p = &data)
         \\    print("Hello world")

@@ -103,11 +103,7 @@ set := #(.t: Type: ImplicitlyCopyable) (
     .self         : $&MutableArrayView#(.t: t),
     .index        : UIntNative,
     .value        : t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 
@@ -144,11 +140,7 @@ implement#(.t: Type) Indexable#(MutableArrayView#(.t: t)) (
     .get_reference = (
         .self         : &MutableArrayView#(.t: t),
         .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(&t, (..out_of_bounds))) {
         assume error_tracer
 
@@ -171,13 +163,7 @@ implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
     }
 
     .get_reference = (
-        .self         : &ArrayView#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &ArrayView#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(&t, (..out_of_bounds))) {
         assume error_tracer
 
@@ -198,11 +184,7 @@ implement#(.t: Type) MutableIndexable#(MutableArrayView#(.t: t)) (
     .get_mutable_reference = (
         .self         : $&MutableArrayView#(.t: t),
         .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#($&t, (..out_of_bounds))) {
         assume error_tracer
 
@@ -223,11 +205,7 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(MutableArrayView#(.t: t
     .get = (
         .self         : &MutableArrayView#(.t: t),
         .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(t, (..out_of_bounds))) {
         assume error_tracer
 
@@ -248,13 +226,7 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(ArrayView#(.t: t)) (
     .Item : Type = t
 
     .get = (
-        .self         : &ArrayView#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &ArrayView#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(t, (..out_of_bounds))) {
         assume error_tracer
 

@@ -18,7 +18,10 @@ generic_sum := #(.t: Type) (.left: t, .right: t) -> (.value: t) {
     value = left | ops.identity#(.t: t)(.value = _ + right)
 }
 
-generic_twice := #(.t: Type) (.self: $&Counter, .token: t) -> (.value: Int32) {
+generic_twice := #(.t: Type) (
+    .self: $&Counter, .token: t, .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.value: Int32) {
+    assume error_tracer
     value = next(.self = self) | ops.add(.left = _, .right = _)
 }
 
@@ -27,6 +30,7 @@ generic_bump := #(.t: Type) (.pointer: $&t) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     counter :: Counter = (.calls = 0)
     value ::= next(.self = $&counter) | ops.add(.left = _ + 1, .right = _ * 2)
     if value != 4 or counter.calls != 1 { abort }

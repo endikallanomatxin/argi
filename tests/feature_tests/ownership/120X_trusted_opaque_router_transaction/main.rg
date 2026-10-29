@@ -14,11 +14,12 @@ implement Deinit#(Router) (
 store_pair := (
     .first_slot: $&Allocation, .first: Allocation, .second_slot: $&Router, .second: Router
 ) -> () {
-    trusted_opaque_move#(.t: Allocation) (.destination = first_slot, .source = ~first)
-    trusted_opaque_move#(.t: Router) (.destination = second_slot, .source = ~second)
+    trusted_opaque_move#(.t: Allocation)(.destination = first_slot, .source = ~first)
+    trusted_opaque_move#(.t: Router)(.destination = second_slot, .source = ~second)
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     route :: Int32 = 7
     first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)

@@ -9,11 +9,7 @@ Logger#(.Value: Type): Contract = (
         .self         : $&Value,
         .level        : LogLevel,
         .message      : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, LogReasons)) where {}
 )
 
@@ -40,11 +36,7 @@ _write_record := #(.WriterType: Type: Writer#(WriterType)) (
     .writer       : $&WriterType,
     .level        : LogLevel,
     .message      : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
     assume error_tracer
 
@@ -86,11 +78,7 @@ implement#(.t: Type: Writer#(t)) Logger#(FileLogger#(.t: t)) (
         .self         : $&FileLogger#(.t: t),
         .level        : LogLevel,
         .message      : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
         assume error_tracer
 
@@ -100,12 +88,7 @@ implement#(.t: Type: Writer#(t)) Logger#(FileLogger#(.t: t)) (
 )
 
 flush := #(.t: Type: Writer#(t)) (
-    .self         : $&FileLogger#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&FileLogger#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
     assume error_tracer
 
@@ -141,11 +124,7 @@ implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Logger#(
         .self         : $&StdLogger#(.out: out, .err: err),
         .level        : LogLevel,
         .message      : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
         assume error_tracer
 
@@ -165,11 +144,7 @@ implement Logger#(NullLogger) (
         .self         : $&NullLogger,
         .level        : LogLevel,
         .message      : StringView,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
         assume error_tracer
 

@@ -12,13 +12,9 @@ _binary_range := (.length: UIntNative, .offset: UIntNative, .width: UIntNative) 
 -- One range-checked implementation for the public multi-byte widths.
 _read_multibyte_uint_at := #(.Value: Type: UInt) (
     .bytes        : ArrayView#(.t: UInt8),
-    .offset       : UIntNative                         = 0,
+    .offset       : UIntNative              = 0,
     .order        : ByteOrder,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Value, (..out_of_bounds))) {
     assume error_tracer
 
@@ -51,11 +47,7 @@ _write_multibyte_uint_at := #(.Value: Type: UInt) (
     .offset       : UIntNative                    = 0,
     .value        : Value,
     .order        : ByteOrder,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
     assume error_tracer
 

@@ -1,4 +1,5 @@
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     values: Array#(.n = 3, .t: Int32) = (2, 4, 6)
     it :: ArrayIterator#(.n = 3, .t: Int32) = to_iterator(.value = &values)
     sum :: Int32 = 0

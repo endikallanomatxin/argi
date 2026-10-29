@@ -8,6 +8,7 @@ test "borrowed array extracted from imported Errable retains lexical lifetime" {
         .{ .path = "main.rg", .code =
         \\dep := import("./dep")
         \\main := () -> () {
+        \\    assume error_tracer ::= $&noop_error_tracer
         \\    escaped :: ArrayView#(Int32)
         \\    {
         \\        values: [2]Int32 = (1, 2)
@@ -28,6 +29,7 @@ test "borrowed array extracted from imported Errable retains lexical lifetime" {
             .{ .path = "main.rg", .code =
             \\dep := import("./dep")
             \\main := () -> () {
+            \\    assume error_tracer ::= $&noop_error_tracer
             \\    escaped :: &[2]Int32
             \\    {
             \\        values: [2]Int32 = (1, 2)
@@ -54,6 +56,7 @@ test "borrowed array extracted from imported Errable retains lexical lifetime" {
         .{ .path = "main.rg", .code =
         \\dep := import("./dep")
         \\main := () -> () {
+        \\    assume error_tracer ::= $&noop_error_tracer
         \\    values: [2]Int32 = (1, 2)
         \\    escaped :: ArrayView#(Int32)
         \\    {
@@ -104,6 +107,7 @@ test "real core environment preserves private library storage and allocator safe
         \\Owner := (.value: Int32)
         \\implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () {})
         \\main := () -> () {
+        \\    assume error_tracer ::= $&noop_error_tracer
         \\    owner: Owner = (.value = 1)
         \\    copy ::= owner
         \\    missing(copy)

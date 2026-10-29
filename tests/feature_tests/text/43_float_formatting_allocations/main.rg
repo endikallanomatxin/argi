@@ -7,8 +7,12 @@ RecordingAllocator := (
 )
 
 expect_formatted := #(.t: Type: Float) (
-    .allocator: $&RecordingAllocator, .value: t, .expected: StringView
+    .allocator    : $&RecordingAllocator,
+    .value        : t,
+    .expected     : StringView,
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> () {
+    assume error_tracer
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
     output ::= unwrap_or_abort(.value = format(.value = value, .allocator = allocator))
@@ -24,6 +28,7 @@ expect_formatted := #(.t: Type: Float) (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     assume system
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     value16 :: Float16 = 0.1
@@ -83,12 +88,8 @@ implement Allocator#(RecordingAllocator) (
     .allocate = (
         .self         : $&RecordingAllocator,
         .size         : UIntNative,
-        .alignment    : UIntNative                         = 1,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .alignment    : UIntNative              = 1,
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

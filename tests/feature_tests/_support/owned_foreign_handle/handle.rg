@@ -35,11 +35,7 @@ OwnedHandleInitArgs: Type = (
     .fail  : Bool                       = false,
     .ffi   : $&ForeignFunctionInterface
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(OwnedHandle, OwnedHandleInitArgs) (
@@ -84,11 +80,7 @@ GenericHandleInitArgs2: Type = #(.t: Type) (
     .tag : t,
     .ffi : $&ForeignFunctionInterface
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type) Init#(GenericHandle#(.t: t), GenericHandleInitArgs2#(t)) (

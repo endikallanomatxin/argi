@@ -6,11 +6,7 @@ CancellationSource := (._state: AtomicUInt32)
 
 CancellationSourceInitArgs: Type = (
     .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(CancellationSource, CancellationSourceInitArgs) (
@@ -57,13 +53,7 @@ implement ImplicitlyCopyable#(CancellationContext) ()
 -- The caller supplies a monotonic reading to make checkpoints deterministic
 -- and avoid unnecessary system calls. Cancellation wins when both apply.
 check_cancelled := (
-    .self         : CancellationContext,
-    .now          : MonotonicInstant,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: CancellationContext, .now: MonotonicInstant, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()) {
     assume error_tracer
 

@@ -20,11 +20,7 @@ RingBufferInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
     .capacity  : UIntNative,
     .allocator : $&Provider
     ,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(
@@ -108,11 +104,7 @@ _queue_push_ring_buffer := #(.t: Type, .Provider: Type: Allocator) (
     .self         : $&RingBuffer#(.t: t),
     .value        : t,
     .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..full))) {
     assume error_tracer
 
@@ -136,12 +128,7 @@ _queue_push_ring_buffer := #(.t: Type, .Provider: Type: Allocator) (
 }
 
 _queue_pop_ring_buffer := #(.t: Type) (
-    .self         : $&RingBuffer#(.t: t),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: $&RingBuffer#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(t, (..empty))) {
     assume error_tracer
 
@@ -165,6 +152,11 @@ _queue_pop_ring_buffer := #(.t: Type) (
 
 implement#(.t: Type) Deinit#(RingBuffer#(.t: t)) (
     .deinit = (.self: $&RingBuffer#(.t: t)) -> () {
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         while self&._length > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop(self))
         }
@@ -180,13 +172,7 @@ implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
     .length = (.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) { count = self&._length }
 
     .get_reference = (
-        .self         : &RingBuffer#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: &RingBuffer#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(&t, (..out_of_bounds))) {
         assume error_tracer
 

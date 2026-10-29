@@ -5,11 +5,7 @@ Editor#(.Participant: Type): Contract = (
         .self         : &Participant,
         .target       : $&Int32,
         .mode         : Int32,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { invalidates(target) }
@@ -32,14 +28,7 @@ implement Resetter#(Cell) (.reset = _impl_reset_Cell)
 _impl_reset_Cell := (.self: &Cell, .target: $&Int32) -> () { target&= 42 }
 
 _impl_edit_Cell := (
-    .self         : &Cell,
-    .target       : $&Int32,
-    .mode         : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Cell, .target: $&Int32, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?Int32, (..failed))) {
     assume error_tracer
 
@@ -62,11 +51,7 @@ apply_edit := (
     .editor       : &Virtual#(Editor),
     .target       : $&Int32,
     .mode         : Int32,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(?Int32, (..failed))) {
     assume error_tracer
 
@@ -74,6 +59,7 @@ apply_edit := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target

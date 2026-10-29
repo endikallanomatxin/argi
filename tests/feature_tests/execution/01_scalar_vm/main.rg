@@ -13,6 +13,7 @@ sum := (.count: Int32) -> (.result: Int32 = 0) {
 fail := () -> (.result: Bool = false) { abort }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     if false and fail() { abort }
     if true or fail() { status_code = identity(.value = sum(.count = 20)) + 9 }
 }

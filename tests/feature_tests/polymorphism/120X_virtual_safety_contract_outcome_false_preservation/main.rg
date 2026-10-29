@@ -30,7 +30,9 @@ _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .succeed: Bool) -> (.result:
     result = ..none
 }
 
-apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32, .succeed: Bool) -> (.result: ?Int32) {
+apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32, .succeed: Bool) -> (
+    .result : ?Int32
+) {
     result = edit(editor, target, succeed)
 }
 

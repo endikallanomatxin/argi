@@ -8,15 +8,9 @@ implement Indexable#(Repeated) (
 
 repeated_length := (.self: &Repeated) -> (.count: UIntNative) { count = self&.count }
 
-repeated_ref := (
-    .self         : &Repeated,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: &Int32, .reasons: (..out_of_bounds))) {
+repeated_ref := (.self: &Repeated, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: &Int32, .reasons: (..out_of_bounds))
+) {
     assume error_tracer
 
     if index >= self&.count { abort }

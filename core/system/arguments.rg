@@ -57,13 +57,7 @@ argument_at := (.self: &Arguments, .index: UIntNative) -> (.text: &CChar) {
 }
 
 argument_view_at := (
-    .self         : &Arguments,
-    .index        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .self: &Arguments, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) {
     assume error_tracer
 
@@ -95,7 +89,11 @@ implement Iterator#(ArgumentsIterator) (
     }
 
     .next = (.self: $&ArgumentsIterator) -> (.value: StringView) {
-        assume error_tracer ::= $&noop_error_tracer
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         current_index :: UIntNative = self&.index
         match argument_view_at(self&.args, .index = current_index) {
             ..ok text { value = text }
@@ -110,15 +108,9 @@ implement ArgumentSource#(Arguments) (
         count = self&.count
     }
 
-    .get = (
-        .self         : &Arguments,
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) {
+    .get = (.self: &Arguments, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
+    ) {
         assume error_tracer
 
         if index >= self&.count {

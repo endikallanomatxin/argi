@@ -30,6 +30,7 @@ apply_edit := (.source: $&Virtual#(Source), .succeed: Bool) -> (.result: ?Int32)
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     cell ::= Cell(41, 9)
     source ::= to_virtual#(Source)($&cell)
     previous ::= get(&source)

@@ -6,7 +6,10 @@ RecordingWriter := (
     .flush_failure : Bool       = false
 )
 
-expect_written := #(.t: Type: Int) (.value: t, .expected: StringView) -> () {
+expect_written := #(.t: Type: Int) (
+    .value: t, .expected: StringView, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     base ::= RecordingWriter(.expected = expected)
     unwrap_or_abort(
         .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
@@ -23,6 +26,7 @@ expect_written := #(.t: Type: Int) (.value: t, .expected: StringView) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     int80: Int8 = -128
     expect_written(.value = int80, .expected = "-128")
     int81: Int8 = 0
@@ -105,13 +109,7 @@ main := () -> (.status_code: Int32 = 0) {
 
 implement Writer#(RecordingWriter) (
     .write_byte = (
-        .self         : $&RecordingWriter,
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .self: $&RecordingWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 
@@ -134,14 +132,9 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (
-        .self         : $&RecordingWriter,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    .flush = (.self: $&RecordingWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer
 
         self&.flush_calls = self&.flush_calls + 1

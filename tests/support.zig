@@ -642,9 +642,9 @@ pub fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8)
     defer allocator.free(constructor_calls);
     const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned :=") != null)
         if (std.mem.indexOf(u8, relocated, ".fail =") != null)
-            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .fail: Bool, .error_tracer: $&Virtual#(.contract: ErrorTracer) = [NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_]) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {\nassume error_tracer\nresult = Owned(.allocator = allocator, .fail = fail) }\n"
+            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {\nassume error_tracer\nresult = Owned(.allocator = allocator, .fail = fail) }\n"
         else
-            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .error_tracer: $&Virtual#(.contract: ErrorTracer) = [NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_]) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {\nassume error_tracer\nresult = Owned(.allocator = allocator) }\n"
+            "parity_owned := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) {\nassume error_tracer\nresult = Owned(.allocator = allocator) }\n"
     else
         "";
     const arguments = if (std.mem.startsWith(u8, source[entry..], "main := (.system: System")) ".system = system" else "";

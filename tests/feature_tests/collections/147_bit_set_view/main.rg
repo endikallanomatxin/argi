@@ -1,4 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     bytes :: [3]UInt8 = (255, 255, 99)
     storage ::= view(.self = $&bytes)
     bits ::= unwrap_or_abort(.value = BitSetView(.bytes = storage, .count = 10))

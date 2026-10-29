@@ -9,6 +9,7 @@ implement Deinit#(BackingAllocator) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     backing ::= BackingAllocator(.page = system.page_allocator)
     allocator ::= GeneralPurposeAllocator(.allocator = $&backing)
     deinit(.self = $&backing)
@@ -21,11 +22,7 @@ implement Allocator#(BackingAllocator) (
         .self         : $&BackingAllocator,
         .size         : UIntNative,
         .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
         assume error_tracer
 

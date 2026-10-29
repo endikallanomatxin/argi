@@ -5,6 +5,7 @@ _alphabet := () -> (.text: StringView) {
 }
 
 _value := (.byte: UInt8) -> (.value: UInt32 = 255) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if byte >= 65 and byte <= 90 {
         value = [byte - 65] | convert#(.to: UInt32)(_)
         return
@@ -28,11 +29,7 @@ _value := (.byte: UInt8) -> (.value: UInt32 = 255) {
 encode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .bytes        : ArrayView#(.t: UInt8),
     .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) {
     assume error_tracer
 
@@ -128,13 +125,7 @@ encode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 -- Reject misplaced padding, whitespace and nonzero unused trailing bits.
 -- Validation precedes allocation, so malformed input publishes no prefix.
 decode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text         : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_base64, ..out_of_memory))) {
     assume error_tracer
 

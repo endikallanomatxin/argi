@@ -1,4 +1,4 @@
-Error := #(.reasons: Type) (.reason: reasons, .tracer: $&Virtual#(.contract: ErrorTracer))
+Error := #(.reasons: Type) (.reason: reasons, .tracer: $&Virtual#(ErrorTracer))
 
 Errable := #(.t: Type, .reasons: Type) (
     ..ok t

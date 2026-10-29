@@ -21,6 +21,7 @@ _string_view_subrange := (.self: StringView, .start: UIntNative, .count: UIntNat
 }
 
 trim_start := (.self: StringView) -> (.view: StringView) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     start :: UIntNative = 0
 
     while start < self._length {
@@ -37,6 +38,7 @@ trim_start := (.self: StringView) -> (.view: StringView) {
 }
 
 trim_end := (.self: StringView) -> (.view: StringView) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     end :: UIntNative = self._length
 
     while end > 0 {
@@ -63,11 +65,7 @@ slice := (
     .self         : StringView,
     .start        : UIntNative,
     .count        : UIntNative,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8_boundary))) {
     assume error_tracer
 
@@ -92,6 +90,7 @@ slice := (
 }
 
 _string_boundary := (.text: StringView, .offset: UIntNative) -> (.ok: Bool) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if offset > text._length {
         ok = false
         return

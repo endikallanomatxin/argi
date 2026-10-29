@@ -13,11 +13,7 @@ Vector64 := (._object: python.Object, ._length: UIntNative)
 Vector64InitArgs: Type = (
     .interpreter  : &python.Python,
     .values       : ArrayView#(.t: Float64),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(Vector64, Vector64InitArgs) (
@@ -43,15 +39,9 @@ implement Deinit#(Vector64) (
 
 length := (.self: &Vector64) -> (.count: UIntNative) { count = self&._length }
 
-add := (
-    .left         : &Vector64,
-    .right        : &Vector64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Vector64, _NumpyReasons)) {
+add := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Vector64, _NumpyReasons)
+) {
     assume error_tracer
 
     if left&._length != right&._length {
@@ -67,15 +57,9 @@ add := (
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
-multiply := (
-    .left         : &Vector64,
-    .right        : &Vector64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Vector64, _NumpyReasons)) {
+multiply := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Vector64, _NumpyReasons)
+) {
     assume error_tracer
 
     if left&._length != right&._length {
@@ -91,15 +75,9 @@ multiply := (
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
-dot := (
-    .left         : &Vector64,
-    .right        : &Vector64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Float64, _NumpyReasons)) {
+dot := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Float64, _NumpyReasons)
+) {
     assume error_tracer
 
     if left&._length != right&._length {
@@ -116,14 +94,9 @@ dot := (
     result = ..ok value
 }
 
-sum := (
-    .self         : &Vector64,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(Float64, _NumpyReasons)) {
+sum := (.self: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(Float64, _NumpyReasons)
+) {
     assume error_tracer
 
     object ::= python.call_method(.self = &self&._object, .name = "sum")!
@@ -135,11 +108,7 @@ sum := (
 copy_values := (
     .self         : &Vector64,
     .destination  : MutableArrayView#(.t: Float64),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(UIntNative, _NumpyReasons)) {
     assume error_tracer
 

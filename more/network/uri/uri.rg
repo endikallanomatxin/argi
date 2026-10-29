@@ -63,6 +63,7 @@ _hex := (.byte: UInt8) -> (.value: UInt8, .ok: Bool = true) {
 }
 
 _scheme_valid := (.text: StringView) -> (.ok: Bool = false) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if byte_length(&text).count == 0 { return }
     if [
         _alpha(.byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))).ok
@@ -89,6 +90,7 @@ _scheme_valid := (.text: StringView) -> (.ok: Bool = false) {
 }
 
 _component_valid := (.text: StringView, .kind: UInt8) -> (.ok: Bool = false) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
@@ -137,14 +139,9 @@ _slice := (.text: StringView, .start: UIntNative, .end: UIntNative) -> (.value: 
 }
 
 -- Delimiters are recognized before any decoding. Encoded separators remain data.
-parse := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(UriView, (..invalid_input))) {
+parse := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(UriView, (..invalid_input))
+) {
     assume error_tracer
 
     fragment_start ::= byte_length(&text).count
@@ -253,6 +250,7 @@ parse := (
 }
 
 _ipv4_valid := (.text: StringView) -> (.ok: Bool = false) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     groups :: UIntNative = 0
     start :: UIntNative = 0
     i :: UIntNative = 0
@@ -285,6 +283,7 @@ _ipv4_valid := (.text: StringView) -> (.ok: Bool = false) {
 }
 
 _ip_literal_valid := (.text: StringView) -> (.ok: Bool = false) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if byte_length(&text).count == 0 { return }
     first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
 
@@ -374,6 +373,7 @@ _ip_literal_valid := (.text: StringView) -> (.ok: Bool = false) {
 }
 
 _authority_valid := (.text: StringView) -> (.ok: Bool = false) {
+    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
     if _component_valid(.text = text, .kind = 0).ok == false { return }
     host_start :: UIntNative = 0
     i :: UIntNative = 0
@@ -442,13 +442,7 @@ _authority_valid := (.text: StringView) -> (.ok: Bool = false) {
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
 build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .value        : UriView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: UriView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) {
     assume error_tracer
 
@@ -551,13 +545,7 @@ build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text         : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
     assume error_tracer
 
@@ -601,13 +589,7 @@ encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 decode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text         : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .text: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) {
     assume error_tracer
 
@@ -646,14 +628,9 @@ AuthorityView := (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
 
 implement ImplicitlyCopyable#(AuthorityView) ()
 
-authority_parts := (
-    .text         : StringView,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(AuthorityView, (..invalid_input))) {
+authority_parts := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(AuthorityView, (..invalid_input))
+) {
     assume error_tracer
 
     if _authority_valid(.text = text).ok == false {

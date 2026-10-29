@@ -7,6 +7,7 @@ length := (.self: &Counter) -> (.count: UIntNative) {
 }
 
 main := () -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     counter :: Counter = (
         .count = 7
     )

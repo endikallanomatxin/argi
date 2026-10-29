@@ -26,7 +26,11 @@ implement Init#(Terminal, TerminalInitArgs) (
 
 implement Deinit#(Terminal) (
     .deinit = (.self: $&Terminal) -> () {
-        assume error_tracer ::= $&noop_error_tracer
+        assume error_tracer ::= [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
         close($&self&.stdin)
         close($&self&.stdout)
         close($&self&.stderr)
@@ -39,11 +43,7 @@ read_line_into_buffer := #(
     .buffer       : $&String,
     .allocator    : $&AllocatorType,
     .reader       : $&ReaderType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_read_failed, ..invalid_utf8))) {
     assume error_tracer
 
@@ -112,15 +112,9 @@ read_line_into_buffer := #(
 
 read_line := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-) (
-    .allocator    : $&AllocatorType,
-    .reader       : $&ReaderType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))) {
+) (.allocator: $&AllocatorType, .reader: $&ReaderType, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))
+) {
     assume error_tracer
 
     assume allocator
@@ -151,12 +145,7 @@ read_line := #(
 }
 
 flush := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer       : $&WriterType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -166,13 +155,7 @@ flush := #(.WriterType: Type: Writer#(WriterType)) (
 }
 
 print_error := #(.WriterType: Type: Writer#(WriterType)) (
-    .value        : StringView,
-    .writer       : $&WriterType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .value: StringView, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -204,12 +187,7 @@ print_error := #(.WriterType: Type: Writer#(WriterType)) (
 }
 
 flush_error := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer       : $&WriterType,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 
@@ -222,12 +200,8 @@ flush_error := #(.WriterType: Type: Writer#(WriterType)) (
 print := #(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) (
     .value        : Value,
     .writer       : $&Stream,
-    .terminator   : StringView = "\n",
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
+    .terminator   : StringView              = "\n",
+    .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
 

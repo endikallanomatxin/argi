@@ -1,15 +1,22 @@
-expect_segment := #(.T: Type: Iterator#(T)) (.iterator: $&T, .expected: StringView) -> () {
+expect_segment := #(.T: Type: Iterator#(T)) (
+    .iterator: $&T, .expected: StringView, .error_tracer: $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     if has_next(.self = iterator).ok == false { abort }
     segment ::= next(.self = iterator).value
     if segment != expected { abort }
 }
 
-first_segment := (.text: StringView) -> (.view: StringView) {
+first_segment := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .view : StringView
+) {
+    assume error_tracer
     iterator ::= unwrap_or_abort(.value = split(.self = text, .separator = ","))
     view = next(.self = $&iterator).value
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     if is(.value = split(.self = "abc", .separator = ""), .variant = ..ok) { abort }
     empty ::= unwrap_or_abort(.value = split(.self = "", .separator = ","))
     expect_segment(.iterator = $&empty, .expected = "")

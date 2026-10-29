@@ -13,6 +13,7 @@ implement Deinit#(AddressSensitive) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     slots_result ::= allocate_bytes(
         .self = $&allocator_storage, .size = size_of(.type = AddressSensitive)
@@ -34,7 +35,7 @@ main := (.system: System) -> (.status_code: Int32) {
                         ).reference
                     ).reference
                     value :: AddressSensitive = (.reference = ..none)
-                    trusted_opaque_move_in#(.t: AddressSensitive, .storage_type: Allocation) (
+                    trusted_opaque_move_in#(.t: AddressSensitive, .storage_type: Allocation)(
                         .storage = $&slots, .destination = slot, .source = ~value
                     )
 

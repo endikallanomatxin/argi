@@ -1,13 +1,8 @@
 ProbeTracer := (.count: UIntNative = 0)
 
-checked_to_int8 := #(.t: Type) (
-    .value        : t,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-        NoopErrorTracer()
-        | to_virtual#(.contract: ErrorTracer)($&_)
-        | $&_
-    ]
-) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
+checked_to_int8 := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(.t: Int8, .reasons: (..out_of_range))
+) {
     assume error_tracer
 
     result = ..ok value | convert#(.to: Int8)(_)!
@@ -41,11 +36,7 @@ implement ErrorTracer#(ProbeTracer) (
     .report = (
         .self         : $&ProbeTracer,
         .writer       : $&Virtual#(.contract: Writer),
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+        .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
 

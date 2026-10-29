@@ -5,6 +5,7 @@ compute := #(.T: Type) (.left: T, .right: T) -> (.result: T) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     byte :: UInt8 = 9
     narrow :: UInt8 = 1 + byte
     difference :: UInt8 = byte - 2

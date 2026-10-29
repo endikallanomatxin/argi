@@ -3,14 +3,9 @@ DummyInput := (
 )
 
 implement Reader#(DummyInput) (
-    .read_byte = (
-        .self         : $&DummyInput,
-        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
-    ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) {
+    .read_byte = (.self: $&DummyInput, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
         assume error_tracer
 
         if self&.index == 0 {
@@ -36,6 +31,7 @@ implement Reader#(DummyInput) (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
+    assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
