@@ -4,7 +4,10 @@ p := import ("python")
 ..invalid_duration
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+    trace_buffer :: [4096]UInt8 = zeroed#([4096]UInt8)()
+    tracer ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))
+    trace_handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&trace_handle
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([4096]UInt8)()))
