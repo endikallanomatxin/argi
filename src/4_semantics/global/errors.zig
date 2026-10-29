@@ -416,25 +416,25 @@ pub const Resolver = struct {
         defer if (measurement) |m| m.finish(changed);
         for (self.graph.nodes.items, 0..) |node, raw| {
             switch (node.content) {
-                .error_propagation => |id| {
-                    const propagation = self.graph.error_propagations.items[@intFromEnum(id)];
-                    const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
+                inline .error_propagation, .error_context => |id, kind| {
+                    const propagation = if (kind == .error_propagation)
+                        self.graph.error_propagations.items[@intFromEnum(id)]
+                    else
+                        self.graph.error_contexts.items[@intFromEnum(id)];
+                    const field_type = unwrapSingleField(self.graph, propagation.ok_payload_type);
+                    const index: ?u32 = if (field_type != null) 0 else null;
                     if (index != propagation.ok_value_field_index) {
                         var updated = propagation;
                         updated.ok_value_field_index = index;
-                        try self.graph.setErrorPropagation(self.allocator, id, updated);
-                        try self.graph.setNodeType(self.allocator, @enumFromInt(raw), unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type);
+                        if (kind == .error_propagation)
+                            try self.graph.setErrorPropagation(self.allocator, id, updated)
+                        else
+                            try self.graph.setErrorContext(self.allocator, id, updated);
                         changed = true;
                     }
-                },
-                .error_context => |id| {
-                    const propagation = self.graph.error_contexts.items[@intFromEnum(id)];
-                    const index = singleFieldIndex(self.graph, propagation.ok_payload_type);
-                    if (index != propagation.ok_value_field_index) {
-                        var updated = propagation;
-                        updated.ok_value_field_index = index;
-                        try self.graph.setErrorContext(self.allocator, id, updated);
-                        try self.graph.setNodeType(self.allocator, @enumFromInt(raw), unwrapSingleField(self.graph, propagation.ok_payload_type) orelse propagation.ok_payload_type);
+                    const result_type = field_type orelse propagation.ok_payload_type;
+                    if (node.ty != result_type) {
+                        try self.graph.setNodeType(self.allocator, @enumFromInt(raw), result_type);
                         changed = true;
                     }
                 },
@@ -743,6 +743,51 @@ fn containsVariant(graph: *const global_sg.GlobalSemanticGraph, haystack: []cons
 test "error propagation resolver writes indexed payloads" {
     try std.testing.expect(@sizeOf(global_sg.GlobalErrorPropagationId) == 4);
     try std.testing.expect(@sizeOf(global_sg.GlobalErrorContextId) == 4);
+}
+
+test "error result types refresh when transparent payload fields change without changing their index" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const integer: global_sg.GlobalTypeId = @enumFromInt(0);
+    const boolean: global_sg.GlobalTypeId = @enumFromInt(1);
+    const payload: global_sg.GlobalTypeId = @enumFromInt(2);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .builtin = .Bool },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    for ([_]global_sg.GlobalTypeId{ integer, boolean }) |ty|
+        try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = ty });
+    var propagation = std.mem.zeroes(global_sg.ErrorPropagation);
+    propagation.ok_payload_type = payload;
+    propagation.ok_value_field_index = 0;
+    try graph.error_propagations.append(a, propagation);
+    var context = std.mem.zeroes(global_sg.ErrorContext);
+    context.ok_payload_type = payload;
+    context.ok_value_field_index = 0;
+    try graph.error_contexts.append(a, context);
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = integer, .content = .{ .error_propagation = @enumFromInt(0) } },
+        .{ .source = source, .ty = integer, .content = .{ .error_context = @enumFromInt(0) } },
+    });
+    var core: core_mod.Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinit();
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    defer resolver.deinit();
+    try std.testing.expect(!try resolver.refreshPropagationResults());
+    var transaction = graph.beginTransaction(a);
+    defer transaction.deinit();
+    try graph.resolveType(a, payload, .{ .structural = .{ .fields = .{ .start = 1, .len = 1 } } });
+    try std.testing.expect(try resolver.refreshPropagationResults());
+    for (graph.nodes.items) |node| try std.testing.expectEqual(boolean, node.ty.?);
+    try std.testing.expectEqual(@as(?u32, 0), graph.error_propagations.items[0].ok_value_field_index);
+    try std.testing.expectEqual(@as(?u32, 0), graph.error_contexts.items[0].ok_value_field_index);
+    try std.testing.expect(!try resolver.refreshPropagationResults());
+    transaction.rollback();
+    for (graph.nodes.items) |node| try std.testing.expectEqual(integer, node.ty.?);
+    try std.testing.expect(!try resolver.refreshPropagationResults());
 }
 
 test "enclosing error search follows nested call arguments" {

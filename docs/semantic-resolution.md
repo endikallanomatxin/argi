@@ -30,6 +30,9 @@ Writing the same unresolved IDs is not progress: semantic type equality rejects
 unresolved types, so propagation compares the actual stored IDs and annotations
 before reporting a change. Stable pending facts must allow quiescence and normal
 unresolved diagnostics rather than forcing another identical resolution round.
+Error-result refresh treats the payload projection and its result type as
+separate facts. A transparent field can retain index zero while its type changes;
+stable projection metadata alone does not certify the propagated expression type.
 
 After quiescence, ownership finalizes eligible bodies. Cleanup can make more
 functions reachable, so resolution resumes before finalizing those bodies.
