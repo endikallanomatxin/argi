@@ -101,15 +101,21 @@ literal through `#run`, keeping compile-time execution on the shared VM path.
 There is no second expectation registry, compiler executable or test discovery
 mechanism. `test-programs` runs both frontend fixtures and executable fixtures.
 
-The internal resource-prelude allocation test prepares semantic state once,
-sweeps lowering failures over that checked candidate, verifier failures over a
-generated program and execution failures over its verified unit. Lowering uses
+The internal resource-prelude allocation test first sweeps source loading,
+syntax and ModuleSema over the real prelude text, checking that discarded batches
+leave no modules, source maps or source arena backing. It then prepares semantic
+state once, sweeps lowering failures over that checked candidate, verifier
+failures over a generated program and execution failures over its verified unit.
+The shared `checkAllocationAndResizeFailures` helper checks allocation failures,
+successful-path resize positions and complete release of requested bytes.
+Lowering uses
 separate code and scratch arenas, matching ordinary execution preparation.
 These are separate allocation boundaries: a verifier OOM must
 not become `InvalidBytecode`, and invocation failures must poison/reset execution
 without pretending to roll back effects. The combined sweeps take about one
 minute in the measured Debug run; the VM-only sweep takes about one second.
-Frontend failure sweeps remain separate work, not coverage implied by this test.
+Retained graph creation, global resolution and Safety failure sweeps remain
+separate work, not coverage implied by this test.
 
 ## Isolation
 

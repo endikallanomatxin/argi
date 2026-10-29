@@ -1,5 +1,21 @@
 const std = @import("std");
 
+/// Sweep allocation failures plus every successful-path resize boundary.
+/// Resize refusal may recover by allocating; both outcomes must release backing.
+pub fn checkAllocationAndResizeFailures(backing: std.mem.Allocator, comptime test_fn: anytype, args: anytype) !void {
+    try std.testing.checkAllAllocationFailures(backing, test_fn, args);
+    var baseline = std.testing.FailingAllocator.init(backing, .{});
+    try @call(.auto, test_fn, .{baseline.allocator()} ++ args);
+    try std.testing.expectEqual(baseline.allocated_bytes, baseline.freed_bytes);
+    for (0..baseline.resize_index) |index| {
+        var failing = std.testing.FailingAllocator.init(backing, .{ .resize_fail_index = index });
+        @call(.auto, test_fn, .{failing.allocator()} ++ args) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        };
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+}
+
 pub fn tmpRootPath(tmp: *const std.testing.TmpDir) ![:0]u8 {
     var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const n = try tmp.dir.realPath(std.testing.io, &buffer);

@@ -689,9 +689,30 @@ test "REPL bundled prelude runtime allocation failures preserve publication boun
     try std.testing.expect(trapped > 0);
 }
 
-test "REPL resource prelude lowering verification and VM release failed allocations" {
+test "REPL resource prelude releases failed source and backend allocations" {
     const bytecode = @import("../5_codegen/bytecode/bytecode.zig");
     const vm_mod = @import("../execution/vm.zig");
+    const checkFailures = @import("../test_support.zig").checkAllocationAndResizeFailures;
+    const source = prelude ++ "\nowned ::= unwrap_or_abort(.value = String(.length = 8))\n";
+    try checkFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator, text: []const u8) !void {
+            var sources = @import("../execution/submissions.zig").Sources.init(a);
+            defer sources.deinit();
+            var source_allocator = a;
+            var messages = diag.Diagnostics.init(&source_allocator, &.{});
+            defer messages.deinit();
+            const saved = try sources.beginBatch(&messages);
+            {
+                defer sources.rollbackBatch(&messages, saved);
+                const command = try sources.loadCommand(&messages, text);
+                try std.testing.expect(command.module.semantic.local_semantics_complete);
+            }
+            try std.testing.expectEqual(@as(usize, 0), sources.modules.items.len);
+            try std.testing.expectEqual(@as(usize, 0), sources.arenaBytes());
+            try std.testing.expectEqual(@as(usize, 0), messages.source_files.len);
+            try std.testing.expectEqual(@as(usize, 0), messages.source_maps.len);
+        }
+    }.run, .{source});
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -705,7 +726,7 @@ test "REPL resource prelude lowering verification and VM release failed allocati
     var session: interactive.Interactive = undefined;
     try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();
-    var command = try session.sources.prepareCommand(&session.compiler, &session.diagnostics, prelude ++ "\nowned ::= unwrap_or_abort(.value = String(.length = 8))\n");
+    var command = try session.sources.prepareCommand(&session.compiler, &session.diagnostics, source);
     defer command.deinit();
     const checked = command.candidate.checked.?;
     const semantic = command.candidate.semantic.?;
@@ -725,17 +746,7 @@ test "REPL resource prelude lowering verification and VM release failed allocati
         }
     };
     const catalogue: bytecode.Session = .{ .namespace = session.compiler.namespace, .bindings = layout };
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, LoweringProbe.run, .{ &command.candidate, catalogue, &session.diagnostics });
-    var lowering_baseline = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    try LoweringProbe.run(lowering_baseline.allocator(), &command.candidate, catalogue, &session.diagnostics);
-    try std.testing.expectEqual(lowering_baseline.allocated_bytes, lowering_baseline.freed_bytes);
-    for (0..lowering_baseline.resize_index) |index| {
-        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = index });
-        LoweringProbe.run(failing.allocator(), &command.candidate, catalogue, &session.diagnostics) catch |err| {
-            try std.testing.expectEqual(error.OutOfMemory, err);
-        };
-        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-    }
+    try checkFailures(std.testing.allocator, LoweringProbe.run, .{ &command.candidate, catalogue, &session.diagnostics });
     var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(allocator, checked.graph, .{ .session = .{ .namespace = session.compiler.namespace, .bindings = layout } });
     lower.annotations = &checked.annotations;
     lower.diagnostics = &session.diagnostics;
@@ -747,17 +758,7 @@ test "REPL resource prelude lowering verification and VM release failed allocati
             try std.testing.expectEqual(candidate_program.graph, unit.program().graph);
         }
     };
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, VerificationProbe.run, .{program});
-    var verification_baseline = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    try VerificationProbe.run(verification_baseline.allocator(), program);
-    try std.testing.expectEqual(verification_baseline.allocated_bytes, verification_baseline.freed_bytes);
-    for (0..verification_baseline.resize_index) |index| {
-        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = index });
-        VerificationProbe.run(failing.allocator(), program) catch |err| {
-            try std.testing.expectEqual(error.OutOfMemory, err);
-        };
-        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-    }
+    try checkFailures(std.testing.allocator, VerificationProbe.run, .{program});
     const verified = try bytecode.Verified.create(allocator, std.testing.allocator, program);
     var output: std.Io.Writer = .failing;
     var adapter: @import("../execution/host_output.zig").Output = .{ .writer = &output, .error_writer = &output };
@@ -792,19 +793,7 @@ test "REPL resource prelude lowering verification and VM release failed allocati
             // separate interactive lifecycle tests exercise checked close/reset.
         }
     };
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{ verified, command.function, &bindings });
-    var baseline = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    try Probe.run(baseline.allocator(), verified, command.function, &bindings);
-    try std.testing.expectEqual(baseline.allocated_bytes, baseline.freed_bytes);
-    for (0..baseline.resize_index) |index| {
-        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = index });
-        Probe.run(failing.allocator(), verified, command.function, &bindings) catch |err| {
-            try std.testing.expectEqual(error.OutOfMemory, err);
-        };
-        // Resize refusal may use allocation fallback. Both outcomes must free
-        // every allocation, including a live owner on successful execution.
-        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-    }
+    try checkFailures(std.testing.allocator, Probe.run, .{ verified, command.function, &bindings });
 }
 
 test "REPL presents compiler types and reuses them in layout queries" {
