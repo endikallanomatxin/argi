@@ -694,7 +694,15 @@ const FunctionLower = struct {
                 const dst = try self.bindingSlot(binding_id);
                 if (!binding_.deferred_initialization) {
                     if (binding_.initialization) |value| {
-                        try self.copyTo(node.source, dst, try self.expression(value));
+                        const initial = try self.expression(value);
+                        // Values stay immutable; lexical aggregate storage keeps
+                        // mutable cells so projected writes do not copy siblings.
+                        if (types.fields(self.parent.graph, binding_.ty) != null or types.arrayElement(self.parent.graph, binding_.ty) != null) {
+                            const layout = try self.parent.partialLayout(node.source, binding_.ty);
+                            if (layout.nodes[0].kind == .record or layout.nodes[0].kind == .array)
+                                _ = try self.emit(node.source, .{ .reserve_storage = .{ .dst = dst, .layout = layout, .reset = true } });
+                        }
+                        try self.copyTo(node.source, dst, initial);
                         if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
                     } else {
                         const layout = try self.parent.partialLayout(node.source, binding_.ty);

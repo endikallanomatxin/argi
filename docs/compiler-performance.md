@@ -44,6 +44,45 @@ Logs: `.zig-cache/float-parsing-retention-fixed.csv` and
 `.zig-cache/float-parsing-attribution.csv`. Failure output includes quota,
 frame, arena and payload counters for any execution benchmark scenario.
 
+### Reserved local aggregate storage
+
+Following the attribution above, local record/array initializers now reserve the
+existing occupancy-cell representation before publishing their complete value.
+Complete slot writes retain that storage. Projected writes split immutable values
+into the reserved cells, while whole-value reads still materialize independent
+snapshots. No snapshot is mutated, and frame identities remain unique. Session
+publication also checks occupancy before allowing initialization again.
+
+Isolated Linux x86-64 ReleaseSafe runs, unchanged execution quotas:
+
+| Prelude scenario | Commands | Before runtime arena bytes | After runtime arena bytes | Before execution ms | After execution ms |
+|---|---:|---:|---:|---:|---:|
+| Float parsing | 10 | 18,340,884 | 1,861,748 | 15.215 | 7.374 |
+| Scalar calls | 100 | 1,861,748 | 1,861,748 | 0.400 | 0.440 |
+| Persistent resources | 100 | 6,802,106 | 3,833,640 | 54.873 | 94.069 |
+
+Float parsing completes 100 commands with a 6,884,916-byte runtime arena and
+1,000 with 67,656,672 bytes; previously it failed during command 54. Update
+allocations are zero at both points, and partial snapshot requests remain four.
+Other immutable values, paths and identity metadata still accumulate: this is
+not garbage collection or a claim that retained memory is bounded indefinitely.
+
+Reserved cells have a cost. The resource control adds roughly 39 ms of execution
+in this sample despite reducing arena retention; total time changes from 964.834
+to 991.411 ms. Scalar-call totals are 566.858 and 566.605 ms. These single-run
+controls expose the tradeoff, not statistically established throughput results.
+Avoid a separate mutation analysis solely to remove these small reservations
+without evidence that it would simplify or materially improve real workloads.
+
+The full native float-parsing fixture now stops at the unchanged instruction
+quota rather than memory quota; it is not yet a passing VM acceptance case.
+The bounded `execution/02_floating_point_vm` fixture parses all three IEEE widths
+and rejects malformed input in native execution, VM execution and its existing
+`#run` probe, without increasing either budget.
+Logs: `.zig-cache/mutable-aggregate-float-{100,1000}.csv`,
+`.zig-cache/mutable-storage-{calls,resources}-{before,after}.csv`, and
+`.zig-cache/mutable-storage-float-fixture.log`.
+
 ## Replacing a live aggregate
 
 The `aggregates` execution scenario repeatedly assigns the result of one reused

@@ -1320,6 +1320,21 @@ test "interactive arrays retain initialized elements across commands" {
     try session.submitStatements("numbers[1] = 42");
     const complete = (try session.submitInput("numbers")).?;
     try std.testing.expectEqual(@as(i128, 42), complete.value.runtime.array[1].integer);
+    try session.submitStatements("saved ::= numbers\nreference ::= $&numbers[0]");
+    try session.submitStatements("reference&= 17\nnumbers[1] = 19");
+    try std.testing.expectEqual(@as(i128, 17), (try session.submitInput("reference&")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 40), (try session.submitInput("saved[0]")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("saved[1]")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(u64, 40), complete.value.runtime.array[0].integer);
+    try std.testing.expectEqual(@as(u64, 42), complete.value.runtime.array[1].integer);
+    const accepted = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitStatements("numbers[1] = 99\nmissing_function()"));
+    try std.testing.expectEqual(accepted, session.compiler.revision);
+    try std.testing.expectEqual(@as(i128, 19), (try session.submitInput("numbers[1]")).?.value.runtime.integer);
+    try session.reset();
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+    try session.submitStatements("numbers :: [2]Int32 = (3, 5)");
+    try std.testing.expectEqual(@as(i128, 5), (try session.submitInput("numbers[1]")).?.value.runtime.integer);
     try session.close();
 }
 

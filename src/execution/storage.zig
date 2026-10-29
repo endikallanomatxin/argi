@@ -51,15 +51,16 @@ pub const Slots = struct {
         return error.ExecutionUninitializedStorage;
     }
 
-    // Verified instructions define complete slot values. Reference writes use
-    // Storage.store instead, which preserves reserved partial storage and
-    // checks projections before publishing a value.
+    // Complete values initialize reserved storage without discarding its mutable
+    // cells. Later projected writes can split the immutable snapshot in place.
+    // Copies still carry only value data, never this storage's occupancy cells.
     pub fn put(self: Slots, index: b.Slot, value: b.Value) !void {
         const values = try self.cells();
         if (index >= values.len) return error.ExecutionInvalidReference;
-        values[index] = value;
-        if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.fetchRemove(index)) |entry|
-            self.storage.discardPartial(entry.value);
+        if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.getPtr(index)) |record| {
+            try record.write(&.{}, value);
+            values[index] = null;
+        } else values[index] = value;
     }
 
     fn cells(self: Slots) ![]?b.Value {
@@ -596,7 +597,16 @@ pub const Storage = struct {
         const values = try target.cells();
         if (self.frames.items[@intFromEnum(target.frame)].duration != .session) return error.ExecutionInvalidReference;
         if (index >= values.len) return error.ExecutionInvalidReference;
-        if (values[index] != null and !reinitialize) return error.ExecutionInitializedStorage;
+        if (!reinitialize) {
+            if (values[index] != null) return error.ExecutionInitializedStorage;
+            if (self.frames.items[@intFromEnum(target.frame)].partial_storage.getPtr(index)) |record| {
+                const complete: ?usize = record.materializationCells(&.{}) catch |err| switch (err) {
+                    error.ExecutionUninitializedStorage => null,
+                    else => return err,
+                };
+                if (complete != null) return error.ExecutionInitializedStorage;
+            }
+        }
         if (try self.cleanupRootActive(target.frame, index)) return error.ExecutionPendingCleanup;
         try self.validateSessionValues((&value)[0..1], 0);
         const retained = try self.cloneValues((&value)[0..1]);
@@ -1309,6 +1319,51 @@ test "deferred session initialization requires discharged cleanup" {
     try storage.reinitializeSession(slots_, 0, .{ .integer = 42 });
     try std.testing.expectEqual(@as(i128, 42), (try slots_.get(0)).integer);
     try std.testing.expect(!storage.frames.items[@intFromEnum(slots_.frame)].cleanup_flags[0]);
+    try storage.prepareStorage(slots_.frame, 1, .{ .nodes = &.{
+        .{ .kind = .record, .first = 1, .count = 1, .span = 2 },
+        .{ .offset = 1 },
+    } });
+    const record: b.Value = .{ .record = &.{.{ .integer = 7 }} };
+    try storage.initializeSession(slots_, 1, record);
+    const charged = storage.cells;
+    try std.testing.expectError(error.ExecutionInitializedStorage, storage.initializeSession(slots_, 1, record));
+    try std.testing.expectEqual(charged, storage.cells);
+    try storage.reinitializeSession(slots_, 1, record);
+}
+
+test "complete slot writes retain mutable cells and isolate copied aggregate snapshots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 1000);
+    const frame = try storage.enter(2);
+    try storage.prepareStorage(frame, 0, .{ .nodes = &.{
+        .{ .kind = .record, .first = 1, .count = 1, .span = 5 },
+        .{ .kind = .array, .first = 2, .count = 3, .span = 4, .offset = 1 },
+        .{ .offset = 1 },
+    } });
+    const initial: b.Value = .{ .record = &.{.{ .array = &.{ .{ .integer = 1 }, .{ .integer = 2 }, .{ .integer = 3 } } }} };
+    const slots_ = try storage.slots(frame);
+    try slots_.put(0, initial);
+    try slots_.put(1, try slots_.get(0));
+    const element: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{ .{ .field = 0 }, .{ .element = 1 } }, .mutability = .read_write };
+    const charged = storage.cells;
+    var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    storage.allocator = failure.allocator();
+    try storage.store(element, .{ .integer = 9 });
+    try std.testing.expectEqual(charged, storage.cells);
+    try std.testing.expectEqual(@as(u64, 2), (try slots_.get(1)).record[0].array[1].integer);
+    storage.allocator = arena.allocator();
+    const snapshot = try slots_.get(0);
+    try storage.store(element, .{ .integer = 10 });
+    try std.testing.expectEqual(@as(u64, 9), snapshot.record[0].array[1].integer);
+    try std.testing.expectEqual(@as(u64, 10), (try storage.read(element)).integer);
+    try slots_.put(0, initial);
+    try storage.store(element, .{ .integer = 11 });
+    try std.testing.expectEqual(@as(u64, 11), (try storage.read(element)).integer);
+    try std.testing.expectEqual(@as(u64, 9), snapshot.record[0].array[1].integer);
+    try std.testing.expectEqual(@as(u64, 2), initial.record[0].array[1].integer);
+    storage.leave(frame);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.read(element));
 }
 
 test "partial record storage reads initialized projected fields only" {
@@ -2805,16 +2860,17 @@ fn partialScratchFailures(a: std.mem.Allocator, session: bool) !void {
     const snapshot = try slots_.get(0);
     const charged = storage.cells;
     if (session) {
-        storage.initializeSession(slots_, 0, .{ .record = &.{ .{ .integer = 77 }, .{ .integer = 7 } } }) catch |err| {
+        storage.reinitializeSession(slots_, 0, .{ .record = &.{ .{ .integer = 77 }, .{ .integer = 7 } } }) catch |err| {
             try std.testing.expectEqual(charged, storage.cells);
             try std.testing.expectEqual(@as(u32, 1), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
             try std.testing.expectEqual(@as(u64, 42), (try storage.read(.{ .context = storage.context, .frame = frame, .root = 0, .path = &.{.{ .field = 0 }}, .mutability = .read_only })).integer);
             return err;
         };
     } else try slots_.put(0, snapshot);
-    // Session publication owns a deep copy of the three-cell complete value.
-    try std.testing.expectEqual(charged - 3 + @as(usize, if (session) 3 else 0), storage.cells);
-    try std.testing.expectEqual(@as(u32, 0), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
+    // Complete publication retains the mutable cells. Session publication also
+    // owns a deep copy of the three-cell value, independent of the producer.
+    try std.testing.expectEqual(charged + @as(usize, if (session) 3 else 0), storage.cells);
+    try std.testing.expectEqual(@as(u32, 1), storage.frames.items[@intFromEnum(frame)].partial_storage.count());
     try storage.prepareStorage(try storage.enter(1), 0, layout);
     if (!session) {
         storage.leave(frame);
@@ -2841,7 +2897,7 @@ test "call partial scratch releases every failed allocation and unpublished fram
     try std.testing.checkAllAllocationFailures(std.testing.allocator, partialScratchFailures, .{false});
 }
 
-test "session partial scratch releases backing without invalidating snapshots or references" {
+test "session reserved cells preserve snapshots through publication and reset" {
     try partialScratchFailures(std.testing.allocator, true);
     try std.testing.checkAllAllocationFailures(std.testing.allocator, partialScratchFailures, .{true});
 }

@@ -32,11 +32,9 @@
   `Vm.invoke` result lifetimes before automatic collection. The measured
   `aggregates` workload retains 16 visible cells while its runtime arena reaches
   14,057,702 bytes after 10,000 replacements; use it as a reclamation control.
-  The `float_parsing` control also exhausts the default cell quota during its
-  54th repeated parse of `42.0`; immutable path updates account for 97% of its
-  post-setup aggregate requests, while partial snapshot requests stay unchanged.
-  Evaluate mutable storage for projected writes while preserving immutable value
-  snapshots, reference identities, initialization and allocation-failure behavior.
+  Local aggregate writes now reuse reserved mutable cells. Keep `float_parsing`
+  as a control for the remaining snapshots, projections and frame identities;
+  it completes 1,000 commands with the default quota.
 
 Validate with growing REPL sessions, rollback/allocation failures and native/VM
 comparisons. New Safety precision needs aliasing and duplicate-cleanup rejections.

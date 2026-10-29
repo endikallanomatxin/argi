@@ -7,6 +7,13 @@ probe := () -> (.result: Int32) {
     if double + 1.0 != 16777217.0 { abort }
     half :: Float16 = 2048.0
     if half + 1.0 != half { abort }
+    if unwrap_or_abort(.value = parse_float16(.text = "1.5")).result != 1.5 { abort }
+    if unwrap_or_abort(.value = parse_float32(.text = "-2.75")).result != -2.75 { abort }
+    if unwrap_or_abort(.value = parse_float64(.text = "4.2e1")).result != 42.0 { abort }
+    match parse_float32(.text = "1.2.3").result {
+        ..ok _ { abort }
+        ..error failure { if failure.reason != ..invalid_input { abort } }
+    }
     result = 42
 }
 
