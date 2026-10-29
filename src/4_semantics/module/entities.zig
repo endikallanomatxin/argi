@@ -155,7 +155,6 @@ pub const PendingOperation = union(enum) {
     resolve_aggregate_literal: struct {
         node: ModuleNodeId,
         target: union(enum) { type: ModuleTypeId, pointee: ModuleNodeId, element: ModuleNodeId },
-        visible_bindings: BindingRange,
         assumed_arguments: ?ModuleNodeId = null,
         owner_function: ?ModuleFunctionId = null,
     },
@@ -254,7 +253,6 @@ pub const PendingOperation = union(enum) {
         body: ModuleBlockId,
         mode: primitives.ForMode,
         source: primitives.SourceRef,
-        visible_bindings: BindingRange,
         owner_function: ?ModuleFunctionId,
     },
     resolve_match: struct {

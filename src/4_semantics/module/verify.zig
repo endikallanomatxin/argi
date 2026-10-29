@@ -193,7 +193,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
                 .type => |ty| try require(verify.idFits(ty, views.typeCount(graph))),
                 .pointee, .element => |node| try require(verify.idFits(node, semantic.nodes.items.len)),
             }
-            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
             try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_entry_call => |value| {
@@ -278,7 +277,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.binding, semantic.bindings.items.len));
             try require(verify.idFits(value.iterable, semantic.nodes.items.len));
             try require(verify.idFits(value.body, semantic.blocks.items.len));
-            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
             try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_match => |value| {

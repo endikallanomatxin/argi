@@ -1146,10 +1146,12 @@ const Context = struct {
     }
 
     fn captureVisibleBindings(self: *Context) !entities.BindingRange {
-        var visible: std.ArrayList(entities.ModuleBindingId) = .empty;
-        defer visible.deinit(self.allocator);
-        for (self.bindings.items) |binding| try visible.append(self.allocator, binding.id);
-        return self.writer.appendBindingRefs(visible.items);
+        const refs = &self.graph.semantic.binding_refs;
+        const start = std.math.cast(u32, refs.items.len) orelse return error.ModuleSemanticGraphTooLarge;
+        const len = std.math.cast(u32, self.bindings.items.len) orelse return error.ModuleSemanticGraphTooLarge;
+        try refs.ensureUnusedCapacity(self.allocator, len);
+        for (self.bindings.items) |binding| refs.appendAssumeCapacity(binding.id);
+        return .{ .start = start, .len = len };
     }
 
     fn lowerBlockNode(self: *Context, node: syn.NodeIndex) !Lowered {
@@ -1216,7 +1218,6 @@ const Context = struct {
         if (expected) |target| _ = try self.writer.addPendingOperation(.{ .resolve_aggregate_literal = .{
             .node = node,
             .target = .{ .type = target },
-            .visible_bindings = try self.captureVisibleBindings(),
             .assumed_arguments = try self.captureAggregateAssumptions(source),
             .owner_function = self.current_function,
         } });
@@ -1229,7 +1230,6 @@ const Context = struct {
         _ = try self.writer.addPendingOperation(.{ .resolve_aggregate_literal = .{
             .node = node,
             .target = target,
-            .visible_bindings = try self.captureVisibleBindings(),
             .assumed_arguments = try self.captureAggregateAssumptions(source),
             .owner_function = self.current_function,
         } });
@@ -1580,7 +1580,6 @@ const Context = struct {
             .body = body,
             .mode = graph_mod.forModeFromSyntax(statement.mode),
             .source = self.sourceRef(node),
-            .visible_bindings = try self.captureVisibleBindings(),
             .owner_function = self.current_function,
         } }, try self.builtin(.Void));
     }

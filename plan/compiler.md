@@ -2,6 +2,9 @@
 
 ## Resolution and transactions
 
+- Use the removal of `reach` to eliminate obsolete dependency propagation,
+  signature completion, resolver state and rollback coordination. Prefer removing
+  work and invariants over retaining generalized machinery without a consumer.
 - Remove resolver state used only to communicate temporary results. Preserve
   diagnostics needed after speculative applicability probes; blanket rollback of
   virtual-signature failures loses the readonly generic-conversion explanation.
