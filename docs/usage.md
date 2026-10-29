@@ -344,6 +344,10 @@ inserted spaces. These editor features do not alter piped input.
 In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
 Left/Right move by UTF-8 character; Backspace and Delete remove the character
 before or under the cursor. Home/End move to the line boundaries.
+Redrawing saves the terminal cursor at that source position and restores it
+after writing the line, letting the terminal determine glyph widths instead of
+assuming one column per character. Navigation remains by Unicode scalar, not
+by grapheme cluster; terminal wrapping and scrolling need separate validation.
 Recalled lines can be edited before submission; Ctrl-C discards the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.
 

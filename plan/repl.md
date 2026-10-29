@@ -20,9 +20,9 @@ Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
 - Measure 10/100/1,000-command sessions and longer resource, definition and
   rejection workloads. Separate phase latency and retained memory; establish
   acceptance budgets and distinguish live results from reclaimable storage.
-- Complete Unicode display-width handling. Verify cursor/rendering, multiline
-  indentation, history, Ctrl-C/EOF and piped input using existing terminal and
-  transport tests; record platform coverage.
+- Validate terminal cursor save/restore for Unicode, wrapped lines and scrolling,
+  especially Windows consoles. Keep scalar navigation explicit. Verify multiline
+  indentation, history, Ctrl-C/EOF and piped input with terminal/transport tests.
 - Publish the supported subset, resource policy and failure/reset guarantees in
   usage documentation, and run acceptance cases in CI before removing the label.
 

@@ -288,6 +288,11 @@ pub fn checkEditor() !void {
         try repl.send("402\x1b[D\x1b[D\x1b[3~\n");
         try repl.until("_0 = 42");
         try repl.until(">>> ");
+        try repl.send("\"界a🙂\"\x1b[H\x1b[C\x1b[3~\n");
+        try repl.until("_1 = \"a🙂\"");
+        try repl.until(">>> ");
+        try contains(&repl, "\x1b[s");
+        try contains(&repl, "\x1b[u");
         try repl.quit();
         const text = repl.transcript.items;
         for (text, 0..) |byte, i| {

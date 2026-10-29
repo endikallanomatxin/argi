@@ -4,15 +4,50 @@ const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 
 const reset = "\x1b[0m";
-fn colored(output: *std.Io.Writer, source: []const u8, color: ?[]const u8) !void {
+const Cursor = struct {
+    offset: ?usize,
+    emitted: usize = 0,
+
+    fn write(self: *Cursor, output: *std.Io.Writer, source: []const u8) !void {
+        if (self.offset) |offset| {
+            if (offset >= self.emitted and offset <= self.emitted + source.len) {
+                const split = offset - self.emitted;
+                try output.writeAll(source[0..split]);
+                try output.writeAll("\x1b[s");
+                try output.writeAll(source[split..]);
+                self.offset = null;
+            } else try output.writeAll(source);
+        } else try output.writeAll(source);
+        self.emitted += source.len;
+    }
+};
+
+fn colored(output: *std.Io.Writer, source: []const u8, color: ?[]const u8, cursor: *Cursor) !void {
     if (color) |prefix| try output.writeAll(prefix);
-    try output.writeAll(source);
+    try cursor.write(output, source);
     if (color != null) try output.writeAll(reset);
 }
 
 /// Presentation only: incomplete input is normal and diagnostics are discarded.
 /// Color escapes never enter the editable source or its history.
 pub fn render(allocator: std.mem.Allocator, output: *std.Io.Writer, line: []const u8, quote: ?u8) !void {
+    return renderLine(allocator, output, line, quote, null, true);
+}
+
+/// The terminal measures its own glyph widths. Mark the source cursor while
+/// streaming the full line, then restore it without estimating display cells.
+pub fn renderWithCursor(allocator: std.mem.Allocator, output: *std.Io.Writer, line: []const u8, quote: ?u8, offset: usize, highlight: bool) !void {
+    std.debug.assert(offset <= line.len);
+    return renderLine(allocator, output, line, quote, if (offset < line.len) offset else null, highlight);
+}
+
+fn renderLine(allocator: std.mem.Allocator, output: *std.Io.Writer, line: []const u8, quote: ?u8, offset: ?usize, highlight: bool) !void {
+    var cursor: Cursor = .{ .offset = offset };
+    if (!highlight) {
+        try cursor.write(output, line);
+        if (offset != null) try output.writeAll("\x1b[u");
+        return;
+    }
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -22,14 +57,14 @@ pub fn render(allocator: std.mem.Allocator, output: *std.Io.Writer, line: []cons
     defer scanner.deinit();
     if (quote) |delimiter| {
         const tail = lexical.quotedTail(line, 0, delimiter);
-        try colored(output, line[0..tail.end], "\x1b[32m");
+        try colored(output, line[0..tail.end], "\x1b[32m", &cursor);
         scanner.location.offset = @intCast(tail.end);
     }
     while (scanner.location.offset < line.len) {
         const start: usize = scanner.location.offset;
         if (line[start] == '"' or line[start] == '\'') {
             const literal = lexical.quoted(line, start);
-            try colored(output, line[start..literal.end], "\x1b[32m");
+            try colored(output, line[start..literal.end], "\x1b[32m", &cursor);
             scanner.location.offset = @intCast(literal.end);
             continue;
         }
@@ -49,7 +84,28 @@ pub fn render(allocator: std.mem.Allocator, output: *std.Io.Writer, line: []cons
             .operator => "\x1b[34m",
             .identifier => if (std.ascii.isUpper(line[start])) "\x1b[36m" else if (start > 0 and line[start - 1] == '#') "\x1b[35m" else null,
         } else if (std.ascii.isDigit(line[start])) "\x1b[33m" else null;
-        try colored(output, line[start..end], color);
+        try colored(output, line[start..end], color, &cursor);
+    }
+    if (offset != null) try output.writeAll("\x1b[u");
+}
+
+test "REPL cursor markers preserve Unicode source and token colors" {
+    const text = "\"界e\u{301}🙂\"";
+    for ([_]bool{ false, true }) |highlight| {
+        for ([_]usize{ 0, 1, 4, 5, 7, 11, 12 }) |offset| {
+            var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+            defer output.deinit();
+            try renderWithCursor(std.testing.allocator, &output.writer, text, null, offset, highlight);
+            const color = if (highlight) "\x1b[32m" else "";
+            const end = if (highlight) reset else "";
+            const expected = if (offset == text.len)
+                try std.fmt.allocPrint(std.testing.allocator, "{s}{s}{s}", .{ color, text, end })
+            else
+                try std.fmt.allocPrint(std.testing.allocator, "{s}{s}\x1b[s{s}{s}\x1b[u", .{ color, text[0..offset], text[offset..], end });
+            defer std.testing.allocator.free(expected);
+            try std.testing.expectEqualStrings(expected, output.written());
+            try std.testing.expect(std.unicode.utf8ValidateSlice(output.written()));
+        }
     }
 }
 

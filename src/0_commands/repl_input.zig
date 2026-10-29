@@ -89,14 +89,7 @@ pub const Editor = struct {
 
     fn redraw(self: *Editor, output: *std.Io.Writer, prompt: []const u8, cursor: usize) !void {
         try output.print("\r\x1b[2K{s}", .{prompt});
-        if (self.highlight) try @import("repl_highlight.zig").render(self.allocator, output, self.line.items, self.context.quote) else try output.writeAll(self.line.items);
-        // Move by characters rather than UTF-8 bytes. Full terminal display-width
-        // accounting is deliberately left to a future multiline editor.
-        var remaining: usize = 0;
-        for (self.line.items[cursor..]) |byte| if (byte & 0xc0 != 0x80) {
-            remaining += 1;
-        };
-        if (remaining != 0) try output.print("\x1b[{d}D", .{remaining});
+        try @import("repl_highlight.zig").renderWithCursor(self.allocator, output, self.line.items, self.context.quote, cursor, self.highlight);
         try output.flush();
     }
 
