@@ -28,6 +28,13 @@ JIT and complete native-backend parity are not prerequisites.
    persistent owners/references and `#run`/`#if`. Classify each gap as unsupported
    language functionality, a VM limitation or a semantic discrepancy. Prioritize
    demonstrated consumers; do not add REPL-specific semantic fallbacks.
+   Concrete gaps from native/VM text comparisons: the address-identity assertion
+   in `text/26_string_view_trim` reaches `__reference_address`, outside checked
+   acquired-reference casts; trimming itself uses ordinary borrowed views and is
+   covered by `text/29_string_view_split` on both backends.
+   `text/41_float_parsing` exhausts the default VM memory quota inside decimal
+   integer multiplication. Investigate retained temporary storage before changing
+   limits; both fixtures remain native acceptance cases.
 2. Audit and extend existing native/VM comparisons, rather than building another
    test runner. Compare values, observable effects and cleanup counts. Cover
    replacement, aliases, early exits, numeric boundaries and dispatch between old

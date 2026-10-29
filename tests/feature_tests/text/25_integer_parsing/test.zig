@@ -8,4 +8,5 @@ test "feature_tests/text/25_integer_parsing" {
     const path = "tests/feature_tests/text/25_integer_parsing";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
+    try support.vmExpect(path, 0, null);
 }

@@ -1,6 +1,10 @@
-identity := #(.T: Type) (.value: T) -> (.result: T)  { result = value }
+identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
 
-main := () -> ()  {
+main := () -> () {
+    compiled ::= #run () -> (.result: UInt32) {
+        result = scalar_value('🙂')
+    }
+    if compiled != 128578 { abort }
     ascii :: UnicodeScalar = 'A'
     latin :: UnicodeScalar = 'ñ'
     euro :: UnicodeScalar = '€'

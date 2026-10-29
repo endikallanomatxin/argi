@@ -1468,6 +1468,10 @@ const FunctionLower = struct {
             .int_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = @import("../integer_arithmetic.zig").encode(value, b.integerBounds(self.parent.graph, self.slots.items[dst]).?) } } });
             },
+            .char_literal => |value| {
+                const fields = try self.parent.allocator.dupe(b.Value, &.{.{ .integer = value }});
+                _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .record = fields } } });
+            },
             .float_literal => |value| {
                 const kind = b.scalarKind(self.parent.graph, self.slots.items[dst]);
                 const number: b.Value = switch (kind) {

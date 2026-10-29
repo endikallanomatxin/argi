@@ -41,4 +41,18 @@ main := () -> (.status_code: Int32 = 0) {
     zero ::= unwrap_or_abort(.value = split(.self = binary, .separator = separator))
     expect_segment(.iterator = $&zero, .expected = "a")
     expect_segment(.iterator = $&zero, .expected = "b")
+    trimmed ::= trim(.self = " \tñ, € ,🙂\r\n").view
+    unicode_parts ::= unwrap_or_abort(.value = split(.self = trimmed, .separator = ","))
+    first_unicode ::= next(.self = $&unicode_parts).value
+    middle_unicode ::= trim(.self = next(.self = $&unicode_parts).value).view
+    expect_segment(.iterator = $&unicode_parts, .expected = "🙂")
+    if first_unicode != "ñ" or middle_unicode != "€" { abort }
+    if has_next(.self = &unicode_parts).ok { abort }
+    if trim(.self = " \t\r\n").view != "" { abort }
+    if trim_start(.self = "  x  ").view != "x  " { abort }
+    if trim_end(.self = "  x  ").view != "  x" { abort }
+    if trim(.self = " x ").view != " x " { abort }
+    nul ::= trim(.self = " \0 ").view
+    if byte_length(&nul).count != 1 { abort }
+    if unwrap_or_abort(.value = bytes_get(.view = &nul, .index = 0)) != 0 { abort }
 }

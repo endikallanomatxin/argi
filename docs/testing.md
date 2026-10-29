@@ -94,6 +94,10 @@ Collection fixtures `97_hash_map`, `157_unified_hash_map`,
 program natively and in the VM. Their explicit CAllocator/FFI setup avoids a
 System entrypoint and preserves the existing growth, borrowing, movement,
 cleanup-count and ordering assertions without creating duplicate fixtures.
+Text fixtures `24_string_view_search`, `25_integer_parsing`,
+`29_string_view_split` and `84_unicode_scalar_literals` compare the same
+assertions across both backends. The Unicode fixture also evaluates a scalar
+literal through `#run`, keeping compile-time execution on the shared VM path.
 There is no second expectation registry, compiler executable or test discovery
 mechanism. `test-programs` runs both frontend fixtures and executable fixtures.
 

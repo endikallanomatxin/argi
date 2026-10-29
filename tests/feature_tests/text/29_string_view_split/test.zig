@@ -8,4 +8,5 @@ test "feature_tests/text/29_string_view_split" {
     const path = "tests/feature_tests/text/29_string_view_split";
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
+    try support.vmExpect(path, 0, null);
 }
