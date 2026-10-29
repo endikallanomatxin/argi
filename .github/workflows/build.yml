@@ -66,6 +66,11 @@ jobs:
         timeout-minutes: 45
         run: zig build test-internal -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
 
+      - name: Sweep resource-prelude semantic allocation failures
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 60
+        run: zig build test-internal -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-extended-allocation-sweeps=true -Dtest-filter='REPL resource prelude releases failed source' --summary all
+
       - name: Run program fixtures with the optimized compiler
         timeout-minutes: 45
         run: zig build test-programs -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all

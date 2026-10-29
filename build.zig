@@ -167,6 +167,9 @@ pub fn build(b: *std.Build) void {
     });
     internal_tests_mod.addImport("llvm_c", llvm_c_mod);
     internal_tests_mod.addOptions("frontend_build_options", frontend_build_options);
+    const internal_test_options = b.addOptions();
+    internal_test_options.addOption(bool, "extended_allocation_sweeps", b.option(bool, "test-extended-allocation-sweeps", "Sweep every resource-prelude semantic preparation allocation (expensive)") orelse false);
+    internal_tests_mod.addOptions("internal_test_options", internal_test_options);
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,

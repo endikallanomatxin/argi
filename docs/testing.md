@@ -103,8 +103,10 @@ mechanism. `test-programs` runs both frontend fixtures and executable fixtures.
 
 The internal resource-prelude allocation test first sweeps source loading,
 syntax and ModuleSema over the real prelude text, checking that discarded batches
-leave no modules, source maps or source arena backing. It then prepares semantic
-state once, sweeps lowering failures over that checked candidate, verifier
+leave no modules, source maps or source arena backing. It also sweeps prepared
+session creation. The extended semantic preparation sweep checks graph rollback
+and that no revision or execution state is published. It prepares semantic state once
+for lowering failures over that checked candidate, verifier
 failures over a generated program and execution failures over its verified unit.
 The shared `checkAllocationAndResizeFailures` helper checks allocation failures,
 successful-path resize positions and complete release of requested bytes.
@@ -112,10 +114,22 @@ Lowering uses
 separate code and scratch arenas, matching ordinary execution preparation.
 These are separate allocation boundaries: a verifier OOM must
 not become `InvalidBytecode`, and invocation failures must poison/reset execution
-without pretending to roll back effects. The combined sweeps take about one
-minute in the measured Debug run; the VM-only sweep takes about one second.
-Retained graph creation, global resolution and Safety failure sweeps remain
-separate work, not coverage implied by this test.
+without pretending to roll back effects. Accepted-state retry with existing
+resource owners uses selected failure positions in the lifecycle test; preparing
+and discarding a fresh prelude does not establish that guarantee by itself.
+
+The exhaustive real-core semantic sweep is expensive and runs separately in
+Linux x86-64 CI with an optimized test binary:
+
+```sh
+zig build test-internal -Doptimize=ReleaseSafe -j16 -Dtest-jobs=16 \
+  -Dtest-extended-allocation-sweeps=true \
+  -Dtest-filter='REPL resource prelude releases failed source'
+```
+
+Ordinary internal runs retain the prepared-session, source, lowering, verifier
+and runtime sweeps, plus the selected accepted-state recovery probes. Release
+acceptance requires the extended sweep as well.
 
 ## Isolation
 
