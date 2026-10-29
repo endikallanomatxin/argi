@@ -589,6 +589,43 @@ test "REPL resource-bearing prelude survives failed reset and releases poisoned 
     try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
     const namespace = session.compiler.namespace;
     const revision = session.compiler.revision;
+    const accepted_graph = session.compiler.semantic.relocation.graph.checkpoint();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, session.compiler.beginPreparation(&session.diagnostics));
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqualDeep(accepted_graph, session.compiler.semantic.relocation.graph.checkpoint());
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(.ready, session.runtime.context.state);
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    {
+        var retry = try session.compiler.beginPreparation(&session.diagnostics);
+        defer retry.deinit();
+    }
+    try std.testing.expectEqualDeep(accepted_graph, session.compiler.semantic.relocation.graph.checkpoint());
+    var rejected_preparations: usize = 0;
+    for ([_]usize{ 0, 1, 8, 32, 128, 512 }) |offset| {
+        const saved_sources = try session.sources.beginBatch(&session.diagnostics);
+        defer session.sources.rollbackBatch(&session.diagnostics, saved_sources);
+        const pending = try session.sources.loadCommand(&session.diagnostics, "trial ::= unwrap_or_abort(.value = String(.length = 3))");
+        const modules = try session.sources.appendModuleViews(session.compiler.semantic.modules, pending.module);
+        const function: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(session.compiler.semantic.relocation.graph.functions.items.len + @intFromEnum(pending.function));
+        failing.fail_index = failing.alloc_index + offset;
+        {
+            defer failing.fail_index = std.math.maxInt(usize);
+            if (session.compiler.prepareContinuation(modules, &session.diagnostics, function)) |prepared_candidate| {
+                var candidate = prepared_candidate;
+                candidate.deinit();
+            } else |err| {
+                try std.testing.expectEqual(error.OutOfMemory, err);
+                rejected_preparations += 1;
+            }
+        }
+        try std.testing.expectEqualDeep(accepted_graph, session.compiler.semantic.relocation.graph.checkpoint());
+        try std.testing.expectEqual(revision, session.compiler.revision);
+        try std.testing.expectEqual(.ready, session.runtime.context.state);
+        try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    }
+    try std.testing.expect(rejected_preparations != 0);
     failing.fail_index = failing.alloc_index;
     try std.testing.expectError(error.OutOfMemory, session.reset());
     failing.fail_index = std.math.maxInt(usize);

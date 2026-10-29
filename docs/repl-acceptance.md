@@ -38,6 +38,22 @@ not merely the presence of workflow definitions.
 
 ## Exclusions to publish
 
+Current executable boundaries, checked against `bytecode/lower.zig` and
+`bytecode/verify.zig`:
+
+| Boundary | Current rejection |
+| --- | --- |
+| Runtime owning writes | Indexed replacement and replacement through runtime references require cleanup evidence not yet transported by these paths |
+| Native calls | Indirect calls are rejected; foreign calls require an explicit scalar host binding |
+| Memory representation | Acquired references and byte reinterpretation require supported numeric layouts and checked allocation receipts where owning storage needs them |
+| Global/captured storage | Unresolved storage outside local/session bindings is rejected; this is not a general closure or owning-global execution facility |
+| Compile-time execution | Acquired metadata preparation is rejected in compile-time mode |
+| Targets | Verification currently requires the native host target |
+
+These are restrictions to exercise with diagnostics, not reasons to exclude an
+entire library when its ordinary checked operations already work. In particular,
+supported collection owners use checked acquisition and cleanup paths.
+
 Full LLVM parity, JIT, closures and unrestricted native FFI are not prerequisites.
 Inventory actual bytecode rejections before finalizing the supported subset,
 including indirect calls, owning globals, acquired layouts and indirect owning
