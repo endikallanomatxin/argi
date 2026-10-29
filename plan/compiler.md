@@ -1,43 +1,39 @@
 # Compiler follow-ups
 
-## Resolution and transactions
+REPL release acceptance is tracked in [repl.md](repl.md). The work below is not
+an automatic release blocker; prioritize demonstrated correctness or cost issues.
 
-- Remove resolver state used only to communicate temporary results. Preserve
-  diagnostics needed after speculative applicability probes; blanket rollback of
-  virtual-signature failures loses the readonly generic-conversion explanation.
-- Reduce measured redundant resolution and verification, including remaining
-  binding/type sweeps. Include older entities completed by new facts.
-  Do not restrict expression type propagation to execution reachability alone:
-  ownership finalization also needs pending choice-payload write operands.
-- Investigate repeated propagation and Safety checking in the measured
-  specialization workload before introducing shared semantic bodies.
+## Resolution
+
+- Replace temporary resolver communication state with explicit results. Preserve
+  useful diagnostics across speculative rollback, including readonly generic
+  virtual conversions.
+- Reduce measured redundant binding/type sweeps, propagation and Safety work in
+  specialization workloads. Revisit older entities completed by new facts;
+  ownership also needs operands outside execution reachability.
 
 ## Safety
 
 - Extend conditional storage effects through stored results, indirect outputs
-  and loops, preserving intervening writes and exact caller identities.
+  and loops, preserving intervening writes and caller identities.
 - Extend hidden retention/replacement and grouped opaque mappings through output
   fields when a consumer needs them.
 - Represent hidden storage and cleanup identities before virtualizing Resizable.
 
 ## Execution
 
-- Track external compile-time reads in build dependencies and cache identity.
+- Track external compile-time reads in build dependencies/cache identity.
 - Separate host execution from target semantics for cross-compilation.
-- Reclaim immutable aggregate payloads using all roots: results, cross-frame
-  writes, session/acquired storage and virtual descriptors. Public `Vm.invoke`
-  results currently live until context reset/destruction or a fresh run; preserve
-  them as external roots before automatic collection. The measured
-  `aggregates` workload retains 16 visible cells while its runtime arena reaches
-  14,057,702 bytes after 10,000 replacements; use it as a reclamation control.
-  Local aggregate writes now reuse reserved mutable cells. Keep `float_parsing`
-  as a control for the remaining snapshots, projections and frame identities;
-  it completes 1,000 commands with the default quota.
+- Reclaim immutable aggregate payloads using every live root: results, cross-frame
+  writes, session/acquired storage, virtual descriptors and public `Vm.invoke`
+  results. Preserve their current validity until reset/destruction or a fresh run.
+  Use `aggregates` and `float_parsing` as controls; local aggregate writes already
+  reuse mutable cells. Baselines and reproduction commands belong in the
+  [performance notes](../docs/compiler-performance.md).
 
-Validate with growing REPL sessions, rollback/allocation failures and native/VM
-comparisons. New Safety precision needs aliasing and duplicate-cleanup rejections.
+Validate with growing sessions, allocation failures, rollback and native/VM
+comparisons. Safety extensions need aliasing and duplicate-cleanup rejections.
 
-References: [performance](../docs/compiler-performance.md),
-[resolution boundaries](../docs/semantic-resolution.md),
+References: [resolution boundaries](../docs/semantic-resolution.md),
 [Safety](../description/34_safety_model.md#precision-of-safety-effects),
 [virtual contracts](../description/134_virtual_types.md).

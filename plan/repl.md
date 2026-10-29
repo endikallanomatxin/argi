@@ -1,66 +1,47 @@
-# REPL stabilization
+# REPL stabilization — next release
 
-Remove the experimental label only after establishing a supported scope and
-repeatable acceptance checks. Keep ordinary semantics, Safety and the shared VM;
-JIT and complete native-backend parity are not prerequisites.
+Ship a non-experimental REPL for a documented execution subset. Keep the shared
+semantics, Safety and VM; full LLVM parity and JIT are not release requirements.
 
-## Current boundaries
+## Acceptance work
 
-- Bytecode lowering rejects unsupported operations in reachable bodies, including
-  untaken branches. General native pointers/FFI, indirect calls, owning globals,
-  some acquired layouts and owning writes through runtime references remain
-  restricted. Inventory actual lowerer/verifier rejections before expanding scope.
-- The prelude provides output, allocation and tracing, not unrestricted `System`.
-  Compile-time external reads additionally require dependency/cache tracking.
-- Compilation rejection preserves accepted state. Traps and cancellation preserve
-  completed effects, poison execution and require reset; user cleanup cannot
-  safely unwind a poisoned context. Healthy reset and exit use checked cleanup.
-- The semantic graph is shared, not copied per command. Frame identities,
-  acquisition tombstones, executable metadata and some immutable value storage
-  remain retained until reset. Numbered results intentionally retain their values.
-- Value display is bounded, with named fields/variants and opaque references.
-  Terminal editing lacks full Unicode display-width handling.
+- Define supported everyday programs through executable cases: text, collections,
+  imports, generic functions/contracts, partial initialization, persistent owners
+  and references, `#run` and `#if`. Inventory lowerer/verifier restrictions and
+  distinguish unsupported features from semantic discrepancies.
+- Extend existing native/VM comparisons for values, effects and cleanup:
+  replacement, aliases, early exits, numeric boundaries and calls/virtual dispatch
+  between old and new code units. Fix discrepancies within the supported scope.
+- Complete allocation/resize failure sweeps for resource-bearing prelude semantic
+  preparation: resolution, Safety, accepted-state rollback and retry. Source
+  preparation, retained graph creation and publication checks already exist.
+- Measure 10/100/1,000-command sessions and longer resource, definition and
+  rejection workloads. Separate phase latency and retained memory; establish
+  acceptance budgets and distinguish live results from reclaimable storage.
+- Complete Unicode display-width handling. Verify cursor/rendering, multiline
+  indentation, history, Ctrl-C/EOF and piped input using existing terminal and
+  transport tests; record platform coverage.
+- Publish the supported subset, resource policy and failure/reset guarantees in
+  usage documentation, and run acceptance cases in CI before removing the label.
 
-## Work and exit criteria
+## Boundaries to preserve
 
-1. Define the everyday supported scope using executable examples: text and
-   collections, imports, generic functions/contracts, partial initialization,
-   persistent owners/references and `#run`/`#if`. Classify each gap as unsupported
-   language functionality, a VM limitation or a semantic discrepancy. Prioritize
-   demonstrated consumers; do not add REPL-specific semantic fallbacks.
-   Concrete gaps from native/VM text comparisons: the address-identity assertion
-   in `text/26_string_view_trim` reaches `__reference_address`, outside checked
-   acquired-reference casts; trimming itself uses ordinary borrowed views and is
-   covered by `text/29_string_view_split` on both backends.
-2. Audit and extend existing native/VM comparisons, rather than building another
-   test runner. Compare values, observable effects and cleanup counts. Cover
-   replacement, aliases, early exits, numeric boundaries and dispatch between old
-   and new code units; retain internal tests for exhaustive local rules.
-3. Complete allocation/resize failure sweeps for semantic preparation of the
-   resource-bearing bundled prelude: retained graph creation, global resolution,
-   Safety and accepted-state rollback. The full interactive path currently probes
-   publication boundaries. Preserve rollback and retry without promising
-   transactional rollback of execution.
-4. Measure 10/100/1,000-command sessions, then longer resource/definition/rejection
-   workloads using the existing execution benchmark. Separate setup, frontend,
-   lowering, verification and execution; report per-command latency and retained
-   memory, distinguishing live results from reclaimable storage. Establish
-   reproducible budgets from these measurements.
-   Coordinate reclamation with [compiler follow-ups](compiler.md).
-5. Complete Unicode display-width handling without changing submitted source.
-   Preserve bounded presentation without dereferencing or copying owners. Verify
-   Unicode cursor/rendering, multiline input, history, Ctrl-C/EOF and piped input.
-   Keep real-terminal
-   tests alongside transport tests and document platform coverage.
+- Unsupported operations can reject reachable bodies even in untaken branches.
+  General FFI/native pointers, indirect calls, owning globals and some acquired
+  layouts/indirect owning writes remain restricted; audit actual coverage.
+- The prelude supplies output, allocation and tracing, not unrestricted System.
+- Compilation rejection preserves accepted state. Traps/cancellation preserve
+  completed effects, poison execution and require reset. Healthy reset/exit clean
+  resources; execution is not transactional.
+- Numbered results intentionally retain values. Measure other retained storage
+  against live roots; coordinate reclamation with [compiler.md](compiler.md).
 
-Before removing the label, publish the supported subset, failure/reset contract
-and measured resource policy in usage documentation, and make their acceptance
-cases part of existing CI. Fix semantic divergences within that scope; explicitly
-document exclusions. Existing differential tests and CI are a starting point,
-not evidence that this acceptance review has already passed.
+Known differential boundary: `text/26_string_view_trim` tests address identity
+through unsupported `__reference_address`; ordinary trimming is covered by
+`text/29_string_view_split` on both backends.
 
 References: [usage](../docs/usage.md#experimental-persistent-repl),
 [measurements](../docs/compiler-performance.md), `src/execution/interactive.zig`,
 `src/5_codegen/bytecode/lower.zig`, `src/0_commands/repl{,_input}.zig` and
-`src/execution_benchmark.zig`. General cross-compilation and external compile-time
-dependencies remain in `compiler.md`; closures remain unscheduled in `0.5.md`.
+`src/execution_benchmark.zig`. External compile-time reads and cross-compilation
+remain in [compiler.md](compiler.md); closures are unscheduled in [0.5.md](0.5.md).

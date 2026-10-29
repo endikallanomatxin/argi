@@ -723,6 +723,22 @@ test "REPL resource prelude releases failed source and backend allocations" {
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
     const prepared = try pipeline.prepareSessionFiles(files.items);
+    const initial_graph = prepared.relocation.graph.checkpoint();
+    try checkFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator, initial_files: []const sf.SourceFile, template: *const @import("../4_semantics/global/semantizer.zig").Session) !void {
+            const checkpoint = template.relocation.graph.checkpoint();
+            var candidate: interactive.Interactive = undefined;
+            candidate.initPrepared(a, initial_files, template, .{}) catch |err| {
+                try std.testing.expectEqualDeep(checkpoint, template.relocation.graph.checkpoint());
+                return err;
+            };
+            defer candidate.deinit();
+            try std.testing.expectEqual(@as(u64, 0), candidate.compiler.revision);
+            try std.testing.expectEqual(.fresh, candidate.runtime.context.state);
+            try std.testing.expectEqual(template.relocation.graph.types.items.len, candidate.compiler.semantic.relocation.graph.types.items.len);
+        }
+    }.run, .{ diagnostics.source_files, prepared });
+    try std.testing.expectEqualDeep(initial_graph, prepared.relocation.graph.checkpoint());
     var session: interactive.Interactive = undefined;
     try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();

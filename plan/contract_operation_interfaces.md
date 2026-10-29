@@ -1,60 +1,37 @@
-# Contract operation interfaces
+# Contract operation interfaces — proposal
 
-Design proposal for later study; no implementation or syntax change is approved.
-Replace open signatures such as `.add: _` with explicit, predictable operation
-interfaces. Validate the model before migrating core contracts.
+Undecided; no implementation or syntax change is approved. Explore replacing
+open signatures such as `.add: _` with declared interfaces.
 
-## Proposed rules
+## Intended model
 
-- The contract declares every input an implementation may accept.
-- An implementation may omit any input, including an operand. Omission means
-  ignoring that input; there is no required/optional classification for
-  implementation inputs.
-- Accepted inputs must match the declared names, types, access modes and Safety
-  guarantees. Implementations cannot add undeclared inputs.
-- Generic callers supply the complete interface, subject to ordinary defaults
-  and lexical `assume` rules. Contracts introduce no separate injection system.
-- Supplying an ignored argument still evaluates its expression exactly once,
-  with ordinary evaluation order, propagation and cleanup. Owned values must
-  be cleaned up; ignoring a reference does not consume its referent.
-- Signature conformance does not prove algebraic laws. Omitting an operand has
-  the same semantic responsibility as accepting it without using it.
+- Contracts declare every permitted input. Implementations may omit any input,
+  meaning they ignore it, but cannot add inputs or weaken declared types/access
+  and Safety guarantees. No separate optional-input classification is needed.
+- Generic callers supply the complete interface using ordinary defaults and
+  lexical `assume`. Evaluate ignored arguments exactly once in normal order;
+  preserve propagation and cleanup, including destruction capabilities. Ignoring
+  a reference does not consume its referent. Algebraic laws remain promises.
+- Explore allocator inputs for Add/Multiply: scalar and fixed-matrix operations
+  can ignore them; allocating operations use them.
+- Keep operand participants determining conformance, e.g. `Add#(Left, Right)`.
+  A concrete allocator specializes the operation, not the contract. An operation
+  promising any Allocator must accept that range or ignore the input; requiring
+  only ArenaAllocator would not conform. Avoid specializing an ignored body
+  unnecessarily, though call adaptation may specialize.
 
-Explore declaring allocator inputs on Add and Multiply. Scalar and fixed-matrix
-implementations could ignore them; strings and dynamic matrices could use them.
-Code generic over these implementations would provide an allocator.
+## Open design work
 
-## Generic operations
+- Operation-level compile-time binders, constraints, inference and conformance.
+- Associated Result versus provider parameters and fallible allocation, without
+  output-based conformance selection.
+- Whether a concretely selected implementation permits omission of ignored
+  inputs. Missing capabilities must never become a selection preference.
+- Named/positional inputs and defaults through ordinary aggregate checking;
+  preserve nominal identity and shared storage/cleanup plans.
+- Virtualization boundaries: arbitrary generic operations do not necessarily fit
+  a finite runtime method table.
 
-Keep conformance selection based on operand participants, such as
-`Add#(Left, Right)`. The allocator's concrete type would be a compile-time
-parameter of the operation, not another contract participant.
-
-This requires contracts to declare generic operations and verify that their
-implementations satisfy the promised genericity. If an operation promises any
-provider satisfying Allocator, an implementation must support that range or
-ignore the input; requiring only ArenaAllocator would not satisfy it.
-Ignoring a provider should not require specializing the implementation body
-for every provider type, though a call adaptation may still be specialized.
-
-## Questions to resolve
-
-- Define operation-level compile-time binders, constraints, input inference and
-  implementation matching. Do not restore unconstrained open signatures.
-- Specify the relationship between associated Result and provider parameters,
-  including fallible allocation, without output-based conformance selection.
-- Decide whether calls with an already-selected implementation can omit inputs
-  it ignores. Missing capabilities must not become a selection preference.
-- Specify named/positional arguments, defaults and implicit supply consistently.
-- Model argument adaptation through ordinary aggregate input checking and
-  storage/cleanup plans, without structural equality between nominal types or
-  backend-specific evaluation rules.
-- Define effect checking for ignored owned inputs, fallible evaluation and
-  cleanup, including capabilities required by destruction.
-- Establish which generic interfaces can be virtualized; do not assume arbitrary
-  operation-level specialization fits a finite runtime method table.
-
-Start with a fixed interface and omitted inputs, then operation-level provider
-genericity. Exercise scalar addition, string concatenation and fixed/dynamic
-matrix multiplication, plus ignored inputs with effects and resources. Compare
-native and VM behavior and preserve speculative rollback.
+First validate fixed interfaces with ignored inputs, then provider genericity.
+Use scalar addition, string concatenation, fixed/dynamic matrix multiplication
+and ignored effectful/owning inputs; compare native/VM behavior and rollback.
