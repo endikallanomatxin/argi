@@ -306,6 +306,11 @@ commands. Failure before publication leaves the session available for another
 attempt. A trap after execution starts poisons the context even though the
 prelude was not installed successfully; reset is required before continuing.
 Reset discards that failed prelude's state rather than rerunning its source.
+Once a unit is published, an allocation failure also requires reset. Reset
+releases VM-owned regions even if execution stopped with live resources; it
+does not attempt to run user destructors in a poisoned context. Completed host
+writes cannot be undone. Failure to allocate a replacement compiler before a
+reset starts preserves the current session and its live owners, allowing retry.
 Allocation uses VM regions rather than native pointers; the supported value and
 storage restrictions still apply.
 

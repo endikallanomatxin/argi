@@ -33,9 +33,10 @@ JIT and complete native-backend parity are not prerequisites.
    replacement, aliases, early exits, numeric boundaries and dispatch between old
    and new code units; retain internal tests for exhaustive local rules.
 3. Complete allocation/resize failure sweeps during initialization of the
-   resource-bearing bundled prelude. Verify publication, poison/reset and retry
-   boundaries. Document effects that cannot be undone and context-owned resource
-   release without user cleanup; never promise transactional rollback of execution.
+   resource-bearing bundled prelude. Extend the existing isolated runtime
+   allocator probes beyond the start/end boundaries; frontend allocation
+   failures need their own coverage. Preserve publication, poison/reset and retry
+   guarantees without promising transactional rollback of execution.
 4. Measure 10/100/1,000-command sessions, then longer resource/definition/rejection
    workloads using the existing execution benchmark. Separate setup, frontend,
    lowering, verification and execution; report per-command latency and retained

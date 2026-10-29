@@ -611,6 +611,84 @@ test "REPL resource-bearing prelude survives failed reset and releases poisoned 
     try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
 }
 
+test "REPL bundled prelude runtime allocation failures preserve publication boundaries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
+    defer sf.freeList(&allocator, &files);
+    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(files.items);
+    var allocation_count: usize = 0;
+    var resize_count: usize = 0;
+    var rejected: usize = 0;
+    var trapped: usize = 0;
+    // Establish counts first, then probe both ends of allocation and resize
+    // sequences. Exhaustive initialization sweeps remain a separate task.
+    for (0..7) |probe| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        if (probe > 0 and probe < 5) failing.fail_index = switch (probe) {
+            1 => 0,
+            2 => 1,
+            3 => allocation_count - 2,
+            else => allocation_count - 1,
+        };
+        if (probe >= 5) failing.resize_fail_index = if (probe == 5) 0 else resize_count - 1;
+        var session: interactive.Interactive = undefined;
+        try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+        var deinitialized = false;
+        defer if (!deinitialized) session.deinit();
+        // Frontend preparation uses its normal allocator. Only executable-unit
+        // preparation and execution storage participate in this failure probe.
+        session.runtime.deinit();
+        session.runtime = .init(failing.allocator(), &session.compiler, session.limits);
+        var output: std.Io.Writer = .failing;
+        var adapter: @import("../execution/host_output.zig").Output = .{ .writer = &output, .error_writer = &output };
+        const bindings = adapter.bindings();
+        session.runtime.context.host_bindings = &bindings;
+        const source = prelude ++ "\nowned ::= unwrap_or_abort(.value = String(.length = 8))\n";
+        session.initializePrelude(source) catch |err| {
+            failing.fail_index = std.math.maxInt(usize);
+            failing.resize_fail_index = std.math.maxInt(usize);
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            try std.testing.expect(session.prelude == null);
+            if (session.compiler.revision == 0) {
+                rejected += 1;
+                try std.testing.expectEqual(.fresh, session.runtime.context.state);
+            } else {
+                trapped += 1;
+                try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+                try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("owned"));
+            }
+            try session.reset();
+            try session.initializePrelude(source);
+            try std.testing.expectEqual(@as(i128, 8), (try session.submitInput("byte_length(&owned).count")).?.value.runtime.integer);
+            try session.close();
+            session.deinit();
+            deinitialized = true;
+            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            continue;
+        };
+        if (probe == 0) {
+            allocation_count = failing.alloc_index;
+            resize_count = failing.resize_index;
+            try std.testing.expect(allocation_count >= 2 and resize_count != 0);
+        }
+        // A failed resize may use the ordinary allocation fallback successfully.
+        failing.fail_index = std.math.maxInt(usize);
+        failing.resize_fail_index = std.math.maxInt(usize);
+        try session.close();
+        session.deinit();
+        deinitialized = true;
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+    try std.testing.expect(rejected > 0);
+    try std.testing.expect(trapped > 0);
+}
+
 test "REPL presents compiler types and reuses them in layout queries" {
     var session: interactive.Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
