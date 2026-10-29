@@ -689,6 +689,80 @@ test "REPL bundled prelude runtime allocation failures preserve publication boun
     try std.testing.expect(trapped > 0);
 }
 
+test "REPL resource prelude VM releases every failed execution allocation" {
+    const bytecode = @import("../5_codegen/bytecode/bytecode.zig");
+    const vm_mod = @import("../execution/vm.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
+    defer sf.freeList(&allocator, &files);
+    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(files.items);
+    var session: interactive.Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    var command = try session.sources.prepareCommand(&session.compiler, &session.diagnostics, prelude ++ "\nowned ::= unwrap_or_abort(.value = String(.length = 8))\n");
+    defer command.deinit();
+    const checked = command.candidate.checked.?;
+    const semantic = command.candidate.semantic.?;
+    const layout = try @import("../5_codegen/bytecode/session_layout.zig").build(allocator, checked.graph, semantic.resolvers.expressions.session_bindings.items);
+    var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(allocator, checked.graph, .{ .session = .{ .namespace = session.compiler.namespace, .bindings = layout } });
+    lower.annotations = &checked.annotations;
+    lower.diagnostics = &session.diagnostics;
+    const program = try lower.compile(command.function);
+    const verified = try bytecode.Verified.create(allocator, std.testing.allocator, program);
+    var output: std.Io.Writer = .failing;
+    var adapter: @import("../execution/host_output.zig").Output = .{ .writer = &output, .error_writer = &output };
+    const bindings = adapter.bindings();
+    // Frontend, lowering and verification happen once. Only invocation-owned
+    // metadata and retained runtime storage participate in the exhaustive sweep.
+    const Probe = struct {
+        fn run(a: std.mem.Allocator, unit: *const bytecode.Verified, entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId, hosts: []const @import("../execution/host.zig").Binding) !void {
+            var context = vm_mod.Context.init(a, 1_000_000);
+            defer context.deinit();
+            context.host_bindings = hosts;
+            var executor = vm_mod.Vm.initVerifiedShared(a, unit, .{}, &context) catch |err| {
+                try std.testing.expectEqual(error.OutOfMemory, err);
+                try std.testing.expectEqual(.fresh, context.state);
+                return err;
+            };
+            defer executor.deinit();
+            _ = executor.invoke(entry, &.{}) catch |err| {
+                try std.testing.expectEqual(error.OutOfMemory, err);
+                try std.testing.expectEqual(.poisoned, context.state);
+                context.reset();
+                try std.testing.expectEqual(.fresh, context.state);
+                return err;
+            };
+            try std.testing.expectEqual(.ready, context.state);
+            var live: usize = 0;
+            for (context.storage.acquisitions.entries.items) |region| if (region.live) {
+                live += 1;
+            };
+            try std.testing.expectEqual(@as(usize, 1), live);
+            // Context teardown releases host memory, not user destructors. The
+            // separate interactive lifecycle tests exercise checked close/reset.
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Probe.run, .{ verified, command.function, &bindings });
+    var baseline = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    try Probe.run(baseline.allocator(), verified, command.function, &bindings);
+    try std.testing.expectEqual(baseline.allocated_bytes, baseline.freed_bytes);
+    for (0..baseline.resize_index) |index| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = index });
+        Probe.run(failing.allocator(), verified, command.function, &bindings) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        };
+        // Resize refusal may use allocation fallback. Both outcomes must free
+        // every allocation, including a live owner on successful execution.
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+}
+
 test "REPL presents compiler types and reuses them in layout queries" {
     var session: interactive.Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
