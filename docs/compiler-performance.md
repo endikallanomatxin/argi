@@ -914,3 +914,36 @@ single sample. Retained memory remained 142.410 MiB. This is directional
 single-run evidence, not a controlled throughput comparison. Outer scan counts
 are unchanged; no cache, frontier or rollback state was added.
 Log: `.zig-cache/scalar-record-completion-profile.log`.
+
+### Baseline after removing reach
+
+At `b23508439`, a ReleaseSafe 1,000-command `prelude calls` control completed
+in 6,420.7 ms: frontend/publication 5,737.6 ms, lowering 339.4 ms,
+verification 339.1 ms and execution 4.7 ms. Retained requested backing grew
+from 143.597 MiB after setup to 159.357 MiB. Setup is excluded from command
+timings; these values are not RSS. The 10/100-command totals were
+57.4/579.9 ms, retaining 143.694/145.030 MiB respectively.
+
+Assignment contextualization took 86.5 ms, including 8.5 ms typed literals,
+42.0 ms initializers and 3.5 ms writes. Its candidate counts differ from the
+older controls, so the previous scan timings are not an A/B comparison.
+Binding type propagation still visited 86.0 million entries in 329.3 ms;
+expression propagation visited 77.8 million in 307.1 ms. Dereference/address
+materialization visited the same 77.8 million entries each, taking
+163.4/147.5 ms. All these sweeps reported zero changes in this control.
+
+Resolution took 1,616.2 ms and completion 989.2 ms inclusive. Safety took
+843.4 ms, while unit verification took 326.6 ms. These are overlapping phase
+measurements, not additive shares of total time. The control compiled 1,001
+functions and 7,004 instructions, reusing 999 bodies. One function body was
+checked and 29,999 body-proof reuses were recorded.
+
+The next investigation should target redundant binding/expression propagation
+and address/dereference sweeps, preserving old entities completed by new facts.
+The smaller contextualization cost does not justify a new retained cache on
+its own. This single observation establishes a current baseline, not a
+throughput gain attributable solely to removing reach.
+
+Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
+1000 prelude calls 1024 --resolution-profile`. Raw output:
+`.zig-cache/post-reach-profile.log`.

@@ -58,5 +58,3 @@ Start with a fixed interface and omitted inputs, then operation-level provider
 genericity. Exercise scalar addition, string concatenation and fixed/dynamic
 matrix multiplication, plus ignored inputs with effects and resources. Compare
 native and VM behavior and preserve speculative rollback.
-
-Related exploration: [dependency propagation refactorings](dependency_refactorings.md).
