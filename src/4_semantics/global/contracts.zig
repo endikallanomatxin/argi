@@ -514,7 +514,7 @@ pub const Resolver = struct {
         const measurement = if (self.core.scan_profile) |profile| profile.begin(.field_access_types) else null;
         defer if (measurement) |m| m.finish(changed);
         // Access nodes keep the effective runtime representation in their
-        // type. This is what lets later reach traversal and codegen stay
+        // type. This is what lets later reachability traversal and codegen stay
         // entirely static once the backing implementer is known.
         for (self.graph.nodes.items, 0..) |node, raw| {
             const access = switch (node.content) {

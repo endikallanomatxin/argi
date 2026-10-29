@@ -68,13 +68,22 @@ including checked replacement plans, rather than rediscovering destruction rules
 ## Transaction ownership
 
 Graph rollback owns provisional IDs and reversible completions. Resolver undo
-owns auxiliary references to those IDs, including caches and captured expressions. Contract checkpoints own conformance resolution state. Virtual-signature
+owns auxiliary references to those IDs, including caches and captured expressions.
+Contract checkpoints own conformance resolution state. Virtual-signature
 diagnostics have a different lifetime: generic applicability probing may discover
 an invalid conversion that must still explain why the enclosing call failed after
 its graph is rolled back. These source-based explanations survive local probes;
 the outer resolver checkpoint restores them when rejecting the whole submission.
 Session rollback also restores scheduler completions and persistent interactive
 state. Diagnostic retention is not permission to retain provisional graph IDs.
+
+`Generics.argument_diagnostic` is a scoped borrowed output sink, not retained
+session state. Nested type materialization reports through the active sink;
+applicability probes suppress it and restore the prior sink on every exit, so
+losing candidates cannot replace the enclosing failure. Removing that field
+requires preserving this nested routing, not simply returning the outermost
+materialization's error. Persistent failures and these scoped sinks have distinct
+lifetimes and must not acquire the same rollback or cloning policy.
 
 A discarded candidate releases its new compile-time requests. A genuinely
 suspended selection can explicitly retain request recipes while rolling back
