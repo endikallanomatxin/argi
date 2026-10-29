@@ -1200,8 +1200,11 @@ pub const Storage = struct {
             if (value != .integer or value.integer > 255) return error.ExecutionInvalidReference;
             var base = reference;
             base.byte_view = null;
-            try self.charge(view.layout.size);
-            const updated = try @import("../5_codegen/bytecode/numeric_layout.zig").writeByte(self.allocator, view.layout, try self.read(base), view.offset, @intCast(value.integer), view.endian);
+            const cells = try numeric.byteWriteCells(view.layout, view.offset);
+            try self.charge(cells);
+            errdefer self.cells -= cells;
+            const updated = try numeric.writeByte(self.allocator, view.layout, try self.read(base), view.offset, @intCast(value.integer), view.endian);
+            if (self.allocation_profile) |counts| counts.aggregate_cells +|= cells;
             return self.store(base, updated);
         }
         if (try self.acquiredView(reference)) |view| {
@@ -1291,6 +1294,9 @@ test "numeric byte storage views retain identity permissions and frame lifetime"
     const bytes = try storage.numericBytes(root, &layout, .little);
     try std.testing.expectEqual(@as(i128, 0x78), (try storage.read(bytes)).integer);
     const second = try storage.offsetReference(bytes, 1);
+    const charged = storage.cells;
+    for (0..5000) |_| try storage.store(second, .{ .integer = 0xab });
+    try std.testing.expectEqual(charged, storage.cells);
     try storage.store(second, .{ .integer = 0xab });
     try std.testing.expectEqual(@as(i128, 0x1234ab78), (try storage.read(root)).integer);
     try slots_.put(0, .{ .integer = 42 });
@@ -1302,6 +1308,35 @@ test "numeric byte storage views retain identity permissions and frame lifetime"
     try std.testing.expectError(error.ExecutionInvalidReference, storage.captureResolvedWrite(bytes, true));
     storage.leave(frame);
     try std.testing.expectError(error.ExecutionDeadReference, storage.read(bytes));
+}
+
+test "numeric aggregate byte writes charge snapshots and restore quota on allocation failure" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const frame = try storage.enter(1);
+    const slots_ = try storage.slots(frame);
+    const initial: b.Value = .{ .record = &.{ .{ .integer = 0 }, .{ .integer = 42 } } };
+    try slots_.put(0, initial);
+    const number: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = false } } };
+    const layout: numeric.Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &.{
+        .{ .offset = 0, .layout = &number },
+        .{ .offset = 4, .layout = &number },
+    } } };
+    const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    const bytes = try storage.numericBytes(root, &layout, .little);
+    const charged = storage.cells;
+    var failure = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = 0 });
+    storage.allocator = failure.allocator();
+    try std.testing.expectError(error.OutOfMemory, storage.store(bytes, .{ .integer = 7 }));
+    try std.testing.expectEqual(charged, storage.cells);
+    try std.testing.expectEqual(@as(u64, 0), (try slots_.get(0)).record[0].integer);
+    storage.allocator = arena.allocator();
+    try storage.store(bytes, .{ .integer = 7 });
+    try std.testing.expectEqual(charged + 2, storage.cells);
+    try std.testing.expectEqual(@as(u64, 7), (try slots_.get(0)).record[0].integer);
+    try std.testing.expectEqual(@as(u64, 42), (try slots_.get(0)).record[1].integer);
+    try std.testing.expectEqual(@as(u64, 0), initial.record[0].integer);
 }
 
 test "deferred session initialization requires discharged cleanup" {

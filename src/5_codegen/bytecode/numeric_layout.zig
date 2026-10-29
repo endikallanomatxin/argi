@@ -285,6 +285,29 @@ pub fn encodeFloat(layout: *const Layout, value: b.Value, bytes: []u8, endian: s
     for (bytes, 0..) |*byte, index| byte.* = try readByte(layout, value, index, endian);
 }
 
+/// Count immutable value cells rebuilt by writeByte, excluding physical bytes
+/// and padding. Scalar bit changes require no new value backing.
+pub fn byteWriteCells(layout: *const Layout, offset: usize) anyerror!usize {
+    if (offset >= layout.size) return error.ExecutionIndexOutOfBounds;
+    return switch (layout.shape) {
+        .reference, .virtual_reference, .choice => error.ExecutionInvalidReference,
+        .boolean, .integer, .floating => 0,
+        .fields => |fields| blk: {
+            for (fields) |field| {
+                if (offset >= field.offset and offset - field.offset < field.layout.size)
+                    break :blk std.math.add(usize, fields.len, try byteWriteCells(field.layout, offset - field.offset)) catch error.ExecutionMemoryLimit;
+            }
+            break :blk 0;
+        },
+        .array => |array| blk: {
+            if (array.stride == 0 or offset / array.stride >= array.length) return error.ExecutionInvalidReference;
+            const within = offset % array.stride;
+            if (within >= array.element.size) break :blk 0;
+            break :blk std.math.add(usize, array.length, try byteWriteCells(array.element, within)) catch error.ExecutionMemoryLimit;
+        },
+    };
+}
+
 /// Produce an updated value without mutating shared aggregate slices. The
 /// caller commits it through its evaluated storage destination afterwards.
 pub fn writeByte(allocator: std.mem.Allocator, layout: *const Layout, value: b.Value, offset: usize, byte: u8, endian: std.builtin.Endian) anyerror!b.Value {
@@ -372,6 +395,11 @@ test "numeric byte writes preserve siblings and interpret signed boundaries" {
     const number: Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = true } } };
     const fields = [_]Layout.Field{ .{ .offset = 0, .layout = &number }, .{ .offset = 4, .layout = &number } };
     const record: Layout = .{ .size = 8, .alignment = 4, .shape = .{ .fields = &fields } };
+    try std.testing.expectEqual(@as(usize, 0), try byteWriteCells(&number, 3));
+    try std.testing.expectEqual(@as(usize, 2), try byteWriteCells(&record, 3));
+    const array: Layout = .{ .size = 24, .alignment = 4, .shape = .{ .array = .{ .element = &record, .length = 3, .stride = 8 } } };
+    try std.testing.expectEqual(@as(usize, 5), try byteWriteCells(&array, 23));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, byteWriteCells(&array, 24));
     const values = [_]b.Value{ .{ .integer = 0 }, .{ .integer = 42 } };
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
