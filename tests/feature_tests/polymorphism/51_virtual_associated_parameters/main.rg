@@ -10,7 +10,7 @@ implement Readable#(Box) (.item: Type = Int32, .read = _impl_read_Box)
 
 _impl_read_Box := (.self: &Box) -> (.value: Int32) { value = self&.value }
 
-consume := (.input: &Virtual#(.contract: Readable#(.item: Int32))) -> (.value: Int32) {
+consume := (.input: &Virtual#(Readable#(.item: Int32))) -> (.value: Int32) {
     value = read(.self = input)
 }
 

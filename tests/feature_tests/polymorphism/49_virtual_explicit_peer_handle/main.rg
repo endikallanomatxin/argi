@@ -1,12 +1,12 @@
 A#(.Participant: Type): Contract = (
-    .read : (.self: &Participant, .other: &Virtual#(.contract: A)) -> (.value: Int32) where {}
+    .read : (.self: &Participant, .other: &Virtual#(A)) -> (.value: Int32) where {}
 )
 
 Box := (.value: Int32)
 
 implement A#(Box) (.read = _impl_read_Box)
 
-_impl_read_Box := (.self: &Box, .other: &Virtual#(.contract: A)) -> (.value: Int32) {
+_impl_read_Box := (.self: &Box, .other: &Virtual#(A)) -> (.value: Int32) {
     value = self&.value
 }
 

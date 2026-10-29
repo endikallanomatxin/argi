@@ -7,7 +7,7 @@ implement ErrorTracer#(Counter) (
     .reset_context = (.self: $&Counter) -> () { self&.count = 0 }
     .report        = (
         .self         : $&Counter,
-        .writer       : $&Virtual#(.contract: Writer),
+        .writer       : $&Virtual#(Writer),
         .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
@@ -97,7 +97,7 @@ implement Allocator#(FailFourthAllocator) (
         }
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         if self&.allocation_attempts == 1 { self&.array_backing_size = size }
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

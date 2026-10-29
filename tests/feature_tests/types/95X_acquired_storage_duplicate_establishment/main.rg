@@ -1,4 +1,4 @@
-establish := (.storage: AcquiredStorage, .deallocator: Virtual#(.contract: Deallocator)) -> (
+establish := (.storage: AcquiredStorage, .deallocator: Virtual#(Deallocator)) -> (
     .result : Allocation
 ) {
     result = establish_allocation(
@@ -11,7 +11,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
-    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
         .value = $&allocator
     )
     storage ::= unwrap_or_abort(

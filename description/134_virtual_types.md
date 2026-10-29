@@ -11,7 +11,7 @@ types/constants. Multiple hidden participants are not currently supported.
 > a useful consumer, joint lifetime/cleanup rules and representable results;
 > independently virtualized values would not establish that joint conformance.
 
-Contracts are static and use monomorphization by default. `Virtual#(.contract: A)`
+Contracts are static and use monomorphization by default. `Virtual#(A)`
 requests runtime dispatch through the fixed interface of A, useful for streams,
 allocators, error tracers and heterogeneous values.
 
@@ -56,7 +56,7 @@ _set_box := (.self: $&Box, .value: Int32) -> ()  {
 
 main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 42)
-    shape :: Virtual#(.contract: Shape) = to_virtual(.value = $&box)
+    shape :: Virtual#(Shape) = to_virtual(.value = $&box)
     set_value(.self = $&shape, .value = 43)
     value ::= get_value(.self = &shape)
     if value != 43 { status_code = 1 }
@@ -101,12 +101,12 @@ that handle's table. The receiver need not be the first input; its position
 comes from the contract.
 
 ```rg
-read_shape := (.shape: &Virtual#(.contract: Shape)) -> (.value: Int32)  {
+read_shape := (.shape: &Virtual#(Shape)) -> (.value: Int32)  {
     value = get_value(.self = shape)
 }
 ```
 
-Static code declares an explicit bound such as `#(.Value: Type: Shape#(Value))`. Use `Virtual#(.contract: Shape)` explicitly when dynamic dispatch
+Static code declares an explicit bound such as `#(.Value: Type: Shape#(Value))`. Use `Virtual#(Shape)` explicitly when dynamic dispatch
 is required. This dispatch support does not imply a general nominal
 `implement A#(Virtual#(A))` relationship.
 

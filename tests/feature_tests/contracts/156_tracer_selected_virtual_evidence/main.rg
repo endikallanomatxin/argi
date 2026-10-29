@@ -7,7 +7,7 @@ implement ErrorTracer#(Counter) (
     .reset_context = (.self: $&Counter) -> () { self&.count = 0 }
     .report        = (
         .self         : $&Counter,
-        .writer       : $&Virtual#(.contract: Writer),
+        .writer       : $&Virtual#(Writer),
         .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer

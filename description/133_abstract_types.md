@@ -23,7 +23,7 @@ listen := #(.Value: Type: Animal#(Value)) (.who: &Value) -> (.sound: Int32)  {
 
 A contract has no runtime representation. Store a concrete type, declare an
 explicitly constrained compile-time parameter, or request a borrowed virtual
-handle with `Virtual#(.contract: Animal)`. See [Virtual types](134_virtual_types.md).
+handle with `Virtual#(Animal)`. See [Virtual types](134_virtual_types.md).
 
 Participants select the most specific applicable implementation. Its associated
 types and constants are resolved afterwards; they never infer missing participants

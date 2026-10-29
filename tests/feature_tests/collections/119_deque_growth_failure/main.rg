@@ -9,7 +9,7 @@ implement ErrorTracer#(CountingTracer) (
     .reset_context = (.self: $&CountingTracer) -> () { self&.captures = 0 }
     .report        = (
         .self         : $&CountingTracer,
-        .writer       : $&Virtual#(.contract: Writer),
+        .writer       : $&Virtual#(Writer),
         .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer
@@ -104,7 +104,7 @@ implement Allocator#(RecordingAllocator) (
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

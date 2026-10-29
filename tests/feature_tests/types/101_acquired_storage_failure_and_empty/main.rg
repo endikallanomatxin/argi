@@ -22,7 +22,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         ..error _ {}
         ..ok ~storage { status_code = 2 }
     }
-    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
         .value = system.memory
     )
     empty ::= unwrap_or_abort(

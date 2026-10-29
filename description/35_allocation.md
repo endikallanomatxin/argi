@@ -47,7 +47,7 @@ Allocation : Type = (
     .size: UIntNative
     .alignment: UIntNative
     .anchor: &Any
-    .deallocator: Virtual#(.contract: Deallocator)
+    .deallocator: Virtual#(Deallocator)
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative

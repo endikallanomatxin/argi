@@ -21,7 +21,7 @@ record := #(.t: Type) (.value: t, .counter: $&UIntNative) -> () {
 }
 
 in_generic := #(.t: Type) (.value: $&t) -> () {
-    handle :: Virtual#(.contract: Counter) = to_virtual(.value = value)
+    handle :: Virtual#(Counter) = to_virtual(.value = value)
     bump(.self = $&handle)
 }
 
@@ -77,7 +77,7 @@ main := (.system: System) -> (.status_code: Int32) {
     }
     count :: UIntNative = 0
     if true {
-        assume counter: $&Virtual#(.contract: Counter) = [
+        assume counter: $&Virtual#(Counter) = [
             Probe(.counter = $&count)
             | to_virtual($&_)
             | $&_
@@ -95,7 +95,7 @@ main := (.system: System) -> (.status_code: Int32) {
     }
     if true {
         probe ::= Probe(.counter = $&count)
-        handle :: Virtual#(.contract: Counter) = to_virtual($&probe)
+        handle :: Virtual#(Counter) = to_virtual($&probe)
         bump(.self = $&handle)
         in_generic(.value = $&probe)
         direct ::= to_virtual#(Counter)($&probe)
@@ -136,7 +136,7 @@ implement ErrorTracer#(FailTracer) (
 
     .report = (
         .self         : $&FailTracer,
-        .writer       : $&Virtual#(.contract: Writer),
+        .writer       : $&Virtual#(Writer),
         .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer

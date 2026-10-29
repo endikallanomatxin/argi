@@ -30,7 +30,7 @@ second := (.value: &Int32, .depth: Int32) -> (.result: &Int32) {
     result = first(.value = value, .depth = depth)
 }
 
-read := (.view: &Virtual#(.contract: View), .depth: Int32) -> (.value: &Int32) {
+read := (.view: &Virtual#(View), .depth: Int32) -> (.value: &Int32) {
     value = get(.self = view, .depth = depth)
 }
 

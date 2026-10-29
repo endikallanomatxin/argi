@@ -6,7 +6,7 @@ implement Counter#(Probe) (.bump = _impl_bump_Probe)
 
 _impl_bump_Probe := (.self: $&Probe) -> () { self&.value = self&.value + 1 }
 
-escape := () -> (.handle: $&Virtual#(.contract: Counter)) {
+escape := () -> (.handle: $&Virtual#(Counter)) {
     handle = Probe() | to_virtual($&_) | $&_
 }
 

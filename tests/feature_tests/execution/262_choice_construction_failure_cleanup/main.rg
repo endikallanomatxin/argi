@@ -83,15 +83,15 @@ implement Consumer#(State) (
     }
 )
 
-select_handle := (.handle: $&Virtual#(.contract: Consumer)) -> (
-    .result : $&Virtual#(.contract: Consumer)
+select_handle := (.handle: $&Virtual#(Consumer)) -> (
+    .result : $&Virtual#(Consumer)
 ) {
     handles = handles + 1
     result = handle
 }
 
 build_virtual := (
-    .handle       : $&Virtual#(.contract: Consumer),
+    .handle       : $&Virtual#(Consumer),
     .fail         : Bool,
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Int32, (..stop))) {

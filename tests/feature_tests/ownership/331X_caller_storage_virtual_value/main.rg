@@ -8,7 +8,7 @@ implement Source#(Local) (.read = _impl_read_Local)
 
 _impl_read_Local := (.self: &Local) -> (.result: Int32) { result = self&.value }
 
-make := () -> (.result: Virtual#(.contract: Source)) {
+make := () -> (.result: Virtual#(Source)) {
     local :: Local = (.value = 29)
     result = to_virtual#(.contract: Source)(.value = &local)
 }

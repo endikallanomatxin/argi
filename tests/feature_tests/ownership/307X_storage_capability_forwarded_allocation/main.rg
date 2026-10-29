@@ -1,4 +1,4 @@
-allocation := (.address: UIntNative, .deallocator: Virtual#(.contract: Deallocator)) -> (
+allocation := (.address: UIntNative, .deallocator: Virtual#(Deallocator)) -> (
     .allocation : Allocation
 ) {
     allocation = trusted_establish_allocation(

@@ -941,7 +941,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             try writer.writeAll(")");
         },
         .virtual => |contract_type| {
-            try writer.writeAll("Virtual#(.contract: ");
+            try writer.writeAll("Virtual#(");
             try writeType(writer, graph, contract_type);
             try writer.writeAll(")");
         },
@@ -1968,7 +1968,7 @@ test "LSP renames scoped operations independently of shared aliases" {
         \\shared := (.value: &Cell) -> (.result: Int32) { result = value&.value }
         \\implement First#(Cell) (.read = shared)
         \\implement Second#(Cell) (.read = shared)
-        \\_read_virtual := (.value: &Virtual#(.contract: First)) -> (.result: Int32) { result = read(value).result }
+        \\_read_virtual := (.value: &Virtual#(First)) -> (.result: Int32) { result = read(value).result }
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(42)
         \\    first ::= First#(Cell).read(&cell).result

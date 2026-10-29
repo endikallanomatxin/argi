@@ -1,7 +1,5 @@
 write_trace_text := (
-    .text         : &CChar,
-    .writer       : $&Virtual#(.contract: Writer),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .text: &CChar, .writer: $&Virtual#(Writer), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
     bytes ::= _c_string_bytes(.text = text)
@@ -17,9 +15,7 @@ write_trace_text := (
 }
 
 write_trace_uint := (
-    .value        : UIntNative,
-    .writer       : $&Virtual#(.contract: Writer),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .value: UIntNative, .writer: $&Virtual#(Writer), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer
     divisor :: UIntNative = 1
@@ -44,7 +40,7 @@ write_trace_uint := (
 _error_report_entry := (
     .self         : $&FixedSizeErrorTracer,
     .index        : UIntNative,
-    .writer       : $&Virtual#(.contract: Writer),
+    .writer       : $&Virtual#(Writer),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer

@@ -1,7 +1,7 @@
 forward := (.storage: AcquiredStorage) -> (.result: AcquiredStorage) { result = ~storage }
 
 establish := (
-    .storage: AcquiredStorage, .size: UIntNative, .deallocator: Virtual#(.contract: Deallocator)
+    .storage: AcquiredStorage, .size: UIntNative, .deallocator: Virtual#(Deallocator)
 ) -> (.result: Allocation) {
     result = establish_allocation(
         .storage = ~storage, .size = size, .alignment = 8, .deallocator = deallocator
@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
-    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
         .value = $&allocator
     )
     storage ::= unwrap_or_abort(
@@ -37,7 +37,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     pages ::= unwrap_or_abort(
         .value = acquire_page_storage(.memory = system.memory, .size = 32, .alignment = 8192)
     )
-    page_deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+    page_deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
         .value = system.memory
     )
     page_allocation ::= establish_allocation(

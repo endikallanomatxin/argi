@@ -14,7 +14,7 @@ implement Counting#(Counter) (
     }
 )
 
-Holder := (.counter: Virtual#(.contract: Counting), .tag: UInt8)
+Holder := (.counter: Virtual#(Counting), .tag: UInt8)
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()

@@ -45,7 +45,7 @@ implement Allocator#(FailFirstAllocator) (
             return
         }
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

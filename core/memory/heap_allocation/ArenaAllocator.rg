@@ -26,7 +26,7 @@ implement Deinit#(ArenaDomain) (
 -- Backing receipts live in block headers. No metadata or storage is acquired
 -- until the first allocation; all blocks come from the chosen backing policy.
 ArenaAllocator := (
-    ._backing_allocator    : Virtual#(.contract: Allocator)
+    ._backing_allocator    : Virtual#(Allocator)
     .domain                : ArenaDomain
     ._block_head           : UIntNative
     .block_count           : UIntNative
@@ -178,7 +178,7 @@ implement Allocator#(ArenaAllocator) (
         }
 
         address ::= self&._block_head + aligned_offset
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation :: Allocation = (

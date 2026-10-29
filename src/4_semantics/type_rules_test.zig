@@ -1264,7 +1264,7 @@ test "type rules: polymorphism/51X_virtual_readonly_generic_conversion" {
         \\
         \\_impl_bump_Box := (.self: $&Box) -> () { self&.value = self&.value + 1 }
         \\
-        \\wrap := #(.t: Type: Counter) (.value: &t) -> (.result: Virtual#(.contract: Counter)) {
+        \\wrap := #(.t: Type: Counter) (.value: &t) -> (.result: Virtual#(Counter)) {
         \\    result = to_virtual#(.contract: Counter)(.value = value)
         \\}
         \\

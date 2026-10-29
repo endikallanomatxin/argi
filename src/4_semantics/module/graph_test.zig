@@ -632,7 +632,7 @@ test "virtual type arguments remain runtime contracts in parameterized IR" {
     const allocator = std.testing.allocator;
     const source =
         "Capability#(.Value: Type): Contract = ()\n" ++
-        "take := #(.t: Type) (.value: Virtual#(.contract: Capability)) -> ()  {}\n";
+        "take := #(.t: Type) (.value: Virtual#(Capability)) -> ()  {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "runtime_contract/main.rg", .tree = &tree, .source = source }};

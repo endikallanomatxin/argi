@@ -94,7 +94,7 @@ implement Consumer#(State) (
 )
 
 build_virtual := (
-    .handle       : $&Virtual#(.contract: Consumer),
+    .handle       : $&Virtual#(Consumer),
     .counter      : $&Counter,
     .fail         : Bool,
     .tracer       : $&Virtual#(ErrorTracer),

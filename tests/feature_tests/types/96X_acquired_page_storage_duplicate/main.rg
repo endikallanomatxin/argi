@@ -1,7 +1,7 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
-    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
         .value = system.memory
     )
     storage ::= unwrap_or_abort(

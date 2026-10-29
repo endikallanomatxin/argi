@@ -17,7 +17,7 @@ _impl_set_value_Box := (.self: $&Box, .value: Int32) -> () {
 
 main := () -> (.status_code: Int32) {
     box :: Box = (.value = 42)
-    erased :: Virtual#(.contract: Shape) = to_virtual#(.contract: Shape)(.value = $&box)
+    erased :: Virtual#(Shape) = to_virtual#(.contract: Shape)(.value = $&box)
     set_value(.self = $&erased, .value = 43)
     dynamic_value ::= get_value(.self = &erased)
     if dynamic_value == 43 and box.value == 43 {

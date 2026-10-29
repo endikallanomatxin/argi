@@ -2664,7 +2664,7 @@ fn diagnoseContractRuntimeBindings(
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
-            "contract '{s}' has no runtime representation; use a concrete type or Virtual#(.contract: {s})",
+            "contract '{s}' has no runtime representation; use a concrete type or Virtual#({s})",
             .{ name, name },
         );
         return true;

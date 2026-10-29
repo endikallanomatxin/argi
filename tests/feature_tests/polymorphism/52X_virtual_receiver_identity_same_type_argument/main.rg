@@ -21,7 +21,7 @@ _impl_get_Holder := (.other: &Holder, .self: &Holder) -> (.value: &Int32) {
 }
 
 read_view := (
-    .other: &Holder, .handle: &Virtual#(.contract: View), .error_tracer: $&Virtual#(ErrorTracer)
+    .other: &Holder, .handle: &Virtual#(View), .error_tracer: $&Virtual#(ErrorTracer)
 ) -> (.value: &Int32) {
     assume error_tracer
     value = get(.other = other, .self = handle)

@@ -65,7 +65,7 @@ implement ErrorTracer#(ProbeTracer) (
 
     .report = (
         .self         : $&ProbeTracer,
-        .writer       : $&Virtual#(.contract: Writer),
+        .writer       : $&Virtual#(Writer),
         .error_tracer : $&Virtual#(ErrorTracer)
     ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer

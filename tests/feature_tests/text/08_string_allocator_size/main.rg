@@ -43,7 +43,7 @@ implement Allocator#(CountingAllocator) (
         raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)
         self&.last_alloc_size = size
         self&.alloc_count = self&.alloc_count + 1
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

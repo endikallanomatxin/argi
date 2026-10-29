@@ -64,7 +64,7 @@ implement Allocator#(RecordingAllocator) (
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

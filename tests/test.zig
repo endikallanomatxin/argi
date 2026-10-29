@@ -2564,7 +2564,7 @@ test "argi repl retains acquired virtual witnesses across submissions" {
         \\    .bump = (.self: $&Counter, .amount: Int32) -> () { self&.value = self&.value + amount }
         \\    .read = (.self: &Counter) -> (.result: Int32) { result = self&.value }
         \\)
-        \\Holder := (.counter: Virtual#(.contract: Counting))
+        \\Holder := (.counter: Virtual#(Counting))
         \\counter :: Counter = (.value = 7)
         \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = allocator))
         \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
