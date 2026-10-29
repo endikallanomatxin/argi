@@ -323,16 +323,24 @@ test "interactive controller retains statements recovers rejected input and rese
 }
 
 test "interactive controller recovers poisoned contexts by reset" {
-    var session: Interactive = undefined;
-    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{ .instructions = 30 });
-    defer session.deinit();
-    try session.submitStatements("value ::= 42");
-    try std.testing.expectError(error.ExecutionInstructionLimit, session.submitStatements("while true {}"));
-    try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("value = 7"));
-    try std.testing.expectError(error.ExecutionContextPoisoned, session.close());
-    try session.reset();
-    try session.submitStatements("fresh ::= 7");
-    try session.close();
+    for ([_]struct { limits: vm.Limits, expected: anyerror }{
+        .{ .limits = .{ .instructions = 30 }, .expected = error.ExecutionInstructionLimit },
+        .{ .limits = .{ .call_depth = 4 }, .expected = error.ExecutionCallDepthLimit },
+        .{ .limits = .{ .value_cells = 64 }, .expected = error.ExecutionMemoryLimit },
+    }) |case| {
+        var session: Interactive = undefined;
+        try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, case.limits);
+        defer session.deinit();
+        try session.submitStatements("value ::= 42");
+        try session.submitDefinitions("recurse := (.value: Int32) -> (.result: Int32) { result = recurse(.value = value) }");
+        try std.testing.expectError(case.expected, session.submitStatements("recurse(.value = value)"));
+        try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+        try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("value = 7"));
+        try std.testing.expectError(error.ExecutionContextPoisoned, session.close());
+        try session.reset();
+        try session.submitStatements("fresh ::= 7");
+        try session.close();
+    }
 }
 
 test "interactive definitions remain visible to subsequent definitions and statements" {

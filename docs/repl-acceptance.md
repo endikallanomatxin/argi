@@ -22,6 +22,14 @@ use POSIX pseudoterminals; passing transport tests alone does not demonstrate
 Windows console behavior. Record actual workflow results for the final candidate,
 not merely the presence of workflow definitions.
 
+Local preflight on Linux x86-64 (2026-10-29) passed the five collection/text
+fixtures listed above, including `collections/149_owned_ordering`, plus execution
+fixtures `02_floating_point_vm`, `14_integer_boundaries_vm`,
+`119_allocation_cleanup` and `138_comptime_transient_expression_defaults`.
+Each passed its native assertions and VM assertions with matching stdout and
+the expected exit status. This used the existing installed compiler; repeat
+against the final candidate, including its rebuilt editor and bundled libraries.
+
 ## Stability contract
 
 - Ordinary semantic analysis and Safety apply before publication. Rejected input
