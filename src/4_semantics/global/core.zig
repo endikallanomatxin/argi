@@ -2453,6 +2453,18 @@ test "binding materialization follows pending states as bindings are appended" {
     try std.testing.expect(try resolver.materializeBindingTypes());
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), graph.bindings.items[3].ty);
     try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.bindings.items[0].ty);
+
+    const use: global_sg.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(3) } });
+    try std.testing.expect(!try resolver.materializeBindingTypes());
+    var transaction = graph.beginTransaction(allocator);
+    defer transaction.deinit();
+    try graph.resolveBindingType(allocator, @enumFromInt(3), @enumFromInt(0));
+    try std.testing.expect(try resolver.materializeBindingTypes());
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), graph.node(use).ty);
+    transaction.rollback();
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), graph.node(use).ty);
+    try std.testing.expect(!try resolver.materializeBindingTypes());
 }
 
 test "completed call defaults remain reversible after nested publication" {

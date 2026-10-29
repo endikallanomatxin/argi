@@ -947,3 +947,13 @@ throughput gain attributable solely to removing reach.
 Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
 1000 prelude calls 1024 --resolution-profile`. Raw output:
 `.zig-cache/post-reach-profile.log`.
+
+A follow-up experiment moved the existing binding/type identity check ahead
+of the unresolved-binding lookup in expression propagation. The same control
+measured 6,391.2 ms overall and 285.0 ms expression propagation, compared
+with 6,420.7/307.1 ms above. Pool visits, retained backing and executable counts
+were unchanged. The total difference is too small to establish a useful gain
+from one sample. The production change was discarded: it does not address the
+repeated sweeps. The existing binding test now also checks propagation after
+a completed binding changes type and restoration after transactional rollback.
+Raw experiment output: `.zig-cache/binding-identity-profile.log`.
