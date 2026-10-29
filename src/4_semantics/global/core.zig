@@ -117,9 +117,11 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn materializeDereferences(self: *Resolver) !bool {
+    // Both reference forms derive their type from an operand. Revisit old nodes
+    // as well as new ones: contextual types can change in a later round.
+    pub fn materializeReferenceTypes(self: *Resolver) !bool {
         var changed = false;
-        const measurement = if (self.scan_profile) |profile| profile.begin(.dereferences) else null;
+        const measurement = if (self.scan_profile) |profile| profile.begin(.reference_types) else null;
         defer if (measurement) |m| m.finish(changed);
         for (self.graph.nodes.items, 0..) |node, raw| {
             if (measurement) |m| m.visit(1);
@@ -130,7 +132,9 @@ pub const Resolver = struct {
                         .pointer => |pointer| pointer.child,
                         else => continue,
                     };
-                    if (node.ty != null and types.equal(self.graph, node.ty.?, child) and types.equal(self.graph, dereference.pointer_type, pointer_type)) continue;
+                    // Equality deliberately rejects unresolved types, even the
+                    // same ID. Propagation advances only when stored IDs change.
+                    if (node.ty == child and dereference.ty == child and dereference.pointer_type == pointer_type) continue;
                     var updated = node;
                     updated.ty = child;
                     updated.content.dereference.ty = child;
@@ -139,19 +143,6 @@ pub const Resolver = struct {
                     self.stats.dereferences += 1;
                     changed = true;
                 },
-                else => {},
-            }
-        }
-        return changed;
-    }
-
-    pub fn materializeAddresses(self: *Resolver) !bool {
-        var changed = false;
-        const measurement = if (self.scan_profile) |profile| profile.begin(.addresses) else null;
-        defer if (measurement) |m| m.finish(changed);
-        for (self.graph.nodes.items, 0..) |node, raw| {
-            if (measurement) |m| m.visit(1);
-            switch (node.content) {
                 .address_of => |value| {
                     const child = self.graph.nodes.items[@intFromEnum(value)].ty orelse continue;
                     if (self.graph.isTypeUnresolved(child)) continue;
@@ -2299,7 +2290,7 @@ test "typed integer initializer adopts its binding context" {
     try std.testing.expect(!try resolver.materializeAssignmentValues());
 }
 
-test "address type materializes after its child resolves" {
+test "reference types converge after late operand completion and roll back contextual changes" {
     const allocator = std.testing.allocator;
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -2307,24 +2298,41 @@ test "address type materializes after its child resolves" {
     const unresolved_ty: global_sg.GlobalTypeId = @enumFromInt(0);
     const bool_ty: global_sg.GlobalTypeId = @enumFromInt(1);
     const bool_pointer_ty: global_sg.GlobalTypeId = @enumFromInt(2);
+    const pending_pointer_ty: global_sg.GlobalTypeId = @enumFromInt(3);
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.types.append(allocator, .{ .builtin = .Bool });
     try graph.types.append(allocator, .{ .pointer = .{ .child = bool_ty, .mutability = .read_only } });
+    try graph.types.append(allocator, .{ .pointer = .{ .child = unresolved_ty, .mutability = .read_only } });
     try graph.markTypeUnresolved(allocator, unresolved_ty);
     try graph.nodes.append(allocator, .{ .source = source, .ty = unresolved_ty, .content = .{ .int_literal = 7 } });
     try graph.nodes.append(allocator, .{ .source = source, .ty = bool_pointer_ty, .content = .{ .address_of = @enumFromInt(0) } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = bool_ty, .content = .{ .dereference = .{ .pointer = @enumFromInt(1), .pointer_type = bool_pointer_ty, .ty = bool_ty } } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = pending_pointer_ty, .content = .{ .address_of = @enumFromInt(0) } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = unresolved_ty, .content = .{ .dereference = .{ .pointer = @enumFromInt(3), .pointer_type = pending_pointer_ty, .ty = unresolved_ty } } });
 
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    try std.testing.expect(!try resolver.materializeAddresses());
+    try std.testing.expect(!try resolver.materializeReferenceTypes());
 
     try graph.resolveType(allocator, unresolved_ty, .{ .builtin = .Int32 });
-    try std.testing.expect(try resolver.materializeAddresses());
+    try std.testing.expect(try resolver.materializeReferenceTypes());
     const result_pointer = switch (graph.semanticType(graph.node(@enumFromInt(1)).ty.?)) {
         .pointer => |pointer| pointer,
         else => return error.ExpectedPointerType,
     };
     try std.testing.expectEqual(unresolved_ty, result_pointer.child);
     try std.testing.expectEqual(primitives.PointerMutability.read_only, result_pointer.mutability);
+    try std.testing.expectEqual(unresolved_ty, graph.node(@enumFromInt(2)).ty.?);
+    try std.testing.expect(!try resolver.materializeReferenceTypes());
+    var transaction = graph.beginTransaction(allocator);
+    defer transaction.deinit();
+    try graph.setNodeType(allocator, @enumFromInt(0), bool_ty);
+    try std.testing.expect(try resolver.materializeReferenceTypes());
+    try std.testing.expectEqual(bool_pointer_ty, graph.node(@enumFromInt(1)).ty.?);
+    try std.testing.expectEqual(bool_ty, graph.node(@enumFromInt(2)).ty.?);
+    try std.testing.expect(!try resolver.materializeReferenceTypes());
+    transaction.rollback();
+    try std.testing.expectEqual(unresolved_ty, graph.node(@enumFromInt(2)).ty.?);
+    try std.testing.expect(!try resolver.materializeReferenceTypes());
 }
 
 test "global core resolver is graph-only" {

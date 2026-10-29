@@ -1,5 +1,33 @@
 # Measuring compiler frontend performance
 
+## One sweep for reference types
+
+Address and dereference type materialization now share one node-ordered scan.
+Both derive results from operand types; the fixed point still revisits old nodes
+when later contextual information changes them. There is no retained candidate
+list, completion cache or new rollback state. CLI timings and resolution profiles
+report the combined phase as `reference_types`.
+
+An isolated Linux x86-64 ReleaseSafe comparison of 1,000 prelude calls, using
+`execution-benchmark 1000 prelude calls 1024 --resolution-profile`:
+
+| Metric | Separate sweeps | Combined sweep |
+|---|---:|---:|
+| Reference node visits | 155,565,854 | 77,782,927 |
+| Reference materialization ms | 314.289 | 211.701 |
+| Fixed-point rounds | 3,001 | 3,001 |
+| Frontend/publication ms | 5,716.273 | 5,622.005 |
+| Total ms | 6,398.002 | 6,298.979 |
+| Tracked live / peak MiB | 159.847 / 160.228 | 159.847 / 160.228 |
+
+The visit reduction is exact for this workload; the timing improvement is one
+paired observation, not a general compilation-speed guarantee. Both versions
+produce the same body/reuse counts, and neither reference phase changes nodes
+during these commands. Late completion, retyping, convergence and transactional
+restoration remain covered independently by the reference materialization test.
+
+Logs: `.zig-cache/reference-sweep-{before,after}.csv`.
+
 ## Reusing verifier operand scratch
 
 Structural checks and definite-initialization propagation now share one temporary

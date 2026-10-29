@@ -13,6 +13,7 @@ not permission to publish or execute a unit.
 | Pending operations | Their operands, visible declarations and selected evidence | Specialized functions, contextual types and compile-time requests |
 | Binding and expression types | Initializer/operand types | Types needed by calls, references and contextual construction |
 | Contextual values | Expected types and aggregate shapes | Nested literal types, including in previously created nodes |
+| Reference types | Operand types and existing reference permissions | Address and dereference types, including previously typed nodes |
 | Generic/associated types | Bound parameters and conformances | Fields, defaults and nullable/Errable representations |
 | Error inference | Available bodies and propagation paths | Reason sets and revised propagation result types |
 | Conformance validation | Declared operation signatures and lexical assumptions | Selected operation bodies |
@@ -22,6 +23,13 @@ The inner fixed point repeats when these facts change. It is not restricted to
 new pool tails: old unresolved slots can complete, and typed expressions may
 receive a different contextual type. Execution reachability alone is insufficient
 to select all type-propagation operands required by ownership finalization.
+Address and dereference materialization share one source-ordered graph scan.
+They derive types from operands rather than certifying a node permanently;
+later contextual changes still revisit both forms until the fixed point settles.
+Writing the same unresolved IDs is not progress: semantic type equality rejects
+unresolved types, so propagation compares the actual stored IDs and annotations
+before reporting a change. Stable pending facts must allow quiescence and normal
+unresolved diagnostics rather than forcing another identical resolution round.
 
 After quiescence, ownership finalizes eligible bodies. Cleanup can make more
 functions reachable, so resolution resumes before finalizing those bodies.

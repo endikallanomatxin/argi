@@ -60,8 +60,7 @@ pub const Stats = struct {
         string_literal_types_ns: u64 = 0,
         binding_types_ns: u64 = 0,
         assignment_values_ns: u64 = 0,
-        dereferences_ns: u64 = 0,
-        addresses_ns: u64 = 0,
+        reference_types_ns: u64 = 0,
         known_generic_types_ns: u64 = 0,
         field_access_types_ns: u64 = 0,
         sugar_types_ns: u64 = 0,
@@ -1232,8 +1231,7 @@ pub const Session = struct {
             .string_literal_types_ns = @intCast(progress.profile_string_literal_types_ns),
             .binding_types_ns = @intCast(progress.profile_binding_types_ns),
             .assignment_values_ns = @intCast(progress.profile_assignment_values_ns),
-            .dereferences_ns = @intCast(progress.profile_dereferences_ns),
-            .addresses_ns = @intCast(progress.profile_addresses_ns),
+            .reference_types_ns = @intCast(progress.profile_reference_types_ns),
             .known_generic_types_ns = @intCast(progress.profile_known_generic_types_ns),
             .field_access_types_ns = @intCast(progress.profile_field_access_types_ns),
             .sugar_types_ns = @intCast(progress.profile_sugar_types_ns),
@@ -1298,8 +1296,7 @@ const ResolutionProgress = struct {
     profile_string_literal_types_ns: i96 = 0,
     profile_binding_types_ns: i96 = 0,
     profile_assignment_values_ns: i96 = 0,
-    profile_dereferences_ns: i96 = 0,
-    profile_addresses_ns: i96 = 0,
+    profile_reference_types_ns: i96 = 0,
     profile_known_generic_types_ns: i96 = 0,
     profile_field_access_types_ns: i96 = 0,
     profile_sugar_types_ns: i96 = 0,
@@ -1415,11 +1412,8 @@ fn advanceResolution(
             if (try core.materializeAssignmentValuesForUnit(reachable)) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &progress.profile_assignment_values_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (try core.materializeDereferences()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &progress.profile_dereferences_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (try core.materializeAddresses()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &progress.profile_addresses_ns);
+            if (try core.materializeReferenceTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_reference_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
             var argument_failure: ?generic_mod.Resolver.ArgumentFailure = null;
             if (generics.materializePendingTypes(&pending_types, &argument_failure) catch |err| {

@@ -169,8 +169,7 @@ fn printStats(
     std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
     std.debug.print("      binding types:           {d:.3} ms\n", .{milliseconds(semantic_timings.binding_types_ns)});
     std.debug.print("      assignment values:       {d:.3} ms\n", .{milliseconds(semantic_timings.assignment_values_ns)});
-    std.debug.print("      dereferences:            {d:.3} ms\n", .{milliseconds(semantic_timings.dereferences_ns)});
-    std.debug.print("      addresses:               {d:.3} ms\n", .{milliseconds(semantic_timings.addresses_ns)});
+    std.debug.print("      reference types:         {d:.3} ms\n", .{milliseconds(semantic_timings.reference_types_ns)});
     std.debug.print("      generic types:           {d:.3} ms\n", .{milliseconds(semantic_timings.known_generic_types_ns)});
     std.debug.print("      field access types:      {d:.3} ms\n", .{milliseconds(semantic_timings.field_access_types_ns)});
     std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
