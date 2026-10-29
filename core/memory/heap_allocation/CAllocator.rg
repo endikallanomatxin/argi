@@ -14,9 +14,18 @@ implement Init#(CAllocator, CAllocatorInitArgs) (
 )
 
 implement Allocator#(CAllocator) (
-    .allocate = (.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&CAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         acquired ::= acquire_heap_storage(
             .size = size, .alignment = alignment, .ffi = self&.ffi
         )

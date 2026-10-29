@@ -6,9 +6,17 @@ StringView := (
 implement ImplicitlyCopyable#(StringView) ()
 
 -- Byte references exclude the end position, including for empty views.
-string_view_byte_address := (.self: &StringView, .index: UIntNative) -> (
-    .result : Errable#(&UInt8, (..out_of_bounds))
-) {
+string_view_byte_address := (
+    .self         : &StringView,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(&UInt8, (..out_of_bounds))) {
+    assume error_tracer
+
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -18,9 +26,17 @@ string_view_byte_address := (.self: &StringView, .index: UIntNative) -> (
     ).reference
 }
 
-_view_get_byte := (.view: &StringView, .index: UIntNative) -> (
-    .result : Errable#(UInt8, (..out_of_bounds))
-) {
+_view_get_byte := (
+    .view         : &StringView,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt8, (..out_of_bounds))) {
+    assume error_tracer
+
     reference ::= string_view_byte_address(view, .index = index)!
     result = ..ok reference&
 }

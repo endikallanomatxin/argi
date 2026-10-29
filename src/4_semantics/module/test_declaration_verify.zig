@@ -49,7 +49,7 @@ fn validateOne(
         try diagnostics.add(loc, .semantic, "tests must define a body", .{});
         return false;
     }
-    _ = entry_interface.classifyInput(file, db.get(file.file_id).source, function.input, .isolated) catch {
+    _ = entry_interface.classifyInput(file, db.get(file.file_id).source, function.input, .program) catch {
         try diagnostics.add(loc, .semantic, "{s}", .{entry_interface.test_input_message});
         return false;
     };

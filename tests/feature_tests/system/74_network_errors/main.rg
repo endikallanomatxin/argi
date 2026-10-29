@@ -1,24 +1,26 @@
 main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
     assume network := system.network
-    match resolve_addresses(.host = "local\0host", .port = 0) {
+    match resolve_addresses(.self = network, .host = "local\0host", .port = 0) {
         ..ok _ { abort } ..error error {
             if [error.reason != ..invalid_network_argument] { abort }
         }
     }
-    addresses ::= resolve_addresses(.host = "localhost", .port = 0, .family = ..ipv4)!!!
+    addresses ::= resolve_addresses(
+        .self = network, .host = "localhost", .port = 0, .family = ..ipv4
+    )!!!
     match address_at(.self = &addresses, .index = length(.self = &addresses).count) {
         ..ok _ { abort } ..error error { if [error.reason != ..out_of_bounds] { abort } }
     }
     address ::= address_at(.self = &addresses, .index = 0)!!!
-    match UdpSocket(.address = address) {
+    match UdpSocket(.network = network, .address = address) {
         ..ok _ { abort } ..error error {
             if [error.reason != ..invalid_network_argument] { abort }
         }
     }
-    listener ::= TcpListener(.address = address)!!!
+    listener ::= TcpListener(.network = network, .address = address)!!!
     bound ::= local_address(.self = &listener)!!!
-    client ::= TcpConnection(.address = bound)!!!
+    client ::= TcpConnection(.network = network, .address = bound)!!!
     connection ::= accept(.self = $&listener)!!!
     set_timeout(.self = $&connection, .milliseconds = 5000)!!!
     Writer#().write_byte(.self = $&client, .byte = 77)!!!

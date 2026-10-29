@@ -1,8 +1,24 @@
-fail := () -> (.result: Errable#(.t: Void, .reasons: (..test_error))) {
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..test_error))) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_error)
 }
 
-run := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+run := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     fail()!! "while stepping"
     result = ..ok 0
 }
@@ -16,7 +32,7 @@ main := () -> (.status_code: Int32) {
         status_code = 1
         return
     }
-    if tracer.line != 6 {
+    if tracer.line != 22 {
         status_code = 2
         return
     }
@@ -53,7 +69,16 @@ implement ErrorTracer#(ProbeTracer) (
 
     .reset_context = (.self: $&ProbeTracer) -> () { self&.count = 0 }
 
-    .report = (.self: $&ProbeTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) { result = ..ok Void() }
+    .report = (
+        .self         : $&ProbeTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+        result = ..ok Void()
+    }
 )

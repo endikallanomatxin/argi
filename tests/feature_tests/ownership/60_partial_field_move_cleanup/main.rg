@@ -13,9 +13,16 @@ Outer := (
     .pair : Pair
 )
 
-make_pair := (.allocator: $&CountingAllocator) -> (
-    .result: Errable#(.t: Pair, .reasons: (..out_of_memory))
-) {
+make_pair := (
+    .allocator    : $&CountingAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Pair, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     first_result ::= allocate_bytes(.self = allocator, .size = 1)
@@ -37,9 +44,17 @@ make_pair := (.allocator: $&CountingAllocator) -> (
     }
 }
 
-run_branch := (.allocator: $&CountingAllocator, .condition: Bool) -> (
-    .result: Errable#(.t: Void, .reasons: (..out_of_memory))
-) {
+run_branch := (
+    .allocator    : $&CountingAllocator,
+    .condition    : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     first_result ::= allocate_bytes(.self = allocator, .size = 1)
@@ -135,9 +150,18 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Allocator#(CountingAllocator) (
-    .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&CountingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)
         self&.alloc_count = self&.alloc_count + 1

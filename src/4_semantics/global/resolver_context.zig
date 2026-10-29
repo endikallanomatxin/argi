@@ -250,14 +250,6 @@ pub const Context = struct {
             return error.InvalidSemanticForkState;
         self.init(allocator, graph, source.core.modules, offsets, diagnostics, source.core.profile_io);
         errdefer self.deinit();
-        for (source.core.reached_calls.items) |call| {
-            var retained = call;
-            retained.visible = try allocator.dupe(global_sg.GlobalBindingId, call.visible);
-            self.core.reached_calls.append(allocator, retained) catch |err| {
-                allocator.free(retained.visible);
-                return err;
-            };
-        }
         if (source.core.session_namespace) |previous| {
             const namespace = try self.core.sessionNamespace();
             try namespace.modules.appendSlice(allocator, previous.modules.items);
@@ -458,8 +450,6 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     const namespace = try source.core.sessionNamespace();
     try namespace.modules.append(a, @enumFromInt(0));
     try namespace.declarations.append(a, @enumFromInt(7));
-    const visible = try a.dupe(global_sg.GlobalBindingId, &.{@enumFromInt(1)});
-    try source.core.reached_calls.append(a, .{ .callee = @enumFromInt(2), .input = @enumFromInt(3), .owner = null, .skip_receiver = false, .visible = visible });
     try source.ownership.deferred.append(a, .{ .marker = @enumFromInt(4), .value = @enumFromInt(5) });
     try source.ownership.auto_nodes.append(a, .{ .binding = @enumFromInt(1), .node = @enumFromInt(6) });
     try source.generics.pointer_types.put(a, .{ .child = @enumFromInt(0), .mutability = .read_only }, @enumFromInt(1));
@@ -483,7 +473,6 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     try std.testing.expect(candidate.generics.execution_context.? == @as(*anyopaque, &candidate.staged_execution));
     try std.testing.expect(candidate.staged_execution.functions == &candidate.generic_functions);
     try std.testing.expect(candidate.ownership.dispatch.? == &candidate.dispatch);
-    candidate.core.reached_calls.items[0].visible[0] = @enumFromInt(9);
     candidate.core.session_namespace.?.modules.clearRetainingCapacity();
     candidate.core.session_namespace.?.declarations.clearRetainingCapacity();
     candidate.ownership.deferred.clearRetainingCapacity();
@@ -491,7 +480,6 @@ fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
     candidate.generics.pointer_types.clearRetainingCapacity();
     candidate.contracts.implementation_templates.getPtr(.{ .declaration = @enumFromInt(7), .arity = 1 }).?.entries.clearRetainingCapacity();
     execution.Scheduler.rollback(&candidate.staged_execution, 0);
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(source.core.reached_calls.items[0].visible[0]));
     try std.testing.expectEqual(@as(usize, 1), namespace.modules.items.len);
     try std.testing.expectEqual(@as(usize, 1), namespace.declarations.items.len);
     try std.testing.expectEqual(@as(usize, 1), source.ownership.deferred.items.len);

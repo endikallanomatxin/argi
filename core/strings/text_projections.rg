@@ -5,14 +5,28 @@ implement Viewable#(&String) (
 
 TextBytes#(.Text: Type): Contract = (
     .measure_bytes : (.self: &Text) -> (.count: UIntNative)
-    .byte_at       : (.view: &Text, .index: UIntNative) -> (
-        .result : Errable#(UInt8, (..out_of_bounds))
-    )
+    .byte_at       : (
+        .view         : &Text,
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(UInt8, (..out_of_bounds)))
 )
 
-bytes_get := #(.Text: Type: TextBytes#(Text)) (.view: &Text, .index: UIntNative) -> (
-    .result : Errable#(UInt8, (..out_of_bounds))
-) {
+bytes_get := #(.Text: Type: TextBytes#(Text)) (
+    .view         : &Text,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt8, (..out_of_bounds))) {
+    assume error_tracer
+
     result = TextBytes#(Text).byte_at(.view = view, .index = index)
 }
 

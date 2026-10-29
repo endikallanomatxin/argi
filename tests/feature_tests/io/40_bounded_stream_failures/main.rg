@@ -5,9 +5,17 @@ FaultReader := (
 )
 
 implement BlockReader#(FaultReader) (
-    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
-    ) {
+    .read_block = (
+        .self         : $&FaultReader,
+        .buffer       : MutableArrayView#(.t: UInt8),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) {
+        assume error_tracer
+
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
             result = ..error(.reason = ..stream_read_failed)
@@ -32,11 +40,21 @@ FaultWriter := (
 )
 
 implement BlockWriter#(FaultWriter) (
-    .write_block = (.self: $&FaultWriter, .buffer: ArrayView#(.t: UInt8)) -> (
+    .write_block = (
+        .self         : $&FaultWriter,
+        .buffer       : ArrayView#(.t: UInt8),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (
         .result : Errable#(
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
         )
     ) {
+        assume error_tracer
+
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
             result = ..error(.reason = ..stream_flush_failed)

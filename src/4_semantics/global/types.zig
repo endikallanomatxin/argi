@@ -685,7 +685,7 @@ pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: gr
 }
 
 /// Lifecycle lookup can consult the module defining a nominal destination
-/// while retaining the caller's lexical context for reached arguments.
+/// while retaining the caller's lexical assumptions for ordinary inputs.
 pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
     if (semantic == .generic) return graph.moduleForFamilyDefinition(semantic.generic.base);

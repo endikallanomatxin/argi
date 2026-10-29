@@ -1,15 +1,30 @@
 Counter := (.count: UIntNative = 0, .flushes: UIntNative = 0)
 
 implement Writer#(Counter) (
-    .write_byte = (.self: $&Counter, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&Counter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.count = self&.count + 1
         result = ..ok Void()
     }
-    .flush = (.self: $&Counter) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&Counter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.flushes = self&.flushes + 1
         result = ..ok Void()
     }
@@ -17,9 +32,17 @@ implement Writer#(Counter) (
 
 implement WriteValue#(Counter, Int32) (
     .Result      : Type = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    .write_value = (.self: $&Counter, .value: Int32) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_value = (
+        .self         : $&Counter,
+        .value        : Int32,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.count = self&.count + 100
         result = ..ok Void()
     }
@@ -33,15 +56,25 @@ implement WriteValue#(Counter, Bool) (
     }
 )
 
-send := #(.Stream: Type, .Value: Type) (.self: $&Stream, .value: Value) -> (
-    .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-) {
+send := #(.Stream: Type, .Value: Type) (
+    .self         : $&Stream,
+    .value        : Value,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     result = WriteValue#(Stream, Value).write_value(.self = self, .value = value)
 }
 
 main := () -> (.status_code: Int32 = 0) {
     sink ::= Counter()
-    unwrap_or_abort(.value = WriteValue#(Counter, Int32).write_value(.self = $&sink, .value = 7))
+    unwrap_or_abort(
+        .value = WriteValue#(Counter, Int32).write_value(.self = $&sink, .value = 7)
+    )
     unwrap_or_abort(.value = send(.self = $&sink, .value = 8))
     wide :: Int64 = 123
     unwrap_or_abort(.value = send(.self = $&sink, .value = wide))

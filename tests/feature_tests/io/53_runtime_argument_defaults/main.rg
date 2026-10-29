@@ -1,6 +1,6 @@
 Counter := (.count: UIntNative = 0)
 
-bump := (.counter: $&Counter = reach counter) -> (.result: UIntNative) {
+bump := (.counter: $&Counter) -> (.result: UIntNative) {
     counter&.count = counter&.count + 1
     result = counter&.count
 }

@@ -101,9 +101,16 @@ _integer_conversion_unchecked := #(.Source: Type, .Target: Type) (.value: Source
 
 -- Bounds are constants in the source representation. The comparison always
 -- precedes truncation or a signedness change; failure retains the active tracer.
-_checked_integer_conversion := #(.Source: Type, .Target: Type) (.value: Source) -> (
-    .result : Errable#(Target, (..out_of_range))
-) {
+_checked_integer_conversion := #(.Source: Type, .Target: Type) (
+    .value        : Source,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Target, (..out_of_range))) {
+    assume error_tracer
+
     minimum ::= __integer_conversion_lower_bound#(.from: Source, .to: Target)()
     maximum ::= __integer_conversion_upper_bound#(.from: Source, .to: Target)()
     if value < minimum or value > maximum {
@@ -122,7 +129,16 @@ implement#(.Source: Type: _BuiltinInteger, .Target: Type: _BuiltinInteger) Conve
     Source, Target
 ) (
     .Result  : Type = Errable#(Target, (..out_of_range))
-    .convert = (.value: Source) -> (.result: Result) {
+    .convert = (
+        .value        : Source,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Result) {
+        assume error_tracer
+
         result = ~_checked_integer_conversion#(.Target: Target)(.value = ~value)
     }
 )

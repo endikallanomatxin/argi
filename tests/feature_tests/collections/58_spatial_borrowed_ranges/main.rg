@@ -1,6 +1,15 @@
-window := (.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (
-    .result: Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))
-) {
+window := (
+    .array        : $&DynamicArray#(.t: UIntNative),
+    .start        : UIntNative,
+    .count        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))) {
+    assume error_tracer
+
     borrowed_view ::= view(.self = array)
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
@@ -17,7 +26,7 @@ exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&Al
     if is(.value = absent, .variant = ..error) == false { status = 2 }
     i :: UIntNative = 0
     while i < 4 {
-        push_assume_capacity#(.t: UIntNative) (.self = $&array, .value = i + 10)
+        push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = i + 10)
         i = i + 1
     }
     borrowed_view ::= unwrap_or_abort(.value = window(.array = $&array, .start = 1, .count = 2))

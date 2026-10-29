@@ -3,21 +3,45 @@ Source := (.byte: UInt8)
 Sink := (.byte: UInt8 = 0)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (
+        .self         : $&Source,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         result = ..ok ..ok self&.byte
     }
 )
 
 implement Writer#(Sink) (
-    .write_byte = (.self: $&Sink, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&Sink,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.byte = byte
         result = ..ok Void()
     }
-    .flush = (.self: $&Sink) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&Sink,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..ok Void()
     }
 )

@@ -3,7 +3,16 @@ increment_and_is_true := (.value: $&Int32) -> (.ok: Bool) {
     ok = true
 }
 
-test language_regression_slice := (.system: System) -> !() {
+test language_regression_slice := (
+    .system       : System,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !() {
+    assume error_tracer
+
     present: ?Int32 = ..some(.value = 5)
     missing: ?Int32 = ..none
     left ::= present unwrap_or 1

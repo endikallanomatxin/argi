@@ -1,20 +1,52 @@
 BitSetAccess#(.Set: Type): Contract = (
-    .read_bit  : (.self: &Set, .index: UIntNative) -> (.result: Errable#(Bool, (..out_of_bounds)))
-    .write_bit : (.self: $&Set, .index: UIntNative, .value: Bool) -> (
-        .result : Errable#(Void, (..out_of_bounds))
-    )
+    .read_bit : (
+        .self         : &Set,
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Bool, (..out_of_bounds)))
+    .write_bit : (
+        .self         : $&Set,
+        .index        : UIntNative,
+        .value        : Bool,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..out_of_bounds)))
     .population : (.self: &Set) -> (.count: UIntNative)
 )
 
-contains_bit := #(.Set: Type: BitSetAccess#(Set)) (.self: &Set, .index: UIntNative) -> (
-    .result : Errable#(Bool, (..out_of_bounds))
-) {
+contains_bit := #(.Set: Type: BitSetAccess#(Set)) (
+    .self         : &Set,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Bool, (..out_of_bounds))) {
+    assume error_tracer
+
     result = BitSetAccess#(Set).read_bit(.self = self, .index = index)
 }
 
 set_bit := #(.Set: Type: BitSetAccess#(Set)) (
-    .self: $&Set, .index: UIntNative, .value: Bool = true
+    .self         : $&Set,
+    .index        : UIntNative,
+    .value        : Bool        = true,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    assume error_tracer
+
     result = BitSetAccess#(Set).write_bit(.self = self, .index = index, .value = value)
 }
 

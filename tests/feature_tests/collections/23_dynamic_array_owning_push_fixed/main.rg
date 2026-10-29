@@ -17,8 +17,16 @@ implement Deinit#(Tracked) (
 )
 
 make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .id: Int32
+    .allocator    : $&AllocatorType,
+    .id           : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     allocation_result ::= allocate_bytes(.self = allocator, .size = 1)
@@ -105,9 +113,18 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Allocator#(BackingAllocator) (
-    .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&BackingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)
         deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(

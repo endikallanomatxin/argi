@@ -5,7 +5,7 @@ const module_entities = @import("../module/entities.zig");
 const primitives = @import("../primitives/schema.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
@@ -39,7 +39,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
-        reach: reach_context.Context,
+        lexical_context: call_context.Context,
         source: primitives.SourceRef,
     ) anyerror!?global_sg.Node {
         const self: *Resolver = @ptrCast(@alignCast(context_ptr));
@@ -48,15 +48,15 @@ pub const Resolver = struct {
         const ty = if (family) |declaration_id| blk: {
             if (arguments.len == 0) {
                 const identity = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
-                const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, reach, source) orelse return null;
+                const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, lexical_context, source) orelse return null;
                 _ = try generics.ensureGenericInstance(selection.target);
-                return self.selectedInitializer(module_index, identity, selection, input, reach, source);
+                return self.selectedInitializer(module_index, identity, selection, input, lexical_context, source);
             }
             if (generics.findTypeParameterized(declaration_id)) |located| {
                 if (arguments.len < located.parameterized.parameters.len) {
                     const identity = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
-                    const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, reach, source);
-                    if (selection) |selected| return self.selectedInitializer(module_index, identity, selected, input, reach, source);
+                    const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, lexical_context, source);
+                    if (selection) |selected| return self.selectedInitializer(module_index, identity, selected, input, lexical_context, source);
                 }
             }
             const generic_ty = try generics.internType(.{ .generic = .{
@@ -77,14 +77,14 @@ pub const Resolver = struct {
             break :blk self.core.declarationTypeValue(declaration_id) orelse return null;
         };
 
-        if (try self.contractInitializer(module_index, ty, input, reach, source)) |call| return call;
+        if (try self.contractInitializer(module_index, ty, input, lexical_context, source)) |call| return call;
 
         const fields = types.fields(self.graph, ty) orelse return null;
         switch (self.core.matchCallInput(fields, input)) {
             .applicable => {},
             .no_match, .deferred => return null,
         }
-        if (!try self.core.completeRecordFieldsWithContext(fields, input, reach)) return null;
+        if (!try self.core.completeRecordFieldsWithContext(fields, input, lexical_context)) return null;
         try self.graph.setNodeType(self.core.allocator, input, ty);
         var node = self.graph.nodes.items[@intFromEnum(input)];
         node.source = source;
@@ -183,7 +183,7 @@ pub const Resolver = struct {
     /// a constructor or distinguish conformances for the same participant tuple.
     const ContractArguments = struct { target: global_sg.GlobalTypeId, args: global_sg.GlobalTypeId };
 
-    fn inferConstructorArguments(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participant: implementation_arguments.Participant, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
+    fn inferConstructorArguments(self: *Resolver, declaration: global_sg.GlobalFamilyDefinitionId, participant: implementation_arguments.Participant, input: global_sg.GlobalNodeId, lexical_context: call_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
         if (participant == .partial) {
             const partial = participant.partial;
             const generics = self.generics.?;
@@ -210,7 +210,7 @@ pub const Resolver = struct {
             .functions = self.generic_functions.?,
             .contracts = self.contracts.?,
         };
-        const selection_result = try resolver.inferOperation(declaration, &.{ participant, .inferred }, "init", input, reach);
+        const selection_result = try resolver.inferOperation(declaration, &.{ participant, .inferred }, "init", input, lexical_context);
         switch (selection_result) {
             .selected => |selection| {
                 defer self.core.allocator.free(selection.participants);
@@ -219,27 +219,22 @@ pub const Resolver = struct {
             .none => return null,
             .deferred => return error.DeferredContractInitializer,
             .ambiguous => try self.reportConstructorError(source, "ambiguous Init participants; specify target parameters or qualify Init with an explicit argument type"),
-            .missing_reach => |field| {
-                const message = try std.fmt.allocPrint(self.core.allocator, "Init argument '.{s}' requires a reachable value or an explicit argument", .{self.graph.text(field.name)});
-                defer self.core.allocator.free(message);
-                try self.reportConstructorError(source, message);
-            },
             .incompatible_arguments => try self.reportConstructorError(source, "construction arguments cannot infer a matching Init target"),
         }
         return error.InvalidInitializerArguments;
     }
 
-    fn contractInitializer(self: *Resolver, module_index: usize, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+    fn contractInitializer(self: *Resolver, module_index: usize, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId, lexical_context: call_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const generic_functions = self.generic_functions.?;
         var scope = generic_functions.beginSpeculation();
         defer scope.deinit();
         const declaration = standard_contracts.standardDefinition(self.graph, "Init") orelse return null;
         if (self.contracts == null) return null;
-        const selected = self.inferConstructorArguments(declaration, .{ .known = ty }, input, reach, source) catch |err| {
+        const selected = self.inferConstructorArguments(declaration, .{ .known = ty }, input, lexical_context, source) catch |err| {
             if (err == error.ComptimeExecutionPending) scope.retainPendingExecution();
             return err;
         } orelse return null;
-        const call = self.selectedInitializer(module_index, declaration, selected, input, reach, source) catch |err| {
+        const call = self.selectedInitializer(module_index, declaration, selected, input, lexical_context, source) catch |err| {
             if (err == error.ComptimeExecutionPending) scope.retainPendingExecution();
             return err;
         };
@@ -249,7 +244,7 @@ pub const Resolver = struct {
 
     /// Participant inference has already chosen Target and Args. Do not probe
     /// them again while constructing the ordinary qualified operation call.
-    fn selectedInitializer(self: *Resolver, module_index: usize, declaration: global_sg.GlobalFamilyDefinitionId, selected: ContractArguments, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+    fn selectedInitializer(self: *Resolver, module_index: usize, declaration: global_sg.GlobalFamilyDefinitionId, selected: ContractArguments, input: global_sg.GlobalNodeId, lexical_context: call_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const contracts = self.contracts orelse return null;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         try self.graph.generic_arguments.appendSlice(self.core.allocator, &.{
@@ -258,7 +253,7 @@ pub const Resolver = struct {
         });
         const contract_type = try self.generics.?.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
         contracts.participant_conformance_failure = null;
-        const call = contracts.makeScopedOperationCall(module_index, contract_type, "init", input, reach, source) catch |err| switch (err) {
+        const call = contracts.makeScopedOperationCall(module_index, contract_type, "init", input, lexical_context, source) catch |err| switch (err) {
             error.InvalidGenericCallArguments => {
                 try self.reportConstructorError(source, "construction arguments do not match the selected Init operation signature");
                 return error.InvalidInitializerArguments;
@@ -289,7 +284,7 @@ pub const Resolver = struct {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         if (reference.generic_arguments != null or reference.computed_arguments != null) {
             if (value.callee_value != null) return .not_applicable;
-            return self.resolveExplicitGenericCall(module_index, module, o, value, reference);
+            return self.resolveExplicitGenericCall(module_index, o, value, reference);
         }
         const input = globalizer.globalNode(o, value.input);
         const ty = if (value.callee_value) |callee| blk: {
@@ -297,7 +292,7 @@ pub const Resolver = struct {
             break :blk types.typeValue(self.graph, expression) orelse return .not_applicable;
         } else blk: {
             if (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) |family|
-                return self.resolveImplicitGenericCall(module_index, module, o, value, family, input);
+                return self.resolveImplicitGenericCall(module_index, o, value, family, input);
             const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{ .type, .binding }) catch |err| switch (err) {
                 error.UnknownGlobalDeclaration => return .not_applicable,
                 else => return err,
@@ -310,7 +305,7 @@ pub const Resolver = struct {
             return self.resolveCallbackConstructor(module_index, module, o, value, self.graph.typeDefinition(semantic.nominal), ty, input);
         }
 
-        if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
+        if (self.contractInitializer(module_index, ty, input, call_context.Context.fromModule(o, value.owner_function), self.graph.node(input).source) catch |err| {
             if (err == error.DeferredContractInitializer) return .deferred;
             return err;
         }) |call| {
@@ -321,13 +316,12 @@ pub const Resolver = struct {
             return .resolved;
         }
 
-        return self.writeStructuralConstruction(module_index, o, value, reference, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function));
+        return self.writeStructuralConstruction(module_index, o, value, reference, ty, input, call_context.Context.fromModule(o, value.owner_function));
     }
 
     fn resolveImplicitGenericCall(
         self: *Resolver,
         module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
         declaration_id: global_sg.GlobalFamilyDefinitionId,
@@ -356,7 +350,7 @@ pub const Resolver = struct {
                         },
                         else => return .deferred,
                     };
-                    if (self.contractInitializer(module_index, expected, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
+                    if (self.contractInitializer(module_index, expected, input, call_context.Context.fromModule(o, value.owner_function), self.graph.node(input).source) catch |err| {
                         return deferredInitializer(&scope, err);
                     }) |call| {
                         try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
@@ -370,12 +364,12 @@ pub const Resolver = struct {
         }
 
         if (standard_contracts.standardDefinition(self.graph, "Init")) |identity| {
-            const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-            if (self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, reach, self.graph.node(input).source) catch |err| {
+            const lexical_context = call_context.Context.fromModule(o, value.owner_function);
+            if (self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = .{ .start = 0, .len = 0 } } }, input, lexical_context, self.graph.node(input).source) catch |err| {
                 return deferredInitializer(&scope, err);
             }) |selection| {
                 _ = generics.ensureGenericInstance(selection.target) catch |err| return deferredInitializer(&scope, err);
-                const call = self.selectedInitializer(module_index, identity, selection, input, reach, self.graph.node(input).source) catch |err| {
+                const call = self.selectedInitializer(module_index, identity, selection, input, lexical_context, self.graph.node(input).source) catch |err| {
                     return deferredInitializer(&scope, err);
                 };
                 if (call) |node| {
@@ -393,7 +387,6 @@ pub const Resolver = struct {
     fn resolveExplicitGenericCall(
         self: *Resolver,
         module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
         reference: module_entities.ExternalRef,
@@ -424,12 +417,12 @@ pub const Resolver = struct {
             if (arguments.len < located.parameterized.parameters.len) {
                 if (standard_contracts.standardDefinition(self.graph, "Init")) |identity| {
                     const input = globalizer.globalNode(o, value.input);
-                    const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-                    const selection = self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, reach, self.graph.node(input).source) catch |err| {
+                    const lexical_context = call_context.Context.fromModule(o, value.owner_function);
+                    const selection = self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, lexical_context, self.graph.node(input).source) catch |err| {
                         return deferredInitializer(&scope, err);
                     };
                     if (selection) |selected| {
-                        if (self.selectedInitializer(module_index, identity, selected, input, reach, self.graph.node(input).source) catch |err| return deferredInitializer(&scope, err)) |call| {
+                        if (self.selectedInitializer(module_index, identity, selected, input, lexical_context, self.graph.node(input).source) catch |err| return deferredInitializer(&scope, err)) |call| {
                             try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), call);
                             scope.commit();
                             self.core.stats.calls += 1;
@@ -450,7 +443,7 @@ pub const Resolver = struct {
         };
 
         const input = globalizer.globalNode(o, value.input);
-        if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
+        if (self.contractInitializer(module_index, ty, input, call_context.Context.fromModule(o, value.owner_function), self.graph.node(input).source) catch |err| {
             return deferredInitializer(&scope, err);
         }) |call| {
             var selected = call;
@@ -461,7 +454,7 @@ pub const Resolver = struct {
             return .resolved;
         }
 
-        const result = try self.writeStructuralConstruction(module_index, o, value, reference, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function));
+        const result = try self.writeStructuralConstruction(module_index, o, value, reference, ty, input, call_context.Context.fromModule(o, value.owner_function));
         if (result == .resolved) scope.commit();
         return result;
     }
@@ -495,7 +488,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         ty: global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
-        reach: reach_context.Context,
+        lexical_context: call_context.Context,
     ) !resolution.Result {
         const fields = types.fields(self.graph, ty) orelse return .deferred;
         try self.core.contextualizeConstructorChoices(module_index, o, fields, input);
@@ -503,7 +496,7 @@ pub const Resolver = struct {
             .applicable => {},
             .no_match, .deferred => return .deferred,
         }
-        if (!try self.core.completeRecordFieldsWithContext(fields, input, reach)) return .deferred;
+        if (!try self.core.completeRecordFieldsWithContext(fields, input, lexical_context)) return .deferred;
 
         try self.graph.setNodeType(self.core.allocator, input, ty);
         const target = globalizer.globalNode(o, value.node);
@@ -659,9 +652,6 @@ fn emptyOffsets() globalizer.Offsets {
         .virtual_registry_base = 0,
         .virtualize_base = 0,
         .virtual_call_base = 0,
-        .reach_segment_base = 0,
-        .reach_alternative_base = 0,
-        .reach_base = 0,
         .nullable_unwrap_base = 0,
         .testing_expect_error_base = 0,
         .error_propagation_base = 0,

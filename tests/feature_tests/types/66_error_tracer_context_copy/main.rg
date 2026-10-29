@@ -1,10 +1,26 @@
 ..copy_test_failure
 
-fail := () -> !Void { result = ..error(.reason = ..copy_test_failure) }
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void {
+    assume error_tracer
+    result = ..error(.reason = ..copy_test_failure)
+}
 
-context_failure := (.allocator: $&PageAllocator) -> (
-    .result: Errable#(.t: Void, .reasons: (..copy_test_failure))
-) {
+context_failure := (
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..copy_test_failure))) {
+    assume error_tracer
+
     text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 3))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 66))

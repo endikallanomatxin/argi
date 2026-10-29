@@ -19,8 +19,16 @@ implement Deinit#(Tracked) (
 )
 
 make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .id: Int32
+    .allocator    : $&AllocatorType,
+    .id           : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
@@ -55,10 +63,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                             match fourth_result {
                                 ..error _ { status_code = 4 }
                                 ..ok ~fourth {
-                                    push_assume_capacity#(.t: Tracked) (
+                                    push_assume_capacity#(.t: Tracked)(
                                         .self = $&array, .value = ~first
                                     )
-                                    push_assume_capacity#(.t: Tracked) (
+                                    push_assume_capacity#(.t: Tracked)(
                                         .self = $&array, .value = ~third
                                     )
                                     inserted ::= insert(

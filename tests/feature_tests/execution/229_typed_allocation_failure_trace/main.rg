@@ -3,9 +3,19 @@ FailingAllocator: Type = ()
 ProbeTracer := (.count: UIntNative = 0)
 
 implement Allocator#(FailingAllocator) (
-    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result: Errable#(Allocation, (..out_of_memory))
-    ) { result = ..error(.reason = ..out_of_memory) }
+    .allocate = (
+        .self         : $&FailingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+        result = ..error(.reason = ..out_of_memory)
+    }
 )
 
 implement ErrorTracer#(ProbeTracer) (
@@ -14,9 +24,18 @@ implement ErrorTracer#(ProbeTracer) (
         self&.count = self&.count + 1
     }
     .reset_context = (.self: $&ProbeTracer) -> () { self&.count = 0 }
-    .report        = (.self: $&ProbeTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) { result = ..ok Void() }
+    .report        = (
+        .self         : $&ProbeTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+        result = ..ok Void()
+    }
 )
 
 main := () -> (.status_code: Int32) {

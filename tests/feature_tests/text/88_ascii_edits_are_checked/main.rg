@@ -1,15 +1,24 @@
 Refusing := (.attempts: UIntNative = 0)
 
 implement Allocator#(Refusing) (
-    .allocate = (.self: $&Refusing, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&Refusing,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-main := (.system: System) -> ()  {
+main := (.system: System) -> () {
     assume allocator := system.page_allocator
     text ::= unwrap_or_abort(.value = format(.value = "Aé"))
     before ::= capacity(&text).count

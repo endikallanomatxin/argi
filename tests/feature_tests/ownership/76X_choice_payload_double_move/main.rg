@@ -1,6 +1,13 @@
-make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
-    .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
-) {
+make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     result = allocate_bytes(.self = allocator, .size = 1)

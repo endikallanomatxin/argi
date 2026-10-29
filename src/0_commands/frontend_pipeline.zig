@@ -345,7 +345,7 @@ pub const FrontendPipeline = struct {
                             return error.Reported;
                         }
                     }
-                    const input_kind = entry_interface.classifyInput(file, source.source, function.input, if (self.options.semantizing.selected_test_name == null) .program else .isolated) catch {
+                    const input_kind = entry_interface.classifyInput(file, source.source, function.input, .program) catch {
                         try self.diagnostics.add(file.location(root), .semantic, "invalid entry input interface", .{});
                         return error.Reported;
                     };

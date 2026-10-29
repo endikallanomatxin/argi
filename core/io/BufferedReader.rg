@@ -23,9 +23,16 @@ implement#(.base_type: Type: Reader#(base_type)) Init#(
 )
 
 implement#(.base_type: Type: Reader#(base_type)) Reader#(BufferedReader#(.base_type: base_type)) (
-    .read_byte = (.self: $&BufferedReader#(.base_type: base_type)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
+    .read_byte = (
+        .self         : $&BufferedReader#(.base_type: base_type),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer)        = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         if self&.start < self&.end {
             byte ::= unwrap_or_abort(.value = get(&self&.buffer, .index = self&.start))
             self&.start = self&.start + 1

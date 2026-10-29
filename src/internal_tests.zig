@@ -90,7 +90,7 @@ comptime {
     _ = @import("4_semantics/global/identity_cache.zig");
     _ = @import("4_semantics/global/module_linker.zig");
     _ = @import("4_semantics/global/print.zig");
-    _ = @import("4_semantics/global/reach_context.zig");
+    _ = @import("4_semantics/global/call_context.zig");
     _ = @import("4_semantics/global/resolution.zig");
     _ = @import("4_semantics/global/standard_contracts.zig");
     _ = @import("4_semantics/module/function_identity_lowerer.zig");

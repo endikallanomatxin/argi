@@ -2,9 +2,18 @@
 
 -- UTC RFC 3339 profile: YYYY-MM-DDTHH:MM:SS[.1..9 digits]Z. Numeric
 -- timezone offsets and leap seconds require a separate timezone policy.
-_date_digits := (.text: StringView, .start: UIntNative, .count: UIntNative) -> (
-    .result : Errable#(UInt32, (..invalid_datetime))
-) {
+_date_digits := (
+    .text         : StringView,
+    .start        : UIntNative,
+    .count        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt32, (..invalid_datetime))) {
+    assume error_tracer
+
     value :: UInt32 = 0
     index :: UIntNative = 0
 
@@ -21,7 +30,16 @@ _date_digits := (.text: StringView, .start: UIntNative, .count: UIntNative) -> (
     result = ..ok value
 }
 
-parse_utc := (.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) {
+parse_utc := (
+    .text         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) {
+    assume error_tracer
+
     if text._length < 20 or text._length > 30 {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -101,9 +119,17 @@ _write_date_digits := (
 
 -- Validate date and complete capacity before writing. Nonzero fractions use
 -- nine digits, preserving every nanosecond without allocation or truncation.
-format_utc_into := (.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
-    .result : Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))
-) {
+format_utc_into := (
+    .date         : UtcDateTime,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))) {
+    assume error_tracer
+
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..invalid_datetime)
         return

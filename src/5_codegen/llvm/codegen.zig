@@ -1155,7 +1155,7 @@ pub const CodeGenerator = struct {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
             .captured_expression => CodegenError.InvalidType,
-            .declaration, .reach_directive, .type_literal, .definition_literal => null,
+            .declaration, .type_literal, .definition_literal => null,
             .binding_declaration => |binding| blk: {
                 if (types.isStaticBinding(self.graph, binding)) break :blk null;
                 if (self.global_bindings.contains(binding)) {

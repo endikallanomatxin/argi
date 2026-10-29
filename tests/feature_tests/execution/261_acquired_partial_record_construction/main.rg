@@ -14,12 +14,21 @@ implement Deinit#(Pair) (
     .deinit = (.self: $&Pair) -> () { abort }
 )
 
-fail_when := (.fail: Bool) -> (.result: Errable#(Int32, (..stop))) {
+fail_when := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..stop))) {
+    assume error_tracer
+
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok 42 }
 }
 
 build_partial := (.fail: Bool, .ffi: $&ForeignFunctionInterface) -> (
-    .result: Errable#(Int32, (..stop))
+    .result : Errable#(Int32, (..stop))
 ) {
     assume error_tracer ::= $&noop_error_tracer
     allocator ::= CAllocator(.ffi = ffi)

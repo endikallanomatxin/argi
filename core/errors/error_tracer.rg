@@ -1,9 +1,15 @@
 ErrorTracer#(.Tracer: Type): Contract = (
     .add_context   : (.self: $&Tracer, .location: SourceLocationId, .context: StringView) -> () where {}
     .reset_context : (.self: $&Tracer) -> () where {}
-    .report        : (.self: $&Tracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) where {
+    .report        : (
+        .self         : $&Tracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) where {
         on result ..ok {}
         on result ..error { depends_on(result, error_tracer) }
     }
@@ -12,7 +18,11 @@ ErrorTracer#(.Tracer: Type): Contract = (
 add_context := (
     .context      : StringView,
     .location     : SourceLocationId                   = error_location_id(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ],
 ) -> () {
     ErrorTracer#().add_context(.self = error_tracer, .location = location, .context = context)
 }
@@ -20,7 +30,11 @@ add_context := (
 add_context_text := (
     .context      : &CChar,
     .location     : SourceLocationId = error_location_id(),
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ],
 ) -> () {
     ErrorTracer#(
     ).add_context(
@@ -32,7 +46,11 @@ add_context_text := (
 
 capture_error_tracer := (
     .location     : SourceLocationId,
-    .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ],
 ) -> (.tracer: $&Virtual#(.contract: ErrorTracer)) {
     add_context(.context = "", .location = location, .error_tracer = error_tracer)
     tracer = error_tracer

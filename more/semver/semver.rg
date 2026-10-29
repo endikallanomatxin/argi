@@ -72,7 +72,16 @@ _identifiers_valid := (.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: 
     ok = true
 }
 
-parse := (.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) {
+parse := (
+    .text         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(VersionView, (..invalid_input))) {
+    assume error_tracer
+
     first ::= _numeric_end(.text = &text, .start = 0)
 
     if first.ok == false or first.end == byte_length(&text).count {
@@ -152,12 +161,21 @@ parse := (.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input
     )
 }
 
-VersionViewInitArgs: Type = (.text: StringView)
+VersionViewInitArgs: Type = (
+    .text         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(VersionView, VersionViewInitArgs) (
     .Result : Type = Errable#(VersionView, (..invalid_input))
 
     .init = VersionViewInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_text ::= text
 
         result = parse(.text = _init_text)
@@ -349,14 +367,31 @@ implement Equal#(&VersionView, &VersionView) (
 )
 
 implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
-    .render = (.value: &VersionView, .allocator: $&Provider) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+    .render = (
+        .value        : &VersionView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(String, (..out_of_memory))) {
+        assume error_tracer
+
         result = ~format(.value = view(.self = value).view, .allocator = allocator)
     }
-    .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) {
+    .append = (
+        .out          : $&String,
+        .value        : &VersionView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..out_of_memory))) {
+        assume error_tracer
+
         result = format_into(
             .out = out, .value = view(.self = value).view, .allocator = allocator
         )

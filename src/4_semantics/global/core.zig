@@ -4,7 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const module_views = @import("../module/views.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 const module_linker = @import("module_linker.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
@@ -29,7 +29,7 @@ pub const Resolver = struct {
         context: *anyopaque,
         checkpoint: *const fn (*anyopaque) @import("generic_functions.zig").Resolver.SideEffectCheckpoint,
         rollback: *const fn (*anyopaque, @import("generic_functions.zig").Resolver.SideEffectCheckpoint) void,
-        instantiate: *const fn (*anyopaque, u32, reach_context.Context) anyerror!global_sg.GlobalNodeId,
+        instantiate: *const fn (*anyopaque, u32, ?global_sg.GlobalTypeId, call_context.Context) anyerror!global_sg.GlobalNodeId,
     };
 
     allocator: std.mem.Allocator,
@@ -45,18 +45,6 @@ pub const Resolver = struct {
     // through this path merely because another module was loaded later.
     session_namespace: ?*SessionNamespace = null,
     session_value_bindings: ?*const std.ArrayList(global_sg.GlobalBindingId) = null,
-
-    // Instantiated bodies and cleanup calls have no module pending operation
-    // to revisit when a callee gains a transitive reached input. Retain their
-    // lexical context until the signatures reach the semantizing fixed point.
-    reached_calls: std.ArrayList(ReachedCall) = .empty,
-    const ReachedCall = struct {
-        callee: global_sg.GlobalFunctionId,
-        input: global_sg.GlobalNodeId,
-        skip_receiver: bool,
-        owner: ?global_sg.GlobalFunctionId,
-        visible: []global_sg.GlobalBindingId,
-    };
 
     pub const SessionNamespace = struct {
         modules: std.ArrayList(global_sg.GlobalModuleId) = .empty,
@@ -82,75 +70,12 @@ pub const Resolver = struct {
     }
 
     pub fn deinit(self: *Resolver) void {
-        self.deinitReachedCalls();
         if (self.session_namespace) |namespace| {
             namespace.modules.deinit(self.allocator);
             namespace.declarations.deinit(self.allocator);
             namespace.assumptions.deinit(self.allocator);
             self.allocator.destroy(namespace);
         }
-    }
-
-    pub fn rollbackReachedCalls(self: *Resolver, count: usize) void {
-        for (self.reached_calls.items[count..]) |call| self.allocator.free(call.visible);
-        self.reached_calls.shrinkRetainingCapacity(count);
-    }
-
-    pub fn deinitReachedCalls(self: *Resolver) void {
-        self.rollbackReachedCalls(0);
-        self.reached_calls.deinit(self.allocator);
-    }
-
-    // Instantiation and cleanup can resolve calls before a callee acquires
-    // all reached inputs. Keep their lexical environment until signature
-    // completion, including calls absent from module pending operations.
-    pub fn trackReachedCall(self: *Resolver, callee: global_sg.GlobalFunctionId, input: global_sg.GlobalNodeId, context: reach_context.Context, skip_receiver: bool) !void {
-        for (self.reached_calls.items) |call| if (call.input == input and call.callee == callee) return;
-        const visible = try self.allocator.alloc(global_sg.GlobalBindingId, context.bindingCount());
-        errdefer self.allocator.free(visible);
-        for (visible, 0..) |*binding, index| binding.* = context.bindingAt(index);
-        try self.reached_calls.append(self.allocator, .{ .callee = callee, .input = input, .skip_receiver = skip_receiver, .owner = context.ownerFunction(), .visible = visible });
-    }
-
-    pub fn trackResolvedReachedCall(self: *Resolver, node: global_sg.Node, context: reach_context.Context) !void {
-        switch (node.content) {
-            .function_call => |call| try self.trackReachedCall(call.callee, call.input, context, false),
-
-            else => {},
-        }
-    }
-
-    pub fn completeTrackedReachedCalls(self: *Resolver) !bool {
-        var changed = false;
-        for (self.reached_calls.items) |call| {
-            var fields = self.graph.function(call.callee).input;
-            if (call.skip_receiver) {
-                fields.start += 1;
-                fields.len -= 1;
-            }
-            const literal = self.graph.node(call.input).content.struct_value_literal;
-            if (literal.fields.len == fields.len) continue;
-            var context = reach_context.Context.fromGlobal(call.visible, call.owner);
-            context.global.assumed_fields = literal.assumed_fields;
-            if (try self.completeRecordFieldsWithContext(fields, call.input, context)) changed = true;
-        }
-        return changed;
-    }
-
-    pub fn errorTracerField(self: *const Resolver) ?global_sg.Field {
-        for (self.graph.functions.items) |function| {
-            const owner = self.graph.moduleForDeclaration(function.declaration) orelse continue;
-            if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
-            if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "capture_error_tracer")) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
-                if (std.mem.eql(u8, self.graph.text(field.name), "error_tracer")) return field;
-        }
-        return null;
-    }
-
-    pub fn ensureErrorTracerInput(self: *Resolver, function: global_sg.GlobalFunctionId) !void {
-        const field = self.errorTracerField() orelse return;
-        _ = try self.propagateReachedDefault(function, field, field.default_value orelse return);
     }
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
@@ -442,7 +367,7 @@ pub const Resolver = struct {
                 };
                 if (self.graph.isTypeUnresolved(target)) break :blk .deferred;
                 const id = globalizer.globalNode(o, value.node);
-                var context = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+                var context = call_context.Context.fromModule(o, value.owner_function);
                 if (value.assumed_arguments) |arguments|
                     context = context.withAssumedFields(self.graph.node(globalizer.globalNode(o, arguments)).content.struct_value_literal.assumed_fields);
                 if (types.arrayElement(self.graph, target) != null) {
@@ -690,55 +615,14 @@ pub const Resolver = struct {
         return self.matchFunctionNamed(current_module, name, null, input_node);
     }
 
-    pub fn matchFunctionByNameWithReach(
-        self: *Resolver,
-        current_module: usize,
-        reference: module_entities.ExternalRef,
-        input_node: global_sg.GlobalNodeId,
-        context: reach_context.Context,
-    ) !FunctionMatch {
-        const module_filter = if (reference.module_path) |path|
-            try self.findModuleForQualifier(current_module, self.modules[current_module].text(path))
-        else
-            null;
-        return self.matchFunctionNamedWithReach(
-            current_module,
-            self.modules[current_module].text(reference.name),
-            module_filter,
-            input_node,
-            context,
-        );
-    }
-
-    pub fn matchUnqualifiedFunctionByNameWithReach(
-        self: *Resolver,
-        current_module: usize,
-        name: []const u8,
-        input_node: global_sg.GlobalNodeId,
-        context: reach_context.Context,
-    ) !FunctionMatch {
-        return self.matchFunctionNamedWithReach(current_module, name, null, input_node, context);
-    }
-
-    pub fn matchFunctionNamedWithReach(
-        self: *Resolver,
-        current_module: usize,
-        name: []const u8,
-        module_filter: ?global_sg.GlobalModuleId,
-        input_node: global_sg.GlobalNodeId,
-        context: reach_context.Context,
-    ) !FunctionMatch {
-        return self.matchVisibleFunction(current_module, name, module_filter, input_node, context);
-    }
-
-    fn matchFunctionNamed(
+    pub fn matchFunctionNamed(
         self: *Resolver,
         current_module: usize,
         name: []const u8,
         module_filter: ?global_sg.GlobalModuleId,
         input_node: global_sg.GlobalNodeId,
     ) !FunctionMatch {
-        return self.matchVisibleFunction(current_module, name, module_filter, input_node, null);
+        return self.matchVisibleFunction(current_module, name, module_filter, input_node);
     }
 
     pub fn functionSignaturePending(self: *const Resolver, id: global_sg.GlobalFunctionId) bool {
@@ -760,7 +644,6 @@ pub const Resolver = struct {
         name: []const u8,
         module_filter: ?global_sg.GlobalModuleId,
         input_node: global_sg.GlobalNodeId,
-        context: ?reach_context.Context,
     ) !FunctionMatch {
         var selected: ?global_sg.GlobalFunctionId = null;
         var saw_deferred = false;
@@ -786,10 +669,7 @@ pub const Resolver = struct {
                 saw_deferred = true;
                 continue;
             }
-            const applicability = if (context) |reach|
-                try self.matchCallInputWithReach(self.graph.function(id).input, input_node, reach)
-            else
-                self.matchCallInput(self.graph.function(id).input, input_node);
+            const applicability = self.matchCallInput(self.graph.function(id).input, input_node);
             switch (applicability) {
                 .no_match => continue,
                 .deferred => saw_deferred = true,
@@ -807,10 +687,7 @@ pub const Resolver = struct {
                 saw_deferred = true;
                 continue;
             }
-            const applicability = if (context) |reach|
-                try self.matchCallInputWithReach(function.input, input_node, reach)
-            else
-                self.matchCallInput(function.input, input_node);
+            const applicability = self.matchCallInput(function.input, input_node);
             switch (applicability) {
                 .no_match => continue,
                 .deferred => saw_deferred = true,
@@ -945,8 +822,8 @@ pub const Resolver = struct {
                 .no_match => return .invalid,
                 .applicable => {},
             }
-            const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-            if (!try self.completeCallInputWithReach(signature, input, reach)) return .deferred;
+            const lexical_context = call_context.Context.fromModule(o, value.owner_function);
+            if (!try self.completeCallInputWithContext(signature, input, lexical_context)) return .deferred;
             try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), .{
                 .source = self.sourceFor(reference.source, o),
                 .ty = try self.functionOutputType(signature),
@@ -1029,14 +906,14 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
-        const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-        const function = switch (try self.matchFunctionByNameWithReach(module_index, reference, input, reach)) {
+        const lexical_context = call_context.Context.fromModule(o, value.owner_function);
+        const function = switch (try self.matchFunctionByName(module_index, reference, input)) {
             .no_match => return .not_applicable,
             .deferred => return .deferred,
             .ambiguous => return .invalid,
             .function => |function| function,
         };
-        if (!try self.completeCallInputWithReach(function, input, reach)) return .deferred;
+        if (!try self.completeCallInputWithContext(function, input, lexical_context)) return .deferred;
         const output = try self.functionOutputType(function);
         const target = globalizer.globalNode(o, value.node);
         try self.graph.setNode(self.allocator, target, .{
@@ -1423,11 +1300,6 @@ pub const Resolver = struct {
         applicable,
     };
 
-    /// A reached default is available, pending resolution, or absent from
-    /// the caller's lexical context.
-    pub const ReachedDefaultProbe = enum { unavailable, deferred, available };
-    const ReachedAdaptation = enum { direct, address };
-
     /// Contextual aggregate literals need no type of their own, but computed
     /// leaves must finish resolution before a signature can reject them.
     pub fn callInputHasPendingTypes(self: *const Resolver, input: global_sg.GlobalNodeId) bool {
@@ -1487,197 +1359,6 @@ pub const Resolver = struct {
         return .applicable;
     }
 
-    pub fn matchCallInputWithReach(
-        self: *Resolver,
-        expected_fields: global_sg.FieldRange,
-        input_node: global_sg.GlobalNodeId,
-        context: reach_context.Context,
-    ) !RecordMatch {
-        const base = self.matchCallInput(expected_fields, input_node);
-        if (base != .applicable) return base;
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
-            .struct_value_literal => |value| value,
-            else => return .no_match,
-        };
-        for (0..expected_fields.len) |offset| {
-            const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
-            if (self.callArgument(literal, offset, expected.name) != null) continue;
-            const fallback = expected.default_value orelse return .no_match;
-            if (self.graph.nodes.items[@intFromEnum(fallback)].content != .reach_directive) continue;
-            switch (try self.probeReachedDefault(
-                context,
-                expected,
-                fallback,
-            )) {
-                .available => {},
-                .deferred => return .deferred,
-                .unavailable => return .no_match,
-            }
-        }
-        return base;
-    }
-
-    pub const ReachedField = struct {
-        hit: types.FieldHit,
-        dereference_child: ?global_sg.GlobalTypeId = null,
-    };
-
-    /// A reach path follows capability fields through references without
-    /// requiring explicit dereference syntax at each segment.
-    pub fn reachedField(
-        self: *const Resolver,
-        current_ty: global_sg.GlobalTypeId,
-        name: []const u8,
-    ) ?ReachedField {
-        const base_ty, const dereference_child = switch (self.graph.types.items[@intFromEnum(current_ty)]) {
-            .pointer => |pointer| .{ pointer.child, pointer.child },
-            else => .{ current_ty, null },
-        };
-        const hit = types.findField(self.graph, base_ty, name) orelse return null;
-        return .{ .hit = hit, .dereference_child = dereference_child };
-    }
-
-    /// Discover a lexical capability's concrete type before a contract's
-    /// participant is known. This does not propagate a new caller parameter:
-    /// that would infer a participant from an unconstrained missing capability.
-    pub fn probeReachedType(self: *Resolver, context: reach_context.Context, default_node: global_sg.GlobalNodeId, deferred: *bool) ?global_sg.GlobalTypeId {
-        const reach = self.graph.reaches.items[@intFromEnum(self.graph.node(default_node).content.reach_directive)];
-        for (self.graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
-            if (alternative.segments.len == 0) continue;
-            const segments = self.graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
-            var index = context.bindingCount();
-            while (index > 0) {
-                index -= 1;
-                const id = context.bindingAt(index);
-                const binding = self.graph.binding(id);
-                if (!std.mem.eql(u8, self.graph.text(binding.name), self.graph.text(segments[0]))) continue;
-                if (self.graph.isBindingTypeUnresolved(id)) {
-                    deferred.* = true;
-                    return null;
-                }
-                var ty = binding.ty;
-                for (segments[1..]) |segment| {
-                    const field = self.reachedField(ty, self.graph.text(segment)) orelse return null;
-                    ty = field.hit.field.ty;
-                }
-                if (self.graph.isTypeUnresolved(ty)) {
-                    deferred.* = true;
-                    return null;
-                }
-                return ty;
-            }
-        }
-        return null;
-    }
-
-    pub fn probeReachedDefault(
-        self: *Resolver,
-        context: reach_context.Context,
-        expected_field: global_sg.Field,
-        default_node: global_sg.GlobalNodeId,
-    ) !ReachedDefaultProbe {
-        const reach_id = self.graph.nodes.items[@intFromEnum(default_node)].content.reach_directive;
-        const reach = self.graph.reaches.items[@intFromEnum(reach_id)];
-        var saw_deferred = false;
-
-        for (self.graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
-            if (alternative.segments.len == 0) continue;
-            const segments = self.graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
-            const root_name = self.graph.text(segments[0]);
-            var scope_index = context.bindingCount();
-            while (scope_index > 0) {
-                scope_index -= 1;
-                const binding_id = context.bindingAt(scope_index);
-                const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
-                if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
-                if (self.graph.isBindingTypeUnresolved(binding_id)) {
-                    saw_deferred = true;
-                    continue;
-                }
-                if (self.graph.isTypeUnresolved(binding.ty)) {
-                    saw_deferred = true;
-                    continue;
-                }
-
-                var current_ty = binding.ty;
-                var valid = true;
-                for (segments[1..]) |segment| {
-                    if (self.graph.isTypeUnresolved(current_ty)) {
-                        saw_deferred = true;
-                        valid = false;
-                        break;
-                    }
-                    const step = self.reachedField(current_ty, self.graph.text(segment)) orelse {
-                        valid = false;
-                        break;
-                    };
-                    current_ty = step.hit.field.ty;
-                }
-                if (!valid) continue;
-                if (self.graph.isTypeUnresolved(current_ty)) {
-                    saw_deferred = true;
-                    continue;
-                }
-                if (self.reachedAdaptation(current_ty, expected_field.ty) != null)
-                    return .available;
-            }
-        }
-
-        const owner_id = context.ownerFunction() orelse
-            return if (saw_deferred) .deferred else .unavailable;
-        const owner = self.graph.functions.items[@intFromEnum(owner_id)];
-        const owner_name = self.graph.text(self.graph.declarations.items[@intFromEnum(owner.declaration)].name);
-        if (std.mem.eql(u8, owner_name, "main") and !std.mem.eql(u8, self.graph.text(expected_field.name), "error_tracer"))
-            return if (saw_deferred) .deferred else .unavailable;
-
-        for (self.graph.fields.items[owner.input.start..][0..owner.input.len]) |field| {
-            if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(expected_field.name))) continue;
-            if (self.graph.isTypeUnresolved(field.ty)) {
-                return .deferred;
-            }
-            if (self.graph.isTypeUnresolved(expected_field.ty)) {
-                return .deferred;
-            }
-            return if (self.reachedTypesCompatible(field.ty, expected_field.ty) or
-                self.reachedTypesCompatible(expected_field.ty, field.ty))
-                .available
-            else
-                .unavailable;
-        }
-
-        // Completion may propagate a missing reach parameter into a non-main
-        // caller. Ranking can acknowledge that possibility without mutating
-        // the caller while probing candidates.
-        return .available;
-    }
-
-    fn reachedTypesCompatible(
-        self: *const Resolver,
-        actual: global_sg.GlobalTypeId,
-        expected: global_sg.GlobalTypeId,
-    ) bool {
-        if (types.equal(self.graph, actual, expected) or self.valueTypesCompatible(actual, expected))
-            return true;
-        return false;
-    }
-
-    fn reachedAdaptation(
-        self: *const Resolver,
-        actual: global_sg.GlobalTypeId,
-        expected: global_sg.GlobalTypeId,
-    ) ?ReachedAdaptation {
-        if (self.reachedTypesCompatible(actual, expected))
-            return .direct;
-
-        const expected_pointer = switch (self.graph.types.items[@intFromEnum(expected)]) {
-            .pointer => |pointer| pointer,
-            else => return null,
-        };
-        if (self.reachedTypesCompatible(actual, expected_pointer.child))
-            return .address;
-        return null;
-    }
-
     pub fn recordFieldNamesMatch(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: anytype) bool {
         if (literal.fields.len > expected_fields.len) return false;
         for (0..literal.fields.len) |supplied_offset| {
@@ -1735,11 +1416,11 @@ pub const Resolver = struct {
         return self.completeRecordFields(function.input, input_node);
     }
 
-    fn completeCallInputWithReach(
+    fn completeCallInputWithContext(
         self: *Resolver,
         function_id: global_sg.GlobalFunctionId,
         input_node: global_sg.GlobalNodeId,
-        context: reach_context.Context,
+        context: call_context.Context,
     ) !bool {
         return self.completeRecordFieldsWithContext(
             self.graph.functions.items[@intFromEnum(function_id)].input,
@@ -1748,15 +1429,15 @@ pub const Resolver = struct {
         );
     }
 
-    fn instantiateCapturedExpression(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!?global_sg.GlobalNodeId {
+    fn instantiateCapturedExpression(self: *Resolver, fallback: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId, context: call_context.Context) anyerror!?global_sg.GlobalNodeId {
         const defaults = self.captured_expressions orelse return null;
-        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.captured_expression, context) catch |err| switch (err) {
+        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.captured_expression, expected, context) catch |err| switch (err) {
             error.DeferredGenericFunction => null,
             else => return err,
         };
     }
 
-    fn completeAggregateValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context, depth: usize) anyerror!bool {
+    fn completeAggregateValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: call_context.Context, depth: usize) anyerror!bool {
         if (depth > 64) return false;
         if (types.arrayElement(self.graph, target)) |element| {
             const content = self.graph.node(node).content;
@@ -1790,7 +1471,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn completeRecordValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: reach_context.Context) anyerror!bool {
+    pub fn completeRecordValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: call_context.Context) anyerror!bool {
         if (self.contextualIdentityConflict(node, target)) return false;
         const fields = types.fields(self.graph, target) orelse return false;
         if (types.isCUnion(self.graph, target)) {
@@ -1803,19 +1484,23 @@ pub const Resolver = struct {
     }
 
     pub fn completeRecordFields(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) !bool {
-        return self.completeRecordFieldsWithContext(expected_fields, input_node, reach_context.Context.fromGlobal(&.{}, null));
+        return self.completeRecordFieldsWithContext(expected_fields, input_node, call_context.Context.fromGlobal(&.{}, null));
     }
 
     pub fn completeRecordFieldsWithContext(
         self: *Resolver,
         expected_fields: global_sg.FieldRange,
         input_node: global_sg.GlobalNodeId,
-        context: reach_context.Context,
+        context: call_context.Context,
     ) anyerror!bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
             else => return false,
         };
+        const lexical_context = if (literal.assumed_fields.len != 0)
+            context.withAssumedFields(literal.assumed_fields)
+        else
+            context;
         if (!self.recordFieldNamesMatch(expected_fields, literal)) return false;
         var transaction = self.graph.beginTransaction(self.allocator);
         defer transaction.deinit();
@@ -1823,10 +1508,8 @@ pub const Resolver = struct {
             defaults.checkpoint(defaults.context)
         else
             null;
-        const calls = self.reached_calls.items.len;
         var published = false;
         defer if (!published) {
-            self.rollbackReachedCalls(calls);
             transaction.rollback();
             if (effects) |checkpoint| self.captured_expressions.?.rollback(self.captured_expressions.?.context, checkpoint);
         };
@@ -1843,19 +1526,11 @@ pub const Resolver = struct {
             var node = self.callArgument(literal, offset, expected.name);
             if (node == null) {
                 const fallback = expected.default_value orelse return false;
-                if (self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive) {
-                    node = try self.resolveReachedDefault(context, fallback, expected.ty);
-                } else if (self.graph.node(fallback).content == .captured_expression) {
-                    node = try self.instantiateCapturedExpression(fallback, if (literal.assumed_fields.len != 0) context.withAssumedFields(literal.assumed_fields) else context);
+                if (self.graph.node(fallback).content == .captured_expression) {
+                    node = try self.instantiateCapturedExpression(fallback, expected.ty, lexical_context);
                 } else {
                     node = fallback;
                 }
-                if (node == null and self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
-                    node = try self.propagateReachedDefault(
-                        context.ownerFunction(),
-                        expected,
-                        fallback,
-                    );
             }
             const value = node orelse return false;
             // Defaults follow the same storage context as explicit values.
@@ -1864,7 +1539,7 @@ pub const Resolver = struct {
             try self.contextualizeStoredValue(value, expected.ty);
             if (self.graph.node(value).content == .struct_value_literal) {
                 if (types.fields(self.graph, expected.ty) != null)
-                    if (!try self.completeRecordValue(expected.ty, value, context)) return false;
+                    if (!try self.completeRecordValue(expected.ty, value, lexical_context)) return false;
             }
             try values.append(self.allocator, .{ .name = expected.name, .value = value });
         }
@@ -1881,192 +1556,6 @@ pub const Resolver = struct {
         transaction.commit();
         published = true;
         return true;
-    }
-
-    /// A local `reach` declaration uses the same lexical lookup and reference
-    /// adaptation as an omitted reached call argument.
-    pub fn resolveReachedBinding(
-        self: *Resolver,
-        context: reach_context.Context,
-        reach_node: global_sg.GlobalNodeId,
-        binding: global_sg.GlobalBindingId,
-    ) !?global_sg.GlobalNodeId {
-        const declared = self.graph.bindings.items[@intFromEnum(binding)];
-        if (try self.resolveReachedDefault(context, reach_node, declared.ty)) |node|
-            return node;
-        return self.propagateReachedDefault(context.ownerFunction(), .{
-            .name = declared.name,
-            .ty = declared.ty,
-            .source = declared.source,
-            .default_value = reach_node,
-        }, reach_node);
-    }
-
-    fn resolveReachedDefault(
-        self: *Resolver,
-        context: reach_context.Context,
-        default_node: global_sg.GlobalNodeId,
-        expected: global_sg.GlobalTypeId,
-    ) !?global_sg.GlobalNodeId {
-        const reach_id = self.graph.nodes.items[@intFromEnum(default_node)].content.reach_directive;
-        const reach = self.graph.reaches.items[@intFromEnum(reach_id)];
-        const source = self.graph.nodes.items[@intFromEnum(default_node)].source;
-        for (self.graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
-            if (alternative.segments.len == 0) continue;
-            const segments = self.graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
-            const root_name = self.graph.text(segments[0]);
-            var scope_index = context.bindingCount();
-            while (scope_index > 0) {
-                scope_index -= 1;
-                const binding_id = context.bindingAt(scope_index);
-                const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
-                if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
-                if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) continue;
-                var current_ty = binding.ty;
-                var hits: std.ArrayList(ReachedField) = .empty;
-                defer hits.deinit(self.allocator);
-                var valid = true;
-                for (segments[1..]) |segment| {
-                    if (self.graph.isTypeUnresolved(current_ty)) {
-                        valid = false;
-                        break;
-                    }
-                    const step = self.reachedField(current_ty, self.graph.text(segment)) orelse {
-                        valid = false;
-                        break;
-                    };
-                    try hits.append(self.allocator, step);
-                    current_ty = step.hit.field.ty;
-                }
-                if (self.graph.isTypeUnresolved(current_ty)) valid = false;
-                if (!valid) continue;
-                const adaptation = self.reachedAdaptation(current_ty, expected) orelse continue;
-
-                var node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-                try self.graph.nodes.append(self.allocator, .{
-                    .source = source,
-                    .ty = binding.ty,
-                    .content = .{ .binding_use = binding_id },
-                });
-                for (hits.items) |step| {
-                    if (step.dereference_child) |child| {
-                        const pointer_type = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
-                        const dereferenced: global_sg.GlobalNodeId = @enumFromInt(
-                            @as(u32, @intCast(self.graph.nodes.items.len)),
-                        );
-                        try self.graph.nodes.append(self.allocator, .{
-                            .source = source,
-                            .ty = child,
-                            .content = .{ .dereference = .{
-                                .pointer = node,
-                                .ty = child,
-                                .pointer_type = pointer_type,
-                            } },
-                        });
-                        node = dereferenced;
-                    }
-
-                    const hit = step.hit;
-                    const next: global_sg.GlobalNodeId = @enumFromInt(
-                        @as(u32, @intCast(self.graph.nodes.items.len)),
-                    );
-                    try self.graph.nodes.append(self.allocator, .{
-                        .source = source,
-                        .ty = hit.field.ty,
-                        .content = .{ .struct_field_access = .{
-                            .value = node,
-                            .field_name = hit.field.name,
-                            .field_index = hit.index,
-                        } },
-                    });
-                    node = next;
-                }
-
-                if (adaptation == .address) {
-                    const expected_pointer = self.graph.types.items[@intFromEnum(expected)].pointer;
-                    const pointer_ty = try self.pointerType(current_ty, expected_pointer.mutability);
-                    const addressed: global_sg.GlobalNodeId = @enumFromInt(
-                        @as(u32, @intCast(self.graph.nodes.items.len)),
-                    );
-                    try self.graph.nodes.append(self.allocator, .{
-                        .source = source,
-                        .ty = pointer_ty,
-                        .content = .{ .address_of = node },
-                    });
-                    node = addressed;
-                }
-                return node;
-            }
-        }
-        return null;
-    }
-
-    fn propagateReachedDefault(
-        self: *Resolver,
-        owner_id: ?global_sg.GlobalFunctionId,
-        reached_field: global_sg.Field,
-        default_node: global_sg.GlobalNodeId,
-    ) !?global_sg.GlobalNodeId {
-        const resolved_owner = owner_id orelse return null;
-        const owner = self.graph.function(resolved_owner);
-        const owner_name = self.graph.text(self.graph.declarations.items[@intFromEnum(owner.declaration)].name);
-        if (std.mem.eql(u8, owner_name, "main") and !std.mem.eql(u8, self.graph.text(reached_field.name), "error_tracer")) return null;
-
-        for (0..owner.input.len) |offset| {
-            const field = self.graph.fields.items[owner.input.start + @as(u32, @intCast(offset))];
-            if (!std.mem.eql(u8, self.graph.text(field.name), self.graph.text(reached_field.name))) continue;
-            if (!self.reachedTypesCompatible(field.ty, reached_field.ty) and
-                !self.reachedTypesCompatible(reached_field.ty, field.ty)) return null;
-            if (offset >= owner.input_bindings.len) return null;
-            const binding = self.graph.binding_refs.items[owner.input_bindings.start + @as(u32, @intCast(offset))];
-            const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-            try self.graph.nodes.append(self.allocator, .{
-                .source = self.graph.nodes.items[@intFromEnum(default_node)].source,
-                .ty = self.graph.bindings.items[@intFromEnum(binding)].ty,
-                .content = .{ .binding_use = binding },
-            });
-            return node;
-        }
-
-        // A host entry cannot acquire capabilities by extending its C ABI.
-        if (owner.flags.is_c_abi) return null;
-
-        const old_input = owner.input;
-        const old_bindings = owner.input_bindings;
-        const copied_fields = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[old_input.start..][0..old_input.len]);
-        defer self.allocator.free(copied_fields);
-        const copied_bindings = try self.allocator.dupe(global_sg.GlobalBindingId, self.graph.binding_refs.items[old_bindings.start..][0..old_bindings.len]);
-        defer self.allocator.free(copied_bindings);
-        const field_start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.appendSlice(self.allocator, copied_fields);
-        try self.graph.fields.append(self.allocator, .{
-            .name = reached_field.name,
-            .ty = reached_field.ty,
-            .source = reached_field.source,
-            .default_value = default_node,
-        });
-        const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
-        try self.graph.bindings.append(self.allocator, .{
-            .name = reached_field.name,
-            .source = reached_field.source,
-            .ty = reached_field.ty,
-            .mutability = .constant,
-        });
-        const binding_start: u32 = @intCast(self.graph.binding_refs.items.len);
-        try self.graph.binding_refs.appendSlice(self.allocator, copied_bindings);
-        try self.graph.binding_refs.append(self.allocator, binding_id);
-        var completed = owner;
-        completed.input = .{ .start = field_start, .len = old_input.len + 1 };
-        completed.input_bindings = .{ .start = binding_start, .len = old_bindings.len + 1 };
-        try self.graph.setFunction(self.allocator, resolved_owner, completed);
-
-        const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
-        try self.graph.nodes.append(self.allocator, .{
-            .source = self.graph.nodes.items[@intFromEnum(default_node)].source,
-            .ty = reached_field.ty,
-            .content = .{ .binding_use = binding_id },
-        });
-        return node;
     }
 
     fn structType(self: *Resolver, fields: global_sg.FieldRange) !global_sg.GlobalTypeId {
@@ -2757,11 +2246,11 @@ test "record literals and call arguments reject unknown fields even when default
     var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     try std.testing.expectEqual(Resolver.RecordMatch.no_match, resolver.matchCallInput(fields, literal));
     try std.testing.expect(!resolver.contextualLiteralFits(literal, record));
-    try std.testing.expect(!try resolver.completeRecordValue(record, literal, reach_context.Context.fromGlobal(&.{}, null)));
+    try std.testing.expect(!try resolver.completeRecordValue(record, literal, call_context.Context.fromGlobal(&.{}, null)));
     graph.value_fields.items[0].name = left;
     try std.testing.expectEqual(Resolver.RecordMatch.applicable, resolver.matchCallInput(fields, literal));
     try std.testing.expect(resolver.contextualLiteralFits(literal, record));
-    try std.testing.expect(try resolver.completeRecordValue(record, literal, reach_context.Context.fromGlobal(&.{}, null)));
+    try std.testing.expect(try resolver.completeRecordValue(record, literal, call_context.Context.fromGlobal(&.{}, null)));
     try std.testing.expect(types.equal(&graph, graph.node(literal).ty.?, record));
     try std.testing.expectEqual(@as(u32, 2), graph.node(literal).content.struct_value_literal.fields.len);
 }
@@ -2910,32 +2399,6 @@ test "global declaration lookup preserves module visibility" {
     var private_reference = reference;
     private_reference.name = .{ .start = 6, .len = 7 };
     try std.testing.expectError(error.UnknownGlobalDeclaration, resolver.resolveDeclaration(0, private_reference, &.{.function}));
-}
-
-test "reached signature rollback restores interfaces before discarded pools are reused" {
-    const allocator = std.testing.allocator;
-    var graph: global_sg.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
-    const name = try graph.addString(allocator, "caller");
-    try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = .{ .file_index = 0, .offset = 0 } });
-    try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
-    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0), .content = .{ .int_literal = 7 } });
-    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer resolver.deinitReachedCalls();
-    const saved = graph.checkpoint();
-    for ([_][]const u8{ "writer", "error_tracer" }) |field_name| {
-        _ = (try resolver.propagateReachedDefault(@enumFromInt(0), .{
-            .name = try graph.addString(allocator, field_name),
-            .ty = @enumFromInt(0),
-            .source = .{ .file_index = 0, .offset = 0 },
-        }, @enumFromInt(0))).?;
-    }
-    try std.testing.expectEqual(@as(u32, 2), graph.functions.items[0].input_bindings.len);
-    graph.rollback(allocator, saved);
-    try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input.len);
-    try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input_bindings.len);
-    try std.testing.expectEqual(@as(usize, 0), graph.binding_refs.items.len);
 }
 
 test "string literal type lookup respects incomplete indexes and unresolved core types" {

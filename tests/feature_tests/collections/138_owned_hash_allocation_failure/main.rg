@@ -101,9 +101,18 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&RecordingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         self&.attempts = self&.attempts + 1
         if self&.attempts == self&.fail_at {
             result = ..error(.reason = ..out_of_memory)

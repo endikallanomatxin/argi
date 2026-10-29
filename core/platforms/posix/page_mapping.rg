@@ -16,7 +16,10 @@
     ) -> (.address: UIntNative): ExternFunction
     _memory_munmap(.address: UIntNative, .length: UIntNative) -> (.status: Int32): ExternFunction
 
-    _memory_map_anonymous := (.length: UIntNative) -> (.address: UIntNative) {
+    _memory_map_anonymous := (.length: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
+        .address : UIntNative
+    ) {
+        assume ffi
         #if target_os("linux") {
             address = _memory_mmap(
                 .hint            = 0
@@ -39,9 +42,10 @@
     }
 
     -- POSIX may release alignment padding independently from the returned range.
-    _memory_acquire_aligned := (.length: UIntNative, .alignment: UIntNative) -> (
-        .address : UIntNative
-    ) {
+    _memory_acquire_aligned := (
+        .length: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
+    ) -> (.address: UIntNative) {
+        assume ffi
         page_size ::= _memory_getpagesize().size
         extra :: UIntNative = 0
         if alignment > page_size { extra = alignment - page_size }
@@ -84,8 +88,10 @@
         ).result
     }
 
-    _memory_release_aligned := (.address: UIntNative, .length: UIntNative) -> (.status: Int32) {
-        status = _memory_munmap(.address = address, .length = length).status
+    _memory_release_aligned := (
+        .address: UIntNative, .length: UIntNative, .ffi: $&ForeignFunctionInterface
+    ) -> (.status: Int32) {
+        status = _memory_munmap(.address = address, .length = length, .ffi = ffi).status
     }
 
 }

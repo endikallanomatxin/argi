@@ -11,9 +11,18 @@ AllocatingPathRenaming#(.PathValue: Type, .Provider: Type: Allocator#(Provider))
     )
 )
 
-_path_rename_c := (.self: &FileSystem, .from: &CChar, .to: &CChar) -> (
-    .result : Errable#(Bool, (..path_rename_failed))
-) {
+_path_rename_c := (
+    .self         : &FileSystem,
+    .from         : &CChar,
+    .to           : &CChar,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Bool, (..path_rename_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
 
     if rename(.old_path = from, .new_path = to).status != 0 {
@@ -24,9 +33,18 @@ _path_rename_c := (.self: &FileSystem, .from: &CChar, .to: &CChar) -> (
     result = ..ok 1 == 1
 }
 
-_path_rename_string := (.self: &FileSystem, .from: &String, .to: &String) -> (
-    .result : Errable#(Bool, (..path_rename_failed))
-) {
+_path_rename_string := (
+    .self         : &FileSystem,
+    .from         : &String,
+    .to           : &String,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Bool, (..path_rename_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     c_from ::= as_c_string(from)
     c_to ::= as_c_string(to)
@@ -35,8 +53,18 @@ _path_rename_string := (.self: &FileSystem, .from: &String, .to: &String) -> (
 }
 
 _path_rename_view := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .from: StringView, .to: StringView, .allocator: $&Provider
+    .self         : &FileSystem,
+    .from         : StringView,
+    .to           : StringView,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Bool, (..path_rename_failed, ..out_of_memory))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -59,9 +87,18 @@ _path_rename_view := #(.Provider: Type: Allocator#(Provider)) (
     }
 }
 
-_path_rename_owned := (.self: &FileSystem, .from: &Path, .to: &Path) -> (
-    .result : Errable#(Bool, (..path_rename_failed))
-) {
+_path_rename_owned := (
+    .self         : &FileSystem,
+    .from         : &Path,
+    .to           : &Path,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Bool, (..path_rename_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
 
     result = rename(.self = self, .from = &from&.text, .to = &to&.text)

@@ -1,4 +1,13 @@
-test core_path_regression_slice := (.system: System) -> !() {
+test core_path_regression_slice := (
+    .system       : System,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !() {
+    assume error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

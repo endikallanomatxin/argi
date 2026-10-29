@@ -34,12 +34,18 @@ _crowded(.a: CInt, .b: CInt, .c: CInt, .d: CInt, .e: CInt, .value: Pointers, .la
 
 _probe() -> (.result: CInt): CFunction(.symbol = "argi_c_aggregate_probe")
 
-_forward := (.index: UIntNative) -> (.result: RawPointer#(.t: UInt8)) {
+_forward := (.index: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
+    .result : RawPointer#(.t: UInt8)
+) {
+    assume ffi
+
     values := _get()
     result = values.values[index]
 }
 
-_forward_element := (.index: UIntNative) -> (.result: Element) {
+_forward_element := (.index: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.result: Element) {
+    assume ffi
+
     values := _elements()
     result = values.values[index]
 }

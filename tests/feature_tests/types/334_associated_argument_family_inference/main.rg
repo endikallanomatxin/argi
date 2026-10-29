@@ -4,7 +4,7 @@ Provider := (.flag: Bool)
 
 OtherProvider := (.marker: UInt8)
 
-Arguments := #(.P: Type) (.value: Int32, .provider: &P = reach provider)
+Arguments := #(.P: Type) (.value: Int32, .provider: &P)
 
 Construct#(.Target: Type): Contract = (
     .Args  : #(.P: Type) Type

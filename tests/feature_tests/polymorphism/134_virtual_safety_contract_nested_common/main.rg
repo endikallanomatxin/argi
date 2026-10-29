@@ -1,7 +1,14 @@
 ..failed
 
 Source#(.Participant: Type): Contract = (
-    .get : (.self: &Participant) -> (.result: Errable#(?&Int32, (..failed))) where {
+    .get : (
+        .self         : &Participant,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(?&Int32, (..failed))) where {
         on result ..ok {
             depends_on(result, self)
             on result ..some {}
@@ -15,11 +22,29 @@ Cell := (.value: Int32)
 
 implement Source#(Cell) (.get = _impl_get_Cell)
 
-_impl_get_Cell := (.self: &Cell) -> (.result: Errable#(?&Int32, (..failed))) {
+_impl_get_Cell := (
+    .self         : &Cell,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?&Int32, (..failed))) {
+    assume error_tracer
+
     result = ..ok ..some(.value = &self&.value)
 }
 
-read_source := (.source: &Virtual#(Source)) -> (.result: Errable#(?&Int32, (..failed))) {
+read_source := (
+    .source       : &Virtual#(Source),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?&Int32, (..failed))) {
+    assume error_tracer
+
     result = get(source)
 }
 

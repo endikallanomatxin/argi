@@ -1,15 +1,23 @@
 Source := (
     .bytes           : ArrayView#(.t: UInt8)
-    .position        : UIntNative           = 0
-    .largest_request : UIntNative           = 0
-    .fail            : Bool                 = false
-    .fail_after      : UIntNative           = 999
+    .position        : UIntNative            = 0
+    .largest_request : UIntNative            = 0
+    .fail            : Bool                  = false
+    .fail_after      : UIntNative            = 999
 )
 
 implement BlockReader#(Source) (
-    .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result: Errable#(UIntNative, (..stream_read_failed))
-    ) {
+    .read_block = (
+        .self         : $&Source,
+        .buffer       : MutableArrayView#(.t: UInt8),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
+        assume error_tracer
+
         size ::= length(&buffer).count
         if size > self&.largest_request { self&.largest_request = size }
         if self&.fail or self&.position == self&.fail_after {
@@ -41,26 +49,26 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     output ::= zeroed#([8]UInt8)()
     base ::= ByteWriter(.bytes = view($&output))
     storage ::= zeroed#([3]UInt8)()
-    writer ::= BufferedWriter(.base = $&base, .buffer = view($&storage))
+    buffer_writer ::= BufferedWriter(.base = $&base, .buffer = view($&storage))
     source ::= Source(.bytes = view(&input))
 
-    Writer#().write_byte($&writer, 80)!!!
-    if transfer_stream(.writer = $&writer, .reader = $&source)!!! != 5 { abort }
+    Writer#().write_byte($&buffer_writer, 80)!!!
+    if transfer_stream(.writer = $&buffer_writer, .reader = $&source)!!! != 5 { abort }
     if source.largest_request != 3 { abort }
-    Writer#().flush($&writer)!!!
+    Writer#().flush($&buffer_writer)!!!
     if position(&base).count != 6 { abort }
     if output[0] != 80 or output[1] != 0 or output[2] != 255 { abort }
     if output[3] != 65 or output[4] != 66 or output[5] != 10 { abort }
-    if transfer_stream(.writer = $&writer, .reader = $&source)!!! != 0 { abort }
+    if transfer_stream(.writer = $&buffer_writer, .reader = $&source)!!! != 0 { abort }
 
     source.position = 0
     source.fail = true
-    Writer#().write_byte($&writer, 81)!!!
-    match transfer_stream(.writer = $&writer, .reader = $&source) {
+    Writer#().write_byte($&buffer_writer, 81)!!!
+    match transfer_stream(.writer = $&buffer_writer, .reader = $&source) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_read_failed { abort } }
     }
-    Writer#().flush($&writer)!!!
+    Writer#().flush($&buffer_writer)!!!
     if position(&base).count != 7 or output[6] != 81 { abort }
 
     source.fail = false
@@ -132,16 +140,31 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Writer#(FailingSink) (
-    .write_byte = (.self: $&FailingSink, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&FailingSink,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.received = self&.received + 1
         result = ..ok Void()
     }
 
-    .flush = (.self: $&FailingSink) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&FailingSink,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..error(.reason = ..stream_flush_failed)
     }
 )

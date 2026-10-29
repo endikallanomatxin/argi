@@ -1,4 +1,13 @@
-test named_optional_view_return := (.system: System) -> !() {
+test named_optional_view_return := (
+    .system       : System,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !() {
+    assume error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

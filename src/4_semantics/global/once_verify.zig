@@ -114,7 +114,7 @@ const State = struct {
             .function_address => {},
             .declaration,
             .binding_use,
-            .reach_directive,
+
             .int_literal,
             .float_literal,
             .char_literal,

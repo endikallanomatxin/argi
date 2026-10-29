@@ -23,9 +23,19 @@ implement HashPolicy#(Policy, Key) (
 Refusal: Type = ()
 
 implement Allocator#(Refusal) (
-    .allocate = (.self: $&Refusal, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) { result = ..error(.reason = ..out_of_memory) }
+    .allocate = (
+        .self         : $&Refusal,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+        result = ..error(.reason = ..out_of_memory)
+    }
 )
 
 main := () -> (.status_code: Int32 = 1) {

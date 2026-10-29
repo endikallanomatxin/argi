@@ -362,8 +362,7 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
     defer safety.deinit();
     if (continuation) |function| {
         const command = graph.function(function);
-        // Ordinary helpers may forward an unresolved reached capability as a
-        // logical input. A top-level command has no caller to supply it.
+        // A top-level command has no caller to supply function inputs.
         if (command.input.len != 0) {
             const field = graph.fields.items[command.input.start];
             const source = graph.declaration(command.declaration).source;

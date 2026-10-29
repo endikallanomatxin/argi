@@ -24,11 +24,29 @@ implement Deinit#(Choice) (
     }
 )
 
-fail_resource := (.fail: Bool) -> (.result: Errable#(Resource, (..stop))) {
+fail_resource := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Resource, (..stop))) {
+    assume error_tracer
+
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.id = 14) }
 }
 
-build_choice := (.fail: Bool) -> (.result: Errable#(Choice, (..stop))) {
+build_choice := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Choice, (..stop))) {
+    assume error_tracer
+
     value :: Choice = ..pair(
         .left  = Resource(.id = 7)
         .right = fail_resource(.fail = fail)!
@@ -42,11 +60,29 @@ consume := (.left: Resource, .right: Resource) -> (.result: Int32) {
     result = 42
 }
 
-build_call := (.fail: Bool) -> (.result: Errable#(Int32, (..stop))) {
+build_call := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..stop))) {
+    assume error_tracer
+
     result = ..ok consume(.left = Resource(.id = 7), .right = fail_resource(.fail = fail)!)
 }
 
-build_array := (.fail: Bool) -> (.result: Errable#(Int32, (..stop))) {
+build_array := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..stop))) {
+    assume error_tracer
+
     values :: [2]Resource = (Resource(.id = 7), fail_resource(.fail = fail)!)
     result = ..ok 42
 }
@@ -74,10 +110,19 @@ select_handle := (.handle: $&Virtual#(.contract: Consumer)) -> (
     result = handle
 }
 
-build_virtual := (.handle: $&Virtual#(.contract: Consumer), .fail: Bool) -> (
-    .result: Errable#(Int32, (..stop))
-) {
-    result = ..ok Consumer#().consume(
+build_virtual := (
+    .handle       : $&Virtual#(.contract: Consumer),
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..stop))) {
+    assume error_tracer
+
+    result = ..ok Consumer#(
+    ).consume(
         .self  = select_handle(.handle = handle)
         .left  = Resource(.id = 7)
         .right = fail_resource(.fail = fail)!

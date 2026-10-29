@@ -204,7 +204,7 @@ test "generic diagnostic probes select without instantiating the chosen body" {
     defer session.deinit();
     const Probe = struct {
         calls: usize = 0,
-        fn constructor(context: *anyopaque, _: usize, _: @import("../module/entities.zig").ExternalRef, _: @import("../primitives/schema.zig").Range(g.GlobalGenericArgId), _: g.GlobalNodeId, _: @import("reach_context.zig").Context, _: @import("../primitives/schema.zig").SourceRef) anyerror!?g.Node {
+        fn constructor(context: *anyopaque, _: usize, _: @import("../module/entities.zig").ExternalRef, _: @import("../primitives/schema.zig").Range(g.GlobalGenericArgId), _: g.GlobalNodeId, _: @import("call_context.zig").Context, _: @import("../primitives/schema.zig").SourceRef) anyerror!?g.Node {
             const self: *@This() = @ptrCast(@alignCast(context));
             self.calls += 1;
             return error.UnexpectedBodyInstantiation;
@@ -213,8 +213,6 @@ test "generic diagnostic probes select without instantiating the chosen body" {
     var probe: Probe = .{};
     session.resolvers.generic_functions.nested_constructor_context = &probe;
     session.resolvers.generic_functions.nested_constructor_resolver = Probe.constructor;
-    var message = std.array_list.Managed(u8).init(a);
-    defer message.deinit();
     var candidates: std.ArrayList(g.GlobalDeclId) = .empty;
     defer candidates.deinit(a);
     const offsets = session.relocation.offsets.items[0];
@@ -224,7 +222,7 @@ test "generic diagnostic probes select without instantiating the chosen body" {
         const call = operation.resolve_call;
         const reference = input.semantic.external_refs.items[@intFromEnum(call.callee)];
         if (!std.mem.eql(u8, input.text(reference.name), "make")) continue;
-        const failure = try session.resolvers.generic_functions.probeGenericCallFailure(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), @import("reach_context.zig").Context.fromModule(&modules[0], offsets, call.visible_bindings, call.owner_function), &message);
+        const failure = try session.resolvers.generic_functions.probeGenericCallFailure(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), @import("call_context.zig").Context.fromModule(offsets, call.owner_function));
         try std.testing.expectEqual(null, failure);
         try std.testing.expect(!try session.resolvers.generic_functions.collectImplicitGenericAmbiguity(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), &candidates));
         checked += 1;

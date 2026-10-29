@@ -2,7 +2,7 @@
 
 `ProcessManager` is the capability for launching child processes. It borrows
 `ForeignFunctionInterface`; `System.proc_man` provides the entry scope's manager.
-`spawn` accepts it as `.self: &ProcessManager = reach proc_man`.
+`spawn` accepts it as `.self: &ProcessManager`.
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0) {

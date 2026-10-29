@@ -481,9 +481,9 @@ test "interactive rejected reset cleanup reclaims unpublished source batches" {
     var session: Interactive = undefined;
     try session.initWithSources(a, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("Resource: Type = ()");
-    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .ffi: $&ForeignFunctionInterface = reach ffi) -> () { host_drop(.ffi = ffi) })");
-    try session.submitStatements("permission :: ForeignFunctionInterface = ()\nassume ffi ::= $&permission\nresource :: Resource = ()");
+    try session.submit("Resource := (.ffi: $&ForeignFunctionInterface)");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { host_drop(.ffi = self&.ffi) })");
+    try session.submitStatements("permission :: ForeignFunctionInterface = ()\nassume ffi ::= $&permission\nresource :: Resource = (.ffi = ffi)");
     const revision = session.compiler.revision;
     try std.testing.expectError(error.Reported, session.reset());
     try std.testing.expectEqual(revision, session.compiler.revision);
@@ -519,9 +519,9 @@ test "interactive rejected reset cleanup reclaims unpublished source batches" {
 
     // A failure after cleanup begins has different semantics: the completed
     // host effect stays visible, and reset must never run that destructor twice.
-    try session.submit("Resource: Type = ()");
-    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .ffi: $&ForeignFunctionInterface = reach ffi) -> () { host_drop(.ffi = ffi) })");
-    try session.submitStatements("permission :: ForeignFunctionInterface = ()\nassume ffi ::= $&permission\nresource :: Resource = ()");
+    try session.submit("Resource := (.ffi: $&ForeignFunctionInterface)");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { host_drop(.ffi = self&.ffi) })");
+    try session.submitStatements("permission :: ForeignFunctionInterface = ()\nassume ffi ::= $&permission\nresource :: Resource = (.ffi = ffi)");
     const region = try session.runtime.context.acquireRegion(8, 1);
     state.fail = true;
     try std.testing.expectError(error.TestCleanupFailure, session.reset());
@@ -771,11 +771,11 @@ test "interactive inherited assumptions supply selected nested cleanup" {
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submit("Resource: Type = ()");
     try session.submit("Capability := (.used: Bool)");
-    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource, .capability: $&Capability = reach capability) -> () { capability&.used = true })");
+    try session.submit("Resource := (.capability: $&Capability)");
+    try session.submit("implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { self&.capability&.used = true })");
     try session.submitStatements("state :: Capability = (.used = false)\nassume capability ::= $&state");
-    try session.submitStatements("if true {\nresource :: Resource = ()\n}");
+    try session.submitStatements("if true {\nresource ::= Resource()\n}");
     try std.testing.expect((try session.submitInput("state.used")).?.value.runtime.boolean);
     try session.close();
 }
@@ -1141,39 +1141,6 @@ test "interactive once defaults consume only completed call arguments" {
     try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("with_default()")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("acquire()"));
     try session.close();
-}
-
-test "interactive generic diagnostics explain omitted reachable capabilities" {
-    for ([_]bool{ false, true }) |bundled| {
-        const allocator = std.testing.allocator;
-        var sources = submissions.Sources.init(allocator);
-        defer sources.deinit();
-        var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
-        defer diagnostics.deinit();
-        const definition = "emit := #(.Stream: Type) (.value: Int32, .writer: $&Stream = reach writer) -> (.result: Int32) { result = value }";
-        const loaded = try sources.loadModule(&diagnostics, definition);
-        var core = loaded.*;
-        core.is_bundled_core = true;
-        var session: Interactive = undefined;
-        if (bundled) {
-            try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
-        } else {
-            try session.init(allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
-        }
-        defer session.deinit();
-        if (!bundled) try session.submitDefinitions(definition);
-        const revision = session.compiler.revision;
-        try std.testing.expectError(error.Reported, session.submitInput("emit(.value = 42)"));
-        try std.testing.expectEqual(revision, session.compiler.revision);
-        const message = session.diagnostics.list.items[0].msg;
-        try std.testing.expect(std.mem.indexOf(u8, message, ".writer uses reach writer") != null);
-        try std.testing.expect(std.mem.indexOf(u8, message, "explicitly") != null);
-        try session.submitStatements("destination :: (.used: Bool) = (.used = false)");
-        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42, .writer = $&destination)")).?.value.runtime.integer);
-        try session.submitStatements("assume writer ::= $&destination");
-        try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("emit(.value = 42)")).?.value.runtime.integer);
-        try session.close();
-    }
 }
 
 test "interactive scalar host calls require explicit bindings before publication" {
@@ -1680,7 +1647,7 @@ test "interactive Init wrappers retain assumed capabilities from earlier command
     var session: Interactive = undefined;
     try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
-    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability = reach permission) -> (.value: Int32) { value = permission&.value }\nBoxInitArgs: Type = ()\n\nimplement Init#(Box, BoxInitArgs) (\n    .Result: Type = Box\n.init = BoxInitArgs -> (.result: Box) { result = (.value = read_capability()) })");
+    try session.submitDefinitions("Capability := (.value: Int32)\nBox := (.value: Int32)\nread_capability := (.permission: &Capability) -> (.value: Int32) { value = permission&.value }\nBoxInitArgs: Type = (.permission: &Capability)\n\nimplement Init#(Box, BoxInitArgs) (\n    .Result: Type = Box\n.init = BoxInitArgs -> (.result: Box) { result = (.value = read_capability(.permission = permission)) })");
     try session.submitStatements("token :: Capability = (.value = 42)\nassume permission ::= &token");
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("Box().value")).?.value.runtime.integer);
     try std.testing.expectError(error.Reported, session.submitInput("missing_capability_command"));

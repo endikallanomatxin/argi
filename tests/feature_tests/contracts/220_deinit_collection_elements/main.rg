@@ -8,9 +8,16 @@ implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () { record_drop() }
 )
 
-partial := (.allocator: $&PageAllocator) -> (
-    .result: Errable#(DynamicArray#(Owner), (..out_of_memory, ..copy_failed))
-) {
+partial := (
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(DynamicArray#(Owner), (..out_of_memory, ..copy_failed))) {
+    assume error_tracer
+
     assume allocator
     values ::= DynamicArray#(Owner)(.capacity = 1)!
     item ::= Owner(42)

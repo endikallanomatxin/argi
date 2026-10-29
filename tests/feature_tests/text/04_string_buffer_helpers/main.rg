@@ -29,8 +29,17 @@ implement Deinit#(DummyWriter) (
 )
 
 append_test_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&DummyWriter, .byte: UInt8, .allocator: $&AllocatorType
+    .self         : $&DummyWriter,
+    .byte         : UInt8,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     assume allocator
 
     pushed ::= push_ascii(.self = $&self&.bytes, .byte = byte, .allocator = allocator)

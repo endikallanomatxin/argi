@@ -8,9 +8,15 @@ OpenState#(.Resource: Type): Contract = (
     .check_open : (.self: &Resource) -> (.ok: Bool)
 )
 
-close := #(.Resource: Type: Closeable#(Resource)) (.self: $&Resource) -> (
-    .result : Closeable#(Resource).Result
-) {
+close := #(.Resource: Type: Closeable#(Resource)) (
+    .self         : $&Resource,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Closeable#(Resource).Result) {
+    assume error_tracer
     result = ~Closeable#(Resource).close_resource(.self = self)
 }
 

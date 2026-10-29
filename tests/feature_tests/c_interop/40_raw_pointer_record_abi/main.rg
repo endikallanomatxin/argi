@@ -48,9 +48,15 @@ _crowded(.a: CInt, .b: CInt, .c: CInt, .d: CInt, .e: CInt, .value: Buffer, .last
 
 _probe() -> (.result: CInt): CFunction(.symbol = "argi_c_buffer_probe")
 
-_forward := () -> (.result: Buffer) { result = _get() }
+_forward := (.ffi: $&ForeignFunctionInterface) -> (.result: Buffer) {
+    assume ffi
+    result = _get()
+}
 
-_forward_again := () -> (.result: Buffer) { result = _forward() }
+_forward_again := (.ffi: $&ForeignFunctionInterface) -> (.result: Buffer) {
+    assume ffi
+    result = _forward()
+}
 
 argi_c_buffer_export(.value: Buffer) -> (.result: Buffer): CFunction(.export = true) := {
     result = value

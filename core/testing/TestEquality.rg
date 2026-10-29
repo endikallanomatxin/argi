@@ -1,15 +1,31 @@
 -- Assertions specialize diagnostics within one operation identity.
 TestEquality#(.Value: Type): Contract = (
-    .check_equal : (.expected: Value, .actual: Value, .message: StringView) -> (
-        .result : Errable#(Void, (..test_failed))
-    )
+    .check_equal : (
+        .expected     : Value,
+        .actual       : Value,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..test_failed)))
 )
 
 implement#(.Value: Type) TestEquality#(Value) (.check_equal = _assert_equal_generic)
 
 expect_equal := #(.Value: Type: TestEquality#(Value)) (
-    .expected: Value, .actual: Value, .message: StringView = ""
+    .expected     : Value,
+    .actual       : Value,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = TestEquality#(
         Value
     ).check_equal(.expected = expected, .actual = actual, .message = message)
@@ -86,7 +102,16 @@ implement _TestTextEquality#(StringView) ()
 implement _TestTextEquality#(&String) ()
 
 expect_equal_strings := #(.Value: Type: _TestTextEquality#(Value)) (
-    .expected: Value, .actual: Value, .message: StringView = ""
+    .expected     : Value,
+    .actual       : Value,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = expect_equal(.expected = expected, .actual = actual, .message = message)
 }

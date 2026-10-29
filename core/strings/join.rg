@@ -12,8 +12,17 @@ _string_copy_view_into := (.output: $&String, .offset: UIntNative, .source: Stri
 }
 
 join := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .parts: ArrayView#(.t: StringView), .separator: StringView, .allocator: $&AllocatorType
+    .parts        : ArrayView#(.t: StringView),
+    .separator    : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) {
+    assume error_tracer
+
     limit ::= _string_max_result_length().length
     count ::= length(&parts).count
     total :: UIntNative = 0

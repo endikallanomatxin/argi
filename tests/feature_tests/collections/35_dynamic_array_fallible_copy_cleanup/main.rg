@@ -5,9 +5,17 @@ implement ErrorTracer#(Counter) (
         self&.count = self&.count + 1
     }
     .reset_context = (.self: $&Counter) -> () { self&.count = 0 }
-    .report        = (.self: $&Counter, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .report        = (
+        .self         : $&Counter,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..ok Void()
     }
 )
@@ -77,9 +85,18 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Allocator#(FailFourthAllocator) (
-    .allocate = (.self: $&FailFourthAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&FailFourthAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         self&.allocation_attempts = self&.allocation_attempts + 1
         if self&.allocation_attempts == 4 {
             result = ..error(.reason = ..out_of_memory)

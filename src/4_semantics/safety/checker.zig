@@ -1279,7 +1279,7 @@ pub const SafetyChecker = struct {
                 break :blk try self.evaluateCall(function, node_id, .{ .callee = expect.test_fail_function, .input = input }, state);
             },
 
-            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
+            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
     }

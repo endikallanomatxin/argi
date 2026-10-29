@@ -707,60 +707,13 @@ pub const Context = struct {
         return self.contractDomainError(node, "unknown Contract storage domain");
     }
 
+    fn contractInputIndex(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex) !?u32 {
+        return self.contractFieldIndex(requirement.input, node);
+    }
+
     fn contractDomainError(self: *Context, node: syn.NodeIndex, message: []const u8) !?primitives.MethodSafetyContract.DomainInput {
         try self.contractError(node, message);
         unreachable;
-    }
-
-    fn contractInputIndex(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex) !?u32 {
-        if (try self.contractFieldIndex(requirement.input, node)) |index| return index;
-        const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-        if (!std.mem.eql(u8, name, "error_tracer")) return null;
-        const fields = try self.contractSignatureFields(requirement.output);
-        for (0..fields.count()) |index|
-            if (self.contractFieldFallible(fields.fieldType(self.graph, @intCast(index))))
-                return (try self.contractSignatureFields(requirement.input)).count();
-        return null;
-    }
-
-    fn contractFieldFallible(self: *const Context, field_type: views.SignatureFields.FieldType) bool {
-        const storage = &self.graph.semantic.parameterized_storage.ir;
-        switch (field_type) {
-            .concrete => |id| {
-                const value = views.typeView(self.graph, id) catch return false;
-                if (value != .resolved) {
-                    const reference = self.graph.semantic.external_refs.items[@intFromEnum(value.external)];
-                    return std.mem.eql(u8, self.graph.text(reference.name), "Errable");
-                }
-                return switch (value.resolved) {
-                    .inferred_errable => true,
-                    .generic => |generic| blk: {
-                        const family = self.graph.semantic.family_definitions.items[@intFromEnum(generic.base)];
-                        const declaration = family.declaration orelse break :blk false;
-                        break :blk std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), "Errable");
-                    },
-                    else => false,
-                };
-            },
-            .parameterized => |id| {
-                const value = storage.representation(id);
-                if (value == .concrete) return self.contractFieldFallible(.{ .concrete = value.concrete });
-                if (value != .resolved) return false;
-                return switch (value.resolved) {
-                    .inferred_errable => true,
-                    .generic => |generic| blk: {
-                        const reference = storage.declarations.items[@intFromEnum(generic.base)].target;
-                        const name = switch (reference) {
-                            .parameter, .projection => return false,
-                            .module => |declaration| self.graph.declaration(declaration).name,
-                            .external => |external| self.graph.semantic.external_refs.items[@intFromEnum(external)].name,
-                        };
-                        break :blk std.mem.eql(u8, self.graph.text(name), "Errable");
-                    },
-                    else => false,
-                };
-            },
-        }
     }
 
     fn contractSignatureFields(self: *Context, signature: syn.NodeIndex) !views.SignatureFields {
@@ -1693,7 +1646,6 @@ pub const Context = struct {
         if (self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block) return self.lowerHandle(node);
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
-        if (self.tree.tag(node) == .reach_directive) return self.lowerReach(node);
         // Standalone blocks, including deferred handlers, already have a
         // resolved block representation; do not wrap them in an unknown op.
         if (self.tree.codeBlock(node) != null) return self.blockAsNode(node);
@@ -2006,8 +1958,8 @@ pub const Context = struct {
             .choice_literal, .choice_some_literal => if (self.tree.choiceLiteral(node)) |literal| try self.writer.addString(self.tree.tokenTextFromSource(self.source, literal.name_token)) else null,
             else => null,
         };
-        // Specialization can select an operation with reached inputs even when
-        // the operand types are not known yet. Retain lexical assume values.
+        // Retain lexical assumptions for the selected operation's declared inputs,
+        // even when its operand types are not known yet.
         const assumed = if (kind == .binary or kind == .comparison) blk: {
             const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
             try self.captureAssumedFields(node, input);
@@ -2215,26 +2167,6 @@ pub const Context = struct {
             .index_access => self.syntaxIsAddressable(self.tree.indexAccess(node).?.value),
             else => false,
         };
-    }
-
-    fn lowerReach(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
-        const directive = self.tree.reachDirective(node) orelse return error.InvalidParameterizedReach;
-        const alt_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.reach_alternatives.items.len);
-        for (directive.alternatives) |alt_node| {
-            const alternative = self.tree.reachAlternative(alt_node) orelse return error.InvalidParameterizedReachAlternative;
-            const segment_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.reach_segments.items.len);
-            for (alternative.segments) |segment| {
-                try self.graph.semantic.parameterized_storage.ir.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
-            }
-            try self.graph.semantic.parameterized_storage.ir.reach_alternatives.append(self.allocator, .{
-                .segments = .{ .start = segment_start, .len = @intCast(alternative.segments.len) },
-            });
-        }
-        const reach_id: ir.ParameterizedReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.reaches.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.reaches.append(self.allocator, .{
-            .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
-        });
-        return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .reach_directive = reach_id });
     }
 
     fn collectBodyOperands(self: *Context, node: syn.NodeIndex, result: *std.array_list.Managed(ir.ParameterizedNodeId)) anyerror!void {

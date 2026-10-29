@@ -62,9 +62,18 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Allocator#(TrackingAllocator) (
-    .allocate = (.self: $&TrackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&TrackingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         allocated ::= allocate_bytes(
             .self = self&.backing, .size = size, .alignment = alignment
         )
@@ -89,7 +98,8 @@ implement Deallocator#(TrackingAllocator) (
         .alignment : UIntNative
     ) -> () {
         self&.deallocations = self&.deallocations + 1
-        Deallocator#().deallocate(
+        Deallocator#(
+        ).deallocate(
             .self = self&.backing&.memory, .data = data, .size = size, .alignment = alignment
         )
     }

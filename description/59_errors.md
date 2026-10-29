@@ -119,8 +119,8 @@ functions. `-> !Void` alone does not declare a success default.
 
 > [!IMPLEMENTATION]
 > An error-producing output default currently needs an explicit `.tracer`;
-> automatic creation from the function's reached tracer is not available in
-> output initializers. Success defaults such as `..ok Void()` need no tracer.
+> a body's lexical `assume` is not active in output initializers. Success defaults
+> such as `..ok Void()` need no tracer.
 
 The same inference path is also available when the output is written
 explicitly as `Errable#(T)` and omits `.reasons`:
@@ -285,10 +285,15 @@ still succeed when tracing cannot retain or emit an entry. A policy may
 allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
 The capability has type `$&Virtual#(.contract: ErrorTracer)`. A tracer may
-be supplied through `reach error_tracer`, so intermediate
-functions need not list it manually. This capability selects the tracer when
-an error is created. Later propagation and reporting use the reference in
-that error, even under a different `assume error_tracer`:
+be supplied through an explicit `error_tracer` input or lexical `assume`.
+Intermediate functions must declare that input to forward the caller's tracer;
+there is no propagation through undeclared parameters. Tracing helpers use the
+caller-scoped noop tracer as an ordinary default when no tracer is supplied.
+This capability selects the tracer when an error is created. Later propagation
+and reporting use the reference in that error. Returning an error that retains a
+function-local tracer is rejected by ordinary reference lifetime rules. A tracer
+input keeps that storage in the caller instead, even under a different local
+`assume error_tracer`:
 
 ```rg
 assume error_tracer ::= FixedSizeErrorTracer(
@@ -367,9 +372,9 @@ The caller decides whether to propagate, inspect, or ignore a report failure.
 > later `report`. Because `add_context` is infallible, write failures during these
 > flushes must be ignored or recorded for a later fallible `report`.
 
-Fallible virtual methods receive the reached tracer capability alongside
-ordinary arguments, including implementations whose bodies always succeed.
-This keeps runtime dispatch consistent when an implementation creates an error.
+Fallible core virtual methods declare an ordinary `error_tracer` input with a
+noop default, including implementations whose bodies always succeed. Their
+implementations enable that input with `assume error_tracer` when forwarding it.
 `source_location(.id)` resolves a recorded ID to immutable source metadata;
 IDs that were not produced by `error_location_id()` abort.
 
@@ -467,6 +472,6 @@ new function. Owned payloads and handler locals receive ordinary cleanup on
 normal continuation and on control transfers.
 
 The ordinary `add_context` helper accepts a `StringView`; `add_context_text`
-accepts zero-terminated text. Both reach the tracer capability and call its
+accepts zero-terminated text. Both receive the tracer capability as an ordinary input and call its
 scoped operation. Direct operations use `ErrorTracer#(T).add_context(...)`,
 `reset_context` and `report`; virtual calls use `ErrorTracer#()` instead.

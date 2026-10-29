@@ -80,9 +80,6 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.virtual_registries.items) |value| try payload.virtualRegistry(entities.Ids, value, bounds);
     for (semantic.virtualizes.items) |value| try payload.virtualize(entities.Ids, value, bounds);
     for (semantic.virtual_calls.items) |value| try payload.virtualCall(entities.Ids, value, bounds);
-    for (semantic.reach_segments.items) |range| try require(verify.stringFits(range, graph.strings.items));
-    for (semantic.reach_alternatives.items) |value| try payload.reachAlternative(entities.Ids, value, bounds);
-    for (semantic.reaches.items) |value| try payload.reach(entities.Ids, value, bounds);
     for (semantic.nullable_unwraps.items) |value| try payload.nullableUnwrap(entities.Ids, value, bounds);
     for (semantic.testing_expect_errors.items) |value| try payload.testingExpectError(entities.Ids, value, bounds);
     for (semantic.error_propagations.items) |value| try payload.errorPropagation(entities.Ids, value, bounds);
@@ -214,13 +211,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(semantic.external_refs.items[@intFromEnum(value.callee)].kind == .function);
             try require(verify.idFits(value.input, semantic.nodes.items.len));
             try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
-        },
-        .resolve_local_reach => |value| {
-            try require(verify.idFits(value.node, semantic.nodes.items.len));
-            try require(verify.idFits(value.reach, semantic.nodes.items.len));
-            try require(verify.idFits(value.binding, semantic.bindings.items.len));
-            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
-            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_field => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
@@ -356,14 +346,12 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtual_registries = semantic.virtual_registries.items.len,
         .virtualizes = semantic.virtualizes.items.len,
         .virtual_calls = semantic.virtual_calls.items.len,
-        .reach_segments = semantic.reach_segments.items.len,
-        .reach_alternatives = semantic.reach_alternatives.items.len,
-        .reaches = semantic.reaches.items.len,
         .nullable_unwraps = semantic.nullable_unwraps.items.len,
         .testing_expect_errors = semantic.testing_expect_errors.items.len,
         .error_propagations = semantic.error_propagations.items.len,
         .error_contexts = semantic.error_contexts.items.len,
         .node_refs = semantic.node_refs.items.len,
+        .captured_expressions = semantic.parameterized_storage.ir.nodes.items.len,
         .type_refs = semantic.type_refs.items.len,
         .binding_refs = semantic.binding_refs.items.len,
         .function_refs = semantic.function_refs.items.len,

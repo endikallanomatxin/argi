@@ -22,7 +22,9 @@ _float_sum(.left: CFloat, .right: CFloat) -> (.result: CFloat): CFunction := {
     result = left + right
 }
 
-_invoke := (.callback: types.Comparator) -> (.result: CInt) {
+_invoke := (.callback: types.Comparator, .ffi: $&ForeignFunctionInterface) -> (.result: CInt) {
+    assume ffi
+
     result = callback(.left = 21, .right = 4)
 }
 

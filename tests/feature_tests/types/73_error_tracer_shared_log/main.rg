@@ -5,7 +5,16 @@ Failures: Type = (..first_failure, ..second_failure)
 
 Probe := (.count: UIntNative = 0, .sum: UIntNative = 0)
 
-fail := (.second: Bool) -> (.result: Errable#(.t: Void, .reasons: Failures)) {
+fail := (
+    .second       : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: Failures)) {
+    assume error_tracer
+
     if second {
         result = ..error(.reason = ..second_failure)
     } else {
@@ -13,9 +22,16 @@ fail := (.second: Bool) -> (.result: Errable#(.t: Void, .reasons: Failures)) {
     }
 }
 
-forward := (.value: Errable#(.t: Void, .reasons: Failures)) -> (
-    .result: Errable#(.t: Void, .reasons: Failures)
-) {
+forward := (
+    .value        : Errable#(.t: Void, .reasons: Failures),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer)      = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: Failures)) {
+    assume error_tracer
+
     value!! "after reset"
     result = ..ok Void()
 }
@@ -99,9 +115,17 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(Probe) (
-    .write_byte = (.self: $&Probe, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&Probe,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.count = self&.count + 1
         remaining :: UInt8 = byte
         while remaining != 0 {
@@ -111,7 +135,15 @@ implement Writer#(Probe) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&Probe) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) { result = ..ok Void() }
+    .flush = (
+        .self         : $&Probe,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+        result = ..ok Void()
+    }
 )

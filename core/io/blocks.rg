@@ -4,8 +4,16 @@
 ..invalid_stream_buffer
 
 read_exact := #(.SelfType: Type: BlockReader#(SelfType)) (
-    .self: $&SelfType, .buffer: MutableArrayView#(.t: UInt8)
+    .self         : $&SelfType,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..stream_read_failed, ..unexpected_eof))) {
+    assume error_tracer
+
     total ::= length(&buffer).count
     count :: UIntNative = 0
 
@@ -26,8 +34,16 @@ read_exact := #(.SelfType: Type: BlockReader#(SelfType)) (
 }
 
 write_all := #(.SelfType: Type: BlockWriter#(SelfType)) (
-    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8)
+    .self         : $&SelfType,
+    .buffer       : ArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     total ::= length(&buffer).count
     count :: UIntNative = 0
 
@@ -49,7 +65,16 @@ write_all := #(.SelfType: Type: BlockWriter#(SelfType)) (
 
 copy_stream := #(
     .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
-) (.reader: $&ReaderType, .writer: $&WriterType, .buffer: MutableArrayView#(.t: UInt8)) -> (
+) (
+    .reader       : $&ReaderType,
+    .writer       : $&WriterType,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (
     .result : Errable#(
         UIntNative,
         (
@@ -61,6 +86,8 @@ copy_stream := #(
         )
     )
 ) {
+    assume error_tracer
+
     size ::= length(&buffer).count
 
     if size == 0 {
@@ -98,8 +125,17 @@ ReadUntil := (.count: UIntNative, .termination: ReadUntilEnd)
 implement ImplicitlyCopyable#(ReadUntil) ()
 
 read_until := #(.SelfType: Type: Reader#(SelfType)) (
-    .self: $&SelfType, .buffer: MutableArrayView#(.t: UInt8), .delimiter: UInt8
+    .self         : $&SelfType,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .delimiter    : UInt8,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(ReadUntil, (..stream_read_failed))) {
+    assume error_tracer
+
     count :: UIntNative = 0
 
     while count < length(&buffer).count {

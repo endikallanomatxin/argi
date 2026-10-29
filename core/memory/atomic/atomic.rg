@@ -32,13 +32,21 @@ AtomicUInt32 := (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
 AtomicUInt32InitArgs: Type = (
     .initial : UInt32                     = 0,
-    .ffi     : $&ForeignFunctionInterface = reach ffi
+    .ffi     : $&ForeignFunctionInterface
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement Init#(AtomicUInt32, AtomicUInt32InitArgs) (
     .Result : Type = Errable#(AtomicUInt32, (..out_of_memory))
 
     .init = AtomicUInt32InitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_initial ::= initial
         _init_ffi ::= ffi
 

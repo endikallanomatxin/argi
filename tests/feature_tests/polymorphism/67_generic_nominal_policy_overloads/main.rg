@@ -34,13 +34,27 @@ implement HasMarker#(MarkerPolicy) (.marker = _impl_marker_MarkerPolicy)
 
 _impl_marker_MarkerPolicy := (.self: &MarkerPolicy) -> (.value: Int32) { value = self&.id }
 
-make_plain := () -> (.result: Errable#(.t: Plain#(.policy: Token), .reasons: (..out_of_memory))) {
+make_plain := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Plain#(.policy: Token), .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     result = ..ok Plain#(.policy: Token)(.policy = Token(.id = 1), .value = 42)
 }
 
-make_checked := () -> (
-    .result: Errable#(.t: Checked#(.policy: MarkerPolicy), .reasons: (..out_of_memory))
-) {
+make_checked := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Checked#(.policy: MarkerPolicy), .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     result = ..ok Checked#(.policy: MarkerPolicy)(.policy = MarkerPolicy(.id = 7), .value = 42)
 }
 

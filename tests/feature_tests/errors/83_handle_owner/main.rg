@@ -8,7 +8,16 @@ implement Deinit#(Owner) (
     }
 )
 
-make := (.fail: Bool) -> (.result: Errable#(.t: Owner, .reasons: (..missing))) {
+make := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Owner, .reasons: (..missing))) {
+    assume error_tracer
+
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok(.value = 7) }
 }
 

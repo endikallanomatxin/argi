@@ -15,9 +15,17 @@ return_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator
 
 ..iteration_failed
 
-fail_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> (
-    .result: Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
-) {
+fail_early := (
+    .array        : DynamicArray#(.t: Tracked),
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()) {
+    assume error_tracer
+
     assume allocator
     for ~item in array {
         result = ..error(.reason = ..iteration_failed)
@@ -25,20 +33,45 @@ fail_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) 
     }
 }
 
-make_array := (.allocator: $&PageAllocator) -> !DynamicArray#(.t: Int32) {
+make_array := (
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !DynamicArray#(.t: Int32) {
+    assume error_tracer
+
     assume allocator
     array ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 1)!
     push(.self = $&array, .value = 42, .allocator = allocator)!
     result = ..ok ~array
 }
 
-iteration_error := () -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed))) {
+iteration_error := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed))) {
+    assume error_tracer
+
     result = ..error(.reason = ..iteration_failed)
 }
 
-propagate_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> (
-    .result: Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
-) {
+propagate_early := (
+    .array        : DynamicArray#(.t: Tracked),
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()) {
+    assume error_tracer
+
     assume allocator
     for ~item in array { iteration_error()! }
 }
@@ -142,7 +175,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         expected = expected + 1
     }
     if expected != 5 { abort }
-    outer ::= DynamicArray#(.t: DynamicArray#(.t: Tracked))(.allocator = allocator, .capacity = 1)!!!
+    outer ::= DynamicArray#(.t: DynamicArray#(.t: Tracked))(
+        .allocator = allocator, .capacity = 1
+    )!!!
     inner ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 2)!!!
     push(.self = $&inner, .value = Tracked(.id = 20), .allocator = allocator)!!!
     push(.self = $&inner, .value = Tracked(.id = 21), .allocator = allocator)!!!

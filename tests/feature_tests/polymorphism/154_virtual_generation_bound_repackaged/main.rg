@@ -20,9 +20,18 @@ _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?
     result = ..none
 }
 
-apply_edit := (.editor: &Virtual#(SimpleEditor), .target: $&Int32, .mode: Int32) -> (
-    .result: Errable#(?Int32, (..failed))
-) {
+apply_edit := (
+    .editor       : &Virtual#(SimpleEditor),
+    .target       : $&Int32,
+    .mode         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     pending ::= edit(editor, target, mode)
 
     result = ..ok pending

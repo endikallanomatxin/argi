@@ -37,12 +37,20 @@ ArenaAllocator := (
 ArenaAllocatorInitArgs: Type = #(.Provider: Type: Allocator) (
     .allocator  : $&Provider,
     .block_size : UIntNative  = 4096
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.Provider: Type: Allocator) Init#(ArenaAllocator, ArenaAllocatorInitArgs#(Provider)) (
     .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
 
     .init = ArenaAllocatorInitArgs#(Provider) -> (.result: Result) {
+        assume error_tracer
+
         _init_allocator ::= allocator
         _init_block_size ::= block_size
 
@@ -103,9 +111,18 @@ implement Deinit#(ArenaAllocator) (
 )
 
 implement Allocator#(ArenaAllocator) (
-    .allocate = (.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&ArenaAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         _require_allocation_alignment(.alignment = alignment)
         required ::= size
 

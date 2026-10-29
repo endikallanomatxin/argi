@@ -79,9 +79,17 @@ _fs_truncate(.stream: UIntNative, .size: UInt64) -> (.status: Int32): CFunction(
     .symbol = "_argi_fs_truncate"
 )
 
-create_directory := (.self: &FileSystem = reach file_system, .path: StringView) -> (
-    .result : Errable#(Void, _FilesystemReasons)
-) {
+create_directory := (
+    .self         : &FileSystem,
+    .path         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, _FilesystemReasons)) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     status ::= _fs_mkdir(.bytes = path._data, .length = path._length).status
 
@@ -93,9 +101,17 @@ create_directory := (.self: &FileSystem = reach file_system, .path: StringView) 
     result = ..ok Void()
 }
 
-remove_directory := (.self: &FileSystem = reach file_system, .path: StringView) -> (
-    .result : Errable#(Void, _FilesystemReasons)
-) {
+remove_directory := (
+    .self         : &FileSystem,
+    .path         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, _FilesystemReasons)) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     status ::= _fs_rmdir(.bytes = path._data, .length = path._length).status
 
@@ -116,8 +132,17 @@ FileMetadata := (.kind: FileKind, .size: UInt64, .modified: UnixTimestamp)
 implement ImplicitlyCopyable#(FileMetadata) ()
 
 metadata := (
-    .self : &FileSystem = reach file_system, .path: StringView, .follow_links: Bool = true
+    .self         : &FileSystem,
+    .path         : StringView,
+    .follow_links : Bool         = true,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(FileMetadata, _FilesystemReasons)) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     kind :: Int32 = 0
     size :: UInt64 = 0
@@ -166,12 +191,22 @@ Directory := (._filesystem: &FileSystem, ._handle: UIntNative, ._ended: Bool)
 
 DirectoryEntry := (.name: String)
 
-DirectoryInitArgs: Type = (.self: &FileSystem = reach file_system, .path: StringView)
+DirectoryInitArgs: Type = (
+    .self         : &FileSystem,
+    .path         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(Directory, DirectoryInitArgs) (
     .Result : Type = Errable#(Directory, _FilesystemReasons)
 
     .init = DirectoryInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_self ::= self
         _init_path ::= path
 
@@ -191,8 +226,16 @@ implement Init#(Directory, DirectoryInitArgs) (
 )
 
 _next_directory := #(.Provider: Type: Allocator#(Provider)) (
-    .self: $&Directory, .allocator: $&Provider
+    .self         : $&Directory,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)) {
+    assume error_tracer
+
     assume ffi := self&._filesystem&._ffi
     assume allocator
 
@@ -249,9 +292,18 @@ implement ImplicitlyCopyable#(SeekOrigin) ()
 ..stream_seek_failed
 ..stream_truncate_failed
 
-seek := (.self: $&File, .offset: Int64, .origin: SeekOrigin) -> (
-    .result : Errable#(UInt64, (..stream_seek_failed))
-) {
+seek := (
+    .self         : $&File,
+    .offset       : Int64,
+    .origin       : SeekOrigin,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt64, (..stream_seek_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     selected :: Int32 = 0
 
@@ -275,13 +327,30 @@ seek := (.self: $&File, .offset: Int64, .origin: SeekOrigin) -> (
     result = ..ok position
 }
 
-position := (.self: $&File) -> (.result: Errable#(UInt64, (..stream_seek_failed))) {
+position := (
+    .self         : $&File,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt64, (..stream_seek_failed))) {
+    assume error_tracer
+
     result = seek(self, .offset = 0, .origin = ..current)
 }
 
-truncate := (.self: $&File, .size: UInt64) -> (
-    .result : Errable#(Void, (..stream_truncate_failed))
-) {
+truncate := (
+    .self         : $&File,
+    .size         : UInt64,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_truncate_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
 
     if _fs_truncate(.stream = self&.stream_address, .size = size).status != 0 {
@@ -317,10 +386,15 @@ _fs_temp_cleanup(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_fs_temp_
 TemporaryDirectory := (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
 
 TemporaryDirectoryInitArgs: Type = #(.Provider: Type: Allocator) (
-    .self      : &FileSystem = reach file_system,
-    .parent    : StringView,
-    .prefix    : StringView  = "argi-",
-    .allocator : $&Provider,
+    .self         : &FileSystem,
+    .parent       : StringView,
+    .prefix       : StringView                         = "argi-",
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.Provider: Type: Allocator) Init#(
@@ -329,6 +403,8 @@ implement#(.Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(TemporaryDirectory, _FilesystemReasons)
 
     .init = TemporaryDirectoryInitArgs#(Provider) -> (.result: Result) {
+        assume error_tracer
+
         _init_self ::= self
         _init_parent ::= parent
         _init_prefix ::= prefix
@@ -386,9 +462,16 @@ path := (.self: &TemporaryDirectory) -> (.view: StringView) {
     view = Viewable#(&String).make_view(.self = &self&._path)
 }
 
-_close_TemporaryDirectory := (.self: $&TemporaryDirectory) -> (
-    .result : Errable#(Void, _FilesystemReasons)
-) {
+_close_TemporaryDirectory := (
+    .self         : $&TemporaryDirectory,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, _FilesystemReasons)) {
+    assume error_tracer
+
     assume ffi := self&._filesystem&._ffi
     status ::= _fs_temp_close(.handle = self&._handle).status
 

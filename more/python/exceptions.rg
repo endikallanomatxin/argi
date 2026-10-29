@@ -66,8 +66,17 @@ capture := #(.t: Type) (.self: &Python, .value: Errable#(t, (..python_error))) -
 }
 
 _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .part: Int32, .allocator: $&AllocatorType
+    .self         : &Exception,
+    .part         : Int32,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     count ::= _exception_size(.handle = self&._handle, .part = part).length
     text ::= _native_byte_buffer(.allocator = allocator, .count = count)!
@@ -87,19 +96,43 @@ _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 exception_type := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType
+    .self         : &Exception,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
 
 exception_message := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType
+    .self         : &Exception,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
 
 exception_traceback := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType
+    .self         : &Exception,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     result = _exception_text(.self = self, .part = 2, .allocator = allocator)
 }

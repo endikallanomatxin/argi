@@ -1,29 +1,71 @@
 ..test_failed
 ..test_skipped
 
-test_fail_impl := () -> (.result: Errable#(Void, (..test_failed))) {
+test_fail_impl := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_failed)
 }
 
-test_skip_impl := () -> (.result: Errable#(Void, (..test_skipped))) {
+test_skip_impl := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_skipped))) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_skipped)
 }
 
-fail_c_string := (.message: &CChar) -> (.result: Errable#(Void, (..test_failed))) {
+fail_c_string := (
+    .message      : &CChar,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     test_fail_impl()!! message
 
     result = ..ok Void()
 }
 
-skip := (.message: &CChar) -> (.result: Errable#(Void, (..test_skipped))) {
+skip := (
+    .message      : &CChar,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_skipped))) {
+    assume error_tracer
+
     test_skip_impl()!! message
 
     result = ..ok Void()
 }
 
-expect := (.condition: Bool, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+expect := (
+    .condition    : Bool,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     if condition {
         result = ..ok Void()
         return
@@ -34,9 +76,18 @@ expect := (.condition: Bool, .message: StringView = "") -> (
     )
 }
 
-_assert_equal_generic := #(.t: Type) (.expected: t, .actual: t, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_assert_equal_generic := #(.t: Type) (
+    .expected     : t,
+    .actual       : t,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     if expected == actual {
         result = ..ok Void()
         return
@@ -48,7 +99,15 @@ _assert_equal_generic := #(.t: Type) (.expected: t, .actual: t, .message: String
 }
 
 expect_error := #(.t: Type, .reasons: Type) (
-    .expected_reason: reasons, .actual_result: Errable#(t, reasons)
+    .expected_reason : reasons,
+    .actual_result   : Errable#(t, reasons),
+    .error_tracer    : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     fail(.message = "testing.expect_error must be lowered by the compiler")!
 }

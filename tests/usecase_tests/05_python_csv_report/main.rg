@@ -115,8 +115,18 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     print(view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
-print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
-) {
+print_python_error := (
+    .interpreter  : &p.Python,
+    .writer       : $&File,
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void = ..ok Void() {
+    assume error_tracer
+
     assume allocator
     assume writer
 
@@ -125,10 +135,26 @@ print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&P
     if message_view != "" { print(message_view)! }
 }
 
-invalid_arguments := () -> (.result: Errable#(Void, (..invalid_arguments))) {
+invalid_arguments := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..invalid_arguments))) {
+    assume error_tracer
+
     result = ..error(.reason = ..invalid_arguments)
 }
 
-invalid_duration := () -> (.result: Errable#(Void, (..invalid_duration))) {
+invalid_duration := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..invalid_duration))) {
+    assume error_tracer
+
     result = ..error(.reason = ..invalid_duration)
 }

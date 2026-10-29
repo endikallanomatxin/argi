@@ -123,7 +123,7 @@ must be Target or an Errable containing Target. The fixed requirement is
 `.init: Args -> (.result: Result)`.
 
 `T(...)` fixes the target and infers the remaining participants from applicable
-input signatures and reachable capabilities. Implementation parameters, including
+input signatures and lexically assumed arguments. Implementation parameters, including
 static allocator types, must be determined by those participants. Several Init
 conformances may share a target. Different inferred argument types require
 qualification; specificity only compares conformances for the same complete tuple.
@@ -165,8 +165,7 @@ Add#(.Left: Type, .Right: Type): Contract = (
 
 Each implementation supplies its operation signature. Its ordinary inputs include
 both operands and any auxiliary capabilities. An allocator provider can be a
-compile-time parameter of that callable, inferred from an explicit input or a
-reach default after the conformance has been selected. It does not distinguish
+compile-time parameter of that callable, inferred from an explicit or lexically assumed input after the conformance has been selected. It does not distinguish
 conformances. The operation returns `(.result: Result)`; Result never selects an
 implementation. Borrowed operands use reference participants and explicit
 reference arguments. Concrete and specialized generic expressions share this
@@ -178,7 +177,7 @@ reference participants, such as `Equal#(&Key, &Key)`. Auxiliary inputs belong
 to the operation signature and cannot distinguish conformances for one tuple.
 The `!=` symbol negates the same selected operation and evaluates it once.
 Bundled StringView, time values, Path and semver comparisons use Equal; auxiliary
-capabilities can be fields with reach defaults, including in generic bodies.
+capabilities are ordinary inputs, including in generic bodies.
 Both addition and equality require explicit references for borrowed operands;
 there is no implicit receiver address. Legacy operator declarations and their
 metadata registries are removed. Arithmetic symbols select Add, Subtract,
@@ -349,12 +348,11 @@ ordinary functions compete by identity, never by cross-contract specificity.
 Multiple applicable identities require explicit qualification. Static and
 generic bodies share this lookup; unary virtual inputs retain their identity.
 
-Scoped requirement inputs retain lexical reach defaults. Unqualified operation
-selection can infer direct participants from visible capability bindings and
-field paths, including unary virtual evidence. A missing capability does not
-supply an inferred type. Selected calls materialize the requirement defaults
-through the ordinary reached-argument path. Conformance ambiguities remain
-diagnostics after speculative selection rolls back.
+Scoped requirement inputs use ordinary defaults and lexical assumptions.
+Selection infers participants from explicitly supplied or assumed input fields,
+including unary virtual evidence. A missing input never supplies an inferred
+type or extends a caller signature. Conformance ambiguities remain diagnostics
+after speculative selection rolls back.
 
 Bundled iteration protocols now use explicit collection/state participants and
 associated `Item`/`IteratorType` elements. `for` calls the selected conversion,
@@ -418,7 +416,7 @@ Type calls select Init evidence, complete its Args record and invoke its init
 operation; Result must be the target participant or one bundled Errable containing
 it. Concrete and explicit generic calls, including parameterized bodies, share
 this route. Closed anonymous Args records retain ordinary field defaults; generic
-argument shapes retain scalar and lexical reach defaults. Failed construction
+argument shapes retain ordinary defaults and lexical assumptions. Failed construction
 probes roll back evidence and generic side effects.
 
 Initializer safety and projected output dependencies recognize selected Init
@@ -442,7 +440,8 @@ evidence as explicit deinit calls. Its self input is consuming. Generic and
 specialized conformances, ordinary operation aliases, imported owners and nested
 structural cleanup share that route. A lifecycle wrapper gives the selected
 operation destruction semantics without changing a reused ordinary function.
-Optional/reached capability inputs still propagate through tracked calls.
+Auxiliary capability inputs must appear in the operation signature and are
+supplied explicitly or through the caller's lexical assumptions.
 
 Bundled Deinit implementations include allocation receipts and backing
 allocations, arena owners/domains, collection shape markers, fixed tracers, native

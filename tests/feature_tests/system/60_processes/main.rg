@@ -59,6 +59,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     args: Array#(.n = 6, .t: StringView) = ("echo", "", "a b", "a\"b", "trail\\", "á;$(no)")
     child ::= unwrap_or_abort(
         .value = spawn(
+            .self       = proc_man
             .executable = executable
             .arguments  = view(.self = &args)
             .stdin      = ..pipe
@@ -79,7 +80,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     quick: [1]StringView = ("quick")
     inherited ::= unwrap_or_abort(
         .value = spawn(
-            .executable = executable, .arguments = view(.self = &quick), .stdin = ..discard
+            .self       = proc_man
+            .executable = executable
+            .arguments  = view(.self = &quick)
+            .stdin      = ..discard
         )
     ).result
     if is_open(.self = &inherited.stdin).ok or is_open(.self = &inherited.stdout).ok { abort }

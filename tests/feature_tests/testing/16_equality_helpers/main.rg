@@ -1,4 +1,13 @@
-test equality_helpers := (.system: System) -> !() {
+test equality_helpers := (
+    .system       : System,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !() {
+    assume error_tracer
+
     testing.expect(.condition = true, .message = "successful checks stay silent")!
     testing.expect_equal(.expected = true, .actual = true)!
     testing.expect_equal(.expected = 1, .actual = 1)!

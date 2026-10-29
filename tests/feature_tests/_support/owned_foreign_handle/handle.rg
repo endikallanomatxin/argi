@@ -33,13 +33,21 @@ violations() -> (.count: CInt): CFunction(.symbol = "argi_c_owned_violations")
 OwnedHandleInitArgs: Type = (
     .value : CInt,
     .fail  : Bool                       = false,
-    .ffi   : $&ForeignFunctionInterface = reach ffi
+    .ffi   : $&ForeignFunctionInterface
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement Init#(OwnedHandle, OwnedHandleInitArgs) (
     .Result : Type = Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
 
     .init = OwnedHandleInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_value ::= ~value
         _init_fail ::= ~fail
         assume ffi := ~ffi
@@ -74,13 +82,21 @@ GenericHandle := #(.t: Type) (
 
 GenericHandleInitArgs2: Type = #(.t: Type) (
     .tag : t,
-    .ffi : $&ForeignFunctionInterface = reach ffi
+    .ffi : $&ForeignFunctionInterface
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.t: Type) Init#(GenericHandle#(.t: t), GenericHandleInitArgs2#(t)) (
     .Result : Type = Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
 
     .init = GenericHandleInitArgs2#(t) -> (.result: Result) {
+        assume error_tracer
+
         _init_tag ::= ~tag
         assume ffi := ~ffi
 

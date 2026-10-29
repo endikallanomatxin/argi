@@ -26,33 +26,63 @@ main := () -> (.status_code: Int32) {
 }
 
 implement Writer#(DummyWriter) (
-    .write_byte = (.self: $&DummyWriter, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&DummyWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&
         byte
         result = ..ok(.value = Void())
     }
 
-    .flush = (.self: $&DummyWriter) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&DummyWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())
     }
 )
 
 implement Writer#(Wrapper) (
-    .write_byte = (.self: $&Wrapper, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&Wrapper,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         Writer#().write_byte(.self = self&.base, .byte = byte)
         result = ..ok(.value = Void())
     }
 
-    .flush = (.self: $&Wrapper) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&Wrapper,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         Writer#().flush(.self = self&.base)
         result = ..ok(.value = Void())
     }

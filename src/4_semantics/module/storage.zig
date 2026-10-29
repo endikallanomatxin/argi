@@ -39,9 +39,6 @@ pub const Storage = struct {
     virtual_registries: std.ArrayList(entities.VirtualMethodRegistry) = .empty,
     virtualizes: std.ArrayList(entities.Virtualize) = .empty,
     virtual_calls: std.ArrayList(entities.VirtualCall) = .empty,
-    reach_segments: std.ArrayList(primitives.StringRange) = .empty,
-    reach_alternatives: std.ArrayList(entities.ReachAlternative) = .empty,
-    reaches: std.ArrayList(entities.Reach) = .empty,
     nullable_unwraps: std.ArrayList(entities.NullableUnwrap) = .empty,
     testing_expect_errors: std.ArrayList(entities.TestingExpectError) = .empty,
     error_propagations: std.ArrayList(entities.ErrorPropagation) = .empty,
@@ -87,9 +84,6 @@ pub const Storage = struct {
         self.virtual_registries.deinit(allocator);
         self.virtualizes.deinit(allocator);
         self.virtual_calls.deinit(allocator);
-        self.reach_segments.deinit(allocator);
-        self.reach_alternatives.deinit(allocator);
-        self.reaches.deinit(allocator);
         self.nullable_unwraps.deinit(allocator);
         self.testing_expect_errors.deinit(allocator);
         self.error_propagations.deinit(allocator);
@@ -133,9 +127,6 @@ pub const Storage = struct {
             self.virtual_registries.items.len * @sizeOf(entities.VirtualMethodRegistry) +
             self.virtualizes.items.len * @sizeOf(entities.Virtualize) +
             self.virtual_calls.items.len * @sizeOf(entities.VirtualCall) +
-            self.reach_segments.items.len * @sizeOf(primitives.StringRange) +
-            self.reach_alternatives.items.len * @sizeOf(entities.ReachAlternative) +
-            self.reaches.items.len * @sizeOf(entities.Reach) +
             self.nullable_unwraps.items.len * @sizeOf(entities.NullableUnwrap) +
             self.testing_expect_errors.items.len * @sizeOf(entities.TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(entities.ErrorPropagation) +

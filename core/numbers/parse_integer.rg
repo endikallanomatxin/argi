@@ -24,8 +24,19 @@ _integer_parse_digit := #(.t: Type: Int) (.byte: UInt8) -> (.value: ?t) {
 }
 
 _integer_parse := #(.t: Type: Int) (
-    .text: StringView, .base: UInt8, .minimum: t, .maximum: t, .allow_negative: Bool
+    .text           : StringView,
+    .base           : UInt8,
+    .minimum        : t,
+    .maximum        : t,
+    .allow_negative : Bool,
+    .error_tracer   : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(t, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     if base < 2 or base > 36 {
         result = ..error(.reason = ..invalid_base)
         return
@@ -109,33 +120,65 @@ _integer_parse := #(.t: Type: Int) (
     result = ..ok accumulated
 }
 
-parse_uint8 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(UInt8, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_uint8 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt8, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: UInt8)(
         .text = text, .base = base, .minimum = 0, .maximum = 255, .allow_negative = false
     ).result
 }
 
-parse_uint16 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(UInt16, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_uint16 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt16, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: UInt16)(
         .text = text, .base = base, .minimum = 0, .maximum = 65535, .allow_negative = false
     ).result
 }
 
-parse_uint32 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(UInt32, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_uint32 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt32, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: UInt32)(
         .text = text, .base = base, .minimum = 0, .maximum = 4294967295, .allow_negative = false
     ).result
 }
 
-parse_uint64 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(UInt64, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_uint64 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt64, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: UInt64)(
         .text           = text
         .base           = base
@@ -145,25 +188,49 @@ parse_uint64 := (.text: StringView, .base: UInt8 = 10) -> (
     ).result
 }
 
-parse_int8 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(Int8, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_int8 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int8, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: Int8)(
         .text = text, .base = base, .minimum = -128, .maximum = 127, .allow_negative = true
     ).result
 }
 
-parse_int16 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(Int16, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_int16 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int16, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: Int16)(
         .text = text, .base = base, .minimum = -32768, .maximum = 32767, .allow_negative = true
     ).result
 }
 
-parse_int32 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(Int32, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_int32 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: Int32)(
         .text           = text
         .base           = base
@@ -173,9 +240,17 @@ parse_int32 := (.text: StringView, .base: UInt8 = 10) -> (
     ).result
 }
 
-parse_int64 := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(Int64, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_int64 := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int64, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     result = _integer_parse#(.t: Int64)(
         .text           = text
         .base           = base
@@ -185,9 +260,17 @@ parse_int64 := (.text: StringView, .base: UInt8 = 10) -> (
     ).result
 }
 
-parse_uintnative := (.text: StringView, .base: UInt8 = 10) -> (
-    .result : Errable#(UIntNative, (..invalid_base, ..invalid_input, ..out_of_range))
-) {
+parse_uintnative := (
+    .text         : StringView,
+    .base         : UInt8       = 10,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UIntNative, (..invalid_base, ..invalid_input, ..out_of_range))) {
+    assume error_tracer
+
     zero :: UIntNative = 0
     maximum ::= integer_limits(.value = zero).maximum
 

@@ -10,9 +10,7 @@ _crc32_z(.previous: CULong, .bytes: RawPointer#(.t: UInt8), .count: CSize) -> (
 -- No storage is allocated, transferred, initialized, or freed by this wrapper.
 -- The result is a 32-bit CRC carried in C's unsigned-long representation.
 update_crc32 := (
-    .previous : CULong,
-    .source   : &ArrayView#(.t: UInt8),
-    .ffi      : $&ForeignFunctionInterface = reach ffi,
+    .previous: CULong, .source: &ArrayView#(.t: UInt8), .ffi: $&ForeignFunctionInterface
 ) -> (.checksum: CULong) {
     assume ffi
     count := length(source)
@@ -27,7 +25,7 @@ update_crc32 := (
     checksum = _crc32_z(previous, raw, count)
 }
 
-crc32 := (.source: &ArrayView#(.t: UInt8), .ffi: $&ForeignFunctionInterface = reach ffi) -> (
+crc32 := (.source: &ArrayView#(.t: UInt8), .ffi: $&ForeignFunctionInterface) -> (
     .checksum : CULong
 ) {
     assume ffi

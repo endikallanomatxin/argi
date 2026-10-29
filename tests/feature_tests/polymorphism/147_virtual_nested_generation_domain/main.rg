@@ -3,7 +3,15 @@
 Source#(.Participant: Type): Contract = (
     domain storage
     .get  : (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
-    .edit : (.self: $&Participant, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) where {
+    .edit : (
+        .self         : $&Participant,
+        .succeed      : Bool,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { invalidates(self.storage) }
             on result ..none {}
@@ -20,7 +28,17 @@ implement Source#(Cell) (.get = _impl_get_Cell, .edit = _impl_edit_Cell) where {
 
 _impl_get_Cell := (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
 
-_impl_edit_Cell := (.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) {
+_impl_edit_Cell := (
+    .self         : $&Cell,
+    .succeed      : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     if succeed {
         self&.value = 42
         result = ..ok ..some(.value = 42)
@@ -30,9 +48,17 @@ _impl_edit_Cell := (.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32,
     result = ..ok ..none
 }
 
-apply_edit := (.source: $&Virtual#(Source), .succeed: Bool) -> (
-    .result: Errable#(?Int32, (..failed))
-) {
+apply_edit := (
+    .source       : $&Virtual#(Source),
+    .succeed      : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     result = edit(source, succeed)
 }
 

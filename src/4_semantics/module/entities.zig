@@ -20,9 +20,6 @@ pub const ModuleAutoDeinitId = enum(u32) { _ };
 pub const ModuleVirtualRegistryId = enum(u32) { _ };
 pub const ModuleVirtualizeId = enum(u32) { _ };
 pub const ModuleVirtualCallId = enum(u32) { _ };
-pub const ModuleReachSegmentId = enum(u32) { _ };
-pub const ModuleReachAlternativeId = enum(u32) { _ };
-pub const ModuleReachId = enum(u32) { _ };
 pub const ModuleNullableUnwrapId = enum(u32) { _ };
 pub const ModuleTestingExpectErrorId = enum(u32) { _ };
 pub const ModuleErrorPropagationId = enum(u32) { _ };
@@ -56,9 +53,6 @@ pub const Ids = struct {
     pub const VirtualRegistryId = ModuleVirtualRegistryId;
     pub const VirtualizeId = ModuleVirtualizeId;
     pub const VirtualCallId = ModuleVirtualCallId;
-    pub const ReachSegmentId = ModuleReachSegmentId;
-    pub const ReachAlternativeId = ModuleReachAlternativeId;
-    pub const ReachId = ModuleReachId;
     pub const NullableUnwrapId = ModuleNullableUnwrapId;
     pub const TestingExpectErrorId = ModuleTestingExpectErrorId;
     pub const ErrorPropagationId = ModuleErrorPropagationId;
@@ -92,8 +86,6 @@ pub const AutoDeinit = primitives.AutoDeinit(Ids);
 pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
-pub const ReachAlternative = primitives.ReachAlternative(Ids);
-pub const Reach = primitives.Reach(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
 pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
@@ -107,7 +99,7 @@ pub const ModuleType = union(enum) {
 
 /// Cold relation for declaration kinds that own runtime storage. Keeping this
 /// sparse avoids inflating every Declaration while making the identity explicit
-/// for lookup, reach, Safety and Codegen.
+/// for lookup, Safety and Codegen.
 pub const DeclarationBinding = struct {
     declaration: ModuleDeclId,
     binding: ModuleBindingId,
@@ -176,15 +168,8 @@ pub const PendingOperation = union(enum) {
         input: ModuleNodeId,
         expected_type: ?ModuleTypeId = null,
         // Indices into ModuleSema.binding_refs, captured at the call site.
-        // Later reach resolution must use the caller's lexical environment.
+        // Inherited assumptions must respect the caller's lexical shadowing.
         visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
-        owner_function: ?ModuleFunctionId = null,
-    },
-    resolve_local_reach: struct {
-        node: ModuleNodeId,
-        reach: ModuleNodeId,
-        binding: ModuleBindingId,
-        visible_bindings: BindingRange,
         owner_function: ?ModuleFunctionId = null,
     },
     resolve_field: struct {

@@ -31,19 +31,47 @@ select_index := (.selection: $&UIntNative) -> (.result: UIntNative) {
     result = selection&
 }
 
-build_choice := (.selection: $&UIntNative, .fail: Bool) -> (.result: Errable#(Choice, (..stop))) {
+build_choice := (
+    .selection    : $&UIntNative,
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Choice, (..stop))) {
+    assume error_tracer
+
     selection&= 1
     value :: Choice = ..pair(.left = Resource(.id = 7), .right = maybe_resource(.fail = fail)!)
     result = ..ok ~value
 }
 
-maybe_resource := (.fail: Bool) -> (.result: Errable#(Resource, (..stop))) {
+maybe_resource := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Resource, (..stop))) {
+    assume error_tracer
+
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.id = 14) }
 }
 
-replace := (.values: $&[2]Choice, .selection: $&UIntNative, .fail: Bool) -> (
-    .result: Errable#(Int32, (..stop))
-) {
+replace := (
+    .values       : $&[2]Choice,
+    .selection    : $&UIntNative,
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..stop))) {
+    assume error_tracer
+
     values&[select_index(.selection = selection)] = build_choice(
         .selection = selection, .fail = fail
     )!

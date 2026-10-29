@@ -14,9 +14,17 @@ implement Init#(Deadline, DeadlineInitArgs) (
     }
 )
 
-deadline_after := (.after: Duration, .now: MonotonicInstant) -> (
-    .result : Errable#(Deadline, (..out_of_range))
-) {
+deadline_after := (
+    .after        : Duration,
+    .now          : MonotonicInstant,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Deadline, (..out_of_range))) {
+    assume error_tracer
+
     instant ::= checked_add(.left = now._nanoseconds, .right = after._nanoseconds)!
 
     result = ..ok(._instant = (._nanoseconds = instant))

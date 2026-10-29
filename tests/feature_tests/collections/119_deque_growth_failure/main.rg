@@ -7,9 +7,18 @@ implement ErrorTracer#(CountingTracer) (
         self&.captures = self&.captures + 1
     }
     .reset_context = (.self: $&CountingTracer) -> () { self&.captures = 0 }
-    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) { result = ..ok Void() }
+    .report        = (
+        .self         : $&CountingTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+        result = ..ok Void()
+    }
 )
 
 RecordingAllocator := (
@@ -81,9 +90,18 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&RecordingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)
             return

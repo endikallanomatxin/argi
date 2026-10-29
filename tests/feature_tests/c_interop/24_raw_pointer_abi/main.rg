@@ -8,7 +8,10 @@ _echo(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)): CF
 
 _probe() -> (.status: Int32): CFunction(.symbol = "argi_c_pointer_probe")
 
-_forward := () -> (.pointer: RawPointer#(.t: UInt8)) { pointer = _static() }
+_forward := (.ffi: $&ForeignFunctionInterface) -> (.pointer: RawPointer#(.t: UInt8)) {
+    assume ffi
+    pointer = _static()
+}
 
 _identity(.pointer: RawPointer#(.t: UInt8)) -> (.result: RawPointer#(.t: UInt8)): CFunction := {
     result = pointer

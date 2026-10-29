@@ -9,7 +9,7 @@ Canonical construction uses `Init#(Target, Args)`. The complete participant tupl
 selects a conformance; Args is its nominal input record. The associated Result
 is Target or `Errable#(Target, R)`, and the required operation is
 `Args -> (.result: Result)`. `T(...)` fixes Target, infers Args against candidate
-signatures, and completes ordinary defaults and reached capabilities.
+signatures, and completes ordinary defaults and lexical assumptions.
 
 No uninitialized destination is passed into it: the successful value is returned
 directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
@@ -47,8 +47,8 @@ Different inferred argument types require explicit qualification, such as
 same complete tuple. Expected outputs never select a conformance. The selected
 Result must construct the target and cannot bypass custom construction.
 
-Record defaults retain scalar literals, payload-free choice variants and lexical
-reach directives without executing runtime expressions during type materialization.
+Record defaults retain scalar literals and payload-free choice variants directly.
+Other defaults remain caller-evaluated expression recipes during type materialization.
 The selected operation preserves argument loans and projected output dependencies.
 References carried inside input records retain effects on their referents, including
 consumption and invalidation. Copying an input record does not let its local field-slot

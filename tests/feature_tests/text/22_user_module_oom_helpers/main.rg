@@ -1,6 +1,13 @@
-make_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
-    .result: Errable#(.t: String, .reasons: (..out_of_memory))
-) {
+make_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = 4)

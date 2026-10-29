@@ -9,21 +9,32 @@ implement Deinit#(Owner) (
     }
 )
 
-attempt := (.fail: Bool) -> (.result: Errable#(Int32, (..missing))) {
+attempt := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..missing))) {
+    assume error_tracer
+
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-run := #(.WriterType: Type: Writer#(WriterType)) (
-    .fail: Bool, .writer: $&WriterType = reach writer
-) -> (.result: Int32 = 9) {
+run := #(.WriterType: Type: Writer#(WriterType)) (.fail: Bool, .writer: $&WriterType) -> (
+    .result : Int32 = 9
+) {
+    assume writer
     local ::= Owner(1)
     value ::= attempt(fail)!!!
     result = value
 }
 
 unwrap := #(.t: Type, .WriterType: Type: Writer#(WriterType)) (
-    .input: Errable#(t, (..missing)), .writer: $&WriterType = reach writer
+    .input: Errable#(t, (..missing)), .writer: $&WriterType
 ) -> (.result: Int32 = 9) {
+    assume writer
     result = ~input!!!
 }
 

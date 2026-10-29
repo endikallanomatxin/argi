@@ -1785,7 +1785,7 @@ test "C interop validates exported bodies and signatures" {
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/12X_reserved_export", "C export symbol 'main' is reserved", "failed without a diagnostic");
 }
 
-test "C interop checks reached and explicit authorization without ABI arguments" {
+test "C interop checks lexical and explicit authorization without ABI arguments" {
     try expectSuccessfulBuild("tests/feature_tests/c_interop/13_foreign_capability");
     try run("tests/feature_tests/c_interop/13_foreign_capability");
     try expectSuccessfulBuild("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
@@ -2670,11 +2670,13 @@ test "argi repl preserves indexed replacement destinations across submissions" {
         \\    counter&.selections = counter&.selections + 1
         \\    result = selection&
         \\}
-        \\make_array_resource := (.selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Resource, (..stop)))  {
+        \\make_array_resource := (.selection: $&UIntNative, .counter: $&Counter, .fail: Bool, .error_tracer: $&Virtual#(.contract: ErrorTracer)) -> (.result: Errable#(Resource, (..stop))) {
+        \\    assume error_tracer
         \\    selection&= 1
         \\    if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.counter = counter, .value = 9) }
         \\}
-        \\replace_array := (.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool) -> (.result: Errable#(Int32, (..stop)))  {
+        \\replace_array := (.values: $&[2]Resource, .selection: $&UIntNative, .counter: $&Counter, .fail: Bool, .error_tracer: $&Virtual#(.contract: ErrorTracer)) -> (.result: Errable#(Int32, (..stop))) {
+        \\    assume error_tracer
         \\    values&[select_array_index(.selection = selection, .counter = counter)] = make_array_resource(.selection = selection, .counter = counter, .fail = fail)!
         \\    result = ..ok 42
         \\}

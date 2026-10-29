@@ -383,7 +383,6 @@ test "staged execution demand follows generic selection transactions" {
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var functions = Functions{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
@@ -473,7 +472,6 @@ test "staged requests own transient type descriptions after selection rollback" 
         defer graph.deinit(a);
         try graph.types.append(a, .{ .builtin = .Int32 });
         var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-        defer core.deinitReachedCalls();
         var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
         defer generics.deinit();
         var functions = Functions{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
@@ -510,7 +508,6 @@ fn transientRequestFailures(a: std.mem.Allocator) !void {
     try graph.fields.append(graph_allocator, .{ .name = try graph.addString(graph_allocator, "value"), .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
     try graph.types.append(graph_allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
     var core = @import("core.zig").Resolver{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var functions = Functions{ .allocator = graph_allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };

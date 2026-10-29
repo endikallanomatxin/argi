@@ -5,9 +5,16 @@ implement ImplicitlyCopyable#(LogLevel) ()
 LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 
 Logger#(.Value: Type): Contract = (
-    .log : (.self: $&Value, .level: LogLevel, .message: StringView) -> (
-        .result : Errable#(Void, LogReasons)
-    ) where {}
+    .log : (
+        .self         : $&Value,
+        .level        : LogLevel,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, LogReasons)) where {}
 )
 
 _rank := (.level: LogLevel) -> (.value: Int32) {
@@ -30,8 +37,17 @@ _prefix := (.level: LogLevel) -> (.text: StringView) {
 -- each record on one line. Writes can fail after a prefix; callers decide
 -- whether logging failures should affect their application. Flush is explicit.
 _write_record := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer: $&WriterType, .level: LogLevel, .message: StringView
+    .writer       : $&WriterType,
+    .level        : LogLevel,
+    .message      : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
+    assume error_tracer
+
     write(.self = writer, .value = _prefix(.level = level).text)!
     write(.self = writer, .value = ": ")!
     index :: UIntNative = 0
@@ -66,17 +82,33 @@ implement#(.t: Type: Writer#(t)) Init#(FileLogger#(.t: t), FileLoggerInitArgs#(t
 )
 
 implement#(.t: Type: Writer#(t)) Logger#(FileLogger#(.t: t)) (
-    .log = (.self: $&FileLogger#(.t: t), .level: LogLevel, .message: StringView) -> (
-        .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) {
+    .log = (
+        .self         : $&FileLogger#(.t: t),
+        .level        : LogLevel,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
+        assume error_tracer
+
         if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
         _write_record(.writer = self&._writer, .level = level, .message = message)!
     }
 )
 
-flush := #(.t: Type: Writer#(t)) (.self: $&FileLogger#(.t: t)) -> (
-    .result : Errable#(Void, LogReasons) = ..ok Void()
-) {
+flush := #(.t: Type: Writer#(t)) (
+    .self         : $&FileLogger#(.t: t),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
+    assume error_tracer
+
     Writer#().flush(.self = self&._writer)!
 }
 
@@ -105,9 +137,18 @@ implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Init#(
 implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Logger#(
     StdLogger#(.out: out, .err: err)
 ) (
-    .log = (.self: $&StdLogger#(.out: out, .err: err), .level: LogLevel, .message: StringView) -> (
-        .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) {
+    .log = (
+        .self         : $&StdLogger#(.out: out, .err: err),
+        .level        : LogLevel,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
+        assume error_tracer
+
         if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
         if _rank(.level = level).value >= 2 {
             _write_record(.writer = self&._err, .level = level, .message = message)!
@@ -120,8 +161,17 @@ implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Logger#(
 NullLogger: Type = ()
 
 implement Logger#(NullLogger) (
-    .log = (.self: $&NullLogger, .level: LogLevel, .message: StringView) -> (
-        .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) {
+    .log = (
+        .self         : $&NullLogger,
+        .level        : LogLevel,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, LogReasons) = ..ok Void()) {
+        assume error_tracer
+
     }
 )

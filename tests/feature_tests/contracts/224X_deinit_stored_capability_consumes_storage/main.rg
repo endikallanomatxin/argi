@@ -1,18 +1,18 @@
 Counter := (.allocation: Allocation)
 
-Owner := (.value: Int32)
+Owner := (.value: Int32, .counter: $&Counter)
 
-release_storage := (.counter: $&Counter = reach counter) -> () {
+release_storage := (.counter: $&Counter) -> () {
     deinit(.self = $&counter&.allocation)
 }
 
-observe := (.self: $&Owner) -> () { release_storage() }
+observe := (.self: $&Owner) -> () { release_storage(.counter = self&.counter) }
 
 implement Deinit#(Owner) (.deinit = observe)
 
 create := (.counter: $&Counter) -> () {
     assume counter
-    value ::= Owner(3)
+    value ::= Owner(.value = 3, .counter = counter)
 }
 
 main := (.system: System) -> () {

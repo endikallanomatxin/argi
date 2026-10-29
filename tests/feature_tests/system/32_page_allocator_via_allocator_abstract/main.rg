@@ -1,6 +1,13 @@
-alloc_one := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
-    .result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))
-) {
+alloc_one := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)

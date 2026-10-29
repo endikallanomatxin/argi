@@ -613,18 +613,6 @@ pub fn VirtualCall(comptime Ids: type) type {
     };
 }
 
-pub fn ReachAlternative(comptime Ids: type) type {
-    return struct {
-        segments: Range(Ids.ReachSegmentId),
-    };
-}
-
-pub fn Reach(comptime Ids: type) type {
-    return struct {
-        alternatives: Range(Ids.ReachAlternativeId),
-    };
-}
-
 pub fn NullableUnwrap(comptime Ids: type) type {
     return struct {
         nullable_value: Ids.NodeId,
@@ -705,7 +693,6 @@ pub fn Node(comptime Ids: type) type {
             declaration: Ids.DeclId,
             binding_declaration: Ids.BindingId,
             binding_use: Ids.BindingId,
-            reach_directive: Ids.ReachId,
             move_value: Ids.NodeId,
             denied_implicit_copy: Ids.NodeId,
             assignment: struct { binding: Ids.BindingId, value: Ids.NodeId },
@@ -735,7 +722,8 @@ pub fn Node(comptime Ids: type) type {
             int_literal: i128,
             float_literal: f64,
             char_literal: u32,
-            // Global-only recipe, expanded independently for each omitted input.
+            // Expanded independently for each omitted field. Modules retain a
+            // parameterized expression ID; global graphs retain a recipe ID.
             captured_expression: u32,
             string_literal: StringRange,
             bool_literal: bool,
@@ -851,9 +839,6 @@ test "semantic primitives instantiate with isolated id namespaces" {
         pub const VirtualRegistryId = enum(u32) { _ };
         pub const VirtualizeId = enum(u32) { _ };
         pub const VirtualCallId = enum(u32) { _ };
-        pub const ReachSegmentId = enum(u32) { _ };
-        pub const ReachAlternativeId = enum(u32) { _ };
-        pub const ReachId = enum(u32) { _ };
         pub const NullableUnwrapId = enum(u32) { _ };
         pub const TestingExpectErrorId = enum(u32) { _ };
         pub const ErrorPropagationId = enum(u32) { _ };

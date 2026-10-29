@@ -22,9 +22,17 @@ _limited_block_remaining := #(.t: Type: BlockReader#(t)) (.self: &LimitedReader#
 }
 
 implement#(.t: Type: BlockReader#(t)) BlockReader#(LimitedReader#(.t: t)) (
-    .read_block = (.self: $&LimitedReader#(.t: t), .buffer: MutableArrayView#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
-    ) {
+    .read_block = (
+        .self         : $&LimitedReader#(.t: t),
+        .buffer       : MutableArrayView#(.t: UInt8),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
+        assume error_tracer
+
         count ::= length(&buffer).count
 
         if self&._remaining < count { count = self&._remaining }
@@ -45,9 +53,16 @@ implement#(.t: Type: BlockReader#(t)) BlockReader#(LimitedReader#(.t: t)) (
 
 -- The block adapter also supports byte consumers without reading ahead.
 implement#(.t: Type: BlockReader#(t)) Reader#(LimitedReader#(.t: t)) (
-    .read_byte = (.self: $&LimitedReader#(.t: t)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
+    .read_byte = (
+        .self         : $&LimitedReader#(.t: t),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         byte :: [1]UInt8 = (0)
         received ::= BlockReader#().read_block(self, .buffer = view($&byte))!
 
@@ -79,9 +94,16 @@ _limited_byte_remaining := #(.t: Type: Reader#(t)) (.self: &LimitedByteReader#(.
 }
 
 implement#(.t: Type: Reader#(t)) Reader#(LimitedByteReader#(.t: t)) (
-    .read_byte = (.self: $&LimitedByteReader#(.t: t)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
+    .read_byte = (
+        .self         : $&LimitedByteReader#(.t: t),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         if self&._remaining == 0 {
             result = ..ok ..end
             return

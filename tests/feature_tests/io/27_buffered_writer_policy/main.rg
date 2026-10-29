@@ -98,9 +98,17 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(RecordingWriter) (
-    .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&RecordingWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         if self&.fail_write {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -112,9 +120,16 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&RecordingWriter) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&RecordingWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.flush_calls = self&.flush_calls + 1
         if self&.fail_flush {
             result = ..error(.reason = ..stream_flush_failed)

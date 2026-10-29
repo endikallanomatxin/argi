@@ -2,7 +2,7 @@ Storage := (.aligner: UIntNative, .bytes: [291]UInt8)
 
 ProbeWriter := (.bytes: UIntNative = 0)
 
-main := () -> (.status_code: Int32 = 0)  {
+main := () -> (.status_code: Int32 = 0) {
     -- The numeric prefix aligns bytes; slicing at one deliberately misaligns
     -- slot headers. Sentinels also cover the unused tail and both boundaries.
     storage ::= Storage(.aligner = 0, .bytes = zeroed#(.t: [291]UInt8)())
@@ -19,7 +19,9 @@ main := () -> (.status_code: Int32 = 0)  {
     ErrorTracer#().add_context(.self = $&tracer, .location = location, .context = context)
     writer ::= ProbeWriter()
     virtual_writer ::= to_virtual#(Writer)($&writer)
-    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer))
+    unwrap_or_abort(
+        .value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer)
+    )
     if writer.bytes <= 43 or writer.bytes > 4096 {
         status_code = 1
         return
@@ -30,7 +32,9 @@ main := () -> (.status_code: Int32 = 0)  {
     }
     ErrorTracer#().reset_context(.self = $&tracer)
     writer.bytes = 0
-    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer))
+    unwrap_or_abort(
+        .value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer)
+    )
     if writer.bytes != 43 {
         status_code = 3
         return
@@ -58,20 +62,31 @@ main := () -> (.status_code: Int32 = 0)  {
     if writer.bytes != 43 { status_code = 5 }
 }
 
-implement Writer#(ProbeWriter)(
+implement Writer#(ProbeWriter) (
     .write_byte = (
-            .self : $&ProbeWriter,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+        .self         : $&ProbeWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.bytes = self&.bytes + 1
         result = ..ok Void()
     }
 
     .flush = (
-            .self : $&ProbeWriter
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) { result = ..ok Void() }
+        .self         : $&ProbeWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+        result = ..ok Void()
+    }
 )

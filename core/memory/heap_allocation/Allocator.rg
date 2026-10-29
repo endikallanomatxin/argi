@@ -1,9 +1,16 @@
 ..out_of_memory
 
 Allocator#(.Provider: Type): Contract = (
-    .allocate : (.self: $&Provider, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) where {
+    .allocate : (
+        .self         : $&Provider,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) where {
         on result ..ok {
             owns(result)
             depends_on(result, self, size, alignment)
@@ -14,16 +21,33 @@ Allocator#(.Provider: Type): Contract = (
 
 -- Byte requests and typed element requests share selected allocator evidence.
 allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
-    .self: $&SelfType, .size: UIntNative, .alignment: UIntNative = 1
+    .self         : $&SelfType,
+    .size         : UIntNative,
+    .alignment    : UIntNative                         = 1,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+    assume error_tracer
+
     result = Allocator#().allocate(self, .size = size, .alignment = alignment)
 }
 
 -- Validate the complete typed reservation before calling the provider, including
 -- element bytes and companion metadata. Containers need only check their shape.
 allocate := #(.t: Type, .SelfType: Type: Allocator#(SelfType)) (
-    .self: $&SelfType, .count: UIntNative = 1
+    .self         : $&SelfType,
+    .count        : UIntNative                         = 1,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+    assume error_tracer
+
     element_size ::= size_of(.type = t)
     bytes ::= element_size * count
     if element_size != 0 and bytes / element_size != count {

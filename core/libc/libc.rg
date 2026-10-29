@@ -48,7 +48,10 @@ _aligned_free(.address: UIntNative) -> (): ExternFunction
 
 memcpy(.dst: $&Any, .src: &Any, .n: UIntNative) -> (): ExternFunction
 
-fread_into := (.buffer: MutableArrayView#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) {
+fread_into := (
+    .buffer: MutableArrayView#(.t: UInt8), .stream: &Any, .ffi: $&ForeignFunctionInterface
+) -> (.count: UIntNative) {
+    assume ffi
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -82,9 +85,10 @@ implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
     .bytes = _write_buffer_readonly
 )
 
-fwrite_from := #(.Buffer: Type: _FileWriteBuffer#(Buffer)) (.buffer: Buffer, .stream: &Any) -> (
-    .count : UIntNative
-) {
+fwrite_from := #(.Buffer: Type: _FileWriteBuffer#(Buffer)) (
+    .buffer: Buffer, .stream: &Any, .ffi: $&ForeignFunctionInterface
+) -> (.count: UIntNative) {
+    assume ffi
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -99,20 +103,20 @@ fwrite_from := #(.Buffer: Type: _FileWriteBuffer#(Buffer)) (.buffer: Buffer, .st
 
 -- Direct libc allocation requires its own foreign-call capability.
 malloc := (.size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) {
-    address = _malloc(.size = size).address
+    address = _malloc(.size = size, .ffi = ffi).address
 }
 
 aligned_alloc := (.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
     .address : UIntNative
 ) {
-    address = _aligned_alloc(.alignment = alignment, .size = size).address
+    address = _aligned_alloc(.alignment = alignment, .size = size, .ffi = ffi).address
 }
 
 free := (.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () {
-    _free(.address = address)
+    _free(.address = address, .ffi = ffi)
 }
 
 -- Aligned CRT storage has its own release operation on Windows.
 aligned_free := (.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () {
-    _aligned_free(.address = address)
+    _aligned_free(.address = address, .ffi = ffi)
 }

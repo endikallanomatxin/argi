@@ -49,12 +49,20 @@ _trusted_dynamic_array_mark_empty := #(.t: Type) (.self: $&DynamicArray#(.t: t))
 DynamicArrayInitArgs: Type = #(.t: Type, .A: Type: Allocator) (
     .allocator : $&A,
     .capacity  : UIntNative = 0
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.t: Type, .A: Type: Allocator) Init#(DynamicArray#(t), DynamicArrayInitArgs#(t, A)) (
     .Result : Type = Errable#(DynamicArray#(t), (..out_of_memory))
 
     .init = DynamicArrayInitArgs#(t, A) -> (.result: Result) {
+        assume error_tracer
+
         _init_allocator ::= allocator
         _init_capacity ::= capacity
 
@@ -114,9 +122,17 @@ implement#(
     .reasons : Type = choice_union#(
         .a: FalliblyCopyable#(t, Provider).reasons, .b: (..out_of_memory)
     )
-    .copy = (.self: &DynamicArray#(t), .allocator: $&Provider) -> (
-        .result : Errable#(DynamicArray#(t), reasons)
-    ) {
+    .copy = (
+        .self         : &DynamicArray#(t),
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(DynamicArray#(t), reasons)) {
+        assume error_tracer
+
         assume allocator
         out ::= DynamicArray#(t)(.allocator = allocator, .capacity = self&._length)!
         i :: UIntNative = 0
@@ -166,8 +182,17 @@ _trusted_dynamic_array_element_mutable_reference := #(.t: Type) (
 -- Callers that must commit an external resource after a successful capacity
 -- check can follow this with `push_assume_capacity` without another OOM point.
 ensure_capacity := #(.t: Type, .Provider: Type: Allocator) (
-    .allocator: $&Provider, .self: $&DynamicArray#(.t: t), .capacity: UIntNative
+    .allocator    : $&Provider,
+    .self         : $&DynamicArray#(.t: t),
+    .capacity     : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if self&._capacity >= capacity {
@@ -181,8 +206,17 @@ ensure_capacity := #(.t: Type, .Provider: Type: Allocator) (
 }
 
 _grow_dynamic_array := #(.t: Type, .Provider: Type: Allocator) (
-    .allocator: $&Provider, .array: $&DynamicArray#(.t: t), .min_capacity: UIntNative
+    .allocator    : $&Provider,
+    .array        : $&DynamicArray#(.t: t),
+    .min_capacity : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     element_size :: UIntNative = size_of(.type = t)
@@ -263,8 +297,18 @@ push_assume_capacity := #(.t: Type) (.self: $&DynamicArray#(.t: t), .value: t) -
 }
 
 insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
+    .allocator    : $&AllocatorType,
+    .self         : $&DynamicArray#(.t: t),
+    .index        : UIntNative,
+    .value        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) {
+    assume error_tracer
+
     assume allocator
     owned ::= ~value
 
@@ -318,8 +362,18 @@ insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 replace := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&AllocatorType
+    .self         : $&DynamicArray#(.t: t),
+    .index        : UIntNative,
+    .value        : t,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    assume error_tracer
+
     assume allocator
     owned ::= ~value
 
@@ -394,9 +448,17 @@ implement#(.t: Type) Indexable#(DynamicArray#(.t: t)) (
         count = self&._length
     }
 
-    .get_reference = (.self: &DynamicArray#(.t: t), .index: UIntNative) -> (
-        .result : Errable#(&t, (..out_of_bounds))
-    ) {
+    .get_reference = (
+        .self         : &DynamicArray#(.t: t),
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(&t, (..out_of_bounds))) {
+        assume error_tracer
+
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
             return
@@ -413,9 +475,18 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
 ) (
     .Item : Type = t
 
-    .push = (.self: $&DynamicArray#(.t: t), .value: t, .allocator: $&Provider) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) {
+    .push = (
+        .self         : $&DynamicArray#(.t: t),
+        .value        : t,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
         owned ::= ~value
 
@@ -438,8 +509,18 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
     }
 
     .insert = (
-        .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&Provider
+        .self         : $&DynamicArray#(.t: t),
+        .index        : UIntNative,
+        .value        : t,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) {
+        assume error_tracer
+
         assume allocator
         owned ::= ~value
 
@@ -457,7 +538,16 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
 implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
     .Item : Type = t
 
-    .pop = (.self: $&DynamicArray#(.t: t)) -> (.result: Errable#(t, (..empty))) {
+    .pop = (
+        .self         : $&DynamicArray#(.t: t),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(t, (..empty))) {
+        assume error_tracer
+
         if self&._length == 0 {
             result = ..error(.reason = ..empty)
             return
@@ -477,9 +567,17 @@ implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
         result = ..ok ~moved_out
     }
 
-    .remove = (.self: $&DynamicArray#(.t: t), .index: UIntNative) -> (
-        .result : Errable#(t, (..out_of_bounds))
-    ) {
+    .remove = (
+        .self         : $&DynamicArray#(.t: t),
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(t, (..out_of_bounds))) {
+        assume error_tracer
+
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
             return
@@ -522,9 +620,17 @@ implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
 implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(DynamicArray#(.t: t)) (
     .Item : Type = t
 
-    .get = (.self: &DynamicArray#(.t: t), .index: UIntNative) -> (
-        .result : Errable#(t, (..out_of_bounds))
-    ) {
+    .get = (
+        .self         : &DynamicArray#(.t: t),
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(t, (..out_of_bounds))) {
+        assume error_tracer
+
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
             return
@@ -541,9 +647,17 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(DynamicArray#(.t: t)) (
 implement#(.t: Type) MutableIndexable#(DynamicArray#(.t: t)) (
     .Item : Type = t
 
-    .get_mutable_reference = (.self: $&DynamicArray#(.t: t), .index: UIntNative) -> (
-        .result : Errable#($&t, (..out_of_bounds))
-    ) {
+    .get_mutable_reference = (
+        .self         : $&DynamicArray#(.t: t),
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#($&t, (..out_of_bounds))) {
+        assume error_tracer
+
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
             return

@@ -15,7 +15,7 @@
         _clock_errno() -> (.pointer: RawPointer#(.t: CInt)): CFunction(.symbol = "__error")
     }
 
-    _platform_monotonic := (.ffi: $&ForeignFunctionInterface = reach ffi) -> (
+    _platform_monotonic := (.ffi: $&ForeignFunctionInterface) -> (
         .status : Int32 = -1, .seconds: UInt64 = 0, .nanoseconds: UInt32 = 0
     ) {
         assume ffi
@@ -33,7 +33,7 @@
         status = 0
     }
 
-    _platform_wall := (.ffi: $&ForeignFunctionInterface = reach ffi) -> (
+    _platform_wall := (.ffi: $&ForeignFunctionInterface) -> (
         .status : Int32 = -1, .seconds: Int64 = 0, .nanoseconds: UInt32 = 0
     ) {
         assume ffi
@@ -48,7 +48,7 @@
     }
 
     _platform_sleep := (
-        .seconds: UInt64, .nanoseconds: UInt32, .ffi: $&ForeignFunctionInterface = reach ffi
+        .seconds: UInt64, .nanoseconds: UInt32, .ffi: $&ForeignFunctionInterface
     ) -> (.status: Int32 = -1) {
         assume ffi
         unspent ::= seconds

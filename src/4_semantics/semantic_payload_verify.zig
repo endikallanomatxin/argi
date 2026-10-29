@@ -24,9 +24,6 @@ pub const Bounds = struct {
     virtual_registries: usize = 0,
     virtualizes: usize = 0,
     virtual_calls: usize = 0,
-    reach_segments: usize = 0,
-    reach_alternatives: usize = 0,
-    reaches: usize = 0,
     nullable_unwraps: usize = 0,
     testing_expect_errors: usize = 0,
     error_propagations: usize = 0,
@@ -210,14 +207,6 @@ pub fn virtualCall(comptime Ids: type, value: primitives.VirtualCall(Ids), bound
     try require(verify.idFits(value.safety_methods, bounds.virtual_registries));
 }
 
-pub fn reachAlternative(comptime Ids: type, value: primitives.ReachAlternative(Ids), bounds: Bounds) !void {
-    try require(verify.rangeFits(value.segments, bounds.reach_segments));
-}
-
-pub fn reach(comptime Ids: type, value: primitives.Reach(Ids), bounds: Bounds) !void {
-    try require(verify.rangeFits(value.alternatives, bounds.reach_alternatives));
-}
-
 pub fn nullableUnwrap(comptime Ids: type, value: primitives.NullableUnwrap(Ids), bounds: Bounds) !void {
     try require(verify.idFits(value.nullable_value, bounds.nodes));
     try require(verify.idFits(value.fallback_value, bounds.nodes));
@@ -271,7 +260,6 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
     switch (value.content) {
         .declaration => |id| try require(verify.idFits(id, bounds.declarations)),
         .binding_declaration, .binding_use => |id| try require(verify.idFits(id, bounds.bindings)),
-        .reach_directive => |id| try require(verify.idFits(id, bounds.reaches)),
         .move_value, .address_of => |id| try require(verify.idFits(id, bounds.nodes)),
         .assignment => |item| {
             try require(verify.idFits(item.binding, bounds.bindings));
@@ -422,9 +410,6 @@ test "shared payload verifier covers declarations and inferred choices" {
         pub const VirtualRegistryId = enum(u32) { _ };
         pub const VirtualizeId = enum(u32) { _ };
         pub const VirtualCallId = enum(u32) { _ };
-        pub const ReachSegmentId = enum(u32) { _ };
-        pub const ReachAlternativeId = enum(u32) { _ };
-        pub const ReachId = enum(u32) { _ };
         pub const NullableUnwrapId = enum(u32) { _ };
         pub const TestingExpectErrorId = enum(u32) { _ };
         pub const ErrorPropagationId = enum(u32) { _ };

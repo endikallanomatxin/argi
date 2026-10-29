@@ -1,4 +1,4 @@
-_EnvironmentVariablesInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+_EnvironmentVariablesInitArgs := (.ffi: $&ForeignFunctionInterface)
 
 EnvironmentVariables := (._ffi: $&ForeignFunctionInterface)
 
@@ -17,10 +17,18 @@ implement Init#(EnvironmentVariables, EnvironmentVariablesInitArgs) (
     .init = _acquire_environment_variables
 )
 
-environment_variables_get_c_string := (.key: &CChar) -> (
-    .result : Errable#(?StringView, (..invalid_utf8))
-) {
-    raw_ptr ::= getenv(.name = key).value
+environment_variables_get_c_string := (
+    .key          : &CChar,
+    .ffi          : $&ForeignFunctionInterface,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?StringView, (..invalid_utf8))) {
+    assume error_tracer
+
+    raw_ptr ::= getenv(.name = key, .ffi = ffi).value
     raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
     if raw_addr == 0 {
         result = ..ok ..none
@@ -31,8 +39,17 @@ environment_variables_get_c_string := (.key: &CChar) -> (
 }
 
 lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &EnvironmentVariables, .key: StringView, .allocator: $&Provider
+    .self         : &EnvironmentVariables,
+    .key          : StringView,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(?StringView, (..out_of_memory, ..invalid_utf8))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -47,8 +64,17 @@ lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 has := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &EnvironmentVariables, .key: StringView, .allocator: $&AllocatorType
+    .self         : &EnvironmentVariables,
+    .key          : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Bool, (..out_of_memory, ..invalid_utf8))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     assume allocator
 

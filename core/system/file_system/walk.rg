@@ -21,10 +21,15 @@ DirectoryWalker := (
 )
 
 DirectoryWalkerInitArgs: Type = #(.Provider: Type: Allocator) (
-    .self          : &FileSystem = reach file_system,
+    .self          : &FileSystem,
     .path          : StringView,
-    .maximum_depth : UIntNative  = 64,
+    .maximum_depth : UIntNative                         = 64,
     .allocator     : $&Provider,
+    .error_tracer  : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.Provider: Type: Allocator) Init#(
@@ -33,6 +38,8 @@ implement#(.Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(DirectoryWalker, _FilesystemReasons)
 
     .init = DirectoryWalkerInitArgs#(Provider) -> (.result: Result) {
+        assume error_tracer
+
         _init_self ::= self
         _init_path ::= path
         _init_maximum_depth ::= maximum_depth
@@ -68,8 +75,16 @@ implement Deinit#(DirectoryWalker) (
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
 _next_directory_walker := #(.Provider: Type: Allocator#(Provider)) (
-    .self: $&DirectoryWalker, .allocator: $&Provider
+    .self         : $&DirectoryWalker,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(?WalkEntry, _FilesystemReasons)) {
+    assume error_tracer
+
     assume allocator
 
     if self&._ended {

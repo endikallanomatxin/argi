@@ -199,6 +199,7 @@ const Context = struct {
                 expected,
                 self.diagnostics,
             );
+
             self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].initialization = value.node;
             if (unresolved) if (value.ty) |value_ty| {
                 self.graph.semantic.bindings.items[@intFromEnum(relation.binding)].ty = value_ty;
@@ -253,15 +254,35 @@ const Context = struct {
             const default_node = field.default_value orelse continue;
             const raw_field: usize = @intCast(range_start + @as(u32, @intCast(offset)));
             const field_ty = self.graph.semantic.fields.items[raw_field].ty;
-            const value = try body_lowerer.lowerInitializerExpression(
-                self.allocator,
-                self.graph,
-                self.files,
-                self.file_index,
-                default_node,
-                field_ty,
-                self.diagnostics,
-            );
+            // Executable defaults use the same caller-scoped recipes as generic
+            // signatures. Never share temporary storage between omitted inputs.
+            const value = if (self.tree.tag(default_node) == .literal)
+                try body_lowerer.lowerInitializerExpression(
+                    self.allocator,
+                    self.graph,
+                    self.files,
+                    self.file_index,
+                    default_node,
+                    field_ty,
+                    self.diagnostics,
+                )
+            else blk: {
+                const expression = try @import("parameterized/lowerer.zig").lowerConcreteExpression(
+                    self.graph,
+                    &self.writer,
+                    self.file_index,
+                    self.tree,
+                    self.source,
+                    default_node,
+                );
+                const node = try self.writer.addNode(.{ .resolved = .{
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.location(default_node).offset },
+                    .ty = field_ty,
+                    .content = .{ .captured_expression = @intFromEnum(expression) },
+                } });
+                break :blk body_lowerer.Lowered{ .node = node, .ty = field_ty };
+            };
+
             self.graph.semantic.fields.items[raw_field].default_value = value.node;
             stats.field_defaults += 1;
         }

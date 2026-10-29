@@ -6,7 +6,14 @@ WriteValue#(.Stream: Type, .Value: Type): Contract = (
 )
 
 write := #(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) (
-    .self: $&Stream, .value: Value
+    .self         : $&Stream,
+    .value        : Value,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: WriteValue#(Stream, Value).Result) {
+    assume error_tracer
     result = ~WriteValue#(Stream, Value).write_value(.self = self, .value = ~value)
 }

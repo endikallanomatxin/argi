@@ -17,7 +17,7 @@ const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 
 pub const Stats = struct {
     checks: u32 = 0,
@@ -93,9 +93,9 @@ pub const Resolver = struct {
 
     instantiate_operation_value: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *generic_mod.Resolver.Bindings) anyerror!global_sg.GlobalNodeId = null,
     instantiate_alias: ?*const fn (*anyopaque, global_sg.DefinitionValue, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
-    infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, reach_context.Context) anyerror!bool = null,
-    probe_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalFamilyDefinitionId, u32, []const u8, global_sg.GlobalNodeId, reach_context.Context, primitives.Range(global_sg.GlobalGenericArgId), *bool, *?ParticipantConformanceFailure) anyerror!?OperationCandidate = null,
-    call_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, reach_context.Context, primitives.SourceRef) anyerror!global_sg.Node = null,
+    infer_operation_parameters: ?*const fn (*anyopaque, usize, parameterized_storage.ContractRequirement, global_sg.GlobalNodeId, *generic_mod.Resolver.Bindings, call_context.Context) anyerror!bool = null,
+    probe_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalFamilyDefinitionId, u32, []const u8, global_sg.GlobalNodeId, call_context.Context, primitives.Range(global_sg.GlobalGenericArgId), *bool, *?ParticipantConformanceFailure) anyerror!?OperationCandidate = null,
+    call_implementation_operation: ?*const fn (*anyopaque, usize, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, call_context.Context, primitives.SourceRef) anyerror!global_sg.Node = null,
     instantiate_generic_operation: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalTypeId, global_sg.GlobalTypeId, bool) anyerror!global_sg.GlobalFunctionId = null,
 
     graph: *global_sg.GlobalSemanticGraph,
@@ -190,7 +190,7 @@ pub const Resolver = struct {
             reference,
             input,
             .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset },
-            reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function),
+            call_context.Context.fromModule(o, value.owner_function),
         )) orelse return .deferred;
         try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
         return .resolved;
@@ -321,11 +321,9 @@ pub const Resolver = struct {
         defer receiver_indices.deinit(self.allocator);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
-            const instance = (try self.requirementInstanceForContractUse(contract_use, concrete, located, requirement, @intCast(method_index))) orelse return null;
             // A virtual table freezes the selected evidence. Scoped operations
             // never re-enter global overload lookup when a type is erased.
             const implementation = try self.resolveOperationBinding(self.graph.contract_conformances.items[evidence.tuple], method_index);
-            if (self.fallibleOutput(instance.output)) try self.core.ensureErrorTracerInput(implementation);
             try methods.append(self.allocator, implementation);
             const erased = (try self.requirementInstanceForContractUse(contract_use, contract_ty, located, requirement, @intCast(method_index))) orelse return null;
             const fields = global_types.fields(self.graph, erased.input) orelse return error.InvalidContractRequirementInput;
@@ -463,9 +461,9 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
-        reach: reach_context.Context,
+        lexical_context: call_context.Context,
     ) anyerror!?global_sg.Node {
-        return self.makeVirtualCall(module_index, reference, input, source, reach);
+        return self.makeVirtualCall(module_index, reference, input, source, lexical_context);
     }
 
     pub fn contractDefinitionForType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFamilyDefinitionId {
@@ -539,40 +537,16 @@ pub const Resolver = struct {
         return changed;
     }
 
-    pub fn fallibleOutput(self: *const Resolver, output: global_sg.GlobalTypeId) bool {
-        const fields = global_types.fields(self.graph, output) orelse return false;
-        if (fields.len != 1) return false;
-        const result = self.graph.fields.items[fields.start].ty;
-        const error_variant = global_types.findVariant(self.graph, result, "error") orelse return false;
-        const payload = error_variant.variant.payload_type orelse return false;
-        return global_types.findField(self.graph, payload, "tracer") != null;
-    }
-
-    // A fallible virtual slot needs a uniform capability input, including for
-    // implementations that return only success. This prevents a late reached
-    // dependency from changing the concrete function's ABI behind its vtable.
-    fn virtualInputType(self: *Resolver, input: global_sg.GlobalTypeId, output: global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
-        if (!self.fallibleOutput(output) or global_types.findField(self.graph, input, "error_tracer") != null) return input;
-        const field = self.core.errorTracerField() orelse return input;
-        const fields = global_types.fields(self.graph, input) orelse return input;
-        const copied = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[fields.start..][0..fields.len]);
-        defer self.allocator.free(copied);
-        const start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.appendSlice(self.allocator, copied);
-        try self.graph.fields.append(self.allocator, field);
-        return self.generics.internType(.{ .structural = .{ .fields = .{ .start = start, .len = fields.len + 1 } } });
-    }
-
     fn makeVirtualCall(
         self: *Resolver,
         module_index: usize,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
-        reach: reach_context.Context,
+        lexical_context: call_context.Context,
     ) !?global_sg.Node {
         if (reference.module_path != null or reference.generic_arguments != null or reference.computed_arguments != null) return null;
-        return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, reach, null);
+        return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, lexical_context, null);
     }
 
     fn makeVirtualOperationCall(
@@ -581,7 +555,7 @@ pub const Resolver = struct {
         contract: ?global_sg.GlobalFamilyDefinitionId,
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
-        reach: reach_context.Context,
+        lexical_context: call_context.Context,
         expected_associations: ?primitives.Range(global_sg.GlobalGenericArgId),
     ) !?global_sg.Node {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
@@ -625,15 +599,15 @@ pub const Resolver = struct {
                     requirement,
                     @intCast(method_index),
                 )) orelse continue;
-                const input_ty = try self.virtualInputType(instance.input, instance.output);
+                const input_ty = instance.input;
                 const output_ty = instance.output;
                 const input_fields = global_types.fields(self.graph, input_ty) orelse continue;
                 const output_fields = global_types.fields(self.graph, output_ty) orelse continue;
-                switch (try self.core.matchCallInputWithReach(input_fields, input, reach)) {
+                switch (self.core.matchCallInput(input_fields, input)) {
                     .applicable => {},
                     else => continue,
                 }
-                if (!try self.core.completeRecordFieldsWithContext(input_fields, input, reach)) continue;
+                if (!try self.core.completeRecordFieldsWithContext(input_fields, input, lexical_context)) continue;
 
                 var self_index: ?u32 = null;
                 var permission: primitives.PointerMutability = .read_only;
@@ -1330,7 +1304,7 @@ pub const Resolver = struct {
 
     pub fn resolveScopedOperation(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
-        const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
+        const context = call_context.Context.fromModule(offsets, call.owner_function);
         const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
         const node = try self.makeSpecializedScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), arguments, globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
             return if (self.participant_conformance_failure != null) .invalid else .deferred;
@@ -1387,15 +1361,15 @@ pub const Resolver = struct {
     /// Compare operation identities using their input signatures. Conformance
     /// specificity determines associated signatures within one identity, never
     /// a priority between contracts. Probes publish no evidence or runtime body.
-    pub fn operationCandidates(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context) !OperationCandidates {
+    pub fn operationCandidates(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: call_context.Context) !OperationCandidates {
         return self.operationCandidatesFiltered(module_index, name, input, context, null);
     }
 
-    pub fn operationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId) !OperationCandidates {
+    pub fn operationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: call_context.Context, module_filter: ?global_sg.GlobalModuleId) !OperationCandidates {
         return self.specializedOperationCandidatesFiltered(module_index, name, input, context, module_filter, .{ .start = 0, .len = 0 });
     }
 
-    pub fn specializedOperationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !OperationCandidates {
+    pub fn specializedOperationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: call_context.Context, module_filter: ?global_sg.GlobalModuleId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !OperationCandidates {
         var result: OperationCandidates = .{};
         errdefer result.deinit(self.allocator);
         if (std.mem.startsWith(u8, name, "_")) return result;
@@ -1428,7 +1402,7 @@ pub const Resolver = struct {
         return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
     }
 
-    fn probeOperationCandidate(self: *Resolver, caller_module_index: usize, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
+    fn probeOperationCandidate(self: *Resolver, caller_module_index: usize, located: LocatedContractDefinition, declaration: global_sg.GlobalFamilyDefinitionId, requirement: parameterized_storage.ContractRequirement, input: global_sg.GlobalNodeId, context: call_context.Context, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -1523,30 +1497,6 @@ pub const Resolver = struct {
                     };
                 }
             }
-            if (!explicit) if (field.default_value) |value| {
-                const reach = try self.generics.instantiateReachDefault(located.module_index, value) orelse continue;
-                const ty = self.core.probeReachedType(context, reach, deferred) orelse continue;
-                const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
-                const actual = self.graph.semanticType(ty);
-                if (located.definition.participants.len == 1 and pattern == .resolved and pattern.resolved == .pointer and
-                    self.isUnaryReceiverParticipantType(located, pattern.resolved.pointer.child) and actual == .pointer)
-                {
-                    const child = self.graph.semanticType(actual.pointer.child);
-                    if (child == .virtual) {
-                        const use = self.contractUse(child.virtual) orelse continue;
-                        if (use.declaration == declaration) {
-                            if (!try self.bindContractUseArguments(use, located, &bindings)) continue;
-                            bindings.types[located.definition.participants.start] = child.virtual;
-                            virtual = true;
-                            continue;
-                        }
-                    }
-                }
-                _ = self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings) catch |err| switch (err) {
-                    error.ConflictingGenericArgument => return null,
-                    else => return err,
-                };
-            };
         }
         const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
         var transferred = false;
@@ -1600,7 +1550,7 @@ pub const Resolver = struct {
             deferred.* = true;
             return null;
         };
-        switch (try self.core.matchCallInputWithReach(global_types.fields(self.graph, required) orelse return error.InvalidContractRequirementInput, input, context)) {
+        switch (self.core.matchCallInput(global_types.fields(self.graph, required) orelse return error.InvalidContractRequirementInput, input)) {
             .applicable => {
                 const candidate = try self.captureOperationCandidate(declaration, participants, virtual, boundary);
                 transferred = true;
@@ -1612,11 +1562,11 @@ pub const Resolver = struct {
         return null;
     }
 
-    pub fn callOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+    pub fn callOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: call_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         return self.callSpecializedOperationCandidate(module_index, candidate, name, input, context, source, .{ .start = 0, .len = 0 });
     }
 
-    pub fn callSpecializedOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.Node {
+    pub fn callSpecializedOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: call_context.Context, source: primitives.SourceRef, arguments: primitives.Range(global_sg.GlobalGenericArgId)) !?global_sg.Node {
         var materialized: ?[]global_sg.GlobalTypeId = null;
         defer if (materialized) |values| self.allocator.free(values);
         const participants = switch (candidate.participants) {
@@ -1666,11 +1616,11 @@ pub const Resolver = struct {
         return self.makeSpecializedScopedOperationCall(module_index, base, name, arguments, input, context, source);
     }
 
-    pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+    pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: call_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         return self.makeSpecializedScopedOperationCall(module_index, base, name, .{ .start = 0, .len = 0 }, input, context, source);
     }
 
-    pub fn makeSpecializedScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+    pub fn makeSpecializedScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: call_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const use = self.typeContractUse(base) orelse return null;
         const located = self.findContractDefinition(use.declaration) orelse return null;
         var failure: ParticipantConformanceFailure = .{
@@ -1809,17 +1759,16 @@ pub const Resolver = struct {
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidContractRequirementInput;
         if (!try self.core.completeRecordFieldsWithContext(required_fields, input, context)) return null;
         const function = self.graph.function(method);
-        switch (try self.core.matchCallInputWithReach(function.input, input, context)) {
+        switch (self.core.matchCallInput(function.input, input)) {
             .deferred => return null,
             .no_match => {
-                failure.reason = "arguments do not match the selected contract operation, including completed defaults and required reachable capabilities";
+                failure.reason = "arguments do not match the selected contract operation, including defaults and declared capability inputs";
                 self.participant_conformance_failure = failure;
                 return null;
             },
             .applicable => {},
         }
         if (!try self.core.completeRecordFieldsWithContext(function.input, input, context)) return null;
-        try self.core.trackReachedCall(method, input, context, false);
         return .{
             .source = source,
             .ty = try self.core.functionOutputType(method),
@@ -1862,8 +1811,8 @@ pub const Resolver = struct {
                     if (actual_type != .pointer) return null;
                     ty = actual_type.pointer.child;
                 }
-                // A fixed virtual interface can defer while reached capability
-                // inputs are being materialized. It must never fall through to
+                // A fixed virtual interface can defer while its declared inputs
+                // are being materialized. It must never fall through to
                 // static conformance selection for the erased handle type.
                 if (self.graph.semanticType(ty) == .virtual or self.contractUse(ty) != null) return null;
                 return ty;
@@ -2129,7 +2078,7 @@ pub const Resolver = struct {
         const expression = self.graph.node(node);
         if (expression.content != .captured_expression) return true;
         const expressions = self.core.captured_expressions orelse return error.MissingOperationInstantiator;
-        const resolved = expressions.instantiate(expressions.context, expression.content.captured_expression, reach_context.Context.fromGlobal(&.{}, null)) catch |err| switch (err) {
+        const resolved = expressions.instantiate(expressions.context, expression.content.captured_expression, expression.ty, call_context.Context.fromGlobal(&.{}, null)) catch |err| switch (err) {
             error.ComptimeExecutionPending, error.DeferredGenericFunction => return false,
             else => return err,
         };
@@ -2138,7 +2087,7 @@ pub const Resolver = struct {
     }
 
     /// The selected conformance owns the callable definition. Ordinary function
-    /// inference determines its signature, defaults and reached capabilities.
+    /// inference determines its signature, defaults and lexical assumptions.
     fn operationCaptureArguments(self: *Resolver, evidence: contract_evidence.SelectedOperation) !primitives.Range(global_sg.GlobalGenericArgId) {
         const captures = evidence.capturedArguments(self.graph) orelse return error.DeferredGenericFunction;
         if (captures.lexical.len == 0) return captures.associated;
@@ -2150,7 +2099,7 @@ pub const Resolver = struct {
         return .{ .start = start, .len = @intCast(captures.len()) };
     }
 
-    fn makeImplementationOperationCall(self: *Resolver, module_index: usize, conformance_index: usize, operation_index: usize, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+    fn makeImplementationOperationCall(self: *Resolver, module_index: usize, conformance_index: usize, operation_index: usize, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: call_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const conformance = self.graph.contract_conformances.items[conformance_index];
         const evidence = contract_evidence.operationInConformance(self.graph, conformance, @intCast(operation_index)) orelse return error.InvalidContractOperation;
         if (!try self.materializeOperationValue(evidence.binding.definition)) return null;
@@ -2452,7 +2401,7 @@ pub const Resolver = struct {
                 return @enumFromInt(@as(u32, @intCast(raw)));
         }
         const function = self.graph.function(body);
-        // Optional/reached capabilities remain logical inputs of the operation.
+        // Declared auxiliary capabilities remain logical inputs of the operation.
         // Invalid signatures are rejected by ordinary conformance validation.
         if (function.input.len == 0 or function.output.len != 0) return body;
         const binding_start: u32 = @intCast(self.graph.binding_refs.items.len);
@@ -2495,7 +2444,6 @@ pub const Resolver = struct {
         });
         // Function/operator metadata shares FunctionId indexing, including
         // synthetic lifecycle bodies that do not represent an operator.
-        try self.core.trackReachedCall(body, input, reach_context.Context.fromGlobal(visible.items, id), false);
         return id;
     }
 
@@ -2927,7 +2875,7 @@ pub const Resolver = struct {
         const instance = (try self.requirementInstanceForContractUse(use, contract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidContractRequirement;
         const signature = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
         const contract = try contract_safety.globalSafetyContract(self, located.module_index, declared, signature, instance.output);
-        const input = try self.virtualInputType(instance.input, instance.output);
+        const input = instance.input;
         const fields = global_types.fields(self.graph, input) orelse return error.InvalidContractRequirementInput;
         try self.graph.completeVirtualSignature(self.allocator, registry_id, contract, fields.len, instance.output);
     }
@@ -2946,7 +2894,6 @@ pub const Resolver = struct {
 
     fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef, selection: primitives.ContractOperationIdentity) !void {
         const declared = requirement.safety_contract orelse return;
-        if (self.fallibleOutput(output)) try self.core.ensureErrorTracerInput(method);
         const function = self.graph.function(method);
         if (try contract_safety.methodSafetyContractFailure(self, function.input, function.output, output, concrete, located, declared, false)) |reason| {
             self.virtual_signature_failure = .{ .source = source, .method_name = self.modules[located.module_index].text(requirement.name), .reason = reason, .static_contract = true };

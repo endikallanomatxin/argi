@@ -4,5 +4,5 @@ const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNo
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/278X_comptime_system_missing_dependency" {
-    try expectFrontendFailureWithoutNoise("tests/feature_tests/execution/278X_comptime_system_missing_dependency", "omitted inputs have unavailable reach defaults", "failed without a diagnostic");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/execution/278X_comptime_system_missing_dependency", "no generic function named 'print' accepts arguments", "failed without a diagnostic");
 }

@@ -6,9 +6,17 @@ FallibleValue := (
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &FallibleValue, .allocator: $&Provider) -> (
-        .result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))
-    ) {
+    .copy    = (
+        .self         : &FallibleValue,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) {
+        assume error_tracer
+
         assume allocator
 
         result = ..ok(.value = self&.value)
@@ -31,7 +39,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: FallibleValue)(.capacity = 1))
     defer deinit(.self = $&source)
     value ::= FallibleValue(.value = 42)
-    push_assume_capacity#(.t: FallibleValue) (.self = $&source, .value = ~value)
+    push_assume_capacity#(.t: FallibleValue)(.self = $&source, .value = ~value)
 
     require_array_reasons(.value = &source)
 

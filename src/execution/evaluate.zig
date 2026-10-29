@@ -58,7 +58,13 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     for (graph.fields.items[function.output.start..][0..function.output.len]) |field| {
         if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationResult;
     }
-    const program = try lower.compile(entry);
+    const program = lower.compile(entry) catch |err| {
+        if (err == error.UnsupportedExecution) {
+            try diagnostics.add(@import("../4_semantics/global/source_location.zig").location(graph, diagnostics, lower.source), .codegen, "#run uses an operation outside the supported bytecode subset: {s}", .{lower.unsupported});
+            return error.Reported;
+        }
+        return err;
+    };
     // Nested entries execute in the outer VM invocation, but retain their
     // declared output boundary even without an independently frozen request.
     for (program.functions) |compiled| {

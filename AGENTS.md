@@ -131,9 +131,8 @@ feature first.
 
 - Current module rules in the compiler:
   - Iterator protocol calls generated for `for` retain the loop's lexical
-    reach context and participate in late reached-input completion. Preserve
-    both module-visible bindings and specialized `assume` values; an empty
-    context can leave call arguments inconsistent with the final signature.
+    assumptions and shadowing context. Preserve specialized `assume` values
+    in their ordinary input fields; calls never extend caller signatures.
   - all `.rg` files in a folder share namespace
   - `argi build` compiles a folder module, not a single `.rg` file
   - `import("...")` must be assigned to a name
@@ -183,7 +182,7 @@ feature first.
   to false for all four predicates; TotalOrder excludes unordered by semantic promise.
   Payloadless choice, C enum and callback equality selects Equal evidence;
   the compiler supplies only their private empty representation classification.
-  Infer participant bindings from Args, including reached generic providers,
+  Infer participant bindings from Args, including lexically assumed generic providers,
   never from Result. Concrete and specialized generic expressions share the
   selected-evidence path; no receiver is implicitly borrowed. Trusted scalar
   conformances lower to representation primitives only after selection, keeping
@@ -201,7 +200,7 @@ feature first.
   Canonical construction uses `implement Init#(Target, Args)` with nominal input
   records and associated Result. The fixed init signature is Args -> (.result: Result).
   Type calls fix Target and infer Args, including allocator types, from candidate
-  signatures and explicit/reached values. Never synthesize structural identities
+  signatures and explicit or lexically assumed values. Never synthesize structural identities
   for argument literals. Result is Target or one Errable containing Target;
   it never selects a conformance. Different inferred targets or argument types
   require disambiguation; specificity only compares one complete participant tuple.
@@ -214,7 +213,6 @@ feature first.
   capabilities reuse named once function values (`acquire := once ...`) as their
   init operations; preserve
   their function identity through lifecycle wrappers and entrypoint analysis.
-  Reach defaults describe lexical lookup, not values to type-check before lookup.
   Scaled durations, relative deadlines, precise Unix timestamps and copied paths
   use named factories rather than legacy constructor overloads.
   Explicit conversion uses `Convert#(Source, Target)` through the unique ordinary
@@ -243,8 +241,8 @@ feature first.
   allocator input. Definite whole-owner consumption permits emptying owned
   opaque storage, never borrowed referents or retaining new hidden values.
   Automatic and explicit cleanup select the same evidence. Lifecycle wrappers
-  preserve ordinary alias-function behavior and forward optional/reached
-  capabilities through tracked calls. They create no second destructor registry.
+  preserve ordinary alias-function behavior and forward declared auxiliary
+  inputs through ordinary lexical assumptions. They create no second destructor registry.
   Whole-receiver destruction supersedes owned field post-values while retaining
   effects through borrowed references. Unknown pointer referents keep separate
   symbolic consumption identities/state; preserve copies, joins and loop equality
@@ -276,8 +274,8 @@ feature first.
   external references. Auxiliary cleanup counters should mutate stable record
   fields rather than replace a whole borrowed capability.
   Imported nominal construction selects visible Init evidence. Automatic cleanup
-  falls back to the defining module when caller lookup finds no destructor; reached
-  arguments retain the caller's context.
+  falls back to the defining module when caller lookup finds no destructor; assumed
+  arguments retain the caller's lexical context.
   Bundled core is already visible, so it needs no second cleanup lookup.
   CFunctionPointer declarations are nominal types backed by signature FunctionIds,
   not runtime symbols or direct callees. Their logical ffi dependency remains
@@ -450,7 +448,7 @@ feature first.
   Compile-time parameter defaults follow explicit bindings and input inference.
   Partial Init targets retain supplied type/integer parameters; never infer from
   Result or reuse a previously instantiated target. Maps receive allocators through
-  ordinary explicit or assumed inputs, without reach allocator defaults.
+  ordinary explicit or assumed inputs.
   Copied lookup and key/value iteration require only the copied element capability.
   Default map iteration borrows both fields; mutable entry iteration never exposes
   mutable keys. Hash tables keep occupied entries separate from slot metadata. Move
@@ -463,7 +461,7 @@ feature first.
   through one representation. Set queries use the policy Query; insertion consumes keys.
   Only copied set iteration and queue peek require ImplicitlyCopyable.
   OrderPolicy always borrows comparison operands, including sorting and search.
-  Collection allocators come from assume, not reach defaults.
+  Collection allocators are explicit or supplied through lexical assume.
 
 - Hash map iteration never exposes mutable keys. Borrowed entry iterators retain
   a direct table shape anchor in addition to their owner loan; return references

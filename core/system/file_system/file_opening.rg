@@ -1,22 +1,43 @@
 -- Opening is a fallible factory; Init retains the canonical empty file handle.
 FileOpening#(.PathValue: Type): Contract = (
-    .open_file : (.file_system: &FileSystem, .path: PathValue, .mode: FileOpenMode = ..read) -> (
-        .result : Errable#(File, (..path_open_failed))
-    )
+    .open_file : (
+        .file_system  : &FileSystem,
+        .path         : PathValue,
+        .mode         : FileOpenMode                       = ..read,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(File, (..path_open_failed)))
 )
 
 AllocatingFileOpening#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .open_file : (
-        .file_system : &FileSystem,
-        .path        : PathValue,
-        .mode        : FileOpenMode = ..read,
-        .allocator   : $&Provider
+        .file_system  : &FileSystem,
+        .path         : PathValue,
+        .mode         : FileOpenMode                       = ..read,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory)))
 )
 
-_open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) -> (
-    .result : Errable#(File, (..path_open_failed))
-) {
+_open_c_file := (
+    .file_system  : &FileSystem,
+    .path         : &CChar,
+    .mode         : FileOpenMode,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(File, (..path_open_failed))) {
+    assume error_tracer
+
     assume ffi := file_system&._ffi
     file ::= file_from_stream(.stream_address = 0, .should_close = false)
     opened ::= open(.p = $&file, .path = path, .mode = mode)
@@ -28,17 +49,35 @@ _open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) 
 }
 
 implement FileOpening#(&CChar) (
-    .open_file = (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read) -> (
-        .result : Errable#(File, (..path_open_failed))
-    ) {
+    .open_file = (
+        .file_system  : &FileSystem,
+        .path         : &CChar,
+        .mode         : FileOpenMode = ..read,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(File, (..path_open_failed))) {
+        assume error_tracer
+
         result = _open_c_file(.file_system = file_system, .path = path, .mode = mode)
     }
 )
 
 implement FileOpening#(&String) (
-    .open_file = (.file_system: &FileSystem, .path: &String, .mode: FileOpenMode = ..read) -> (
-        .result : Errable#(File, (..path_open_failed))
-    ) {
+    .open_file = (
+        .file_system  : &FileSystem,
+        .path         : &String,
+        .mode         : FileOpenMode = ..read,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(File, (..path_open_failed))) {
+        assume error_tracer
+
         result = _open_c_file(
             .file_system = file_system, .path = as_c_string(path), .mode = mode
         )
@@ -46,9 +85,18 @@ implement FileOpening#(&String) (
 )
 
 implement FileOpening#(&Path) (
-    .open_file = (.file_system: &FileSystem, .path: &Path, .mode: FileOpenMode = ..read) -> (
-        .result : Errable#(File, (..path_open_failed))
-    ) {
+    .open_file = (
+        .file_system  : &FileSystem,
+        .path         : &Path,
+        .mode         : FileOpenMode = ..read,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(File, (..path_open_failed))) {
+        assume error_tracer
+
         result = _open_c_file(
             .file_system = file_system, .path = as_c_string(&path&.text), .mode = mode
         )
@@ -57,11 +105,18 @@ implement FileOpening#(&Path) (
 
 implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileOpening#(StringView, Provider) (
     .open_file = (
-        .file_system : &FileSystem,
-        .path        : StringView,
-        .mode        : FileOpenMode = ..read,
-        .allocator   : $&Provider
+        .file_system  : &FileSystem,
+        .path         : StringView,
+        .mode         : FileOpenMode                       = ..read,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory))) {
+        assume error_tracer
+
         assume ffi := file_system&._ffi
         assume allocator
         converted ::= copy_c_string(path, .allocator = allocator)

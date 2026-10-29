@@ -1,8 +1,15 @@
 Owner := (.first: DynamicArray#(UIntNative), .second: DynamicArray#(UIntNative))
 
-make_owner := #(.Provider: Type: Allocator) (.allocator: $&Provider = reach allocator) -> (
-    .result: Errable#(Owner, (..out_of_memory))
-) {
+make_owner := #(.Provider: Type: Allocator) (
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Owner, (..out_of_memory))) {
+    assume error_tracer
+
     first ::= DynamicArray#(UIntNative)(.allocator = allocator)!
     second ::= DynamicArray#(UIntNative)(.allocator = allocator)!
     result = ..ok(.first = ~first, .second = ~second)

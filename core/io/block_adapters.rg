@@ -1,12 +1,28 @@
-_reader_block := #(.t: Type: Reader#(t)) (.self: $&t, .buffer: MutableArrayView#(.t: UInt8)) -> (
-    .result : Errable#(UIntNative, (..stream_read_failed))
-) {
+_reader_block := #(.t: Type: Reader#(t)) (
+    .self         : $&t,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
+    assume error_tracer
+
     result = read(self, .buffer = buffer)
 }
 
-_writer_block := #(.t: Type: Writer#(t)) (.self: $&t, .buffer: ArrayView#(.t: UInt8)) -> (
-    .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-) {
+_writer_block := #(.t: Type: Writer#(t)) (
+    .self         : $&t,
+    .buffer       : ArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     index :: UIntNative = 0
 
     while index < length(&buffer).count {

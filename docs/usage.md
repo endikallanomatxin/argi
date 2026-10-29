@@ -347,7 +347,6 @@ later submissions. Inner blocks keep lexical assumptions local. Rejected
 submissions publish no assumptions; reset clears the session evidence. References
 to expression temporaries retain their backing storage until checked session
 cleanup, including temporaries created by `assume capability ::= $&acquire()`.
-Diagnostics identify unavailable reached inputs in generic calls as well.
 
 ```text
 >>> value ::= 40 + 2

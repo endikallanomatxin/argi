@@ -1,6 +1,14 @@
 ..missing
 
-fail := () -> (.result: Errable#(Int32, (..missing))) {
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..missing))) {
+    assume error_tracer
+
     result = ..error(.reason = ..missing)
 }
 

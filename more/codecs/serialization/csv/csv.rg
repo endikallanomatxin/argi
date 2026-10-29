@@ -50,8 +50,16 @@ implement Init#(CsvReader, CsvReaderInitArgs) (
 
 -- Errors are terminal, and no partially decoded record escapes.
 next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&CsvReader, .allocator: $&AllocatorType
+    .self         : $&CsvReader,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
+    assume error_tracer
+
     assume allocator
 
     if self&._ended or self&._position == byte_length(&self&._text).count {
@@ -155,8 +163,16 @@ next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
 write_record := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer: $&WriterType, .fields: ArrayView#(.t: StringView)
+    .writer       : $&WriterType,
+    .fields       : ArrayView#(.t: StringView),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+    assume error_tracer
+
     index :: UIntNative = 0
 
     while index < length(&fields).count {

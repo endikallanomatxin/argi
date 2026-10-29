@@ -1,6 +1,6 @@
 Counter := (.count: Int32 = 0)
 
-next_value := (.counter: $&Counter = reach counter) -> (.value: Int32) {
+next_value := (.counter: $&Counter) -> (.value: Int32) {
     counter&.count = counter&.count + 1
     value = counter&.count
 }

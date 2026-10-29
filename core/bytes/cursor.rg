@@ -41,9 +41,17 @@ _byte_writer_remaining := (.self: &ByteWriter) -> (.count: UIntNative) {
     count = [length(&self&._bytes).count - self&._position]
 }
 
-_byte_reader_skip := (.self: $&ByteReader, .count: UIntNative) -> (
-    .result : Errable#(Void, (..out_of_bounds))
-) {
+_byte_reader_skip := (
+    .self         : $&ByteReader,
+    .count        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    assume error_tracer
+
     if count > remaining(self).count {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -54,9 +62,17 @@ _byte_reader_skip := (.self: $&ByteReader, .count: UIntNative) -> (
     result = ..ok Void()
 }
 
-_read_uint_cursor := #(.Value: Type: UInt) (.self: $&ByteReader, .order: ByteOrder) -> (
-    .result : Errable#(Value, (..out_of_bounds))
-) {
+_read_uint_cursor := #(.Value: Type: UInt) (
+    .self         : $&ByteReader,
+    .order        : ByteOrder,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Value, (..out_of_bounds))) {
+    assume error_tracer
+
     value_out ::= _read_multibyte_uint_at#(.Value: Value)(
         .bytes = self&._bytes, .offset = self&._position, .order = order
     )!
@@ -69,9 +85,17 @@ read_uint16 := _read_uint_cursor#(.Value: UInt16)
 read_uint32 := _read_uint_cursor#(.Value: UInt32)
 read_uint64 := _read_uint_cursor#(.Value: UInt64)
 
-_byte_writer_skip := (.self: $&ByteWriter, .count: UIntNative) -> (
-    .result : Errable#(Void, (..out_of_bounds))
-) {
+_byte_writer_skip := (
+    .self         : $&ByteWriter,
+    .count        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    assume error_tracer
+
     if count > remaining(self).count {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -83,8 +107,17 @@ _byte_writer_skip := (.self: $&ByteWriter, .count: UIntNative) -> (
 }
 
 _write_uint_cursor := #(.Value: Type: UInt) (
-    .self: $&ByteWriter, .value: Value, .order: ByteOrder
+    .self         : $&ByteWriter,
+    .value        : Value,
+    .order        : ByteOrder,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    assume error_tracer
+
     value_out ::= _write_multibyte_uint_at#(.Value: Value)(
         .bytes = self&._bytes, .offset = self&._position, .value = value, .order = order
     )!

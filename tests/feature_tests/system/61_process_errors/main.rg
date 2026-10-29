@@ -1,6 +1,6 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume proc_man ::= system.proc_man
-    match spawn(.executable = "") {
+    match spawn(.self = proc_man, .executable = "") {
         ..error error {
             if is(.value = error.reason, .variant = ..invalid_process_argument) {
             } else {
@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
             abort
         }
     }
-    match spawn(.executable = "argi-nonexistent-executable-87a6d") {
+    match spawn(.self = proc_man, .executable = "argi-nonexistent-executable-87a6d") {
         ..error error {
             if is(.value = error.reason, .variant = ..process_spawn_failed) {} else { abort }
         }
@@ -25,7 +25,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     bytes: [3]UInt8 = (97, 0, 98)
     invalid: StringView = "a\0b"
     args: [1]StringView = (invalid)
-    match spawn(.executable = executable, .arguments = view(.self = &args)) {
+    match spawn(.self = proc_man, .executable = executable, .arguments = view(.self = &args)) {
         ..error error {
             if is(.value = error.reason, .variant = ..invalid_process_argument) {
             } else {

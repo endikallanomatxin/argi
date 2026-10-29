@@ -63,7 +63,10 @@ _sret_crowded(.a: CInt, .b: CInt, .c: CInt, .d: CInt, .e: CInt, .value: Words, .
 
 _probe() -> (.status: CInt): CFunction(.symbol = "argi_c_record_probe")
 
-_forward := (.value: Words) -> (.result: Words) { result = _words(value) }
+_forward := (.value: Words, .ffi: $&ForeignFunctionInterface) -> (.result: Words) {
+    assume ffi
+    result = _words(value)
+}
 
 argi_c_pair_export(.value: Pair) -> (.result: Pair): CFunction(.export = true) := {
     result = (.left = value.left + 1, .right = value.right + 2)

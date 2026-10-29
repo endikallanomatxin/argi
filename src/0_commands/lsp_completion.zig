@@ -92,7 +92,7 @@ pub fn completeFiles(allocator: std.mem.Allocator, io: std.Io, files: []File, pa
     }
     inline for (@typeInfo(primitives.BuiltinType).@"enum".fields) |field|
         try builder.add(field.name, .type_, "builtin type", field.name);
-    for ([_][]const u8{ "if", "else", "while", "for", "in", "match", "return", "break", "continue", "assume", "reach", "once", "test", "import", "abort", "and", "or", "true", "false" }) |keyword|
+    for ([_][]const u8{ "if", "else", "while", "for", "in", "match", "return", "break", "continue", "assume", "once", "test", "import", "abort", "and", "or", "true", "false" }) |keyword|
         try builder.add(keyword, .keyword, "keyword", keyword);
     return finish(arena, &builder, start, end);
 }

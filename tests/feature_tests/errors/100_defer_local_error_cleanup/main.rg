@@ -10,13 +10,22 @@ implement Deinit#(Owner) (
     }
 )
 
-fail := () -> (.result: Errable#(Void, (..failure))) {
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..failure))) {
+    assume error_tracer
+
     result = ..error(.reason = ..failure)
 }
 
 finish := #(.WriterType: Type: Writer#(WriterType)) (
-    .body_fails: Bool, .state: $&Int32, .writer: $&WriterType = reach writer
+    .body_fails: Bool, .state: $&Int32, .writer: $&WriterType
 ) -> (.result: Int32 = 1) {
+    assume writer
     owner ::= Owner(1)
     defer { state&= state&* 10 + 3 }
     defer {
@@ -70,15 +79,30 @@ main := (.system: System) -> () {
 }
 
 implement Writer#(BrokenWriter) (
-    .write_byte = (.self: $&BrokenWriter, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&BrokenWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..error(.reason = ..stream_write_failed)
     }
 
-    .flush = (.self: $&BrokenWriter) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&BrokenWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..error(.reason = ..stream_flush_failed)
     }
 )

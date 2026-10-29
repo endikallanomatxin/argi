@@ -147,9 +147,15 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
         }
     }
 
-    .report = (.self: $&FixedSizeErrorTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .report = (
+        .self         : $&FixedSizeErrorTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer ::= $&noop_error_tracer
         write_trace_text(.text = "error trace (most recent first):\n", .writer = writer)!
 

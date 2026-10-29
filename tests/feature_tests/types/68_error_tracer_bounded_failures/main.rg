@@ -4,7 +4,16 @@ CountAllocator := (.backing: $&PageAllocator, .calls: UIntNative = 0, .fail: Boo
 
 ProbeWriter := (.count: UIntNative = 0, .fail: Bool = false)
 
-fail := () -> !Void { result = ..error(.reason = ..bounded_test_failure) }
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void {
+    assume error_tracer
+    result = ..error(.reason = ..bounded_test_failure)
+}
 
 main := (.system: System) -> (.status_code: Int32) {
     counting_allocator :: CountAllocator = (
@@ -79,9 +88,8 @@ main := (.system: System) -> (.status_code: Int32) {
             writer.count = 0
             virtual_writer ::= to_virtual#(Writer)($&writer)
             unwrap_or_abort(
-                .value = ErrorTracer#().report(
-                    .self = $&virtual_unbuffered, .writer = $&virtual_writer
-                )
+                .value = ErrorTracer#(
+                ).report(.self = $&virtual_unbuffered, .writer = $&virtual_writer)
             )
             if writer.count != 43 or counting_allocator.calls != 0 {
                 status_code = 10
@@ -93,9 +101,17 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Writer#(ProbeWriter) (
-    .write_byte = (.self: $&ProbeWriter, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&ProbeWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.count = self&.count + 1
         if self&.fail {
             result = ..error(.reason = ..stream_write_failed)
@@ -104,15 +120,32 @@ implement Writer#(ProbeWriter) (
         }
     }
 
-    .flush = (.self: $&ProbeWriter) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) { result = ..ok Void() }
+    .flush = (
+        .self         : $&ProbeWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+        result = ..ok Void()
+    }
 )
 
 implement Allocator#(CountAllocator) (
-    .allocate = (.self: $&CountAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&CountAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         self&.calls = self&.calls + 1
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)

@@ -2,9 +2,16 @@ DummyWriter := (
     .count : Int32 = 0
 )
 
-relay := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
-    .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-) {
+relay := #(.WriterType: Type: Writer#(WriterType)) (
+    .writer       : $&WriterType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     Writer#().write_byte(.self = writer, .byte = 65)
     result = ..ok(.value = Void())
 }
@@ -19,17 +26,32 @@ main := () -> (.status_code: Int32) {
 }
 
 implement Writer#(DummyWriter) (
-    .write_byte = (.self: $&DummyWriter, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&DummyWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.count = self&.count + 1
         byte
         result = ..ok(.value = Void())
     }
 
-    .flush = (.self: $&DummyWriter) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&DummyWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self
         result = ..ok(.value = Void())
     }

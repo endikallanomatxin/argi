@@ -1,4 +1,4 @@
-_ProcessManagerInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+_ProcessManagerInitArgs := (.ffi: $&ForeignFunctionInterface)
 
 -- The native adapter owns temporary argument copies and opaque child records.
 -- Addresses are private handles, never safe references or acquisition receipts.
@@ -110,17 +110,24 @@ _process_no_arguments := () -> (.value: ArrayView#(.t: StringView)) {
 _process_inherit := () -> (.value: ProcessStreamMode) { value = ..inherit }
 
 spawn := (
-    .executable : StringView,
-    .arguments  : ArrayView#(.t: StringView) = _process_no_arguments(),
-    .stdin      : ProcessStreamMode          = _process_inherit(),
-    .stdout     : ProcessStreamMode          = _process_inherit(),
-    .stderr     : ProcessStreamMode          = _process_inherit(),
-    .self       : &ProcessManager            = reach proc_man,
+    .executable   : StringView,
+    .arguments    : ArrayView#(.t: StringView)         = _process_no_arguments(),
+    .stdin        : ProcessStreamMode                  = _process_inherit(),
+    .stdout       : ProcessStreamMode                  = _process_inherit(),
+    .stderr       : ProcessStreamMode                  = _process_inherit(),
+    .self         : &ProcessManager,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (
     .result : Errable#(
         Process, (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
     )
 ) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     builder ::= _process_builder().address
 
@@ -186,7 +193,16 @@ spawn := (
     )
 }
 
-wait := (.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_wait_failed))) {
+wait := (
+    .self         : $&Process,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(ProcessExitStatus, (..process_wait_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
 
     if self&._handle == 0 {
@@ -210,7 +226,16 @@ wait := (.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_w
     result = ..ok ..exited(.code = code)
 }
 
-terminate := (.self: $&Process) -> (.result: Errable#(Void, (..process_terminate_failed))) {
+terminate := (
+    .self         : $&Process,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..process_terminate_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
 
     if self&._handle == 0 {
@@ -228,9 +253,16 @@ terminate := (.self: $&Process) -> (.result: Errable#(Void, (..process_terminate
 
 _is_open_ProcessStream := (.self: &ProcessStream) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_close_ProcessStream := (.self: $&ProcessStream) -> (
-    .result : Errable#(Void, (..stream_close_failed))
-) {
+_close_ProcessStream := (
+    .self         : $&ProcessStream,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_close_failed))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -244,9 +276,16 @@ _close_ProcessStream := (.self: $&ProcessStream) -> (
 }
 
 implement Reader#(ProcessStream) (
-    .read_byte = (.self: $&ProcessStream) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
+    .read_byte = (
+        .self         : $&ProcessStream,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         assume ffi := self&._ffi
 
         if self&._handle == 0 or self&._writable {
@@ -291,9 +330,17 @@ implement Deinit#(Process) (
 )
 
 implement Writer#(ProcessStream) (
-    .write_byte = (.self: $&ProcessStream, .byte: UInt8) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&ProcessStream,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         assume ffi := self&._ffi
 
         if self&._handle == 0 or self&._writable == false {
@@ -309,9 +356,16 @@ implement Writer#(ProcessStream) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&ProcessStream) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&ProcessStream,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         if self&._handle == 0 or self&._writable == false {
             result = ..error(.reason = ..stream_flush_failed)
             return

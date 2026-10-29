@@ -24,9 +24,15 @@ implement ErrorTracer#(CustomTracer) (
 
     .reset_context = (.self: $&CustomTracer) -> () {}
 
-    .report = (.self: $&CustomTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .report = (
+        .self         : $&CustomTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
         assume error_tracer ::= $&noop_error_tracer
         write_trace_text(.writer = writer, .text = "custom trace\n")!
         result = ..ok Void()

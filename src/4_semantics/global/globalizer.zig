@@ -30,9 +30,6 @@ pub const Offsets = struct {
     virtual_registry_base: u32,
     virtualize_base: u32,
     virtual_call_base: u32,
-    reach_segment_base: u32,
-    reach_alternative_base: u32,
-    reach_base: u32,
     nullable_unwrap_base: u32,
     testing_expect_error_base: u32,
     error_propagation_base: u32,
@@ -161,9 +158,6 @@ fn appendModule(
         .virtual_registry_base = try baseFor(result.virtual_registries.items.len, module.semantic.virtual_registries.items.len),
         .virtualize_base = try baseFor(result.virtualizes.items.len, module.semantic.virtualizes.items.len),
         .virtual_call_base = try baseFor(result.virtual_calls.items.len, module.semantic.virtual_calls.items.len),
-        .reach_segment_base = try baseFor(result.reach_segments.items.len, module.semantic.reach_segments.items.len),
-        .reach_alternative_base = try baseFor(result.reach_alternatives.items.len, module.semantic.reach_alternatives.items.len),
-        .reach_base = try baseFor(result.reaches.items.len, module.semantic.reaches.items.len),
         .nullable_unwrap_base = try baseFor(result.nullable_unwraps.items.len, module.semantic.nullable_unwraps.items.len),
         .testing_expect_error_base = try baseFor(result.testing_expect_errors.items.len, module.semantic.testing_expect_errors.items.len),
         .error_propagation_base = try baseFor(result.error_propagations.items.len, module.semantic.error_propagations.items.len),
@@ -481,13 +475,6 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .self_permission = value.self_permission,
         .safety_methods = globalVirtualRegistry(o, value.safety_methods),
     });
-    for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
-    for (storage.reach_alternatives.items) |value| try result.reach_alternatives.append(allocator, .{
-        .segments = relocateEntityRange(global_sg.GlobalReachSegmentId, o.reach_segment_base, value.segments),
-    });
-    for (storage.reaches.items) |value| try result.reaches.append(allocator, .{
-        .alternatives = relocateEntityRange(global_sg.GlobalReachAlternativeId, o.reach_alternative_base, value.alternatives),
-    });
     for (storage.nullable_unwraps.items) |value| try result.nullable_unwraps.append(allocator, .{
         .nullable_value = globalNode(o, value.nullable_value),
         .fallback_value = globalNode(o, value.fallback_value),
@@ -543,7 +530,19 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
 
     for (storage.nodes.items) |node| switch (node) {
-        .resolved => |value| try result.nodes.append(allocator, try relocateNode(module, o, value)),
+        .resolved => |value| {
+            var relocated = try relocateNode(module, o, value);
+            if (value.content == .captured_expression) {
+                const recipe = try index32(result.captured_expressions.items.len);
+                try result.captured_expressions.append(allocator, .{
+                    .module_index = result.modules.items.len,
+                    .expression = @enumFromInt(value.content.captured_expression),
+                    .bindings = .{ .start = 0, .len = 0 },
+                });
+                relocated.content = .{ .captured_expression = recipe };
+            }
+            try result.nodes.append(allocator, relocated);
+        },
         .pending => if (mode == .allow_holes) try result.nodes.append(allocator, .{
             .source = .{ .file_index = o.file_base, .offset = 0 },
             .ty = null,
@@ -562,7 +561,6 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .declaration => |id| .{ .declaration = globalDecl(o, id) },
             .binding_declaration => |id| .{ .binding_declaration = globalBinding(o, id) },
             .binding_use => |id| .{ .binding_use = globalBinding(o, id) },
-            .reach_directive => |id| .{ .reach_directive = globalReach(o, id) },
             .move_value => |id| .{ .move_value = globalNode(o, id) },
             .denied_implicit_copy => |id| .{ .denied_implicit_copy = globalNode(o, id) },
             .assignment => |value| .{ .assignment = .{ .binding = globalBinding(o, value.binding), .value = globalNode(o, value.value) } },
@@ -581,7 +579,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
             .int_literal => |value| .{ .int_literal = value },
             .float_literal => |value| .{ .float_literal = value },
             .char_literal => |value| .{ .char_literal = value },
-            .captured_expression => return error.InvalidArgumentDefaultInModule,
+            .captured_expression => |expression| .{ .captured_expression = expression },
             .string_literal => |value| .{ .string_literal = try relocateString(module, value, o.string_base) },
             .bool_literal => |value| .{ .bool_literal = value },
             .list_literal => |value| .{ .list_literal = .{
@@ -744,9 +742,6 @@ fn globalVirtualize(o: Offsets, id: module_entities.ModuleVirtualizeId) global_s
 }
 fn globalVirtualCall(o: Offsets, id: module_entities.ModuleVirtualCallId) global_sg.GlobalVirtualCallId {
     return @enumFromInt(o.virtual_call_base + @intFromEnum(id));
-}
-fn globalReach(o: Offsets, id: module_entities.ModuleReachId) global_sg.GlobalReachId {
-    return @enumFromInt(o.reach_base + @intFromEnum(id));
 }
 fn globalNullableUnwrap(o: Offsets, id: module_entities.ModuleNullableUnwrapId) global_sg.GlobalNullableUnwrapId {
     return @enumFromInt(o.nullable_unwrap_base + @intFromEnum(id));

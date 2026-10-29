@@ -10,6 +10,24 @@ const module_semantizer = @import("semantizer.zig");
 const initializer_lowerer = @import("initializer_lowerer.zig");
 const parameterized_lowerer = @import("parameterized/lowerer.zig");
 
+test "field defaults share pipe lowering and retain temporary storage" {
+    const allocator = std.testing.allocator;
+    const source = "make := () -> (.value: Int32) { value = 42 }\nread := (.reference: $&Int32 = [make() | $&_]) -> (.value: Int32) { value = reference& }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const files = [_]module_graph.FileInput{.{ .path = "pipe_default/main.rg", .tree = &tree, .source = source }};
+    var graph = try buildInterfaces(allocator, "pipe_default", &files);
+    defer graph.deinit(allocator);
+    var retained = false;
+    for (graph.semantic.nodes.items) |node| {
+        if (node == .resolved and node.resolved.content == .captured_expression) {
+            try std.testing.expect(node.resolved.content.captured_expression < graph.semantic.parameterized_storage.ir.nodes.items.len);
+            retained = true;
+        }
+    }
+    try std.testing.expect(retained);
+}
+
 test "deferred struct definitions retain fields with external generic types" {
     const allocator = std.testing.allocator;
     const source = "Holder := (.value: ExternalBox#(.t: Int32))\n";
@@ -630,30 +648,6 @@ test "virtual type arguments remain runtime contracts in parameterized IR" {
     try std.testing.expect(storage.ir.types.items[@intFromEnum(field.ty)].resolved == .virtual);
 }
 
-test "parameterized call defaults preserve reach alternatives" {
-    const allocator = std.testing.allocator;
-    const source = "consume := #(.t: Type) (.value: t = reach value, context.value) -> ()  {}\n";
-    var tree = try parseSource(allocator, source, @enumFromInt(0));
-    defer tree.deinit(allocator);
-    const files = [_]module_graph.FileInput{.{ .path = "reach_template/main.rg", .tree = &tree, .source = source }};
-    var module = try module_graph.build(allocator, "reach_template", &files);
-    defer module.deinit(allocator);
-    _ = try @import("parameterized/lowerer.zig").lower(allocator, &module, &files);
-    const storage = &module.semantic.parameterized_storage.ir;
-    const input = storage.representation(module.semantic.parameterized_storage.parameterized_functions.items[0].input).resolved.structural;
-    const field = storage.fields.items[input.fields.start];
-    const default_node = storage.nodes.items[@intFromEnum(field.default_value.?)].resolved;
-    const reach = storage.reaches.items[@intFromEnum(default_node.content.reach_directive)];
-    try std.testing.expectEqual(@as(u32, 2), reach.alternatives.len);
-    const first = storage.reach_alternatives.items[reach.alternatives.start];
-    const second = storage.reach_alternatives.items[reach.alternatives.start + 1];
-    try std.testing.expectEqualStrings("value", module.text(storage.reach_segments.items[first.segments.start]));
-    try std.testing.expectEqualStrings("context", module.text(storage.reach_segments.items[second.segments.start]));
-    try std.testing.expectEqualStrings("value", module.text(storage.reach_segments.items[second.segments.start + 1]));
-    const input_binding = storage.bindings.items[module.semantic.parameterized_storage.parameterized_functions.items[0].input_bindings.start];
-    try std.testing.expect(input_binding.initialization != null);
-}
-
 test "explicit imported contract bounds become constrained templates" {
     const allocator = std.testing.allocator;
     const source = "dep := import(\"../dep\")\nwrite := #(.t: Type, .Provider: Type: dep.Writer) (.value: t, .writer: $&Provider) -> ()  {}\n";
@@ -698,25 +692,7 @@ test "local concrete type shadows unqualified prelude contract" {
     );
 }
 
-test "parameterized call defaults reach caller bindings after instantiation" {
-    const allocator = std.testing.allocator;
-    const source =
-        "consume := #(.t: Type) (.item: t = reach value) -> ()  {}\n" ++
-        "main := (.value: Int32) -> ()  { consume#(.t: Int32)() }\n";
-    var tree = try parseSource(allocator, source, @enumFromInt(0));
-    defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").build(allocator, "generic_reach", &.{.{
-        .path = "generic_reach/main.rg",
-        .tree = &tree,
-        .source = source,
-    }});
-    defer module.graph.deinit(allocator);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
-}
-
-test "ordinary calls retain caller bindings for reached defaults" {
+test "ordinary calls retain lexical shadowing bindings" {
     const allocator = std.testing.allocator;
     const source =
         "consume := (.value: Int32) -> ()  {}\n" ++
@@ -726,7 +702,7 @@ test "ordinary calls retain caller bindings for reached defaults" {
         "}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").build(allocator, "reach_caller", &.{.{ .path = "reach_caller/main.rg", .tree = &tree, .source = source }});
+    var module = try @import("semantizer.zig").build(allocator, "call_scope", &.{.{ .path = "call_scope/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var found = false;
     for (module.graph.semantic.pending_operations.items, 0..) |operation, operation_index| {
@@ -771,65 +747,6 @@ test "named call inputs reject unrelated default-only operation identities" {
         matched = true;
     }
     try std.testing.expect(matched);
-}
-
-test "ordinary reached default selects a caller binding" {
-    const allocator = std.testing.allocator;
-    const source =
-        "consume := (.value: Int32 = reach value) -> (.result: Int32)  { result = value }\n" ++
-        "main := () -> (.result: Int32)  {\n" ++
-        "    value :: Int32 = 7\n" ++
-        "    result = consume().result\n" ++
-        "}\n";
-    var tree = try parseSource(allocator, source, @enumFromInt(0));
-    defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").build(allocator, "reach_local", &.{.{ .path = "reach_local/main.rg", .tree = &tree, .source = source }});
-    defer module.graph.deinit(allocator);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
-    var reached = false;
-    for (result.graph.nodes.items) |node| {
-        if (node.content != .function_call) continue;
-        const function = result.graph.functions.items[@intFromEnum(node.content.function_call.callee)];
-        const declaration = result.graph.declaration(function.declaration);
-        if (!std.mem.eql(u8, result.graph.text(declaration.name), "consume")) continue;
-        const input = result.graph.nodes.items[@intFromEnum(node.content.function_call.input)].content.struct_value_literal;
-        const argument = result.graph.value_fields.items[input.fields.start];
-        const value = result.graph.nodes.items[@intFromEnum(argument.value)];
-        try std.testing.expect(value.content == .binding_use);
-        try std.testing.expectEqualStrings("value", result.graph.text(result.graph.bindings.items[@intFromEnum(value.content.binding_use)].name));
-        reached = true;
-    }
-    try std.testing.expect(reached);
-}
-
-test "reached defaults propagate through an intermediate function" {
-    const allocator = std.testing.allocator;
-    const source =
-        "consume := (.value: Int32 = reach value) -> (.result: Int32)  { result = value }\n" ++
-        "forward := () -> (.result: Int32)  { result = consume().result }\n" ++
-        "main := () -> (.result: Int32)  {\n" ++
-        "    value :: Int32 = 7\n" ++
-        "    result = forward().result\n" ++
-        "}\n";
-    var tree = try parseSource(allocator, source, @enumFromInt(0));
-    defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").build(allocator, "reach_propagation", &.{.{ .path = "reach_propagation/main.rg", .tree = &tree, .source = source }});
-    defer module.graph.deinit(allocator);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
-    defer result.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
-    var found = false;
-    for (result.graph.functions.items) |function| {
-        const declaration = result.graph.declaration(function.declaration);
-        if (!std.mem.eql(u8, result.graph.text(declaration.name), "forward")) continue;
-        try std.testing.expectEqual(@as(u32, 1), function.input.len);
-        try std.testing.expectEqual(@as(u32, 1), function.input_bindings.len);
-        try std.testing.expectEqualStrings("value", result.graph.text(result.graph.fields.items[function.input.start].name));
-        found = true;
-    }
-    try std.testing.expect(found);
 }
 
 test "callback invocation preserves binding and field editor targets" {

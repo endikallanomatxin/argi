@@ -9,8 +9,16 @@ implement#(.Stream: Type: Reader#(Stream)) BufferReading#(Stream) (
 )
 
 _reader_read := #(.Stream: Type: Reader#(Stream)) (
-    .self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)
+    .self         : $&Stream,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
+    assume error_tracer
+
     copied :: UIntNative = 0
 
     while copied < length(&buffer).count {

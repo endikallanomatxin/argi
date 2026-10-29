@@ -1,11 +1,20 @@
 Widget := (.value: Int32)
 
-WidgetInitArgs: Type = (.fail: Bool)
+WidgetInitArgs: Type = (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(Widget, WidgetInitArgs) (
     .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
 
     .init = WidgetInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_fail ::= ~fail
 
         constructed :: Widget

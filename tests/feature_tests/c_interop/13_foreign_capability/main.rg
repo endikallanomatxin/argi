@@ -1,8 +1,14 @@
 _absolute(.value: Int32) -> (.result: Int32): CFunction(.symbol = "abs")
 
-_wrapper := (.value: Int32) -> (.result: Int32) { result = _absolute(value) }
+_wrapper := (.value: Int32, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) {
+    assume ffi
+    result = _absolute(value)
+}
 
-_forward := (.value: Int32) -> (.result: Int32) { result = _wrapper(value) }
+_forward := (.value: Int32, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) {
+    assume ffi
+    result = _wrapper(value)
+}
 
 _local(.context: $&ForeignFunctionInterface, .value: Int32) -> (.result: Int32): CFunction := {
     assume ffi := context

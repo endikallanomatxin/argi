@@ -36,7 +36,7 @@ read_identity := #(.T: Type) (.input: IdentityType#(T)) -> (.result: T) {
 
 Provider := (.flag: Bool)
 
-ReachedArgs := #(.P: Type) (.provider: &P = reach provider)
+ReachedArgs := #(.P: Type) (.provider: &P)
 
 read_provider := #(.P: Type) ReachedArgs#(P) -> Result {
     result = provider&.flag

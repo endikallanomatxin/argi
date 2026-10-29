@@ -93,9 +93,17 @@ next_bool := (.self: $&Pcg32) -> (.value: Bool) {
     value = next_uint32(self).value >= 2147483648
 }
 
-uniform_uint32 := (.self: $&Pcg32, .upper_bound: UInt32) -> (
-    .result : Errable#(UInt32, (..invalid_range))
-) {
+uniform_uint32 := (
+    .self         : $&Pcg32,
+    .upper_bound  : UInt32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt32, (..invalid_range))) {
+    assume error_tracer
+
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
         return
@@ -116,9 +124,17 @@ uniform_uint32 := (.self: $&Pcg32, .upper_bound: UInt32) -> (
     }
 }
 
-uniform_uint64 := (.self: $&Pcg32, .upper_bound: UInt64) -> (
-    .result : Errable#(UInt64, (..invalid_range))
-) {
+uniform_uint64 := (
+    .self         : $&Pcg32,
+    .upper_bound  : UInt64,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt64, (..invalid_range))) {
+    assume error_tracer
+
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
         return

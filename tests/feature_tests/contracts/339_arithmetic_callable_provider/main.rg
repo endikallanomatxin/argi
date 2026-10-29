@@ -6,9 +6,9 @@ Large := (.amount: Int32)
 
 implement Add#(&Value, &Value) (
     .Result : Type = Int32
-    .add    = #(.Provider: Type) (
-        .left: &Value, .right: &Value, .provider: &Provider = reach provider
-    ) -> (.result: Result) {
+    .add    = #(.Provider: Type) (.left: &Value, .right: &Value, .provider: &Provider) -> (
+        .result : Result
+    ) {
         result = left&.number + right&.number + provider&.amount
     }
 )

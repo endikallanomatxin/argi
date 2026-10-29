@@ -1,9 +1,18 @@
 check := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .input: StringView, .expected: StringView, .allocator: $&AllocatorType
+    .input        : StringView,
+    .expected     : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (
-    .result: Errable#(.t: Void, .reasons: (..invalid_path, ..out_of_memory, ..test_failed)) = ..ok Void(
+    .result : Errable#(.t: Void, .reasons: (..invalid_path, ..out_of_memory, ..test_failed)) = ..ok Void(
     )
 ) {
+    assume error_tracer
+
     assume allocator
     path ::= normalize_path(.view = input, .allocator = allocator)!
     expect(.condition = view(.self = &path) == expected)!

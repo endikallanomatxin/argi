@@ -1,7 +1,16 @@
 Source := (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (
+        .self         : $&Source,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         self&.calls = self&.calls + 1
         if self&.fail_once and self&.position == 1 {
             self&.fail_once = false

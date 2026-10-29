@@ -37,7 +37,7 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
     };
 }
 
-/// Foreign imports have a logical reached capability argument. It participates
+/// Foreign imports have a logical capability input. It participates
 /// in ordinary dependency resolution and safety, but never in the C ABI. Add
 /// it after relocation so its nominal identity comes from bundled core rather
 /// than a user declaration with the same spelling.
@@ -77,19 +77,11 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         const saved = graph.checkpoint();
         errdefer graph.rollback(allocator, saved);
         const source = graph.declaration(function.declaration).source;
-        const segment_start: u32 = @intCast(graph.reach_segments.items.len);
-        try graph.reach_segments.append(allocator, name);
-        const alternative_start: u32 = @intCast(graph.reach_alternatives.items.len);
-        try graph.reach_alternatives.append(allocator, .{ .segments = .{ .start = segment_start, .len = 1 } });
-        const reach: graph_mod.GlobalReachId = @enumFromInt(graph.reaches.items.len);
-        try graph.reaches.append(allocator, .{ .alternatives = .{ .start = alternative_start, .len = 1 } });
-        const fallback: graph_mod.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
-        try graph.nodes.append(allocator, .{ .source = source, .ty = pointer, .content = .{ .reach_directive = reach } });
         const old_fields = try allocator.dupe(graph_mod.Field, graph.fields.items[function.input.start..][0..function.input.len]);
         defer allocator.free(old_fields);
         const field_start: u32 = @intCast(graph.fields.items.len);
         try graph.fields.appendSlice(allocator, old_fields);
-        try graph.fields.append(allocator, .{ .name = name, .ty = pointer, .source = source, .default_value = fallback });
+        try graph.fields.append(allocator, .{ .name = name, .ty = pointer, .source = source });
         const old_bindings = try allocator.dupe(graph_mod.GlobalBindingId, graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
         defer allocator.free(old_bindings);
         const binding: graph_mod.GlobalBindingId = @enumFromInt(graph.bindings.items.len);

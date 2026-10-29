@@ -26,9 +26,18 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Allocator#(CountingAllocator) (
-    .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result: Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&CountingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)
         self&.alloc_count = self&.alloc_count + 1

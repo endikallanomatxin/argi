@@ -137,7 +137,16 @@ _slice := (.text: StringView, .start: UIntNative, .end: UIntNative) -> (.value: 
 }
 
 -- Delimiters are recognized before any decoding. Encoded separators remain data.
-parse := (.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) {
+parse := (
+    .text         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UriView, (..invalid_input))) {
+    assume error_tracer
+
     fragment_start ::= byte_length(&text).count
     i :: UIntNative = 0
 
@@ -433,8 +442,16 @@ _authority_valid := (.text: StringView) -> (.ok: Bool = false) {
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
 build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .value: UriView, .allocator: $&AllocatorType
+    .value        : UriView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) {
+    assume error_tracer
+
     if [
         is(.value = value.scheme, .variant = ..none)
         and is(.value = value.authority, .variant = ..none)
@@ -534,8 +551,16 @@ build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text: StringView, .allocator: $&AllocatorType
+    .text         : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     hex: StringView = "0123456789ABCDEF"
     i :: UIntNative = 0
@@ -576,8 +601,16 @@ encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 decode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text: StringView, .allocator: $&AllocatorType
+    .text         : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) {
+    assume error_tracer
+
     output ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
 
@@ -613,7 +646,16 @@ AuthorityView := (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
 
 implement ImplicitlyCopyable#(AuthorityView) ()
 
-authority_parts := (.text: StringView) -> (.result: Errable#(AuthorityView, (..invalid_input))) {
+authority_parts := (
+    .text         : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(AuthorityView, (..invalid_input))) {
+    assume error_tracer
+
     if _authority_valid(.text = text).ok == false {
         result = ..error(.reason = ..invalid_input)
         return

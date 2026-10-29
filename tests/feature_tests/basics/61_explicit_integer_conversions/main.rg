@@ -9,11 +9,29 @@ next_value := () -> (.value: Int64) {
     value = 127
 }
 
-checked := #(.t: Type) (.value: t) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
+checked := #(.t: Type) (
+    .value        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
+    assume error_tracer
+
     result = value | convert#(.to: Int8)(_)
 }
 
-narrow := (.value: Int64) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
+narrow := (
+    .value        : Int64,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
+    assume error_tracer
+
     result = value | convert#(.to: Int8)(_)
 }
 

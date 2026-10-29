@@ -36,8 +36,7 @@ randomness, and foreign calls.
 `ProcessManager` provides [child processes and their streams](165_processes.md).
 
 Functions receive the capabilities they use through ordinary inputs. They
-may be passed explicitly or supplied through lexical `assume` or a declared
-`reach` input. There is no implicit default allocator. For example:
+may be passed explicitly or supplied through lexical `assume`. There is no implicit default allocator. For example:
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0) {
@@ -76,7 +75,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
 Reporting uses the ordinary writer and the tracer stored in the error.
 The checked entry provides a stderr writer and a bounded 4096-byte tracer;
-functions using reporting need a reachable writer or an explicit writer input.
+functions using reporting need a declared writer input, supplied explicitly or
+through a lexical assumption.
 A locally selected writer or tracer retains its ordinary meaning. Reporting
 finishes before normal return cleanup releases borrowed resources. A failed
 report is not recursively reported and does not alter the pending return.
@@ -138,5 +138,5 @@ querying screen dimensions.
 A fallible helper can return an error borrowing a tracer supplied by its caller
 or the program entry scope. A tracer created inside the helper cannot escape
 in an `Error` or `ErrorTrace`. Create a custom tracer in the caller, keep its
-buffer and virtual wrapper alive, and pass or reach that capability while the
+buffer and virtual wrapper alive, and pass that capability explicitly or through lexical `assume` while the
 caller handles or reports the error.

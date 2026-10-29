@@ -90,8 +90,6 @@ pub const Node = struct {
         identifier,
         pipe_placeholder,
         assume_statement,
-        reach_directive,
-        reach_alternative,
         move_expression,
         function_call,
         comptime_entry,
@@ -351,8 +349,6 @@ pub const StructFieldAccess = struct { value: NodeIndex, field_token: TokenIndex
 pub const ChoicePayloadAccess = struct { value: NodeIndex, variant_token: TokenIndex };
 pub const ChoiceLiteral = struct { name_token: TokenIndex, payload: ?NodeIndex };
 pub const ValueField = struct { name_token: ?TokenIndex, value: NodeIndex, position: ?u32 };
-pub const ReachDirective = struct { alternatives: []const NodeIndex };
-pub const ReachAlternative = struct { segments: []const NodeIndex };
 pub const ReturnStatement = struct { value: ?NodeIndex };
 pub const IndexAccess = struct { value: NodeIndex, index: NodeIndex };
 pub const AddressOf = struct { value: NodeIndex, mutability: PointerMutability };
@@ -973,16 +969,6 @@ pub const FileSyntaxTree = struct {
         };
     }
 
-    pub fn reachDirective(tree: *const FileSyntaxTree, node: NodeIndex) ?ReachDirective {
-        if (tree.tag(node) != .reach_directive) return null;
-        return .{ .alternatives = tree.nodeRange(tree.data(node).extra_range) };
-    }
-
-    pub fn reachAlternative(tree: *const FileSyntaxTree, node: NodeIndex) ?ReachAlternative {
-        if (tree.tag(node) != .reach_alternative) return null;
-        return .{ .segments = tree.nodeRange(tree.data(node).extra_range) };
-    }
-
     pub fn returnStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?ReturnStatement {
         if (tree.tag(node) != .return_statement) return null;
         return .{ .value = tree.data(node).optional_node.unwrap() };
@@ -1095,7 +1081,6 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .keyword_continue => "continue",
         .keyword_once => "once",
         .keyword_assume => "assume",
-        .keyword_reach => "reach",
         .keyword_import => "import",
         .keyword_test => "test",
         .keyword_implement => "implement",

@@ -2,14 +2,14 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
     assume network := system.network
     addresses ::= resolve_addresses(
-        .host = "127.0.0.1", .port = 0, .family = ..ipv4, .passive = true
+        .self = network, .host = "127.0.0.1", .port = 0, .family = ..ipv4, .passive = true
     )!!!
     if length(.self = &addresses).count == 0 { abort }
     address ::= address_at(.self = &addresses, .index = 0)!!!
-    listener ::= TcpListener(.address = address)!!!
+    listener ::= TcpListener(.network = network, .address = address)!!!
     bound ::= local_address(.self = &listener)!!!
     if port(.self = &bound).value == 0 { abort }
-    client ::= TcpConnection(.address = bound)!!!
+    client ::= TcpConnection(.network = network, .address = bound)!!!
     server ::= accept(.self = $&listener)!!!
     set_timeout(.self = $&client, .milliseconds = 5000)!!!
     set_timeout(.self = $&server, .milliseconds = 5000)!!!
@@ -39,11 +39,11 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if is_open(.self = &server).ok { abort }
 
     udp_addresses ::= resolve_addresses(
-        .host = "127.0.0.1", .port = 0, .transport = ..udp, .family = ..ipv4
+        .self = network, .host = "127.0.0.1", .port = 0, .transport = ..udp, .family = ..ipv4
     )!!!
     udp_address ::= address_at(.self = &udp_addresses, .index = 0)!!!
-    receiver ::= UdpSocket(.address = udp_address)!!!
-    sender ::= UdpSocket(.address = udp_address)!!!
+    receiver ::= UdpSocket(.network = network, .address = udp_address)!!!
+    sender ::= UdpSocket(.network = network, .address = udp_address)!!!
     set_timeout(.self = $&receiver, .milliseconds = 5000)!!!
     peer ::= local_address(.self = &receiver)!!!
     if send_to(.self = $&sender, .peer = peer, .buffer = input)!!! != 4 { abort }

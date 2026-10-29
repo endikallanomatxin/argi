@@ -1,6 +1,8 @@
 ..failure
 
-fail := (.error_tracer: $&Virtual#(ErrorTracer) = reach error_tracer) -> !Void {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void {
+    assume error_tracer
+
     result = ..error(.reason = ..failure)
 }
 

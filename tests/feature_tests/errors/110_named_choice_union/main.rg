@@ -4,7 +4,16 @@ Extra: Type = (..alpha, ..shared)
 
 Combined: Type = choice_union#(.a: Base, .b: Extra)
 
-source := (.shared: Bool) -> (.result: Errable#(Void, Base)) {
+source := (
+    .shared       : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, Base)) {
+    assume error_tracer
+
     if shared {
         result = ..error(.reason = ..shared)
     } else {
@@ -12,11 +21,28 @@ source := (.shared: Bool) -> (.result: Errable#(Void, Base)) {
     }
 }
 
-extra := () -> (.result: Errable#(Void, Extra)) {
+extra := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, Extra)) {
+    assume error_tracer
+
     result = ..error(.reason = ..alpha)
 }
 
-combined := (.which: UInt8) -> (.result: Errable#(Void, Combined)) {
+combined := (
+    .which        : UInt8,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, Combined)) {
+    assume error_tracer
+
     if which == 0 {
         source(.shared = false)!
     } else if which == 1 {

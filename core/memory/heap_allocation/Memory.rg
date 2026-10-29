@@ -1,4 +1,4 @@
-_MemoryInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+_MemoryInitArgs := (.ffi: $&ForeignFunctionInterface)
 
 -- Page mappings retain the foreign-call authorization used to acquire them.
 Memory := (
@@ -31,9 +31,20 @@ implement Init#(Memory, MemoryInitArgs) (
     .init = _acquire_memory
 )
 
-_memory_map_aligned := (.size: UIntNative, .alignment: UIntNative, .page_size: UIntNative) -> (
-    .result : Errable#(AcquiredStorage, (..out_of_memory))
-) {
+_memory_map_aligned := (
+    .size         : UIntNative,
+    .alignment    : UIntNative,
+    .page_size    : UIntNative,
+    .ffi          : $&ForeignFunctionInterface,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
+    assume error_tracer
+
+    assume ffi
     _require_allocation_alignment(.alignment = alignment)
 
     if page_size == 0 {
@@ -58,9 +69,18 @@ _memory_map_aligned := (.size: UIntNative, .alignment: UIntNative, .page_size: U
     result = ..ok(._address = address, ._size = mapped_size, ._alignment = alignment)
 }
 
-map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
-    .result : Errable#(Allocation, (..out_of_memory))
-) {
+map_pages := (
+    .self         : $&Memory,
+    .size         : UIntNative,
+    .alignment    : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(
         .size = size, .alignment = self&._page_size

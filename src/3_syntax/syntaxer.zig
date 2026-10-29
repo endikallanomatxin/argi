@@ -1299,49 +1299,6 @@ pub const Syntaxer = struct {
         return true;
     }
 
-    fn commaStartsReachAlternative(self: *Syntaxer) bool {
-        if (!self.tokenIs(.comma)) return false;
-
-        var idx: usize = self.index + 1;
-        while (idx < self.file.tokens.len) : (idx += 1) {
-            switch (self.contentAt(idx)) {
-                .new_line, .comment => continue,
-                .identifier => return true,
-                else => return false,
-            }
-        }
-
-        return false;
-    }
-
-    fn parseReachDirective(self: *Syntaxer, keyword_token: syn.TokenIndex) SyntaxerError!syn.NodeIndex {
-        const alternatives_top = self.scratch.items.len;
-        defer self.scratch.shrinkRetainingCapacity(alternatives_top);
-
-        while (true) {
-            const segments_top = self.scratch.items.len;
-            const first = try self.parseName();
-            try self.scratch.append(self.allocator, try self.addNode(.identifier, first.token, .{ .unused = .{ 0, 0 } }));
-
-            while (self.tokenIs(.dot)) {
-                self.advanceOne();
-                const segment = try self.parseName();
-                try self.scratch.append(self.allocator, try self.addNode(.identifier, segment.token, .{ .unused = .{ 0, 0 } }));
-            }
-
-            const segments_range = try self.addNodeRange(self.scratch.items[segments_top..]);
-            self.scratch.shrinkRetainingCapacity(segments_top);
-            try self.scratch.append(self.allocator, try self.addNode(.reach_alternative, first.token, .{ .extra_range = segments_range }));
-
-            self.skipNewLinesAndComments();
-            if (!self.commaStartsReachAlternative()) break;
-            self.advanceOne();
-            self.skipNewLinesAndComments();
-        }
-
-        return try self.addNode(.reach_directive, keyword_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[alternatives_top..]) });
-    }
-
     fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
         if (open_paren_index >= self.file.tokens.len) return null;
         if (std.meta.activeTag(self.contentAt(open_paren_index)) != .open_parenthesis) return null;
@@ -1745,12 +1702,6 @@ pub const Syntaxer = struct {
             self.advanceOne();
             const inner = try self.parsePrimary(); // recursivo
             return try self.addNode(if (mutable) .address_of_mut else .address_of, main_token, .{ .node = inner });
-        }
-
-        if (self.tokenIs(.keyword_reach)) {
-            const keyword_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
-            return self.parsePostfix(try self.parseReachDirective(keyword_token));
         }
 
         if (self.tokenIs(.keyword_import)) {

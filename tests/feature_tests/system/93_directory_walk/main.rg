@@ -1,9 +1,18 @@
 RefusingAllocator: Type = ()
 
 implement Allocator#(RefusingAllocator) (
-    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&RefusingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         result = ..error(.reason = ..out_of_memory)
     }
 )
@@ -74,13 +83,15 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     #if target_os("linux") or target_os("macos") {
         assume file_system := system.file_system
         temporary ::= TemporaryDirectory(
-            .parent = "tests/feature_tests/system/93_directory_walk/build"
+            .self = file_system, .parent = "tests/feature_tests/system/93_directory_walk/build"
         )!!!
         original ::= path(.self = &temporary).view
         child ::= concat(.left = original, .right = "/child", .allocator = allocator)!!!
         moved ::= concat(.left = original, .right = "-moved", .allocator = allocator)!!!
-        create_directory(.path = view(&child))!!!
-        changed ::= DirectoryWalker(.path = original, .allocator = allocator)!!!
+        create_directory(.self = file_system, .path = view(&child))!!!
+        changed ::= DirectoryWalker(
+            .self = file_system, .path = original, .allocator = allocator
+        )!!!
         _ ::= rename(
             .self = file_system, .from = original, .to = view(&moved), .allocator = allocator
         )!!!
@@ -95,7 +106,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         _ ::= rename(
             .self = file_system, .from = view(&moved), .to = original, .allocator = allocator
         )!!!
-        remove_directory(.path = view(&child))!!!
+        remove_directory(.self = file_system, .path = view(&child))!!!
         close(.self = $&temporary)!!!
     }
     status_code = 0

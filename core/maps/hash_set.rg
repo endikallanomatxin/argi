@@ -8,9 +8,18 @@ HashSet := #(.key: Type, .policy: Type: HashPolicy#(policy, key) = StandardHashP
 
 _init_hash_set := #(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator
-) (.policy: policy, .allocator: $&Provider, .capacity: UIntNative) -> (
-    .result : Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
-) {
+) (
+    .policy       : policy,
+    .allocator    : $&Provider,
+    .capacity     : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))) {
+    assume error_tracer
+
     map ::= _init_hash_map#(.key: key, .value: _HashSetValue)(
         .policy = ~policy, .allocator = allocator, .capacity = capacity
     )!
@@ -23,6 +32,12 @@ HashSetInitArgs: Type = #(
     .policy    : policy,
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator) Init#(
@@ -31,6 +46,8 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type:
     .Result : Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
 
     .init = HashSetInitArgs#(key, policy, Provider) -> (.result: Result) {
+        assume error_tracer
+
         constructed ::= _init_hash_set#(.key: key)(
             .policy = ~policy, .allocator = allocator, .capacity = capacity
         )!
@@ -43,6 +60,12 @@ StandardHashSetInitArgs: Type = #(
 ) (
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#(
@@ -53,6 +76,8 @@ implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#
     )
 
     .init = StandardHashSetInitArgs#(key, Provider) -> (.result: Result) {
+        assume error_tracer
+
         constructed ::= _init_hash_set#(.key: key)(
             .policy = StandardHashPolicy(), .allocator = allocator, .capacity = capacity
         )!
@@ -62,9 +87,18 @@ implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#
 
 _map_insert_hash_set := #(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
-    .result : Errable#(Bool, (..out_of_memory))
-) {
+) (
+    .self         : $&HashSet#(.key: key, .policy: policy),
+    .key          : key,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer)      = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Bool, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
     incoming ::= ~key
     query ::= HashPolicy#(policy, key).query(&self&._map._policy, .key = &incoming)
@@ -130,9 +164,18 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) CollectionCapaci
 
 _map_reserve_hash_set := #(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) (.self: $&HashSet#(.key: key, .policy: policy), .capacity: UIntNative, .allocator: $&Provider) -> (
-    .result : Errable#(Void, (..out_of_memory))
-) {
+) (
+    .self         : $&HashSet#(.key: key, .policy: policy),
+    .capacity     : UIntNative,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     result = reserve($&self&._map, .capacity = capacity, .allocator = allocator)
 }
 

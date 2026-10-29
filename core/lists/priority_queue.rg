@@ -11,6 +11,12 @@ PriorityQueueInitArgs: Type = #(
     .order     : &order,
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
@@ -19,6 +25,8 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allo
     .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
 
     .init = PriorityQueueInitArgs#(t, order, Provider) -> (.result: Result) {
+        assume error_tracer
+
         _init_order ::= order
         _init_allocator ::= allocator
         _init_capacity ::= capacity
@@ -50,9 +58,18 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) CollectionLength#(
 
 _queue_push_priority_queue := #(
     .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
-) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Provider) -> (
-    .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
-) {
+) (
+    .self         : $&PriorityQueue#(.t: t, .order: order),
+    .value        : t,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer)      = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..out_of_memory)) = ..ok Void()) {
+    assume error_tracer
+
     assume allocator
     owned ::= ~value
 

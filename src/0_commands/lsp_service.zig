@@ -1112,7 +1112,6 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
         .keyword_continue => 8,
         .keyword_once => 4,
         .keyword_assume => 6,
-        .keyword_reach => 5,
         .keyword_test => 4,
         .keyword_implement => 9,
         .keyword_defer => 5,

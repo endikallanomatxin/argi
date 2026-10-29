@@ -4,5 +4,5 @@ const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNo
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/io/26X_print_without_system" {
-    try expectFrontendFailureWithoutNoise("tests/feature_tests/io/26X_print_without_system", ".writer uses reach writer", "panic");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/io/26X_print_without_system", "no generic function named 'print' accepts arguments", "panic");
 }

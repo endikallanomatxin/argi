@@ -6,9 +6,16 @@ implement OrderPolicy#(SmallOrder, UInt8) (
     }
 )
 
-take_queue := #(.Collection: Type: Queue#(Collection)) (.self: $&Collection) -> (
-    .result : Queue#(Collection).Result
-) {
+take_queue := #(.Collection: Type: Queue#(Collection)) (
+    .self         : $&Collection,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Queue#(Collection).Result) {
+    assume error_tracer
+
     result = ~Queue#(Collection).pop(.self = self)
 }
 

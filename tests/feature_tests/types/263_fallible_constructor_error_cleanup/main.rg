@@ -6,12 +6,21 @@ implement Deinit#(Widget) (
     }
 )
 
-WidgetInitArgs: Type = (.cleanups: $&Int32)
+WidgetInitArgs: Type = (
+    .cleanups     : $&Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(Widget, WidgetInitArgs) (
     .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
 
     .init = WidgetInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_cleanups ::= ~cleanups
 
         constructed :: Widget = (.cleanups = _init_cleanups)

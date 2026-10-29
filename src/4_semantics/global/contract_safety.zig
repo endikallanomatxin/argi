@@ -197,8 +197,8 @@ pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange
         }
     }
     for (contract.dependencies) |dependency| {
-        if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) {
-            reason = "error_tracer is only implicit for fallible contract operations";
+        if (dependency.input_index >= inputs.len) {
+            reason = "dependency names an unknown input";
             break;
         }
     }

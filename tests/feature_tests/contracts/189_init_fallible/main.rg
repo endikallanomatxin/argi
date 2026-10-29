@@ -1,11 +1,20 @@
 Point := (._x: Int32)
 
-PointInitArgs: Type = (.x: Int32)
+PointInitArgs: Type = (
+    .x            : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(Point, PointInitArgs) (
     .Result : Type = Errable#(Point, (..invalid_point))
 
     .init = PointInitArgs -> (.result: Result) {
+        assume error_tracer
+
         if x < 0 {
             result = ..error(.reason = ..invalid_point)
             return

@@ -3,12 +3,20 @@ Owned := (.allocation: Allocation)
 OwnedInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
     .allocator : $&AllocatorProvider,
     .fail      : Bool
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, OwnedInitArgs#(AllocatorProvider)) (
     .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
 
     .init = OwnedInitArgs#(AllocatorProvider) -> (.result: Result) {
+        assume error_tracer
+
         _init_allocator ::= ~allocator
         _init_fail ::= ~fail
 

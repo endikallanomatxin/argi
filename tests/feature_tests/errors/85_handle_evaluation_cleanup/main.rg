@@ -10,7 +10,16 @@ implement Deinit#(Marker) (
     }
 )
 
-attempt := (.fail: Bool) -> !Int32 {
+attempt := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Int32 {
+    assume error_tracer
+
     calls = calls + 1
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 5 }
 }

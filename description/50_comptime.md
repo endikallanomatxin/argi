@@ -52,7 +52,7 @@ answer ::= #run (.system: System) -> (.result: Int32) {
 ```
 
 Neither `#run` nor its `System` input installs assumed writers, allocators or
-other capabilities. Ordinary `assume`, `reach`, contracts and safety rules
+other capabilities. Ordinary `assume`, contracts and safety rules
 apply to the entry and its calls. Existing functions are called inside the
 block; `#run function(...)` is not an alternative entry syntax.
 

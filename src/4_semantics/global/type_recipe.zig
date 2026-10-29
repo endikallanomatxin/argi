@@ -613,7 +613,6 @@ test "type recipes outlive rollback and distinguish reused type identities" {
     try graph.types.append(a, .{ .array = .{ .length = 3, .element = @enumFromInt(3) } });
     try std.testing.expect(!try cloned.matches(a, &graph, &roots));
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -674,7 +673,6 @@ fn aggregateDefaultFailures(a: std.mem.Allocator, array: bool) !void {
     try graph.types.append(owner, .{ .builtin = .Bool });
     try graph.nodes.append(owner, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 99 } });
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -765,7 +763,6 @@ test "type recipes retain literal defaults and their origins across rollback" {
     graph.nodes.items[0].source.offset = 8;
     try std.testing.expect(!try retained.matches(allocator, &graph, &roots));
     var core = @import("core.zig").Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -812,7 +809,6 @@ test "type recipes preserve literal precision and owned string bytes after rollb
     graph.rollback(a, checkpoint);
     _ = try graph.addString(a, "overwritten graph string storage");
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -857,7 +853,6 @@ fn pendingDefaultFailures(a: std.mem.Allocator) !void {
     try graph.types.append(a, .{ .builtin = .Bool });
     try graph.captured_expressions.append(a, .{ .module_index = 0, .expression = @enumFromInt(99), .bindings = .{ .start = 0, .len = 0 } });
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -920,7 +915,6 @@ fn choiceDefaultFailures(a: std.mem.Allocator, with_payload: bool) !void {
     try graph.types.append(a, .{ .builtin = .Bool });
     try graph.variants.append(a, .{ .name = try graph.addString(a, "unrelated"), .source = source, .value = 0 });
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -964,7 +958,6 @@ test "type recipes preserve pending errable wrappers without retaining speculati
     try graph.types.append(a, .{ .inferred_errable = @enumFromInt(2) });
     try std.testing.expect(!try cloned.matches(a, &graph, &roots));
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var published: [1]?g.GlobalTypeId = undefined;
@@ -994,7 +987,6 @@ test "type recipes retain anonymous nominal definitions across speculative type 
     try graph.types.append(a, .{ .builtin = .Bool });
     try std.testing.expect(!try recipe.matches(a, &graph, &input));
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var output: [1]?g.GlobalTypeId = .{null};
@@ -1030,7 +1022,6 @@ test "type recipes reconstruct nominal specializations without retaining specula
     try graph.types.append(a, .{ .nominal = @enumFromInt(1) });
     try std.testing.expect(!try recipe.matches(a, &graph, &roots));
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var output: [1]?g.GlobalTypeId = .{null};
@@ -1063,7 +1054,6 @@ test "type recipes restore a closed nominal definition completed inside a reject
     transaction.rollback();
     try std.testing.expectEqual(null, graph.typeDefinition(@enumFromInt(0)).struct_fields);
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    defer core.deinitReachedCalls();
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
     defer generics.deinit();
     var output: [1]?g.GlobalTypeId = .{null};

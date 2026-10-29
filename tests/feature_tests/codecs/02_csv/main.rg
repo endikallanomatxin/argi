@@ -40,8 +40,8 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     }
     fields :: [2]StringView = ("a,b", "\"quoted\"")
     storage ::= zeroed#(.t: [64]UInt8)()
-    writer ::= ByteWriter(.bytes = view(.self = $&storage))
-    csv.write_record(.writer = $&writer, .fields = view(.self = &fields))!!!
+    buffer_writer ::= ByteWriter(.bytes = view(.self = $&storage))
+    csv.write_record(.writer = $&buffer_writer, .fields = view(.self = &fields))!!!
     text_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
             .bytes = unwrap_or_abort(

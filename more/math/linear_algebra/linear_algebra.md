@@ -54,7 +54,8 @@ Vectors expose `length`, checked `get`/`set`, `dot`, `+`, and `scale`. Matrices
 expose `shape`, checked `get`/`set`, `+`, `*`, and `transpose`. Dynamic
 shape incompatibilities return `dimension_mismatch`. Addition and multiplication
 infer their allocator provider in the selected operation's compile-time parameters.
-Its ordinary allocator input has a reach default. Other operations returning owners
+Its ordinary allocator input is explicit or supplied through lexical `assume`.
+Other operations returning owners
 take `.allocator`; scalar reads, writes, and dot products do not allocate.
 Index errors return `out_of_bounds` without writing. No operation resizes an
 existing owner or exposes mutable shape fields.

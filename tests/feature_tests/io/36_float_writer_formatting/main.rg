@@ -851,9 +851,9 @@ main := () -> (.status_code: Int32 = 0) {
     }
     if partial.count != 2 or partial.flush_calls != 0 { abort }
     first ::= RecordingWriter(.expected = "", .fail_at = 0, .flush_failure = true)
-    first_failed ::= WriteValue#(RecordingWriter, Float64).write_value(
-        .self = $&first, .value = value64
-    )
+    first_failed ::= WriteValue#(
+        RecordingWriter, Float64
+    ).write_value(.self = $&first, .value = value64)
     if is(.value = first_failed, .variant = ..error) {
         if first_failed ..error.reason != ..stream_flush_failed { abort }
     } else {
@@ -870,9 +870,17 @@ main := () -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(RecordingWriter) (
-    .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&RecordingWriter,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         if self&.count == self&.fail_at {
             if self&.flush_failure {
                 result = ..error(.reason = ..stream_flush_failed)
@@ -892,9 +900,16 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&RecordingWriter) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&RecordingWriter,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()
     }

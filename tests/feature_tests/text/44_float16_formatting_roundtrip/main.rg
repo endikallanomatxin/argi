@@ -49,9 +49,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
             ).reference&
             buffer.length = 0
             unwrap_or_abort(
-                .value = WriteValue#(DecimalBuffer, Float16).write_value(
-                    .self = $&buffer, .value = original
-                )
+                .value = WriteValue#(
+                    DecimalBuffer, Float16
+                ).write_value(.self = $&buffer, .value = original)
             )
             bytes ::= unwrap_or_abort(
                 .value = slice(&view(&buffer.bytes), .start = 0, .count = buffer.length)
@@ -71,18 +71,33 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(DecimalBuffer) (
-    .write_byte = (.self: $&DecimalBuffer, .byte: UInt8) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&DecimalBuffer,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         if self&.length == 32 { abort }
         self&.bytes[self&.length] = byte
         self&.length = self&.length + 1
         result = ..ok Void()
     }
 
-    .flush = (.self: $&DecimalBuffer) -> (
-        .result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&DecimalBuffer,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         abort
     }
 )

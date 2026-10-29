@@ -17,9 +17,19 @@ select_holder := (.holder: $&Holder, .counter: $&Counter) -> (.result: $&Holder)
     result = holder
 }
 
-maybe_retarget := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
-    .result: Errable#(Resource, (..stop))
-) {
+maybe_retarget := (
+    .holder       : $&Holder,
+    .other        : $&Resource,
+    .counter      : $&Counter,
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Resource, (..stop))) {
+    assume error_tracer
+
     holder&.reference = other
     if fail {
         result = ..error(.reason = ..stop)
@@ -28,9 +38,19 @@ maybe_retarget := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .
     }
 }
 
-replace := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
-    .result: Errable#(Int32, (..stop))
-) {
+replace := (
+    .holder       : $&Holder,
+    .other        : $&Resource,
+    .counter      : $&Counter,
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..stop))) {
+    assume error_tracer
+
     [select_holder(.holder = holder, .counter = counter)&.reference]&= maybe_retarget(
         .holder = holder, .other = other, .counter = counter, .fail = fail
     )!

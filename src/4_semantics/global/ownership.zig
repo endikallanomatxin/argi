@@ -6,7 +6,7 @@ const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const dispatch_mod = @import("dispatch.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 const global_types = @import("types.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
@@ -150,7 +150,7 @@ pub const Resolver = struct {
         const visible = try self.allocator.dupe(global_sg.GlobalBindingId, self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
         defer self.allocator.free(visible);
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
-        var plan = try self.buildAutoDeinit(.{ .indirect = target }, target, pointer.child, reach_context.Context.fromGlobal(visible, function_id), @intFromEnum(module)) orelse return;
+        var plan = try self.buildAutoDeinit(.{ .indirect = target }, target, pointer.child, call_context.Context.fromGlobal(visible, function_id), @intFromEnum(module)) orelse return;
         plan.allow_untracked_complete = true;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
         try self.graph.auto_deinits.append(self.allocator, plan);
@@ -837,7 +837,7 @@ pub const Resolver = struct {
         module_index: usize,
     ) !global_sg.GlobalNodeId {
         if (!needed) return value;
-        try self.prepareAutoDeinit(binding, reach_context.Context.fromGlobal(visible, owner_function), module_index);
+        try self.prepareAutoDeinit(binding, call_context.Context.fromGlobal(visible, owner_function), module_index);
         const original_cleanup = self.autoDeinitNode(binding) orelse return value;
         // Each replacement has its own activation identity. An output's first
         // assignment cannot destroy an old value, while a later one may.
@@ -887,7 +887,7 @@ pub const Resolver = struct {
         const binding = lexical_storage.root(self.graph, target) orelse return value;
         // Module-level storage has no lexical cleanup activation.
         if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, binding) == null) return value;
-        const context = reach_context.Context.fromGlobal(visible, owner_function);
+        const context = call_context.Context.fromGlobal(visible, owner_function);
         try self.prepareAutoDeinit(binding, context, module_index);
         const ty = self.graph.node(target).ty orelse return value;
         const plan = try self.buildAutoDeinit(
@@ -906,7 +906,7 @@ pub const Resolver = struct {
     fn indirectReplacement(self: *Resolver, needed: bool, target: global_sg.GlobalNodeId, value: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId, owner_function: global_sg.GlobalFunctionId, module_index: usize) !global_sg.GlobalNodeId {
         if (!needed) return value;
         const ty = self.graph.node(target).ty orelse return value;
-        const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, reach_context.Context.fromGlobal(visible, owner_function), module_index) orelse return value;
+        const plan = try self.buildAutoDeinit(.{ .indirect = target }, target, ty, call_context.Context.fromGlobal(visible, owner_function), module_index) orelse return value;
         const id: global_sg.GlobalAutoDeinitId = @enumFromInt(self.graph.auto_deinits.items.len);
         try self.graph.auto_deinits.append(self.allocator, plan);
         const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
@@ -971,7 +971,7 @@ pub const Resolver = struct {
             try visible.append(self.allocator, binding);
             try self.prepareAutoDeinit(
                 binding,
-                reach_context.Context.fromGlobal(visible.items, owner_function),
+                call_context.Context.fromGlobal(visible.items, owner_function),
                 module_index,
             );
             try active.append(self.allocator, binding);
@@ -992,7 +992,7 @@ pub const Resolver = struct {
                 if (std.mem.indexOfScalar(global_sg.GlobalBindingId, active.items, binding) != null) continue;
                 try rebuilt.append(self.allocator, declaration);
                 try visible.append(self.allocator, binding);
-                try self.prepareAutoDeinit(binding, reach_context.Context.fromGlobal(visible.items, owner_function), module_index);
+                try self.prepareAutoDeinit(binding, call_context.Context.fromGlobal(visible.items, owner_function), module_index);
                 try active.append(self.allocator, binding);
             }
             try rebuilt.append(self.allocator, node_id);
@@ -1012,7 +1012,7 @@ pub const Resolver = struct {
                     try visible.append(self.allocator, binding);
                     try self.prepareAutoDeinit(
                         binding,
-                        reach_context.Context.fromGlobal(visible.items, owner_function),
+                        call_context.Context.fromGlobal(visible.items, owner_function),
                         module_index,
                     );
                     const persistent = self.continuation_function == owner_function and
@@ -1177,7 +1177,7 @@ pub const Resolver = struct {
     fn prepareAutoDeinit(
         self: *Resolver,
         binding: global_sg.GlobalBindingId,
-        context: reach_context.Context,
+        context: call_context.Context,
         module_index: usize,
     ) !void {
         for (self.auto_nodes.items) |entry| if (entry.binding == binding) return;
@@ -1186,15 +1186,15 @@ pub const Resolver = struct {
         const target = try self.appendNode(record.source, record.ty, .{ .binding_use = binding });
         var cleanup_context = context;
         if (record.cleanup_arguments) |input| {
-            cleanup_context.global.assumed_fields = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields;
+            cleanup_context.assumed_fields = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields;
         }
         if (self.continuation_function != null and context.ownerFunction() == self.continuation_function) {
             if (self.core.session_namespace) |namespace| {
-                cleanup_context.global.assumed_fields = try self.inheritAssumedFields(
+                cleanup_context.assumed_fields = try self.inheritAssumedFields(
                     record.source,
-                    cleanup_context.global.assumed_fields,
+                    cleanup_context.assumed_fields,
                     namespace.assumptions.items,
-                    context.global.visible_bindings,
+                    context.visible_bindings,
                 );
             }
         }
@@ -1225,7 +1225,7 @@ pub const Resolver = struct {
         storage: @FieldType(global_sg.AutoDeinit, "storage"),
         target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
-        context: reach_context.Context,
+        context: call_context.Context,
         module_index: usize,
     ) !?global_sg.AutoDeinit {
         // References never own their pointee.
@@ -1256,7 +1256,7 @@ pub const Resolver = struct {
         field_index: u32,
         target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
-        context: reach_context.Context,
+        context: call_context.Context,
         module_index: usize,
     ) anyerror!?global_sg.AutoDeinitField {
         if (self.graph.semanticType(ty) == .pointer) return null;
@@ -1281,7 +1281,7 @@ pub const Resolver = struct {
         self: *Resolver,
         target: global_sg.GlobalNodeId,
         ty: global_sg.GlobalTypeId,
-        context: reach_context.Context,
+        context: call_context.Context,
         module_index: usize,
     ) anyerror!primitives.Range(global_sg.GlobalAutoDeinitFieldId) {
         var children: std.ArrayList(global_sg.AutoDeinitField) = .empty;
@@ -1338,7 +1338,7 @@ pub const Resolver = struct {
     fn resolveDestructor(
         self: *Resolver,
         target: global_sg.GlobalNodeId,
-        context: reach_context.Context,
+        context: call_context.Context,
         module_index: usize,
     ) !?ResolvedDestructor {
         if (try self.resolveDestructorInScope(target, context, module_index)) |call| return call;
@@ -1346,7 +1346,7 @@ pub const Resolver = struct {
         const owner = global_types.nominalTypeOwner(self.graph, ty) orelse return null;
         if (@intFromEnum(owner) == module_index or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) return null;
         // A resource keeps its defining module's cleanup when passed to a
-        // caller in another module. Reached arguments still come from the
+        // caller in another module. Assumed arguments still come from the
         // caller's captured context, not from the defining module's locals.
         return self.resolveDestructorInScope(target, context, @intFromEnum(owner));
     }
@@ -1354,7 +1354,7 @@ pub const Resolver = struct {
     fn resolveDestructorInScope(
         self: *Resolver,
         target: global_sg.GlobalNodeId,
-        context: reach_context.Context,
+        context: call_context.Context,
         module_index: usize,
     ) !?ResolvedDestructor {
         const profile_start = self.profileNow();
@@ -1376,11 +1376,10 @@ pub const Resolver = struct {
         if (standard_contracts.standardDefinition(self.graph, "Deinit")) |declaration| {
             if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
-                if (context == .global) {
-                    var updated = self.graph.node(input);
-                    updated.content.struct_value_literal.assumed_fields = context.global.assumed_fields;
-                    try self.graph.setNode(self.allocator, input, updated);
-                }
+
+                var updated = self.graph.node(input);
+                updated.content.struct_value_literal.assumed_fields = context.assumed_fields;
+                try self.graph.setNode(self.allocator, input, updated);
                 var participants = [_]global_sg.GlobalTypeId{target_ty};
                 const node = try dispatch.contracts.callOperationCandidate(module_index, .{
                     .declaration = declaration,

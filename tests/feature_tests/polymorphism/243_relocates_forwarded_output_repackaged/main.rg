@@ -38,9 +38,19 @@ _impl_transfer_Manager := (
     result = ..none
 }
 
-forward := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
-    .result: Errable#(?Large, (..failed))
-) {
+forward := (
+    .mover        : &Virtual#(Mover),
+    .source       : $&Resource,
+    .destination  : $&Resource,
+    .move         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Large, (..failed))) {
+    assume error_tracer
+
     returned ::= transfer(mover, source, destination, move)
     result = ..ok returned.result
 }

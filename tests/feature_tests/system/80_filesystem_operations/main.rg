@@ -3,11 +3,11 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     assume allocator := system.page_allocator
     assume file_system := system.file_system
     directory_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample"
-    create_directory(.path = directory_path)!!!
-    match create_directory(.path = directory_path) {
+    create_directory(.self = file_system, .path = directory_path)!!!
+    match create_directory(.self = file_system, .path = directory_path) {
         ..ok _ { abort } ..error error { if [error.reason != ..already_exists] { abort } }
     }
-    info ::= metadata(.path = directory_path)!!!
+    info ::= metadata(.self = file_system, .path = directory_path)!!!
     if info.kind != ..directory { abort }
     file_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample/bytes.bin"
     file ::= open_file(
@@ -19,9 +19,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if seek(.self = $&file, .offset = 1, .origin = ..start)!!! != 1 { abort }
     truncate(.self = $&file, .size = 2)!!!
     close(.self = $&file)!!!
-    data ::= metadata(.path = file_path)!!!
+    data ::= metadata(.self = file_system, .path = file_path)!!!
     if data.kind != ..file or data.size != 2 { abort }
-    directory ::= Directory(.path = directory_path)!!!
+    directory ::= Directory(.self = file_system, .path = directory_path)!!!
     entry ::= next(.self = $&directory)!!!
     match entry {
         ..none { abort }
@@ -33,8 +33,8 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     match next(.self = $&directory)!!! { ..some ~payload { abort } ..none {} }
     deinit(.self = $&directory)
     remove(.self = file_system, .path = file_path, .allocator = allocator)!!!
-    remove_directory(.path = directory_path)!!!
-    match metadata(.path = directory_path) {
+    remove_directory(.self = file_system, .path = directory_path)!!!
+    match metadata(.self = file_system, .path = directory_path) {
         ..ok _ { abort } ..error error { if [error.reason != ..path_not_found] { abort } }
     }
     invalid: [3]UInt8 = (97, 0, 98)
@@ -47,7 +47,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         )
     )
     invalid_path ::= view(&invalid_path_storage)
-    match create_directory(.path = invalid_path) {
+    match create_directory(.self = file_system, .path = invalid_path) {
         ..ok _ { abort } ..error error { if [error.reason != ..invalid_path] { abort } }
     }
     status_code = 0

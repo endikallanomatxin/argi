@@ -26,8 +26,16 @@ _value := (.byte: UInt8) -> (.value: UInt32 = 255) {
 
 -- RFC 4648 standard alphabet with required padding; no inserted whitespace.
 encode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .bytes: ArrayView#(.t: UInt8), .allocator: $&AllocatorType
+    .bytes        : ArrayView#(.t: UInt8),
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) {
+    assume error_tracer
+
     assume allocator
     alphabet ::= _alphabet().text
     count ::= length(&bytes).count
@@ -120,8 +128,16 @@ encode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 -- Reject misplaced padding, whitespace and nonzero unused trailing bits.
 -- Validation precedes allocation, so malformed input publishes no prefix.
 decode := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text: StringView, .allocator: $&AllocatorType
+    .text         : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_base64, ..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if byte_length(&text).count % 4 != 0 {

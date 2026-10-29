@@ -9,7 +9,16 @@ implement Deinit#(Owner) (
     }
 )
 
-attempt := (.fail: Bool) -> (.result: Errable#(Owner, (..missing))) {
+attempt := (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Owner, (..missing))) {
+    assume error_tracer
+
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok Owner(7) }
 }
 

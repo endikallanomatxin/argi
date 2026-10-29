@@ -11,8 +11,17 @@ _binary_range := (.length: UIntNative, .offset: UIntNative, .width: UIntNative) 
 
 -- One range-checked implementation for the public multi-byte widths.
 _read_multibyte_uint_at := #(.Value: Type: UInt) (
-    .bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder
+    .bytes        : ArrayView#(.t: UInt8),
+    .offset       : UIntNative                         = 0,
+    .order        : ByteOrder,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Value, (..out_of_bounds))) {
+    assume error_tracer
+
     width ::= size_of(.type = Value)
     if [
         _binary_range(.length = length(&bytes).count, .offset = offset, .width = width).ok
@@ -38,11 +47,18 @@ _read_multibyte_uint_at := #(.Value: Type: UInt) (
 }
 
 _write_multibyte_uint_at := #(.Value: Type: UInt) (
-    .bytes  : MutableArrayView#(.t: UInt8),
-    .offset : UIntNative                    = 0,
-    .value  : Value,
-    .order  : ByteOrder
+    .bytes        : MutableArrayView#(.t: UInt8),
+    .offset       : UIntNative                    = 0,
+    .value        : Value,
+    .order        : ByteOrder,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
+    assume error_tracer
+
     width ::= size_of(.type = Value)
     -- Prove the whole range before any destination byte changes.
     if [

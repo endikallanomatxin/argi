@@ -9,12 +9,12 @@ test "feature_tests/types/66_error_tracer_context_copy" {
     try expectSuccessfulBuild(path);
     try runExpectStderr(path, 0,
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:14:11: AB
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:30:11: AB
         \\        fail()!! view
         \\              ^
-        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:32
-        \\    fail := () -> !Void { result = ..error(.reason = ..copy_test_failure) }
-        \\                                   ^
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:11:14
+        \\        result = ..error(.reason = ..copy_test_failure)
+        \\                 ^
         \\
     );
 }

@@ -3,9 +3,16 @@ DummyInput := (
 )
 
 implement Reader#(DummyInput) (
-    .read_byte = (.self: $&DummyInput) -> (
-        .result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-    ) {
+    .read_byte = (
+        .self         : $&DummyInput,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) {
+        assume error_tracer
+
         if self&.index < 20 {
             current ::= self&.index
             self&.index = current + 1

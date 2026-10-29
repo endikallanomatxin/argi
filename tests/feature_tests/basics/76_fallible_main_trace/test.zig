@@ -16,6 +16,6 @@ test "feature_tests/basics/76_fallible_main_trace" {
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "error trace") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
-    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:4:" else "76_fallible_main_trace/main.rg:4:";
+    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:12:" else "76_fallible_main_trace/main.rg:12:";
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }

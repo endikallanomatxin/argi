@@ -53,11 +53,11 @@ The entry scope creates `Clock` and lends it through `System.clock`. A clock
 retains its foreign-call dependency; constructing one requires a reachable
 `ForeignFunctionInterface` and follows the ordinary `once` rules.
 
-- `monotonic_now(.self: &Clock = reach clock)` returns
+- `monotonic_now(.self: &Clock)` returns
   `Errable#(MonotonicInstant, clock_read_failed/out_of_range)`.
-- `wall_now(.self: &Clock = reach clock)` returns
+- `wall_now(.self: &Clock)` returns
   `Errable#(UnixTimestamp, clock_read_failed/out_of_range)`.
-- `sleep(.duration: Duration, .self: &Clock = reach clock)` returns
+- `sleep(.duration: Duration, .self: &Clock)` returns
   `Errable#(Void, sleep_failed)`.
 
 A failed platform read reports `clock_read_failed`; a successful monotonic

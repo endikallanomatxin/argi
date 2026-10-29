@@ -1,4 +1,4 @@
-_TerminalInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+_TerminalInitArgs := (.ffi: $&ForeignFunctionInterface)
 
 -- Canonical endpoints do not allocate or choose a buffering policy.
 -- Programs borrow these files and wrap them in readers or writers as needed.
@@ -35,9 +35,18 @@ implement Deinit#(Terminal) (
 
 read_line_into_buffer := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-) (.buffer: $&String, .allocator: $&AllocatorType, .reader: $&ReaderType) -> (
-    .result : Errable#(Void, (..stream_read_failed, ..invalid_utf8))
-) {
+) (
+    .buffer       : $&String,
+    .allocator    : $&AllocatorType,
+    .reader       : $&ReaderType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_read_failed, ..invalid_utf8))) {
+    assume error_tracer
+
     assume allocator
     assume reader
 
@@ -103,9 +112,17 @@ read_line_into_buffer := #(
 
 read_line := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-) (.allocator: $&AllocatorType, .reader: $&ReaderType) -> (
-    .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))
-) {
+) (
+    .allocator    : $&AllocatorType,
+    .reader       : $&ReaderType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))) {
+    assume error_tracer
+
     assume allocator
     assume reader
 
@@ -133,17 +150,32 @@ read_line := #(
     result = ..ok ..ok ~line
 }
 
-flush := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
-    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-) {
+flush := #(.WriterType: Type: Writer#(WriterType)) (
+    .writer       : $&WriterType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     assume writer
 
     result = Writer#().flush(.self = writer)
 }
 
 print_error := #(.WriterType: Type: Writer#(WriterType)) (
-    .value: StringView, .writer: $&WriterType
+    .value        : StringView,
+    .writer       : $&WriterType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     assume writer
 
     i :: UIntNative = 0
@@ -171,9 +203,16 @@ print_error := #(.WriterType: Type: Writer#(WriterType)) (
     result = ..ok Void()
 }
 
-flush_error := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
-    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-) {
+flush_error := #(.WriterType: Type: Writer#(WriterType)) (
+    .writer       : $&WriterType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     assume writer
 
     result = Writer#().flush(.self = writer)
@@ -181,8 +220,17 @@ flush_error := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType)
 
 -- Rendering is selected by WriteValue, not an ordinary print overload family.
 print := #(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) (
-    .value: Value, .writer: $&Stream = reach writer, .terminator: StringView = "\n"
+    .value        : Value,
+    .writer       : $&Stream,
+    .terminator   : StringView = "\n",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    assume error_tracer
+
     write(.self = writer, .value = ~value)!
     result = write(.self = writer, .value = terminator)
 }

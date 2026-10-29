@@ -20,8 +20,16 @@ as_c_string := (.self: &String) -> (.text: &CChar) {
 }
 
 copy_c_string := #(.Provider: Type: Allocator#(Provider)) (
-    .self: StringView, .allocator: $&Provider
+    .self         : StringView,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(OwnedCString, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if self._length == integer_limits(.value = self._length).maximum {
@@ -78,9 +86,17 @@ _c_string_bytes := (.text: &CChar) -> (.bytes: ArrayView#(UInt8)) {
     ).array
 }
 
-string_from_c_string := #(.Provider: Type: Allocator) (.text: &CChar, .allocator: $&Provider) -> (
-    .result : Errable#(String, (..invalid_utf8, ..out_of_memory))
-) {
+string_from_c_string := #(.Provider: Type: Allocator) (
+    .text         : &CChar,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
     result = string_from_bytes(.bytes = _c_string_bytes(.text = text), .allocator = allocator)
 }

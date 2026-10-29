@@ -1,6 +1,15 @@
 join := #(.Provider: Type: Allocator) (
-    .left: &StringView, .right: &StringView, .allocator: $&Provider
+    .left         : &StringView,
+    .right        : &StringView,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
     result = ~[left + right]
 }

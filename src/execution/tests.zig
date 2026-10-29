@@ -2556,7 +2556,7 @@ test "bytecode failed lowering does not retain host requirements" {
         \\Mode: CEnum = (..one)
         \\foreign_value(.value: Int32) -> (.result: Int32): ExternFunction
         \\unsupported := (.ffi: $&ForeignFunctionInterface) -> (.result: Int32)  {
-        \\    result = foreign_value(.value = 41)
+        \\    result = foreign_value(.value = 41, .ffi = ffi)
         \\    value: Mode = ..one
         \\}
         \\main := () -> (.status_code: Int32 = 0)  {

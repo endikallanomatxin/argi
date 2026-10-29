@@ -1,9 +1,18 @@
 RefusingAllocator: Type = ()
 
 implement Allocator#(RefusingAllocator) (
-    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&RefusingAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         result = ..error(.reason = ..out_of_memory)
     }
 )

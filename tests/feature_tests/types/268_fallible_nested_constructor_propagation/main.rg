@@ -2,12 +2,21 @@ Widget := (.value: Int32)
 
 Wrapper := (.widget: Widget)
 
-WidgetInitArgs: Type = (.fail: Bool)
+WidgetInitArgs: Type = (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(Widget, WidgetInitArgs) (
     .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
 
     .init = WidgetInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_fail ::= ~fail
 
         constructed :: Widget
@@ -21,12 +30,21 @@ implement Init#(Widget, WidgetInitArgs) (
     }
 )
 
-WrapperInitArgs2: Type = (.fail: Bool)
+WrapperInitArgs2: Type = (
+    .fail         : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(Wrapper, WrapperInitArgs2) (
     .Result : Type = Errable#(.t: Wrapper, .reasons: (..rejected))
 
     .init = WrapperInitArgs2 -> (.result: Result) {
+        assume error_tracer
+
         _init_fail ::= ~fail
 
         constructed :: Wrapper

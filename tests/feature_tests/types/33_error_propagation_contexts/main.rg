@@ -1,26 +1,85 @@
-step := () -> (.result: Errable#(.t: Void, .reasons: (..test_error))) { result = ..ok Void() }
+step := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..test_error))) {
+    assume error_tracer
+    result = ..ok Void()
+}
 
-value := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) { result = ..ok 5 }
+value := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+    result = ..ok 5
+}
 
-flag := () -> (.result: Errable#(.t: Bool, .reasons: (..test_error))) { result = ..ok true }
+flag := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Bool, .reasons: (..test_error))) {
+    assume error_tracer
+    result = ..ok true
+}
 
 increment := (.x: Int32) -> (.value: Int32) { value = x + 1 }
 
-statement := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+statement := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     step()!
     result = ..ok 7
 }
 
-argument := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+argument := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     out ::= increment(.x = value()!)
     result = ..ok out
 }
 
-condition := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+condition := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     if flag()! { result = ..ok 1 } else { result = ..ok 2 }
 }
 
-assignment := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+assignment := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     x :: Int32 = 0
     x = value()!
     result = ..ok x

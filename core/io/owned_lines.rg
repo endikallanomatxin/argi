@@ -6,9 +6,20 @@ OwnedByteLine := (.bytes: DynamicArray#(.t: UInt8), .terminated: Bool)
 -- before reading each payload byte, so allocation failure does not consume it.
 read_line_owned := #(
     .SelfType: Type: Reader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
-) (.self: $&SelfType, .maximum: UIntNative, .allocator: $&AllocatorType) -> (
+) (
+    .self         : $&SelfType,
+    .maximum      : UIntNative,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
 ) {
+    assume error_tracer
+
     assume allocator
     bytes ::= DynamicArray#(.t: UInt8)(.capacity = 1)!
     terminated ::= false
@@ -73,10 +84,18 @@ implement#(.t: Type: Reader#(t)) Init#(OwnedLineReader#(.t: t), OwnedLineReaderI
 )
 
 next := #(.t: Type: Reader#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&OwnedLineReader#(.t: t), .allocator: $&AllocatorType
+    .self         : $&OwnedLineReader#(.t: t),
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
 ) {
+    assume error_tracer
+
     assume allocator
 
     if self&._ended {

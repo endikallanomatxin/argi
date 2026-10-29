@@ -22,7 +22,7 @@ const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reachability_mod = @import("reachability.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 
 pub const RootSelection = enum { program, requests_only };
 
@@ -1042,8 +1042,6 @@ pub const Session = struct {
                 return error.Reported;
 
             if (options.diagnostics) |diagnostics| {
-                if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-                    return error.Reported;
                 if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
                     return error.Reported;
                 if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
@@ -1447,7 +1445,6 @@ fn advanceResolution(
             if (try errors.refreshPropagationResults()) changed = true;
             profileAccumulate(options.profile_io, refresh_start, &progress.profile_error_refresh_ns);
             if (options.profile_io) |io| progress.profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
-            if (try completePropagatedReachCalls(core, modules, offsets)) changed = true;
             // Evidence selected by newly specialized bodies belongs to this
             // fixed point. Its operation bodies must become reachable and have
             // their cleanup finalized before construction metadata is retired.
@@ -2137,106 +2134,6 @@ fn diagnoseConstantArrayIndex(
     return true;
 }
 
-fn diagnoseUnresolvedPropagatedReach(
-    allocator: std.mem.Allocator,
-    graph: *const global_sg.GlobalSemanticGraph,
-    modules: []const module_sg.ModuleSemanticGraph,
-    offsets: []const globalizer.Offsets,
-    diagnostics: *diagnostics_mod.Diagnostics,
-) !bool {
-    for (modules, offsets) |*module, offset| {
-        for (module.semantic.pending_operations.items) |operation| {
-            const call = switch (operation) {
-                .resolve_call => |value| value,
-                else => continue,
-            };
-            const node = graph.node(globalizer.globalNode(offset, call.node));
-            const resolved = switch (node.content) {
-                .function_call => |value| value,
-                else => continue,
-            };
-            const input = switch (graph.node(resolved.input).content) {
-                .struct_value_literal => |value| value,
-                else => continue,
-            };
-            const function = graph.functions.items[@intFromEnum(resolved.callee)];
-            if (input.fields.len >= function.input.len) continue;
-            const field = graph.fields.items[function.input.start + input.fields.len];
-            const fallback = field.default_value orelse continue;
-            const reach_id = switch (graph.node(fallback).content) {
-                .reach_directive => |value| value,
-                else => continue,
-            };
-            const reach = graph.reaches.items[@intFromEnum(reach_id)];
-            var message = std.array_list.Managed(u8).init(allocator);
-            defer message.deinit();
-            try message.print("cannot resolve reached argument '.{s}' with alternatives [", .{graph.text(field.name)});
-            for (graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
-                if (index != 0) try message.appendSlice(", ");
-                for (graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, segment_index| {
-                    if (segment_index != 0) try message.append('.');
-                    try message.appendSlice(graph.text(segment));
-                }
-            }
-            try message.appendSlice("] expected as '");
-            try appendTypeName(&message, graph, field.ty);
-            try message.append('\'');
-            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
-            const source = globalSource(offset, reference.source);
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, .{ .file_index = source.file_index, .offset = source.offset + @as(u32, @intCast(module.text(reference.name).len)) }),
-                .semantic,
-                "{s}",
-                .{message.items},
-            );
-            return true;
-        }
-    }
-    return false;
-}
-
-fn completePropagatedReachCalls(
-    core: *core_mod.Resolver,
-    modules: []const module_sg.ModuleSemanticGraph,
-    offsets: []const globalizer.Offsets,
-) !bool {
-    const measurement = if (core.scan_profile) |profile| profile.begin(.propagated_reach) else null;
-    // A callee can acquire reached inputs after its callers have resolved.
-    // Rebuild those call inputs until their shape follows the final signature.
-    var changed = try core.completeTrackedReachedCalls();
-    defer if (measurement) |m| m.finish(changed);
-    for (modules, offsets) |*module, offset| {
-        for (module.semantic.pending_operations.items) |operation| {
-            const call = switch (operation) {
-                .resolve_call => |value| value,
-                else => continue,
-            };
-            const node = core.graph.nodes.items[@intFromEnum(globalizer.globalNode(offset, call.node))];
-            const callee = switch (node.content) {
-                .function_call => |value| value.callee,
-
-                else => continue,
-            };
-            const input_id = switch (node.content) {
-                .function_call => |value| value.input,
-
-                else => unreachable,
-            };
-            const input = core.graph.nodes.items[@intFromEnum(input_id)];
-            const literal = switch (input.content) {
-                .struct_value_literal => |value| value,
-                else => continue,
-            };
-            const fields = core.graph.function(callee).input;
-
-            if (literal.fields.len == fields.len) continue;
-            const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
-            if (try core.completeRecordFieldsWithContext(fields, input_id, context)) changed = true;
-        }
-    }
-    return changed;
-}
-
 fn resolvePendingPhase(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
@@ -2351,7 +2248,7 @@ fn hasSelectedUnresolvedBindingTypes(
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
     return switch (tag) {
         .resolve_type, .resolve_entity_value => .types,
-        .resolve_call, .resolve_local_reach, .resolve_function_signature => .calls,
+        .resolve_call, .resolve_function_signature => .calls,
         .resolve_index => .indexing,
         .resolve_aggregate_literal,
         .resolve_entry_call,
@@ -2451,8 +2348,6 @@ fn resolvePendingOperation(
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
         .calls => if (operation == .resolve_function_signature)
             ownedResult(try dispatch.generic_functions.tryResolve(module_index, module, o, operation))
-        else if (operation == .resolve_local_reach)
-            dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
         else
             dispatch.resolveCall(module_index, module, o, operation),
         .indexing => blk: {
@@ -2461,12 +2356,12 @@ fn resolvePendingOperation(
         },
         .core => blk: {
             if (operation == .resolve_binary) {
-                const contract_result = try dispatch.generic_functions.resolveContractArithmetic(module_index, module, o, operation.resolve_binary);
+                const contract_result = try dispatch.generic_functions.resolveContractArithmetic(module_index, o, operation.resolve_binary);
                 break :blk ownedResult(contract_result);
             }
             const core_result = try core.tryResolve(module_index, module, o, operation);
             if (core_result != .resolved and operation == .resolve_comparison) {
-                const contract_result = try dispatch.generic_functions.resolveContractComparison(module_index, module, o, operation.resolve_comparison);
+                const contract_result = try dispatch.generic_functions.resolveContractComparison(module_index, o, operation.resolve_comparison);
                 if (contract_result == .resolved) break :blk contract_result;
             }
             break :blk ownedResult(core_result);
@@ -3414,7 +3309,7 @@ fn diagnoseUnresolvedCall(
                     const signature = graph.function(declaration.function_id.?);
                     const input = globalizer.globalNode(offsets[module_index], call.input);
                     if (generic_functions.core.matchCallInput(signature.input, input) == .applicable) {
-                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': .ffi uses reach [ffi] and requires a ForeignFunctionInterface capability", .{name});
+                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': requires an explicit or lexically assumed ForeignFunctionInterface capability", .{name});
                     } else {
                         try diagnostics.add(location, .semantic, "arguments do not match the C callback signature of '{s}'", .{name});
                     }
@@ -3517,15 +3412,12 @@ fn diagnoseUnresolvedCall(
                 if (contextual_matches < 2) continue;
             }
 
-            var missing_generic_reach = std.array_list.Managed(u8).init(allocator);
-            defer missing_generic_reach.deinit();
             if (try generic_functions.probeGenericCallFailure(
                 module_index,
                 module,
                 reference,
                 input_id,
-                reach_context.Context.fromModule(module, offsets[module_index], call.visible_bindings, call.owner_function),
-                &missing_generic_reach,
+                call_context.Context.fromModule(offsets[module_index], call.owner_function),
             )) |failure| {
                 defer allocator.free(failure.actual_name);
                 try diagnostics.add(
@@ -3582,11 +3474,7 @@ fn diagnoseUnresolvedCall(
                     try mismatch.appendSlice(name);
                     try mismatch.appendSlice("' accepts arguments ");
                     try appendValueShape(&mismatch, graph, input);
-                    if (missing_generic_reach.items.len != 0) {
-                        try mismatch.appendSlice("; omitted inputs have unavailable reach defaults:");
-                        try mismatch.appendSlice(missing_generic_reach.items);
-                        try mismatch.appendSlice("\nPass these inputs explicitly or make the required capabilities reachable in the caller.");
-                    } else try mismatch.appendSlice("; input types and repeated generic dimensions must agree");
+                    try mismatch.appendSlice("; input types and repeated generic dimensions must agree");
                     try diagnostics.add(
                         if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                         .semantic,
@@ -3777,27 +3665,6 @@ fn diagnoseUnresolvedCall(
                 };
             }
 
-            var reach_details = std.array_list.Managed(u8).init(allocator);
-            defer reach_details.deinit();
-            var reach_candidate_count: usize = 0;
-            for (candidates.items) |candidate| {
-                const function = graph.functions.items[@intFromEnum(candidate)];
-                if (diagnostic_core.matchCallInput(function.input, input_id) != .applicable) continue;
-                if (try appendOmittedReachDefaults(&reach_details, graph, name, function, input))
-                    reach_candidate_count += 1;
-            }
-            if (reach_candidate_count != 0) {
-                var message = std.array_list.Managed(u8).init(allocator);
-                defer message.deinit();
-                try message.print("function '{s}' exists, but its arguments do not match.\nCandidates with omitted reach defaults:\n", .{name});
-                try message.appendSlice(reach_details.items);
-                if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
-                    try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
-                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main := (.system: System) -> (.status_code: Int32 = 0) { ... }\n\nOr pass the omitted argument explicitly.");
-                try diagnostics.add(location, .semantic, "{s}", .{message.items});
-                return true;
-            }
-
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
             try message.appendSlice("no function named '");
@@ -3858,90 +3725,6 @@ fn appendFieldShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg
         try appendTypeName(buffer, graph, field.ty);
     }
     try buffer.append(')');
-}
-
-fn appendOmittedReachDefaults(
-    buffer: *std.array_list.Managed(u8),
-    graph: *const global_sg.GlobalSemanticGraph,
-    name: []const u8,
-    function: global_sg.Function,
-    input: anytype,
-) !bool {
-    var omitted_count: usize = 0;
-    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
-        if (callInputSuppliesField(graph, input, field, field_index)) continue;
-        const fallback = field.default_value orelse continue;
-        if (graph.node(fallback).content == .reach_directive) omitted_count += 1;
-    }
-    if (omitted_count == 0) return false;
-
-    if (buffer.items.len != 0) try buffer.append('\n');
-    try buffer.appendSlice("  - ");
-    try buffer.appendSlice(name);
-    try buffer.append('(');
-    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
-        if (index != 0) try buffer.appendSlice(", ");
-        try buffer.append('.');
-        try buffer.appendSlice(graph.text(field.name));
-        try buffer.appendSlice(": ");
-        try appendTypeName(buffer, graph, field.ty);
-        const fallback = field.default_value orelse continue;
-        const reach_id = switch (graph.node(fallback).content) {
-            .reach_directive => |value| value,
-            else => continue,
-        };
-        try buffer.appendSlice(" = reach ");
-        try appendReachAlternatives(buffer, graph, reach_id);
-    }
-    try buffer.appendSlice(") -> ");
-    try appendFieldShape(buffer, graph, function.output);
-    try buffer.appendSlice("\n    omitted reach defaults:");
-
-    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
-        if (callInputSuppliesField(graph, input, field, field_index)) continue;
-        const fallback = field.default_value orelse continue;
-        const reach_id = switch (graph.node(fallback).content) {
-            .reach_directive => |value| value,
-            else => continue,
-        };
-        try buffer.appendSlice("\n      - .");
-        try buffer.appendSlice(graph.text(field.name));
-        try buffer.appendSlice(" uses reach [");
-        try appendReachAlternatives(buffer, graph, reach_id);
-        try buffer.appendSlice("] expected as '");
-        try appendTypeName(buffer, graph, field.ty);
-        try buffer.append('\'');
-    }
-    return true;
-}
-
-fn callInputSuppliesField(
-    graph: *const global_sg.GlobalSemanticGraph,
-    input: anytype,
-    field: global_sg.Field,
-    field_index: usize,
-) bool {
-    for (graph.value_fields.items[input.fields.start..][0..input.fields.len], 0..) |supplied, supplied_index| {
-        if (supplied_index < input.dispatch_prefix_positional_count or graph.text(supplied.name).len == 0) {
-            if (supplied_index == field_index) return true;
-        } else if (std.mem.eql(u8, graph.text(supplied.name), graph.text(field.name))) return true;
-    }
-    return false;
-}
-
-fn appendReachAlternatives(
-    buffer: *std.array_list.Managed(u8),
-    graph: *const global_sg.GlobalSemanticGraph,
-    reach_id: global_sg.GlobalReachId,
-) !void {
-    const reach = graph.reaches.items[@intFromEnum(reach_id)];
-    for (graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
-        if (index != 0) try buffer.appendSlice(", ");
-        for (graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, segment_index| {
-            if (segment_index != 0) try buffer.append('.');
-            try buffer.appendSlice(graph.text(segment));
-        }
-    }
 }
 
 pub const appendTypeName = @import("type_names.zig").appendTypeName;

@@ -23,9 +23,6 @@ pub const GlobalAutoDeinitId = enum(u32) { _ };
 pub const GlobalVirtualRegistryId = enum(u32) { _ };
 pub const GlobalVirtualizeId = enum(u32) { _ };
 pub const GlobalVirtualCallId = enum(u32) { _ };
-pub const GlobalReachSegmentId = enum(u32) { _ };
-pub const GlobalReachAlternativeId = enum(u32) { _ };
-pub const GlobalReachId = enum(u32) { _ };
 pub const GlobalNullableUnwrapId = enum(u32) { _ };
 pub const GlobalTestingExpectErrorId = enum(u32) { _ };
 pub const GlobalErrorPropagationId = enum(u32) { _ };
@@ -53,9 +50,6 @@ pub const Ids = struct {
     pub const VirtualRegistryId = GlobalVirtualRegistryId;
     pub const VirtualizeId = GlobalVirtualizeId;
     pub const VirtualCallId = GlobalVirtualCallId;
-    pub const ReachSegmentId = GlobalReachSegmentId;
-    pub const ReachAlternativeId = GlobalReachAlternativeId;
-    pub const ReachId = GlobalReachId;
     pub const NullableUnwrapId = GlobalNullableUnwrapId;
     pub const TestingExpectErrorId = GlobalTestingExpectErrorId;
     pub const ErrorPropagationId = GlobalErrorPropagationId;
@@ -128,8 +122,6 @@ pub const ContractConformance = struct {
     associated_arguments: primitives.Range(GlobalGenericArgId),
     source: primitives.SourceRef,
 };
-pub const ReachAlternative = primitives.ReachAlternative(Ids);
-pub const Reach = primitives.Reach(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
 pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
@@ -416,9 +408,6 @@ pub const GlobalSemanticGraph = struct {
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
     contract_operation_bindings: std.ArrayList(ContractOperationBinding) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
-    reach_segments: std.ArrayList(StringRange) = .empty,
-    reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
-    reaches: std.ArrayList(Reach) = .empty,
     nullable_unwraps: std.ArrayList(NullableUnwrap) = .empty,
     testing_expect_errors: std.ArrayList(TestingExpectError) = .empty,
     error_propagations: std.ArrayList(ErrorPropagation) = .empty,
@@ -661,19 +650,18 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                  &self.module_aliases,               &self.files,                        &self.declarations,
-            &self.symbols,                  &self.symbol_declarations,          &self.types,                        &self.type_definitions,
-            &self.family_definitions,       &self.generic_instances,            &self.functions,                    &self.generic_function_instances,
-            &self.generic_instance_by_type, &self.bindings,                     &self.nodes,                        &self.blocks,
-            &self.fields,                   &self.variants,                     &self.generic_arguments,            &self.value_fields,
-            &self.switch_cases,             &self.switches,                     &self.auto_deinit_fields,           &self.auto_deinits,
-            &self.virtual_registries,       &self.virtualizes,                  &self.virtual_calls,                &self.reach_segments,
-            &self.reach_alternatives,       &self.reaches,                      &self.nullable_unwraps,             &self.testing_expect_errors,
-            &self.error_propagations,       &self.error_contexts,               &self.node_refs,                    &self.type_refs,
-            &self.binding_refs,             &self.function_refs,                &self.virtual_registry_refs,        &self.strings,
-            &self.roots,                    &self.contract_safety_conformances, &self.contract_conformances,        &self.contract_operation_bindings,
-            &self.captured_expressions,     &self.argument_default_temporaries, &self.captured_expression_bindings, &self.comptime_requests,
-            &self.block_assumptions,
+            &self.modules,                     &self.module_aliases,       &self.files,                        &self.declarations,
+            &self.symbols,                     &self.symbol_declarations,  &self.types,                        &self.type_definitions,
+            &self.family_definitions,          &self.generic_instances,    &self.functions,                    &self.generic_function_instances,
+            &self.generic_instance_by_type,    &self.bindings,             &self.nodes,                        &self.blocks,
+            &self.fields,                      &self.variants,             &self.generic_arguments,            &self.value_fields,
+            &self.switch_cases,                &self.switches,             &self.auto_deinit_fields,           &self.auto_deinits,
+            &self.virtual_registries,          &self.virtualizes,          &self.virtual_calls,                &self.nullable_unwraps,
+            &self.testing_expect_errors,       &self.error_propagations,   &self.error_contexts,               &self.node_refs,
+            &self.type_refs,                   &self.binding_refs,         &self.function_refs,                &self.virtual_registry_refs,
+            &self.strings,                     &self.roots,                &self.contract_safety_conformances, &self.contract_conformances,
+            &self.contract_operation_bindings, &self.captured_expressions, &self.argument_default_temporaries, &self.captured_expression_bindings,
+            &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -1326,9 +1314,6 @@ pub const GlobalSemanticGraph = struct {
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +
             self.contract_operation_bindings.items.len * @sizeOf(ContractOperationBinding) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
-            self.reach_segments.items.len * @sizeOf(StringRange) +
-            self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +
-            self.reaches.items.len * @sizeOf(Reach) +
             self.nullable_unwraps.items.len * @sizeOf(NullableUnwrap) +
             self.testing_expect_errors.items.len * @sizeOf(TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(ErrorPropagation) +

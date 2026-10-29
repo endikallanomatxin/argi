@@ -389,7 +389,8 @@ explicit dependencies and rollback rules.
 
 The resolution profile now also times pending operations, published bodies,
 text-literal and field-access types, error result refresh, propagated reached
-inputs and reachability expansion. The additional entries report timings and
+inputs and reachability expansion. The reached-input phase was subsequently
+removed together with `reach`. The additional entries report timings and
 change counts; their pool-visit counters remain zero unless explicitly counted.
 
 Reachability expansion accounted for 2,095 ms of 7,306 ms of resolution in a

@@ -337,7 +337,7 @@ existing element loans.
 ## Growable deque
 
 `Deque#(.t: T)` owns a ring of live elements. Construct it with an explicit or
-reached allocator; `.capacity` defaults to eight, and zero requests a minimum
+lexically assumed allocator; `.capacity` defaults to eight, and zero requests a minimum
 capacity of one. `push_front` and `push_back` grow geometrically when full;
 `pop_front` and `pop_back` transfer ownership of one element or return `..empty`.
 Both ends take constant time without growth; growth moves every live element
@@ -355,8 +355,8 @@ Structural changes invalidate outstanding element references, including pushes
 that do not grow, pops, and successful growth. A failed reserve preserves the
 old storage and occupancy. No allocation, physical slot, or occupancy metadata
 is public. Whole-deque copies are rejected. Cleanup destroys only occupied
-elements and releases storage through its recorded deallocator; an allocator
-may be reached for element destructors.
+elements and releases storage through its recorded deallocator. Element cleanup
+uses its selected destructor and declared inputs.
 
 Deque supports value iteration when elements are `ImplicitlyCopyable`, and
 reference/mutable-reference iteration for all element types. Iteration follows

@@ -3,7 +3,7 @@ const primitives = @import("../primitives/schema.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
@@ -56,24 +56,6 @@ pub const Resolver = struct {
         stats.ns += @intCast(self.profileTimestamp() - start);
     }
 
-    pub fn resolveLocalReach(
-        self: *Resolver,
-        module: *const module_sg.ModuleSemanticGraph,
-        o: globalizer.Offsets,
-        value: anytype,
-    ) !resolution.Result {
-        const binding = globalizer.globalBinding(o, value.binding);
-        if (self.core.graph.isBindingTypeUnresolved(binding)) return .deferred;
-        const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-        const selected = try self.core.resolveReachedBinding(
-            reach,
-            globalizer.globalNode(o, value.reach),
-            binding,
-        ) orelse return .deferred;
-        try self.core.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), self.core.graph.nodes.items[@intFromEnum(selected)]);
-        return .resolved;
-    }
-
     pub fn resolveCall(
         self: *Resolver,
         module_index: usize,
@@ -114,7 +96,7 @@ pub const Resolver = struct {
             const call = operation.resolve_call;
             const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
             {
-                const context = reach_context.Context.fromModule(module, o, call.visible_bindings, call.owner_function);
+                const context = call_context.Context.fromModule(o, call.owner_function);
                 const operation_module = if (reference.module_path) |path| try self.core.findModuleForQualifier(module_index, module.text(path)) else null;
                 const arguments = try self.generic_functions.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
                 const selected = self.generic_functions.resolveSpecializedOperationIdentityFiltered(module_index, module.text(reference.name), globalizer.globalNode(o, call.input), context, .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset }, operation_module, arguments, reference) catch |err| switch (err) {

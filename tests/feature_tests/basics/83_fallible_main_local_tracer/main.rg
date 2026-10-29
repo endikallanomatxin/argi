@@ -1,7 +1,9 @@
 ..failure
 
-check_fallible_result := (.error_tracer: $&Virtual#(.contract: ErrorTracer) = reach error_tracer) -> !Void = ..ok Void(
+check_fallible_result := (.error_tracer: $&Virtual#(.contract: ErrorTracer)) -> !Void = ..ok Void(
 ) {
+    assume error_tracer
+
     result = ..error(.reason = ..failure)
 }
 

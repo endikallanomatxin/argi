@@ -30,9 +30,18 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Allocator#(FailFirstAllocator) (
-    .allocate = (.self: $&FailFirstAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&FailFirstAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         self&.allocations = self&.allocations + 1
         if self&.allocations > 0 {
             result = ..error(.reason = ..out_of_memory)

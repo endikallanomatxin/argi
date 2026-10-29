@@ -4,9 +4,17 @@ Sink := (
     .fail_write  : Bool       = false
 )
 
-finish := (.sink: $&Sink, .early: Bool) -> (
-    .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-) {
+finish := (
+    .sink         : $&Sink,
+    .early        : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+    assume error_tracer
+
     assume writer := sink
     defer {
         Writer#().flush(writer) handle error { result = ..error ~error }
@@ -57,9 +65,17 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Writer#(Sink) (
-    .write_byte = (.self: $&Sink, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .write_byte = (
+        .self         : $&Sink,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         if self&.fail_write {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -67,9 +83,16 @@ implement Writer#(Sink) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&Sink) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .flush = (
+        .self         : $&Sink,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         self&.flush_calls = self&.flush_calls + 1
         if self&.fail_flush {
             result = ..error(.reason = ..stream_flush_failed)

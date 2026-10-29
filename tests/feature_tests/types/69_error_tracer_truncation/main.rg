@@ -1,6 +1,15 @@
 ..truncated_test_failure
 
-fail := () -> !Void { result = ..error(.reason = ..truncated_test_failure) }
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void {
+    assume error_tracer
+    result = ..error(.reason = ..truncated_test_failure)
+}
 
 main := (.system: System) -> (.status_code: Int32) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))

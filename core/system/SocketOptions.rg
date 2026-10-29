@@ -1,22 +1,50 @@
 SocketAddress#(.Socket: Type): Contract = (
-    .local : (.self: &Socket) -> (.result: Errable#(NetworkAddress, (..socket_option_failed)))
+    .local : (
+        .self         : &Socket,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(NetworkAddress, (..socket_option_failed)))
 )
 
 SocketTimeout#(.Socket: Type): Contract = (
-    .configure_timeout : (.self: $&Socket, .milliseconds: UInt32) -> (
-        .result : Errable#(Void, (..socket_option_failed))
-    )
+    .configure_timeout : (
+        .self         : $&Socket,
+        .milliseconds : UInt32,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..socket_option_failed)))
 )
 
-local_address := #(.Socket: Type: SocketAddress#(Socket)) (.self: &Socket) -> (
-    .result : Errable#(NetworkAddress, (..socket_option_failed))
-) {
+local_address := #(.Socket: Type: SocketAddress#(Socket)) (
+    .self         : &Socket,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(NetworkAddress, (..socket_option_failed))) {
+    assume error_tracer
+
     result = SocketAddress#(Socket).local(.self = self)
 }
 
-set_timeout := #(.Socket: Type: SocketTimeout#(Socket)) (.self: $&Socket, .milliseconds: UInt32) -> (
-    .result : Errable#(Void, (..socket_option_failed))
-) {
+set_timeout := #(.Socket: Type: SocketTimeout#(Socket)) (
+    .self         : $&Socket,
+    .milliseconds : UInt32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..socket_option_failed))) {
+    assume error_tracer
+
     result = SocketTimeout#(
         Socket
     ).configure_timeout(.self = self, .milliseconds = milliseconds)

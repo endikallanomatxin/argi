@@ -1,6 +1,6 @@
 Args := (.number: Int32)
 
-read_reached := (.number: Int32 = reach number) -> (.result: Int32) { result = number }
+read_reached := (.number: Int32) -> (.result: Int32) { result = number }
 
 read := Args -> (.result: Int32) {
     assume number
@@ -14,9 +14,9 @@ read_generic := #(.T: Type: ImplicitlyCopyable) GenericArgs#(T) -> (.result: T) 
     result = read_reached_generic#(T)()
 }
 
-read_reached_generic := #(.T: Type: ImplicitlyCopyable) (.number: T = reach number) -> (
-    .result : T
-) { result = number }
+read_reached_generic := #(.T: Type: ImplicitlyCopyable) (.number: T) -> (.result: T) {
+    result = number
+}
 
 main := () -> (.status_code: Int32 = 0) {
     if read(42) != 42 { status_code = 1 }

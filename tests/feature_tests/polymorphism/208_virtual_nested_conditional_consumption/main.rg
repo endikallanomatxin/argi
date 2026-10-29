@@ -1,9 +1,16 @@
 ..failed
 
 Releaser#(.Participant: Type): Contract = (
-    .release : (.self: &Participant, .resource: $&Resource, .mode: Int32) -> (
-        .result: Errable#(?Int32, (..failed))
-    ) where {
+    .release : (
+        .self         : &Participant,
+        .resource     : $&Resource,
+        .mode         : Int32,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { consumes(resource) }
             on result ..none {}
@@ -26,9 +33,18 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .mode: Int32) -> (
-    .result: Errable#(?Int32, (..failed))
-) {
+_impl_release_Manager := (
+    .self         : &Manager,
+    .resource     : $&Resource,
+    .mode         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     if mode == 2 {
         result = ..error(.reason = ..failed)
         return
@@ -42,9 +58,18 @@ _impl_release_Manager := (.self: &Manager, .resource: $&Resource, .mode: Int32) 
     result = ..ok ..none
 }
 
-release_again := (.releaser: &Virtual#(Releaser), .resource: $&Resource, .mode: Int32) -> (
-    .result: Errable#(?Int32, (..failed))
-) {
+release_again := (
+    .releaser     : &Virtual#(Releaser),
+    .resource     : $&Resource,
+    .mode         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     result = release(releaser, resource, mode)
 }
 

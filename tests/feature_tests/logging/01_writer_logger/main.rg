@@ -3,8 +3,8 @@ logging := import ("logging")
 main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
     storage ::= zeroed#(.t: [64]UInt8)()
-    writer ::= ByteWriter(.bytes = view(.self = $&storage))
-    logger ::= logging.FileLogger#(.t: ByteWriter)(.writer = $&writer)
+    buffer_writer ::= ByteWriter(.bytes = view(.self = $&storage))
+    logger ::= logging.FileLogger#(.t: ByteWriter)(.writer = $&buffer_writer)
     logging.Logger#().log(.self = $&logger, .level = ..debug, .message = "discard")!!!
     logging.Logger#().log(.self = $&logger, .level = ..info, .message = "hello\nworld")!!!
     logging.flush(.self = $&logger)!!!

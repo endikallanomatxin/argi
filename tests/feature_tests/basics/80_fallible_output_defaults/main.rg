@@ -1,13 +1,37 @@
 ..default_failed
 
-default_failure := () -> !Void = ..error(
+default_failure := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void = ..error(
     .reason = ..default_failed
     .tracer = $&noop_error_tracer
-) {}
+) {
+    assume error_tracer
+}
 
-value := () -> !Int32 = ..ok 42 {}
+value := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Int32 = ..ok 42 {
+    assume error_tracer
+}
 
-noop := #(.t: Type) () -> !Void = ..ok Void() {}
+noop := #(.t: Type) (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void = ..ok Void() {
+    assume error_tracer
+}
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr

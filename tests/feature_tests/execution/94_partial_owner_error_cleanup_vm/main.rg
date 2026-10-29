@@ -16,15 +16,30 @@ implement Deinit#(Parent) (
     .deinit = (.self: $&Parent) -> () { abort }
 )
 
-fail := (.tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result: Errable#(Int32, (..partial_construction_failed))
-) {
+fail := (
+    .tracer       : $&Virtual#(.contract: ErrorTracer),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer)  = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..partial_construction_failed))) {
+    assume error_tracer
+
     result = ..error(.reason = ..partial_construction_failed, .tracer = tracer)
 }
 
-build_partial := (.counter: $&Counter, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
-    .result: Errable#(Int32, (..partial_construction_failed))
-) {
+build_partial := (
+    .counter      : $&Counter,
+    .tracer       : $&Virtual#(.contract: ErrorTracer),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, (..partial_construction_failed))) {
+    assume error_tracer
+
     parent :: Parent
     parent.child = Child(.counter = counter)
     value ::= fail(tracer)!

@@ -1,4 +1,4 @@
-_ArgumentsInitArgs := (.ffi: $&ForeignFunctionInterface = reach ffi)
+_ArgumentsInitArgs := (.ffi: $&ForeignFunctionInterface)
 
 argi_runtime_argc() -> (.count: UIntNative): ExternFunction
 
@@ -56,9 +56,17 @@ argument_at := (.self: &Arguments, .index: UIntNative) -> (.text: &CChar) {
     text = read_reference#(.t: CChar)(.base = inherited).reference
 }
 
-argument_view_at := (.self: &Arguments, .index: UIntNative) -> (
-    .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
-) {
+argument_view_at := (
+    .self         : &Arguments,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) {
+    assume error_tracer
+
     if index >= self&.count {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -102,9 +110,17 @@ implement ArgumentSource#(Arguments) (
         count = self&.count
     }
 
-    .get = (.self: &Arguments, .index: UIntNative) -> (
-        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
-    ) {
+    .get = (
+        .self         : &Arguments,
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) {
+        assume error_tracer
+
         if index >= self&.count {
             result = ..error(.reason = ..out_of_bounds)
             return

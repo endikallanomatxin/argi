@@ -1,4 +1,13 @@
-roundtrip := (.date: UtcDateTime) -> !Void = ..ok Void() {
+roundtrip := (
+    .date         : UtcDateTime,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Void = ..ok Void() {
+    assume error_tracer
+
     stamp ::= unix_timestamp(.date = date)!
     actual ::= utc_date(.timestamp = stamp)!
     if [

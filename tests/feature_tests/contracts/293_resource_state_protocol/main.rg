@@ -20,7 +20,16 @@ implement Closeable#(Latch) (
 
 implement Closeable#(Retryable) (
     .Result         : Type = Errable#(Void, (..busy))
-    .close_resource = (.self: $&Retryable) -> (.result: Result) {
+    .close_resource = (
+        .self         : $&Retryable,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Result) {
+        assume error_tracer
+
         if self&.busy {
             result = ..error(.reason = ..busy)
             return
@@ -30,9 +39,16 @@ implement Closeable#(Retryable) (
     }
 )
 
-finish := #(.Resource: Type: Closeable#(Resource)) (.self: $&Resource) -> (
-    .result : Closeable#(Resource).Result
-) {
+finish := #(.Resource: Type: Closeable#(Resource)) (
+    .self         : $&Resource,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Closeable#(Resource).Result) {
+    assume error_tracer
+
     result = ~close(.self = self)
 }
 

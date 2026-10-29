@@ -83,9 +83,17 @@ implement IntegerBounds#(UIntNative) (
 
 ..division_by_zero
 
-checked_add := #(.t: Type: Int) (.left: t, .right: t) -> (
-    .result : Errable#(t, (..out_of_range))
-) {
+checked_add := #(.t: Type: Int) (
+    .left         : t,
+    .right        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(t, (..out_of_range))) {
+    assume error_tracer
+
     bounds ::= integer_limits(.value = left)
 
     if right > 0 {
@@ -103,9 +111,17 @@ checked_add := #(.t: Type: Int) (.left: t, .right: t) -> (
     result = ..ok left + right
 }
 
-checked_subtract := #(.t: Type: Int) (.left: t, .right: t) -> (
-    .result : Errable#(t, (..out_of_range))
-) {
+checked_subtract := #(.t: Type: Int) (
+    .left         : t,
+    .right        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(t, (..out_of_range))) {
+    assume error_tracer
+
     bounds ::= integer_limits(.value = left)
 
     if right > 0 {
@@ -123,9 +139,17 @@ checked_subtract := #(.t: Type: Int) (.left: t, .right: t) -> (
     result = ..ok left - right
 }
 
-checked_multiply := #(.t: Type: Int) (.left: t, .right: t) -> (
-    .result : Errable#(t, (..out_of_range))
-) {
+checked_multiply := #(.t: Type: Int) (
+    .left         : t,
+    .right        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(t, (..out_of_range))) {
+    assume error_tracer
+
     bounds ::= integer_limits(.value = left)
     -- Divide a representable bound, never a potentially overflowing product.
     -- The negative pair uses maximum/right and avoids negating signed minima.
@@ -154,9 +178,17 @@ checked_multiply := #(.t: Type: Int) (.left: t, .right: t) -> (
     result = ..ok left * right
 }
 
-checked_divide := #(.t: Type: Int) (.left: t, .right: t) -> (
-    .result : Errable#(t, (..out_of_range, ..division_by_zero))
-) {
+checked_divide := #(.t: Type: Int) (
+    .left         : t,
+    .right        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(t, (..out_of_range, ..division_by_zero))) {
+    assume error_tracer
+
     if right == 0 {
         result = ..error(.reason = ..division_by_zero)
         return

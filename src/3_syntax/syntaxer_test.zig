@@ -313,10 +313,6 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
         .positional_value_field,
         .struct_value_field,
     });
-    try expectTags("tests/feature_tests/io/02_reached_output_stream/main.rg", &.{
-        .reach_directive,
-        .reach_alternative,
-    });
     try expectTags("tests/feature_tests/control_flow/17_for_moving/main.rg", &.{.for_move});
     try expectTags("tests/feature_tests/control_flow/04_for_dynamic_array/main.rg", &.{.for_value});
     try expectTags("tests/feature_tests/control_flow/13_for_borrowed_array/main.rg", &.{.for_borrow});
@@ -378,13 +374,17 @@ test "generic type applications retain positional arguments" {
 }
 
 test "test definitions share ordinary function payloads" {
-    var tree = try parseTestFile("tests/feature_tests/testing/21_modern_test_syntax/main.rg");
+    const source =
+        "test empty := () -> !() {}\n" ++
+        "test system := (.system: System) -> !() {}\n" ++
+        "test defaulted := (.system: System, .count: Int32 = 42) -> !() {}\n";
+    var tree = try parseTestSource("test_inputs.rg", source);
     defer tree.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 3), tree.roots.len);
-    for (tree.roots) |root| {
+    for (tree.roots, 0..) |root, count| {
         const declaration = tree.testDeclaration(root).?;
         try std.testing.expect(declaration.function.body != null);
-        try std.testing.expectEqual(@as(usize, 1), tree.structTypeLiteral(declaration.function.input).?.fields.len);
+        try std.testing.expectEqual(count, tree.structTypeLiteral(declaration.function.input).?.fields.len);
         try std.testing.expectEqual(syntax_tree.Node.Tag.test_declaration, tree.tag(root));
     }
 }

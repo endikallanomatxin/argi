@@ -28,20 +28,50 @@ AllocatingMatrixTransposition#(.Value: Type, .Provider: Type: Allocator#(Provide
 
 MatrixAccess#(.Value: Type): Contract = (
     .Element : Type
-    .get     : (.self: &Value, .row: UIntNative, .col: UIntNative) -> (
-        .result : Errable#(Element, (..out_of_bounds))
-    )
-    .set : (.self: $&Value, .row: UIntNative, .col: UIntNative, .value: Element) -> (
-        .result : Errable#(Void, (..out_of_bounds))
-    )
+    .get     : (
+        .self         : &Value,
+        .row          : UIntNative,
+        .col          : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Element, (..out_of_bounds)))
+    .set : (
+        .self         : $&Value,
+        .row          : UIntNative,
+        .col          : UIntNative,
+        .value        : Element,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..out_of_bounds)))
 )
 
 VectorAccess#(.Value: Type): Contract = (
     .Element : Type
-    .get     : (.self: &Value, .index: UIntNative) -> (.result: Errable#(Element, (..out_of_bounds)))
-    .set     : (.self: $&Value, .index: UIntNative, .value: Element) -> (
-        .result : Errable#(Void, (..out_of_bounds))
-    )
+    .get     : (
+        .self         : &Value,
+        .index        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Element, (..out_of_bounds)))
+    .set : (
+        .self         : $&Value,
+        .index        : UIntNative,
+        .value        : Element,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..out_of_bounds)))
 )
 
 implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) MatrixTransposition#(

@@ -18,9 +18,17 @@ _buffer_copy(
     .copied      : $&UIntNative
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_buffer_copy")
 
-_array_storage := #(.t: Type, .view_type: Type) (.self: &Python, .values: view_type) -> (
-    .result : Errable#(Object, (..python_error))
-) {
+_array_storage := #(.t: Type, .view_type: Type) (
+    .self         : &Python,
+    .values       : view_type,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Object, (..python_error))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     count ::= length(&values).count
     address :: UIntNative = 0
@@ -39,8 +47,17 @@ _array_storage := #(.t: Type, .view_type: Type) (.self: &Python, .values: view_t
 }
 
 _copy_numeric := #(.t: Type) (
-    .self: &Object, .destination: MutableArrayView#(.t: t), .kind: Int32
+    .self         : &Object,
+    .destination  : MutableArrayView#(.t: t),
+    .kind         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(UIntNative, (..python_error))) {
+    assume error_tracer
+
     assume ffi := self&._python&._ffi
     capacity ::= length(&destination).count
     address :: UIntNative = 0
@@ -69,9 +86,18 @@ _copy_numeric := #(.t: Type) (
     result = ..ok copied
 }
 
-_numpy_array := (.self: &Python, .storage: &Object, .dtype: StringView) -> (
-    .result : Errable#(Object, (..python_error))
-) {
+_numpy_array := (
+    .self         : &Python,
+    .storage      : &Object,
+    .dtype        : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Object, (..python_error))) {
+    assume error_tracer
+
     numpy ::= import_module(.self = self, .name = "numpy")!
     dtype_object ::= string(.self = self, .value = dtype)!
     arguments: [1]&Object = (storage)
@@ -108,17 +134,33 @@ implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t
     .Element : Type = t
 )
 
-numeric_buffer := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .values: View) -> (
-    .result : Errable#(Object, (..python_error))
-) {
+numeric_buffer := #(.View: Type: _PythonNumericView#(View)) (
+    .self         : &Python,
+    .values       : View,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Object, (..python_error))) {
+    assume error_tracer
+
     result = ~_array_storage#(.t: _PythonNumericView#(View).Element)(
         .self = self, .values = values
     )
 }
 
-numeric_array := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .values: View) -> (
-    .result : Errable#(Object, (..python_error))
-) {
+numeric_array := #(.View: Type: _PythonNumericView#(View)) (
+    .self         : &Python,
+    .values       : View,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Object, (..python_error))) {
+    assume error_tracer
+
     storage ::= numeric_buffer(.self = self, .values = values)!
     result = ~_numpy_array(
         .self    = self
@@ -128,8 +170,16 @@ numeric_array := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .val
 }
 
 copy_numeric := #(.t: Type: _PythonNumericScalar#(t)) (
-    .self: &Object, .destination: MutableArrayView#(.t: t)
+    .self         : &Object,
+    .destination  : MutableArrayView#(.t: t),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(UIntNative, (..python_error))) {
+    assume error_tracer
+
     result = _copy_numeric(
         .self = self, .destination = destination, .kind = _PythonNumericScalar#(t).native_kind()
     )

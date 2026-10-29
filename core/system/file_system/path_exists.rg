@@ -21,8 +21,17 @@ _path_exists_string := (.self: &FileSystem, .path: &String) -> (.ok: Bool) {
 }
 
 _path_exists_view := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .path: StringView, .allocator: $&Provider
+    .self         : &FileSystem,
+    .path         : StringView,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Bool, (..out_of_memory))) {
+    assume error_tracer
+
     assume ffi := self&._ffi
     assume allocator
 

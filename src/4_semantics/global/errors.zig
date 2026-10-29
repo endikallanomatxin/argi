@@ -4,7 +4,7 @@ const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const reachability = @import("reachability.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const global_types = @import("types.zig");
@@ -354,7 +354,7 @@ pub const Resolver = struct {
 
         const fail_function = self.findTestingFailFunction(module_index) orelse return .deferred;
         // The testing intrinsic calls the ordinary failure helper on its
-        // failure paths; its reached capability must follow the call site.
+        // failure paths; its declared inputs use the call site's assumptions.
         const fail_input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{
             .source = self.graph.node(input).source,
@@ -364,10 +364,9 @@ pub const Resolver = struct {
                 .assumed_fields = literal.assumed_fields,
             } },
         });
-        const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-        try self.core.trackReachedCall(fail_function, fail_input, reach, false);
+        const lexical_context = call_context.Context.fromModule(o, value.owner_function);
         const fail = self.graph.functions.items[@intFromEnum(fail_function)];
-        _ = try self.core.completeRecordFieldsWithContext(fail.input, fail_input, reach);
+        _ = try self.core.completeRecordFieldsWithContext(fail.input, fail_input, lexical_context);
         if (fail.output.len != 1) return error.InvalidTestingFailFunction;
         const result_ty = self.graph.fields.items[fail.output.start].ty;
         const result_ok = global_types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidTestingFailFunction;

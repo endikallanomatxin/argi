@@ -14,9 +14,18 @@ _next(.context: UIntNative, .object: RawPointer#(.t: _PyObject), .exhausted: $&I
     .handle : RawPointer#(.t: _PyObject)
 ): CFunction(.symbol = "_argi_python_next")
 
-set_attribute := (.self: &Object, .name: StringView, .value: &Object) -> (
-    .result : Errable#(Void, (..python_error))
-) {
+set_attribute := (
+    .self         : &Object,
+    .name         : StringView,
+    .value        : &Object,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..python_error))) {
+    assume error_tracer
+
     assume ffi := self&._python&._ffi
 
     if [
@@ -36,9 +45,17 @@ set_attribute := (.self: &Object, .name: StringView, .value: &Object) -> (
     result = ..ok Void()
 }
 
-tuple := (.self: &Python, .values: ArrayView#(.t: &Object) = _no_arguments()) -> (
-    .result : Errable#(Object, (..python_error))
-) {
+tuple := (
+    .self         : &Python,
+    .values       : ArrayView#(.t: &Object) = _no_arguments(),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Object, (..python_error))) {
+    assume error_tracer
+
     result = positional_arguments(.self = self, .values = values)
 }
 
@@ -47,7 +64,16 @@ tuple := (.self: &Python, .values: ArrayView#(.t: &Object) = _no_arguments()) ->
 -- the core Iterator contract's infallible next/has_next protocol.
 PythonIterator := (._object: Object)
 
-iterate := (.self: &Object) -> (.result: Errable#(PythonIterator, (..python_error))) {
+iterate := (
+    .self         : &Object,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(PythonIterator, (..python_error))) {
+    assume error_tracer
+
     assume ffi := self&._python&._ffi
     object ::= _owned(
         .self   = self&._python
@@ -57,7 +83,16 @@ iterate := (.self: &Object) -> (.result: Errable#(PythonIterator, (..python_erro
     result = ..ok(._object = ~object)
 }
 
-next := (.self: $&PythonIterator) -> (.result: Errable#(?Object, (..python_error))) {
+next := (
+    .self         : $&PythonIterator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Object, (..python_error))) {
+    assume error_tracer
+
     assume ffi := self&._object._python&._ffi
     exhausted :: Int32 = 0
     handle ::= _next(

@@ -5,7 +5,7 @@ const parameterized_storage = @import("../module/parameterized/storage.zig");
 const ir = @import("../module/parameterized/ir.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
-const reach_context_mod = @import("reach_context.zig");
+const call_context_mod = @import("call_context.zig");
 const errors_mod = @import("errors.zig");
 const control_mod = @import("control.zig");
 const resolution = @import("resolution.zig");
@@ -44,7 +44,7 @@ pub const SelectionProfile = struct {
     explicit_final_instantiation_ns: u64 = 0,
 };
 
-const ReachInferenceContext = reach_context_mod.Context;
+const CallContext = call_context_mod.Context;
 
 /// A diagnostic result owns its rendered name, independent of speculative IDs.
 /// The caller releases actual_name with the resolver's allocator.
@@ -66,15 +66,14 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
     nested_call_context: ?*contract_mod.Resolver = null,
-    nested_call_resolver: ?*const fn (*contract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef, ReachInferenceContext) anyerror!?global_sg.Node = null,
+    nested_call_resolver: ?*const fn (*contract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef, CallContext) anyerror!?global_sg.Node = null,
     nested_constructor_context: ?*anyopaque = null,
-    nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
+    nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, CallContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     ownership_checkpoint: ?*const fn (*anyopaque) @import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
     rollback_ownership: ?*const fn (*anyopaque, @import("ownership.zig").Resolver.ParameterizedCheckpoint) void = null,
     constraint_diagnostic: ?*?ConstraintFailure = null,
-    reach_diagnostics: ?*std.array_list.Managed(u8) = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     selection_profile: SelectionProfile = .{},
@@ -92,7 +91,6 @@ pub const Resolver = struct {
     pub const SideEffectCheckpoint = struct {
         execution_requests: ?usize = null,
         ownership: ?@import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
-        reached_calls: usize = 0,
         type_caches: [2]usize,
         capture_nodes: usize,
         capture_bindings: usize,
@@ -139,7 +137,7 @@ pub const Resolver = struct {
     }
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .type_caches = self.generics.checkpointCaches(), .capture_nodes = self.graph.nodes.items.len, .capture_bindings = self.graph.bindings.items.len };
+        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .type_caches = self.generics.checkpointCaches(), .capture_nodes = self.graph.nodes.items.len, .capture_bindings = self.graph.bindings.items.len };
         if (self.generics.checkpoint_execution) |checkpoint|
             saved.execution_requests = checkpoint(self.generics.execution_context.?);
         if (self.ownership_context) |context| {
@@ -168,7 +166,6 @@ pub const Resolver = struct {
         }
         self.generics.comptime_failure = saved.comptime_failure;
         self.generics.rollbackCaches(saved.type_caches);
-        self.core.rollbackReachedCalls(saved.reached_calls);
         if (saved.contracts) |checkpoint|
             if (self.nested_call_context) |contracts|
                 contracts.rollbackResolution(checkpoint);
@@ -253,21 +250,20 @@ pub const Resolver = struct {
         return .invalid;
     }
 
-    /// Operator sugar selects scoped evidence from an operand record. Reached
-    /// capability fields participate in inference before materializing the call.
+    /// Operator sugar selects scoped evidence from an operand record. Lexically
+    /// assumed inputs participate in inference before materializing the call.
     pub fn resolveContractArithmetic(
         self: *Resolver,
         module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
     ) !resolution.Result {
         const identity = standard_contracts.arithmeticOperation(value.operator);
-        const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
+        const lexical_context = CallContext.fromModule(o, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
         try self.core.contextualizeArithmeticPair(&operands);
-        const call = try self.makeContractOperator(module_index, identity.contract, identity.operation, &operands, reach, assumed) orelse return .deferred;
+        const call = try self.makeContractOperator(module_index, identity.contract, identity.operation, &operands, lexical_context, assumed) orelse return .deferred;
         try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.lowerSelectedScalarArithmetic(call, value.operator, &operands));
         return .resolved;
     }
@@ -330,7 +326,7 @@ pub const Resolver = struct {
         return .{ .source = call.source, .ty = call.ty, .content = .{ .comparison = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
     }
 
-    fn makeComparisonCall(self: *Resolver, module_index: usize, operator: primitives.ComparisonOperator, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+    fn makeComparisonCall(self: *Resolver, module_index: usize, operator: primitives.ComparisonOperator, operands: []const global_sg.GlobalNodeId, lexical_context: CallContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
         // A bare variant tests the discriminant; it is not a call to Equal
         // between two choice values. Parameterized lowering canonicalizes the
         // value first and represents the tested tag as an integer literal.
@@ -340,10 +336,10 @@ pub const Resolver = struct {
                 self.graph.node(operands[1]).content == .int_literal) return null;
         }
         const identity = standard_contracts.comparisonOperation(operator);
-        return self.makeContractOperator(module_index, identity.contract, identity.operation, operands, reach, assumed);
+        return self.makeContractOperator(module_index, identity.contract, identity.operation, operands, lexical_context, assumed);
     }
 
-    fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+    fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, lexical_context: CallContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
         const declaration = standard_contracts.standardDefinition(self.graph, contract_name) orelse return null;
         const contracts = self.nested_call_context orelse return null;
         for (operands) |operand| {
@@ -372,10 +368,10 @@ pub const Resolver = struct {
         const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
         const input = try self.makePositionalInput(operands);
         var completed_input = self.graph.node(input);
-        if (reach == .global) completed_input.content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
+        if (lexical_context.assumed_fields.len != 0) completed_input.content.struct_value_literal.assumed_fields = lexical_context.assumed_fields;
         if (assumed) |node| completed_input.content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
         try self.graph.setNode(self.allocator, input, completed_input);
-        const call = contracts.makeScopedOperationCall(module_index, contract, operation_name, input, reach, self.graph.node(operands[0]).source) catch |err| {
+        const call = contracts.makeScopedOperationCall(module_index, contract, operation_name, input, lexical_context, self.graph.node(operands[0]).source) catch |err| {
             failure = contracts.participant_conformance_failure;
             if (failure) |*value| {
                 value.input = null;
@@ -396,12 +392,12 @@ pub const Resolver = struct {
         return call;
     }
 
-    pub fn resolveContractComparison(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
-        const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
+    pub fn resolveContractComparison(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        const lexical_context = CallContext.fromModule(o, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
         try self.core.contextualizeArithmeticPair(&operands);
-        const call = try self.makeComparisonCall(module_index, value.operator, &operands, reach, assumed) orelse return .deferred;
+        const call = try self.makeComparisonCall(module_index, value.operator, &operands, lexical_context, assumed) orelse return .deferred;
         try self.patchComparisonResult(globalizer.globalNode(o, value.node), self.lowerSelectedScalarComparison(call, if (value.operator == .not_equal) .equal else value.operator, &operands), value.operator);
         return .resolved;
     }
@@ -449,12 +445,12 @@ pub const Resolver = struct {
         return id;
     }
 
-    pub fn makeDefinitionCall(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, definition: global_sg.DefinitionValue, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !global_sg.Node {
+    pub fn makeDefinitionCall(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, definition: global_sg.DefinitionValue, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, lexical_context: CallContext, source: primitives.SourceRef) !global_sg.Node {
         const family = self.graph.familyDefinition(definition.origin);
         if (family.kind == .function and family.template_index == null) {
             if (arguments.len != 0 or definition.captures.len != 0) return error.TooManyGenericArguments;
             const function = self.graph.declaration(self.graph.familyDeclaration(definition.origin)).function_id orelse return error.DeferredGenericFunction;
-            return self.makeConcreteFunctionCall(function, input, reach, source);
+            return self.makeConcreteFunctionCall(function, input, lexical_context, source);
         }
         if (self.core.callInputHasPendingTypes(input)) return error.DeferredGenericFunction;
         const input_value = self.graph.node(input).content;
@@ -472,23 +468,23 @@ pub const Resolver = struct {
             }
         }
         const selected = (if (arguments.len != 0)
-            self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, true, definition)
+            self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, lexical_context, true, definition)
         else
-            self.selectImplicitGenericFunctionFiltered(module_index, self.graph.familyDefinitionName(definition.origin), null, input, reach, null, definition)) catch |err| switch (err) {
+            self.selectImplicitGenericFunctionFiltered(module_index, self.graph.familyDefinitionName(definition.origin), null, input, lexical_context, null, definition)) catch |err| switch (err) {
             error.NoMatchingGenericFunction, error.ConflictingGenericArgument => {
-                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match this specialized function definition, including its required reachable capabilities" };
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match this specialized function definition, including its declared capability inputs" };
                 return error.InvalidGenericCallArguments;
             },
             else => return err,
         };
         const function = try self.instantiate(selected.declaration, selected.arguments);
-        return self.makeConcreteFunctionCall(function, input, reach, source);
+        return self.makeConcreteFunctionCall(function, input, lexical_context, source);
     }
 
     pub fn resolveDefinitionCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype, definition: global_sg.DefinitionValue) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
         const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
-        const node = self.makeDefinitionCall(module_index, reference, definition, arguments, globalizer.globalNode(offsets, call.input), ReachInferenceContext.fromModule(module, offsets, call.visible_bindings, call.owner_function), self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+        const node = self.makeDefinitionCall(module_index, reference, definition, arguments, globalizer.globalNode(offsets, call.input), CallContext.fromModule(offsets, call.owner_function), self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
             error.DeferredGenericFunction => return .deferred,
             else => return err,
         };
@@ -535,14 +531,14 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
-        const reach: ReachInferenceContext = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
+        const lexical_context: CallContext = CallContext.fromModule(o, value.owner_function);
         const function = blk: {
             const started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             defer {
                 if (self.profile_io) |io| self.profile_source_selection_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - started;
             }
             break :blk if (arguments) |args|
-                self.resolveExplicitGenericFunction(module_index, module, reference, args, input, reach) catch |err| switch (err) {
+                self.resolveExplicitGenericFunction(module_index, module, reference, args, input, lexical_context) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
@@ -551,7 +547,7 @@ pub const Resolver = struct {
                     else => return .deferred,
                 }
             else
-                self.resolveImplicitGenericFunction(module_index, module, reference, input, reach) catch |err| switch (err) {
+                self.resolveImplicitGenericFunction(module_index, module, reference, input, lexical_context) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.ComptimeExecutionPending => return error.ComptimeExecutionPending,
@@ -562,7 +558,7 @@ pub const Resolver = struct {
                 };
         };
         const completion_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-        const completed = try self.core.completeRecordFieldsWithContext(self.graph.functions.items[@intFromEnum(function)].input, input, reach);
+        const completed = try self.core.completeRecordFieldsWithContext(self.graph.functions.items[@intFromEnum(function)].input, input, lexical_context);
         if (self.profile_io) |io| self.profile_source_completion_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - completion_started;
         if (!completed)
             return .deferred;
@@ -584,9 +580,9 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
-        reach_context: ?ReachInferenceContext,
+        call_context: ?CallContext,
     ) !global_sg.GlobalFunctionId {
-        const selected = try self.selectExplicitGenericFunction(current_module, module, reference, arguments, input, reach_context, true, null);
+        const selected = try self.selectExplicitGenericFunction(current_module, module, reference, arguments, input, call_context, true, null);
         const instantiate_start = self.profileTimestamp();
         const result = try self.instantiate(selected.declaration, selected.arguments);
         self.addProfileTime(instantiate_start, &self.selection_profile.explicit_final_instantiation_ns);
@@ -600,7 +596,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         input: global_sg.GlobalNodeId,
-        reach_context: ?ReachInferenceContext,
+        call_context: ?CallContext,
         report_argument_failure: bool,
         definition_override: ?global_sg.DefinitionValue,
     ) !ImplicitGenericSelection {
@@ -652,8 +648,8 @@ pub const Resolver = struct {
                 else => return err,
             };
             if (!input_inferred) continue;
-            if (reach_context) |context|
-                if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+            if (call_context) |context|
+                if (!try self.inferBindingsFromDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
             self.addProfileTime(phase_start, &self.selection_profile.explicit_prefilter_inference_ns);
             prefilter_active = false;
             phase_start = self.profileTimestamp();
@@ -735,12 +731,12 @@ pub const Resolver = struct {
         return self.inferBindingsFromInputFields(module_index, pattern, input, bindings, 0, true);
     }
 
-    fn inferNamedSignature(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
+    fn inferNamedSignature(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, lexical_context: ?CallContext) anyerror!bool {
         const caller = &self.modules[module_index];
         const expression = caller.semantic.parameterized_storage.ir.representation(pattern);
         if (expression != .resolved or expression.resolved != .generic)
             return self.matchClosedSignatureInput(module_index, pattern, input, bindings, field_offset);
-        return self.inferFamilyApplication(module_index, expression.resolved.generic, .{ .fields = input }, bindings, field_offset, reach);
+        return self.inferFamilyApplication(module_index, expression.resolved.generic, .{ .fields = input }, bindings, field_offset, lexical_context);
     }
 
     const FamilyInput = union(enum) {
@@ -750,7 +746,7 @@ pub const Resolver = struct {
         callable: struct { input: global_sg.GlobalNodeId, arguments: primitives.Range(global_sg.GlobalGenericArgId) },
     };
 
-    fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, reach: ?ReachInferenceContext) anyerror!bool {
+    fn inferFamilyApplication(self: *Resolver, module_index: usize, application: @FieldType(ir.ResolvedType, "generic"), input: FamilyInput, bindings: *generic_mod.Resolver.Bindings, field_offset: u32, lexical_context: ?CallContext) anyerror!bool {
         const definition = try self.generics.resolveParameterizedDefinitionValue(module_index, application.base, bindings);
         const ApplicationDefinition = struct { module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), shape: ir.ParameterizedTypeId };
         const located: ApplicationDefinition = if (input == .callable) callable: {
@@ -809,13 +805,13 @@ pub const Resolver = struct {
         switch (input) {
             .callable => |call| {
                 if (!try self.inferBindingsFromInputFields(located.module_index, located.shape, call.input, &local, field_offset, true)) return false;
-                if (reach) |context|
-                    if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.shape, call.input, &local, context, field_offset)) return false;
+                if (lexical_context) |context|
+                    if (!try self.inferBindingsFromDefaultFields(located.module_index, located.shape, call.input, &local, context, field_offset)) return false;
             },
             .fields => |node| {
                 if (!try self.inferBindingsFromInputFields(located.module_index, located.shape, node, &local, field_offset, true)) return false;
-                if (reach) |context|
-                    if (!try self.inferBindingsFromReachDefaultFields(located.module_index, located.shape, node, &local, context, field_offset)) return false;
+                if (lexical_context) |context|
+                    if (!try self.inferBindingsFromDefaultFields(located.module_index, located.shape, node, &local, context, field_offset)) return false;
             },
             .value_type => |actual| if (!try self.inferInputType(located.module_index, located.shape, actual, &local)) return false,
             .signature_type => |required| if (!try self.inferSignatureBindings(located.module_index, located.shape, required, &local)) return false,
@@ -915,24 +911,24 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn inferBindingsFromReachDefaults(
+    fn inferBindingsFromDefaults(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
         input: global_sg.GlobalNodeId,
         bindings: *generic_mod.Resolver.Bindings,
-        context: ReachInferenceContext,
+        context: CallContext,
     ) !bool {
-        return self.inferBindingsFromReachDefaultFields(module_index, pattern, input, bindings, context, 0);
+        return self.inferBindingsFromDefaultFields(module_index, pattern, input, bindings, context, 0);
     }
 
-    fn inferBindingsFromReachDefaultFields(
+    fn inferBindingsFromDefaultFields(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
         input: global_sg.GlobalNodeId,
         bindings: *generic_mod.Resolver.Bindings,
-        context: ReachInferenceContext,
+        context: CallContext,
         field_offset: u32,
     ) !bool {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
@@ -964,69 +960,6 @@ pub const Resolver = struct {
                         bindings.types[@intFromEnum(parameter)] = ty;
                 }
             }
-            const default_node = switch (storage.nodes.items[@intFromEnum(default_id)]) {
-                .resolved => |node| node,
-                .pending => continue,
-            };
-            const reach_id = switch (default_node.content) {
-                .reach_directive => |reach| reach,
-                else => continue,
-            };
-            const reach = storage.reaches.items[@intFromEnum(reach_id)];
-
-            var inferred = false;
-            for (storage.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
-                if (alternative.segments.len == 0) continue;
-                const segments = storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
-                const root_name = candidate_module.text(segments[0]);
-                var scope_index = context.bindingCount();
-                while (scope_index > 0) {
-                    scope_index -= 1;
-                    const binding_id = context.bindingAt(scope_index);
-                    if (self.graph.isBindingTypeUnresolved(binding_id)) continue;
-                    const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
-                    if (!std.mem.eql(u8, self.graph.text(binding.name), root_name)) continue;
-                    var current_ty = binding.ty;
-                    var valid = !self.graph.isTypeUnresolved(current_ty);
-                    for (segments[1..]) |segment| {
-                        if (!valid) break;
-                        const step = self.core.reachedField(current_ty, candidate_module.text(segment)) orelse {
-                            valid = false;
-                            break;
-                        };
-                        current_ty = step.hit.field.ty;
-                        if (self.graph.isTypeUnresolved(current_ty)) valid = false;
-                    }
-                    if (!valid) continue;
-                    const matched = self.inferInputTypeWithImplicitAddress(
-                        module_index,
-                        field.ty,
-                        current_ty,
-                        bindings,
-                    ) catch |err| switch (err) {
-                        error.ConflictingGenericArgument => return false,
-                        error.OutOfMemory, error.ComptimeExecutionPending => return err,
-                        else => continue,
-                    };
-                    if (matched) {
-                        inferred = true;
-                        break;
-                    }
-                }
-                if (inferred) break;
-            }
-            if (!inferred) if (self.reach_diagnostics) |message| {
-                // Render while the speculative candidate is alive; retain no
-                // inferred type or graph-tail identity in the diagnostic.
-                try message.print("\n  .{s} uses reach ", .{candidate_module.text(field.name)});
-                for (storage.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
-                    if (index != 0) try message.appendSlice(" or ");
-                    for (storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, part| {
-                        if (part != 0) try message.append('.');
-                        try message.appendSlice(candidate_module.text(segment));
-                    }
-                }
-            };
         }
         return true;
     }
@@ -1038,7 +971,6 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage.ir;
         switch (storage.nodes.items[@intFromEnum(node_id)]) {
             .resolved => |node| {
-                if (node.content == .reach_directive) return null;
                 const ty = node.ty orelse return null;
                 return self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
                     error.OutOfMemory => return err,
@@ -1117,7 +1049,7 @@ pub const Resolver = struct {
         operation: parameterized_storage.ContractOperation,
         captures: primitives.Range(ir.ComptimeParameterId),
         input: global_sg.GlobalNodeId,
-        context: ReachInferenceContext,
+        context: CallContext,
         bindings: *generic_mod.Resolver.Bindings,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         associated: primitives.Range(ir.ParameterizedGenericArgId),
@@ -1181,7 +1113,7 @@ pub const Resolver = struct {
             else => return null,
         };
         if (!try self.inferBindingsFromInput(located.module_index, function.input, input, &inferred)) return null;
-        if (!try self.inferBindingsFromReachDefaults(located.module_index, function.input, input, &inferred, context)) return null;
+        if (!try self.inferBindingsFromDefaults(located.module_index, function.input, input, &inferred, context)) return null;
         const implementation_parameters: primitives.Range(ir.ComptimeParameterId) = .{ .start = function.parameters.start, .len = capture_count };
         if ((try self.inferAndValidateConstraints(located.module_index, implementation_parameters, &inferred)) != .satisfied or
             !self.parametersBound(located.module_index, implementation_parameters, &inferred)) return null;
@@ -1213,7 +1145,7 @@ pub const Resolver = struct {
 
     /// Probe an implementation-owned interface through ordinary input inference.
     /// Bodies stay deferred, and all graph/call/default effects are rolled back.
-    pub fn probeImplementationOperation(function_context: *anyopaque, module_index: usize, declaration: global_sg.GlobalFamilyDefinitionId, participant_count: u32, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?contract_mod.ParticipantConformanceFailure) anyerror!?contract_mod.Resolver.OperationCandidate {
+    pub fn probeImplementationOperation(function_context: *anyopaque, module_index: usize, declaration: global_sg.GlobalFamilyDefinitionId, participant_count: u32, name: []const u8, input: global_sg.GlobalNodeId, lexical_context: CallContext, arguments: primitives.Range(global_sg.GlobalGenericArgId), deferred: *bool, failure: *?contract_mod.ParticipantConformanceFailure) anyerror!?contract_mod.Resolver.OperationCandidate {
         const self: *Resolver = @ptrCast(@alignCast(function_context));
         const contracts = self.nested_call_context orelse return error.MissingOperationInstantiator;
         const boundary: @import("type_recipe.zig").Recipe.Boundary = .{
@@ -1232,7 +1164,7 @@ pub const Resolver = struct {
         defer self.allocator.free(prefix);
         @memset(prefix, .inferred);
         var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .contracts = contracts };
-        const result = resolver.inferOperationWithArguments(declaration, prefix, name, input, reach, arguments) catch |err| switch (err) {
+        const result = resolver.inferOperationWithArguments(declaration, prefix, name, input, lexical_context, arguments) catch |err| switch (err) {
             error.ComptimeExecutionPending => {
                 scope.retainPendingExecution();
                 deferred.* = true;
@@ -1254,7 +1186,7 @@ pub const Resolver = struct {
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         for (selected.participants) |participant| try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
         const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = participant_count } } });
-        _ = contracts.makeSpecializedScopedOperationCall(module_index, contract, name, arguments, input, reach, self.graph.node(input).source) catch |err| switch (err) {
+        _ = contracts.makeSpecializedScopedOperationCall(module_index, contract, name, arguments, input, lexical_context, self.graph.node(input).source) catch |err| switch (err) {
             error.OutOfMemory => return err,
             error.ComptimeExecutionPending => {
                 scope.retainPendingExecution();
@@ -1395,9 +1327,9 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
-        reach_context: ?ReachInferenceContext,
+        call_context: ?CallContext,
     ) !global_sg.GlobalFunctionId {
-        const selected = try self.selectImplicitGenericFunction(current_module, module, reference, input, reach_context);
+        const selected = try self.selectImplicitGenericFunction(current_module, module, reference, input, call_context);
         const started = self.profileTimestamp();
         const result = try self.instantiate(selected.declaration, selected.arguments);
         self.addProfileTime(started, &self.selection_profile.implicit_final_instantiation_ns);
@@ -1410,7 +1342,7 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
-        reach_context: ?ReachInferenceContext,
+        call_context: ?CallContext,
     ) !ImplicitGenericSelection {
         const module_filter = if (reference.module_path) |path|
             try self.core.findModuleForQualifier(current_module, module.text(path))
@@ -1422,29 +1354,29 @@ pub const Resolver = struct {
             if (selected_definition) |value| self.graph.familyDefinitionName(value.origin) else module.text(reference.name),
             module_filter,
             input,
-            reach_context,
+            call_context,
             null,
             selected_definition,
         );
     }
 
-    pub fn resolveOperationIdentity(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !?global_sg.Node {
-        return self.resolveOperationIdentityFiltered(module_index, name, input, reach, source, null);
+    pub fn resolveOperationIdentity(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, lexical_context: CallContext, source: primitives.SourceRef) !?global_sg.Node {
+        return self.resolveOperationIdentityFiltered(module_index, name, input, lexical_context, source, null);
     }
 
-    pub fn resolveOperationIdentityFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef, module_filter: ?global_sg.GlobalModuleId) !?global_sg.Node {
-        return self.resolveSpecializedOperationIdentityFiltered(module_index, name, input, reach, source, module_filter, .{ .start = 0, .len = 0 }, null);
+    pub fn resolveOperationIdentityFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, lexical_context: CallContext, source: primitives.SourceRef, module_filter: ?global_sg.GlobalModuleId) !?global_sg.Node {
+        return self.resolveSpecializedOperationIdentityFiltered(module_index, name, input, lexical_context, source, module_filter, .{ .start = 0, .len = 0 }, null);
     }
 
-    pub fn resolveSpecializedOperationIdentityFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef, module_filter: ?global_sg.GlobalModuleId, arguments: primitives.Range(global_sg.GlobalGenericArgId), reference: ?module_entities.ExternalRef) !?global_sg.Node {
+    pub fn resolveSpecializedOperationIdentityFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, lexical_context: CallContext, source: primitives.SourceRef, module_filter: ?global_sg.GlobalModuleId, arguments: primitives.Range(global_sg.GlobalGenericArgId), reference: ?module_entities.ExternalRef) !?global_sg.Node {
         const contracts = self.nested_call_context orelse return null;
-        var candidates = try contracts.specializedOperationCandidatesFiltered(module_index, name, input, reach, module_filter, arguments);
+        var candidates = try contracts.specializedOperationCandidatesFiltered(module_index, name, input, lexical_context, module_filter, arguments);
         defer candidates.deinit(self.allocator);
-        const ordinary: core_mod.Resolver.FunctionMatch = if (arguments.len == 0) try self.core.matchFunctionNamedWithReach(module_index, name, module_filter, input, reach) else .no_match;
+        const ordinary: core_mod.Resolver.FunctionMatch = if (arguments.len == 0) try self.core.matchFunctionNamed(module_index, name, module_filter, input) else .no_match;
         if (candidates.items.items.len == 0) {
             if (candidates.deferred) return error.DeferredOperationIdentity;
             if (ordinary == .function or candidates.failure != null) {
-                const generic = if (arguments.len == 0) try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter) else try self.explicitOrdinaryApplicable(module_index, reference.?, arguments, input, reach);
+                const generic = if (arguments.len == 0) try self.implicitOrdinaryApplicableFiltered(module_index, name, input, lexical_context, module_filter) else try self.explicitOrdinaryApplicable(module_index, reference.?, arguments, input, lexical_context);
                 if (generic == .ambiguous or (ordinary == .function and generic == .applicable and generic.applicable != self.graph.functions.items[@intFromEnum(ordinary.function)].declaration)) {
                     contracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the function explicitly" };
                     return error.AmbiguousOperationIdentity;
@@ -1459,13 +1391,13 @@ pub const Resolver = struct {
             }
             return null;
         }
-        const generic = if (arguments.len == 0) try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter) else try self.explicitOrdinaryApplicable(module_index, reference.?, arguments, input, reach);
+        const generic = if (arguments.len == 0) try self.implicitOrdinaryApplicableFiltered(module_index, name, input, lexical_context, module_filter) else try self.explicitOrdinaryApplicable(module_index, reference.?, arguments, input, lexical_context);
         if (candidates.items.items.len > 1 or ordinary == .function or ordinary == .ambiguous or generic == .applicable or generic == .ambiguous) {
             contracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the contract operation explicitly" };
             return error.AmbiguousOperationIdentity;
         }
         if (candidates.deferred or ordinary == .deferred or generic == .deferred) return error.DeferredOperationIdentity;
-        return contracts.callSpecializedOperationCandidate(module_index, candidates.items.items[0], name, input, reach, source, arguments);
+        return contracts.callSpecializedOperationCandidate(module_index, candidates.items.items[0], name, input, lexical_context, source, arguments);
     }
 
     pub fn hasVisibleParameterizedFunctionName(
@@ -1499,11 +1431,11 @@ pub const Resolver = struct {
 
     /// Identity lookup checks generic applicability without instantiating a body.
     /// The same selector supplies the arguments used by ordinary resolution.
-    pub fn implicitOrdinaryApplicable(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !OrdinaryApplicability {
-        return self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, null);
+    pub fn implicitOrdinaryApplicable(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, lexical_context: CallContext) !OrdinaryApplicability {
+        return self.implicitOrdinaryApplicableFiltered(module_index, name, input, lexical_context, null);
     }
 
-    fn explicitOrdinaryApplicable(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !OrdinaryApplicability {
+    fn explicitOrdinaryApplicable(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, lexical_context: CallContext) !OrdinaryApplicability {
         var speculation = self.beginSpeculation();
         const diagnostic = self.generics.argument_diagnostic;
         self.generics.argument_diagnostic = null;
@@ -1511,7 +1443,7 @@ pub const Resolver = struct {
             speculation.deinit();
             self.generics.argument_diagnostic = diagnostic;
         }
-        const selected = self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, reach, false, null) catch |err| return switch (err) {
+        const selected = self.selectExplicitGenericFunction(module_index, &self.modules[module_index], reference, arguments, input, lexical_context, false, null) catch |err| return switch (err) {
             error.ComptimeExecutionPending => pending: {
                 speculation.retainPendingExecution();
                 break :pending .deferred;
@@ -1524,7 +1456,7 @@ pub const Resolver = struct {
         return .{ .applicable = selected.declaration };
     }
 
-    fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !OrdinaryApplicability {
+    fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, lexical_context: CallContext, module_filter: ?global_sg.GlobalModuleId) !OrdinaryApplicability {
         var speculation = self.beginSpeculation();
         const diagnostic = self.generics.argument_diagnostic;
         self.generics.argument_diagnostic = null;
@@ -1532,7 +1464,7 @@ pub const Resolver = struct {
             speculation.deinit();
             self.generics.argument_diagnostic = diagnostic;
         }
-        const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null, null) catch |err| {
+        const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, lexical_context, null, null) catch |err| {
             return switch (err) {
                 error.ComptimeExecutionPending => blk: {
                     speculation.retainPendingExecution();
@@ -1553,7 +1485,7 @@ pub const Resolver = struct {
         name: []const u8,
         module_filter: ?global_sg.GlobalModuleId,
         input: global_sg.GlobalNodeId,
-        reach_context: ?ReachInferenceContext,
+        call_context: ?CallContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
         selected_definition: ?global_sg.DefinitionValue,
     ) !ImplicitGenericSelection {
@@ -1619,8 +1551,8 @@ pub const Resolver = struct {
                 if (candidate_deferred) saw_deferred = true;
                 continue;
             }
-            if (reach_context) |context|
-                if (!try self.inferBindingsFromReachDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
+            if (call_context) |context|
+                if (!try self.inferBindingsFromDefaults(candidate_index, parameterized.input, input, &bindings, context)) continue;
             self.addProfileTime(phase_start, &self.selection_profile.implicit_prefilter_inference_ns);
             prefilter_active = false;
             const constraints_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -1781,7 +1713,7 @@ pub const Resolver = struct {
     }
 
     /// Diagnostic probes use normal selection and roll back its graph and
-    /// ownership effects. Bounds and unavailable reach defaults are explanations
+    /// ownership effects. Failed bounds are explanations
     /// only; discard them when another visible identity accepts the call.
     pub fn probeGenericCallFailure(
         self: *Resolver,
@@ -1789,38 +1721,33 @@ pub const Resolver = struct {
         module: *const module_sg.ModuleSemanticGraph,
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
-        reach: ReachInferenceContext,
-        missing_reach: *std.array_list.Managed(u8),
+        lexical_context: CallContext,
     ) !?ConstraintFailure {
         var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         const saved_diagnostics = self.constraint_diagnostic;
-        const saved_reach_diagnostics = self.reach_diagnostics;
         defer {
             speculation.deinit();
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
             self.constraint_diagnostic = saved_diagnostics;
-            self.reach_diagnostics = saved_reach_diagnostics;
         }
         var failure: ?ConstraintFailure = null;
         errdefer if (failure) |value| self.allocator.free(value.actual_name);
         self.constraint_diagnostic = &failure;
-        missing_reach.clearRetainingCapacity();
-        self.reach_diagnostics = missing_reach;
         // Explain applicability only. A selected body's errors belong to normal
         // instantiation, not to this diagnostic probe or its discarded effects.
         const selected = selection: {
             if (try self.generics.resolveCallArguments(current_module, reference)) |relocated| {
-                _ = self.selectExplicitGenericFunction(current_module, module, reference, relocated, input, reach, false, null) catch |err| {
+                _ = self.selectExplicitGenericFunction(current_module, module, reference, relocated, input, lexical_context, false, null) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     break :selection false;
                 };
             } else {
-                _ = self.selectImplicitGenericFunction(current_module, module, reference, input, reach) catch |err| {
+                _ = self.selectImplicitGenericFunction(current_module, module, reference, input, lexical_context) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     break :selection false;
                 };
@@ -1831,7 +1758,6 @@ pub const Resolver = struct {
             // A successful selection is not a constraint error even if other
             // candidates failed their bounds.
             if (failure) |value| self.allocator.free(value.actual_name);
-            missing_reach.clearRetainingCapacity();
             return null;
         }
         return failure;
@@ -1906,36 +1832,6 @@ pub const Resolver = struct {
         };
         const fields = global_types.fields(self.graph, ty) orelse return if (self.unresolvedSignature(ty) == .deferred) .deferred else .no_match;
         return self.core.matchCallInput(fields, input);
-    }
-
-    /// Reach defaults and index receivers may synthesize an address when a
-    /// value is supplied for a reference parameter. Generic inference runs
-    /// before that address node exists, so infer from the pointee pattern in
-    /// that case and use ordinary inference for real pointer arguments.
-    fn inferInputTypeWithImplicitAddress(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-        actual: global_sg.GlobalTypeId,
-        bindings: *generic_mod.Resolver.Bindings,
-    ) anyerror!bool {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        switch (storage.types.items[@intFromEnum(pattern)]) {
-            .resolved => |resolved| switch (resolved) {
-                .pointer => |pointer| switch (self.graph.types.items[@intFromEnum(actual)]) {
-                    .pointer => {},
-                    else => return self.inferInputType(
-                        module_index,
-                        pointer.child,
-                        actual,
-                        bindings,
-                    ),
-                },
-                else => {},
-            },
-            else => {},
-        }
-        return self.inferInputType(module_index, pattern, actual, bindings);
     }
 
     pub fn inferInputType(
@@ -2335,40 +2231,39 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn callImplementationOperation(context: *anyopaque, module_index: usize, declaration: global_sg.GlobalDeclId, captures: primitives.Range(global_sg.GlobalGenericArgId), arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) anyerror!global_sg.Node {
+    pub fn callImplementationOperation(context: *anyopaque, module_index: usize, declaration: global_sg.GlobalDeclId, captures: primitives.Range(global_sg.GlobalGenericArgId), arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, lexical_context: CallContext, source: primitives.SourceRef) anyerror!global_sg.Node {
         const self: *Resolver = @ptrCast(@alignCast(context));
         if (self.findParameterized(declaration) != null) {
             const family = self.graph.familyForDeclaration(declaration) orelse return error.GenericFunctionParameterizedNotFound;
             const reference = module_entities.ExternalRef{ .kind = .function, .module_path = null, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = source.file_index - self.offsets[module_index].file_base, .offset = source.offset } };
-            return self.makeDefinitionCall(module_index, reference, .{ .origin = family, .captures = captures }, arguments, input, reach, source);
+            return self.makeDefinitionCall(module_index, reference, .{ .origin = family, .captures = captures }, arguments, input, lexical_context, source);
         }
         if (arguments.len != 0) return error.TooManyGenericArguments;
         const function = self.graph.declaration(declaration).function_id orelse return error.DeferredGenericFunction;
-        return self.makeConcreteFunctionCall(function, input, reach, source);
+        return self.makeConcreteFunctionCall(function, input, lexical_context, source);
     }
 
-    fn makeConcreteFunctionCall(self: *Resolver, function: global_sg.GlobalFunctionId, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !global_sg.Node {
+    fn makeConcreteFunctionCall(self: *Resolver, function: global_sg.GlobalFunctionId, input: global_sg.GlobalNodeId, lexical_context: CallContext, source: primitives.SourceRef) !global_sg.Node {
         if (self.core.functionSignaturePending(function)) return error.DeferredGenericFunction;
         const signature = self.graph.function(function);
         if (self.core.callInputHasPendingTypes(input)) return error.DeferredGenericFunction;
-        switch (try self.core.matchCallInputWithReach(signature.input, input, reach)) {
+        switch (self.core.matchCallInput(signature.input, input)) {
             .deferred => return error.DeferredGenericFunction,
             .no_match => {
-                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected function definition, including its required reachable capabilities" };
+                self.generics.comptime_failure = .{ .source = source, .reason = "arguments do not match the selected function definition, including its declared capability inputs" };
                 return error.InvalidGenericCallArguments;
             },
             .applicable => {},
         }
-        if (!try self.core.completeRecordFieldsWithContext(signature.input, input, reach)) return error.DeferredGenericFunction;
-        try self.core.trackReachedCall(function, input, reach, false);
+        if (!try self.core.completeRecordFieldsWithContext(signature.input, input, lexical_context)) return error.DeferredGenericFunction;
         return .{ .source = source, .ty = try self.core.functionOutputType(function), .content = .{ .function_call = .{ .callee = function, .input = input } } };
     }
 
-    pub fn inferOperationParameters(context: *anyopaque, module_index: usize, requirement: @import("../module/parameterized/storage.zig").ContractRequirement, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, reach: ReachInferenceContext) anyerror!bool {
+    pub fn inferOperationParameters(context: *anyopaque, module_index: usize, requirement: @import("../module/parameterized/storage.zig").ContractRequirement, input: global_sg.GlobalNodeId, bindings: *generic_mod.Resolver.Bindings, lexical_context: CallContext) anyerror!bool {
         const signature = requirement.signature orelse return false;
         const self: *Resolver = @ptrCast(@alignCast(context));
         if (!try self.inferBindingsFromInput(module_index, signature.input, input, bindings)) return false;
-        if (!try self.inferBindingsFromReachDefaults(module_index, signature.input, input, bindings, reach)) return false;
+        if (!try self.inferBindingsFromDefaults(module_index, signature.input, input, bindings, lexical_context)) return false;
         if ((try self.inferAndValidateConstraints(module_index, requirement.parameters, bindings)) != .satisfied) return false;
         return self.parametersBound(module_index, requirement.parameters, bindings);
     }
@@ -2774,7 +2669,7 @@ pub const Resolver = struct {
         self.rollbackSideEffects(saved);
     }
 
-    pub fn instantiateCapturedExpression(context: *anyopaque, recipe_id: u32, reach: ReachInferenceContext) anyerror!global_sg.GlobalNodeId {
+    pub fn instantiateCapturedExpression(context: *anyopaque, recipe_id: u32, expected: ?global_sg.GlobalTypeId, lexical_context: CallContext) anyerror!global_sg.GlobalNodeId {
         const self: *Resolver = @ptrCast(@alignCast(context));
         const recipe = self.graph.captured_expressions.items[recipe_id];
         var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, recipe.bindings.len);
@@ -2792,9 +2687,12 @@ pub const Resolver = struct {
             .body = null,
         }, &substitutions);
         defer instance.deinit();
-        instance.function = reach.ownerFunction();
-        instance.callsite_reach = reach;
-        const expression = try instance.instantiateNode(recipe.expression);
+        instance.function = lexical_context.ownerFunction();
+        instance.callsite_context = lexical_context;
+        const expression = if (expected) |ty|
+            try instance.instantiateNodeWithExpected(recipe.expression, ty)
+        else
+            try instance.instantiateNode(recipe.expression);
         for (instance.callsite_temporaries.items) |declaration| {
             try self.graph.argument_default_temporaries.append(self.allocator, .{ .expression = expression, .declaration = declaration });
         }
@@ -2826,7 +2724,7 @@ pub const Resolver = struct {
         node_map: instantiation_map.Map(global_sg.GlobalNodeId),
         block_map: instantiation_map.Map(global_sg.GlobalBlockId),
         function: ?global_sg.GlobalFunctionId = null,
-        callsite_reach: ?ReachInferenceContext = null,
+        callsite_context: ?CallContext = null,
         callsite_temporaries: std.ArrayList(global_sg.GlobalNodeId) = .empty,
         conditional_bindings: std.ArrayList(struct { local: ir.ParameterizedBindingId, global: global_sg.GlobalBindingId }) = .empty,
         entry_captures: std.ArrayList(struct { field: global_sg.Field, binding: global_sg.GlobalBindingId }) = .empty,
@@ -2862,7 +2760,7 @@ pub const Resolver = struct {
             if (mutability != .constant and (range.len != 0 or fields.len == 0)) return self.instantiateBindingRange(range);
             // Input defaults belong to the signature as recipes. Evaluating
             // their template initializers here would allocate storage in the
-            // callee and lose the caller's reached capabilities. Named input
+            // callee and lose the caller's lexical assumptions. Named input
             // types use this same path without duplicate local declarations.
             const bindings = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, fields.len);
             defer self.resolver.allocator.free(bindings);
@@ -3284,7 +3182,6 @@ pub const Resolver = struct {
             // the complete contextual record type. A type annotation alone
             // cannot manufacture omitted runtime fields.
             const context = try self.operatorContext(null);
-            defer self.resolver.allocator.free(context.global.visible_bindings);
             if (!try self.resolver.core.completeRecordValue(expected, global, context))
                 return error.MissingParameterizedStructField;
             try self.resolver.graph.setNodeType(self.resolver.allocator, global, expected);
@@ -3342,7 +3239,6 @@ pub const Resolver = struct {
                 .ty = ty,
                 .content = switch (node.content) {
                     .binding_use, .binding_declaration, .assignment, .move_value => unreachable,
-                    .reach_directive => |reach| .{ .reach_directive = try self.instantiateReach(reach) },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .value_sequence => |block| .{ .value_sequence = try self.instantiateBlock(block) },
                     .replacement => return error.InvalidParameterizedNode,
@@ -3362,29 +3258,6 @@ pub const Resolver = struct {
                     else => return error.UnsupportedResolvedParameterizedNode,
                 },
             };
-        }
-
-        fn instantiateReach(self: *InstanceContext, id: ir.ParameterizedReachId) !global_sg.GlobalReachId {
-            const module = &self.resolver.modules[self.module_index];
-            const storage = &module.semantic.parameterized_storage.ir;
-            const local = storage.reaches.items[@intFromEnum(id)];
-            const alternatives_start: u32 = @intCast(self.resolver.graph.reach_alternatives.items.len);
-            for (storage.reach_alternatives.items[local.alternatives.start..][0..local.alternatives.len]) |alternative| {
-                const segments_start: u32 = @intCast(self.resolver.graph.reach_segments.items.len);
-                for (storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len]) |segment|
-                    try self.resolver.graph.reach_segments.append(
-                        self.resolver.allocator,
-                        try self.resolver.graph.addString(self.resolver.allocator, module.text(segment)),
-                    );
-                try self.resolver.graph.reach_alternatives.append(self.resolver.allocator, .{
-                    .segments = .{ .start = segments_start, .len = alternative.segments.len },
-                });
-            }
-            const global: global_sg.GlobalReachId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.reaches.items.len)));
-            try self.resolver.graph.reaches.append(self.resolver.allocator, .{
-                .alternatives = .{ .start = alternatives_start, .len = local.alternatives.len },
-            });
-            return global;
         }
 
         fn instantiateStructValue(self: *InstanceContext, node: ir.ResolvedNode) !global_sg.Node {
@@ -3415,7 +3288,7 @@ pub const Resolver = struct {
             // annotated storage supply the expected nominal record later.
             var assumed: std.ArrayList(global_sg.ValueField) = .empty;
             defer assumed.deinit(self.resolver.allocator);
-            if (self.callsite_reach) |context| {
+            if (self.callsite_context) |context| {
                 // A default executes in its caller's lexical environment.
                 // Re-instantiating the declaration's assumed bindings creates
                 // body-local slots that do not exist at that call site.
@@ -3628,18 +3501,16 @@ pub const Resolver = struct {
                         const callee = try self.instantiateNode(value.detail.callee_value);
                         if (global_types.definitionValue(self.resolver.graph, callee)) |definition| {
                             if (self.resolver.graph.familyDefinition(definition.origin).kind == .function) {
-                                const reach = try self.operatorContext(value.assumed_arguments);
-                                defer self.resolver.allocator.free(reach.global.visible_bindings);
-                                break :blk try self.resolver.makeDefinitionCall(self.module_index, .{ .kind = .function, .module_path = null, .name = name, .source = value.source }, definition, args, input, reach, self.resolver.sourceFor(self.module_index, value.source));
+                                const lexical_context = try self.operatorContext(value.assumed_arguments);
+                                break :blk try self.resolver.makeDefinitionCall(self.module_index, .{ .kind = .function, .module_path = null, .name = name, .source = value.source }, definition, args, input, lexical_context, self.resolver.sourceFor(self.module_index, value.source));
                             }
                         }
                     }
                     if (value.contract_type) |contract| {
                         const base = try self.resolver.generics.instantiateParameterizedType(self.module_index, contract, self.substitutions);
                         var context = try self.operatorContext(value.assumed_arguments);
-                        defer self.resolver.allocator.free(context.global.visible_bindings);
                         if (self.resolver.graph.node(input).content == .struct_value_literal)
-                            context.global.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
+                            context.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
                         const contracts = self.resolver.nested_call_context orelse return error.InvalidContractOperation;
                         break :blk try contracts.makeSpecializedScopedOperationCall(self.module_index, base, self.resolver.modules[self.module_index].text(name), args, input, context, self.resolver.sourceFor(self.module_index, value.source)) orelse error.InvalidContractOperation;
                     }
@@ -4042,7 +3913,6 @@ pub const Resolver = struct {
             // Default expressions can be materialized before a function body
             // exists. They have no body-local input bindings to expose.
             const nested_reach = try self.operatorContext(null);
-            defer self.resolver.allocator.free(nested_reach.global.visible_bindings);
             {
                 const operation_module = if (module_path) |path| try self.resolver.core.findModuleForQualifier(self.module_index, module.text(path)) else null;
                 if (try self.resolver.resolveSpecializedOperationIdentityFiltered(self.module_index, name, input, nested_reach, self.resolver.sourceFor(self.module_index, source), operation_module, arguments, reference)) |operation| return operation;
@@ -4069,7 +3939,6 @@ pub const Resolver = struct {
                                         nested_reach,
                                         self.resolver.sourceFor(self.module_index, source),
                                     )) |node| {
-                                        try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
                                         return node;
                                     }
                                 }
@@ -4080,7 +3949,7 @@ pub const Resolver = struct {
                     }
                 else ordinary_lookup: {
                     const ordinary = if (module_path == null)
-                        try self.resolver.core.matchUnqualifiedFunctionByNameWithReach(self.module_index, name, input, nested_reach)
+                        try self.resolver.core.matchUnqualifiedFunctionByName(self.module_index, name, input)
                     else
                         try self.resolver.core.matchFunctionByName(self.module_index, reference, input);
                     if (ordinary == .function) break :ordinary_lookup ordinary.function;
@@ -4091,7 +3960,6 @@ pub const Resolver = struct {
                         if (self.resolver.nested_constructor_context) |context| {
                             if (self.resolver.nested_constructor_resolver) |resolve| {
                                 if (try resolve(context, self.module_index, reference, arguments, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |node| {
-                                    try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
                                     return node;
                                 }
                             }
@@ -4099,7 +3967,6 @@ pub const Resolver = struct {
                         if (self.resolver.nested_call_context) |context| {
                             if (self.resolver.nested_call_resolver) |resolve| {
                                 if (try resolve(context, self.module_index, reference, input, self.resolver.sourceFor(self.module_index, source), nested_reach)) |node| {
-                                    try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
                                     return node;
                                 }
                             }
@@ -4113,7 +3980,6 @@ pub const Resolver = struct {
                 input,
                 nested_reach,
             )) return error.IncompleteParameterizedCallInput;
-            try self.resolver.core.trackReachedCall(function, input, nested_reach, false);
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = try self.resolver.core.functionOutputType(function),
@@ -4171,9 +4037,8 @@ pub const Resolver = struct {
             };
             try self.resolver.core.contextualizeArithmeticPair(operands);
             const identity = standard_contracts.arithmeticOperation(operator);
-            const reach = try self.operatorContext(assumed);
-            defer self.resolver.allocator.free(reach.global.visible_bindings);
-            const call = try self.resolver.makeContractOperator(self.module_index, identity.contract, identity.operation, operands, reach, null) orelse return error.UnresolvedContractArithmetic;
+            const lexical_context = try self.operatorContext(assumed);
+            const call = try self.resolver.makeContractOperator(self.module_index, identity.contract, identity.operation, operands, lexical_context, null) orelse return error.UnresolvedContractArithmetic;
             return self.resolver.lowerSelectedScalarArithmetic(call, operator, operands);
         }
 
@@ -4185,9 +4050,8 @@ pub const Resolver = struct {
             };
             try self.resolver.core.contextualizeArithmeticPair(operands);
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
-            const reach = try self.operatorContext(assumed);
-            defer self.resolver.allocator.free(reach.global.visible_bindings);
-            if (try self.resolver.makeComparisonCall(self.module_index, operator, operands, reach, null)) |call|
+            const lexical_context = try self.operatorContext(assumed);
+            if (try self.resolver.makeComparisonCall(self.module_index, operator, operands, lexical_context, null)) |call|
                 return self.resolver.comparisonResult(self.resolver.lowerSelectedScalarComparison(call, if (operator == .not_equal) .equal else operator, operands), operator);
             const left = self.resolver.graph.node(operands[0]).ty orelse return error.UntypedParameterizedComparison;
             const right = self.resolver.graph.node(operands[1]).ty orelse return error.UntypedParameterizedComparison;
@@ -4265,22 +4129,16 @@ pub const Resolver = struct {
             };
         }
 
-        fn operatorContext(self: *InstanceContext, assumed: ?ir.ParameterizedNodeId) !ReachInferenceContext {
-            if (self.callsite_reach) |inherited| {
-                const visible = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, inherited.bindingCount());
-                for (visible, 0..) |*binding, index| binding.* = inherited.bindingAt(index);
-                var result = ReachInferenceContext.fromGlobal(visible, inherited.ownerFunction());
-                result.global.assumed_fields = inherited.assumedFields();
+        fn operatorContext(self: *InstanceContext, assumed: ?ir.ParameterizedNodeId) !CallContext {
+            if (self.callsite_context) |inherited| {
+                var result = CallContext.fromGlobal(&.{}, inherited.ownerFunction());
+                result.assumed_fields = inherited.assumedFields();
                 return result;
             }
-            var context = ReachInferenceContext.fromGlobal(&.{}, self.function);
+            var context = CallContext.fromGlobal(&.{}, self.function);
             if (assumed) |local| {
                 const input = try self.instantiateNode(local);
-                context.global.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
-            }
-            if (self.function) |function| {
-                const bindings = self.resolver.graph.functions.items[@intFromEnum(function)].input_bindings;
-                context.global.visible_bindings = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[bindings.start..][0..bindings.len]);
+                context.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
             }
             return context;
         }
@@ -4366,7 +4224,6 @@ pub const Resolver = struct {
                 .source = source,
             };
             const context = try self.operatorContext(value.assumed_arguments);
-            defer self.resolver.allocator.free(context.global.visible_bindings);
             switch (try control.resolveForEach(self.module_index, std.mem.zeroes(globalizer.Offsets), operation, context)) {
                 .resolved => {},
                 .deferred => return error.DeferredGenericFunction,
@@ -4429,7 +4286,7 @@ pub const Resolver = struct {
                 return self.resolver.graph.node(operands[0]);
             const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });
             var target = operands[0];
-            if (self.callsite_reach != null) switch (self.resolver.graph.node(target).content) {
+            if (self.callsite_context != null) switch (self.resolver.graph.node(target).content) {
                 .binding_use, .assignment, .struct_field_access, .choice_payload_access, .array_index, .dereference => {},
                 else => {
                     const graph = self.resolver.graph;
@@ -4537,9 +4394,9 @@ test "generic literal compatibility preserves allocation errors and speculative 
     }.probe, .{});
 }
 
-test "generic input matching propagates allocation errors in concrete pointer and reached inputs" {
+test "generic input matching propagates allocation errors in concrete and pointer inputs" {
     const Probe = struct {
-        fn run(pointer: bool, reached: bool) !void {
+        fn run(pointer: bool) !void {
             const setup = std.testing.allocator;
             var module: module_sg.ModuleSemanticGraph = .{};
             defer module.deinit(setup);
@@ -4553,18 +4410,6 @@ test "generic input matching propagates allocation errors in concrete pointer an
             if (pointer) {
                 try graph.types.append(setup, .{ .builtin = .Int32 });
                 try graph.types.append(setup, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
-            }
-            if (reached) {
-                const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
-                const name = try @import("../primitives/strings.zig").append(&module.strings, setup, "provider");
-                try storage.nodes.append(setup, .{ .resolved = .{ .source = source, .ty = null, .content = .{ .reach_directive = @enumFromInt(0) } } });
-                try storage.reach_segments.append(setup, name);
-                try storage.reach_alternatives.append(setup, .{ .segments = .{ .start = 0, .len = 1 } });
-                try storage.reaches.append(setup, .{ .alternatives = .{ .start = 0, .len = 1 } });
-                try storage.fields.append(setup, .{ .name = name, .ty = @enumFromInt(0), .source = source, .default_value = @enumFromInt(0) });
-                try storage.types.append(setup, .{ .resolved = .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } } });
-                try graph.nodes.append(setup, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } });
-                try graph.bindings.append(setup, .{ .name = try graph.addString(setup, "provider"), .source = source, .ty = @enumFromInt(0), .initialization = null, .mutability = .constant });
             }
             const modules = [_]module_sg.ModuleSemanticGraph{module};
             const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
@@ -4583,18 +4428,13 @@ test "generic input matching propagates allocation errors in concrete pointer an
             const actual: global_sg.GlobalTypeId = @enumFromInt(@as(u32, if (pointer) 2 else 0));
             var failing = std.testing.FailingAllocator.init(setup, .{ .fail_index = 0 });
             generics.allocator = failing.allocator();
-            if (reached) {
-                try std.testing.expectError(error.OutOfMemory, resolver.inferBindingsFromReachDefaults(0, @enumFromInt(1), @enumFromInt(0), &bindings, ReachInferenceContext.fromGlobal(&.{@enumFromInt(0)}, null)));
-                return;
-            }
             try std.testing.expectError(error.OutOfMemory, resolver.inferInputType(0, pattern, actual, &bindings));
             generics.allocator = setup;
             try std.testing.expect(!try resolver.inferInputType(0, pattern, actual, &bindings));
         }
     };
-    try Probe.run(false, false);
-    try Probe.run(true, false);
-    try Probe.run(false, true);
+    try Probe.run(false);
+    try Probe.run(true);
 }
 
 test "nominal reference prefilter preserves allocation errors resolving external families" {

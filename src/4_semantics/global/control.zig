@@ -9,7 +9,7 @@ const generic_functions_mod = @import("generic_functions.zig");
 const contract_mod = @import("contracts.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 
 pub const Stats = struct {
     choices: u32 = 0,
@@ -97,7 +97,7 @@ pub const Resolver = struct {
             .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
             .resolve_match => |value| try self.resolveMatch(module, o, value),
             .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
-            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function)),
+            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value, call_context.Context.fromModule(o, value.owner_function)),
             else => .not_applicable,
         };
     }
@@ -539,7 +539,7 @@ pub const Resolver = struct {
         call: global_sg.GlobalNodeId,
     };
 
-    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, context: reach_context.Context) !resolution.Result {
+    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, context: call_context.Context) !resolution.Result {
         @setEvalBranchQuota(5000);
         const generic_functions = self.generic_functions orelse return .deferred;
         const contracts = self.contracts orelse return .deferred;
@@ -712,7 +712,7 @@ pub const Resolver = struct {
         module_index: usize,
         name: []const u8,
         argument: global_sg.GlobalNodeId,
-        context: reach_context.Context,
+        context: call_context.Context,
         source: primitives.SourceRef,
     ) !SyntheticCallResult {
         const input = try self.positionalInput(argument, source);
@@ -722,8 +722,7 @@ pub const Resolver = struct {
         const participant = if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty;
         const contracts = self.contracts orelse return .deferred;
         var participants = [_]global_sg.GlobalTypeId{participant};
-        // Generated protocol calls retain the loop's lexical reach context.
-        // Selected operations can gain transitive inputs on later passes.
+        // Generated protocol calls use the loop's ordinary lexical assumptions.
         const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = .{ .stable = &participants } }, name, input, context, source) orelse return .deferred;
         const value = try self.appendNode(source, node.ty orelse return .deferred, node.content);
         return .{ .call = value };

@@ -9,9 +9,17 @@ implement ErrorTracer#(CountingTracer) (
         self&.location = location.value
     }
     .reset_context = (.self: $&CountingTracer) -> () {}
-    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .report        = (
+        .self         : $&CountingTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..ok Void()
     }
 )

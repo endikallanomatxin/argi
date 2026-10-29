@@ -1,11 +1,18 @@
 words ::= import ("../../../usecase_tests/03_word_count/library")
 
 expect_count := (
-    .self: &HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
-    .word      : StringView,
-    .expected  : UIntNative,
-    .allocator : $&PageAllocator
+    .self         : &HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+    .word         : StringView,
+    .expected     : UIntNative,
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> !Void = ..ok Void() {
+    assume error_tracer
+
     assume allocator
     key ::= format(.value = word)!
     match get_reference(.self = self, .key = view(&key)).result {

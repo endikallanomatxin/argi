@@ -1,7 +1,16 @@
 Input := (.position: UIntNative = 0)
 
 implement Reader#(Input) (
-    .read_byte = (.self: $&Input) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+    .read_byte = (
+        .self         : $&Input,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume error_tracer
+
         if self&.position == 0 {
             self&.position = 1
             result = ..ok ..ok 65

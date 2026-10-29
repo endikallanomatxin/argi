@@ -78,7 +78,7 @@ _error_report_entry := (
 }
 
 report_trace := #(.WriterType: Type: Writer#(WriterType)) (
-    .tracer: $&Virtual#(.contract: ErrorTracer), .writer: $&WriterType = reach writer
+    .tracer: $&Virtual#(.contract: ErrorTracer), .writer: $&WriterType
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     assume error_tracer ::= $&noop_error_tracer
     virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)

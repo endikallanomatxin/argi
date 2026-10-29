@@ -9,7 +9,16 @@ Owner := (.allocation: Allocation)
 
 implement#(.A: Type: Allocator) Construct#(Owner, ConstructionArgs#(A)) (
     .Result    : Type = Errable#(Owner, (..out_of_memory))
-    .construct = (.args: ConstructionArgs#(A)) -> (.result: Result) {
+    .construct = (
+        .args         : ConstructionArgs#(A),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Result) {
+        assume error_tracer
+
         allocation ::= Allocator#(
             A
         ).allocate(.self = args.allocator, .size = args.length, .alignment = 1)!

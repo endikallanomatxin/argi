@@ -45,8 +45,8 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     )!!!
     if view(.self = &decoded) != "café 🙂\n" { abort }
     storage ::= zeroed#(.t: [64]UInt8)()
-    writer ::= ByteWriter(.bytes = view(.self = $&storage))
-    json.write_string(.writer = $&writer, .text = view(.self = &decoded))!!!
+    buffer_writer ::= ByteWriter(.bytes = view(.self = $&storage))
+    json.write_string(.writer = $&buffer_writer, .text = view(.self = &decoded))!!!
     text_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
             .bytes = unwrap_or_abort(

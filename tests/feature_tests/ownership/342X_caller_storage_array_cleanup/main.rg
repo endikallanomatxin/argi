@@ -1,16 +1,15 @@
 CleanupCounter := (.value: Int32)
 
-Resource := (.value: Int32)
+Resource := (.value: Int32, .counter: $&CleanupCounter)
 
 implement Deinit#(Resource) (
-    .deinit = (.self: $&Resource, .counter: $&CleanupCounter = reach cleanup_counter) -> () {
-        counter&.value = counter&.value + 1
+    .deinit = (.self: $&Resource) -> () {
+        self&.counter&.value = self&.counter&.value + 1
     }
 )
 
 make := (.external: $&CleanupCounter) -> (.result: &Resource) {
-    assume cleanup_counter ::= external
-    resource :: Resource = (.value = 7)
+    resource :: Resource = (.value = 7, .counter = external)
     result = &resource
 }
 

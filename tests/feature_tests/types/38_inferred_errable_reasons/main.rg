@@ -1,19 +1,51 @@
 ..test_error
 
-fail := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_error)
 }
 
-from_propagation := () -> !Int32 {
+from_propagation := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Int32 {
+    assume error_tracer
+
     value := fail()!
     result = ..ok value + 1
 }
 
-direct_error := () -> !Int32 {
+direct_error := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Int32 {
+    assume error_tracer
+
     result = ..error(.reason = ..test_error)
 }
 
-explicit_output := () -> (.result: Errable#(.t: Int32)) {
+explicit_output := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32)) {
+    assume error_tracer
+
     value := fail()!
     result = ..ok value + 2
 }

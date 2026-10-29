@@ -1,6 +1,15 @@
 logging := import ("logging")
 
-check := (.system: System) -> (.result: Errable#(Void, logging.LogReasons) = ..ok Void()) {
+check := (
+    .system       : System,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, logging.LogReasons) = ..ok Void()) {
+    assume error_tracer
+
     output_bytes ::= zeroed#([64]UInt8)()
     error_bytes ::= zeroed#([64]UInt8)()
     output ::= ByteWriter(.bytes = view(.self = $&output_bytes))

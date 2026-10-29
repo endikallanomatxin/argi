@@ -3,9 +3,7 @@ Box := #(.t: Type) (.value: t)
 implement#(.t: Type: ImplicitlyCopyable) ImplicitlyCopyable#(Box#(.t: t)) ()
 
 implement#(.t: Type) Equal#(Box#(.t: t), Box#(.t: t)) (
-    .equal = (.left: Box#(.t: t), .right: Box#(.t: t), .bias: Int32 = reach bias) -> (
-        .ok : Bool
-    ) {
+    .equal = (.left: Box#(.t: t), .right: Box#(.t: t), .bias: Int32 = 0) -> (.ok: Bool) {
         ok = left.value == right.value and bias == 7
     }
 )

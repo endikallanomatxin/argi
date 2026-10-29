@@ -94,7 +94,6 @@ pub const Content = union(enum(u8)) {
     keyword_continue: struct {},
     keyword_once: struct {},
     keyword_assume: struct {},
-    keyword_reach: struct {},
     keyword_import: struct {},
     keyword_test: struct {},
     keyword_implement: struct {},
@@ -226,7 +225,7 @@ pub fn lexicalClass(content: Content) ?LexicalClass {
             .bool_literal => .keyword,
             else => .number,
         },
-        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_implement, .keyword_defer, .keyword_and, .keyword_or => .keyword,
+        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_test, .keyword_implement, .keyword_defer, .keyword_and, .keyword_or => .keyword,
         .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .operator,
         else => null,
     };

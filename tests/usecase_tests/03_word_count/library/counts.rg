@@ -1,8 +1,14 @@
 count_text := (
-    .self      : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
-    .text      : StringView,
-    .allocator : $&PageAllocator
+    .self         : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+    .text         : StringView,
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> !Void = ..ok Void() {
+    assume error_tracer
     assume allocator
 
     for token in split_whitespace(text) {
@@ -19,17 +25,23 @@ count_text := (
 }
 
 count_directory := (
-    .self        : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
-    .path        : StringView,
-    .limit       : UIntNative,
-    .buffer      : MutableArrayView#(.t: UInt8),
-    .file_system : $&FileSystem,
-    .allocator   : $&PageAllocator
+    .self         : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+    .path         : StringView,
+    .limit        : UIntNative,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .file_system  : $&FileSystem,
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> !Void = ..ok Void() {
+    assume error_tracer
     assume allocator
     assume file_system
 
-    directory ::= Directory(.path = path)!! path
+    directory ::= Directory(.self = file_system, .path = path)!! path
 
     while true {
         match next($&directory)!! path {

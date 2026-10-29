@@ -128,9 +128,6 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.virtual_registries.items) |value| try payload.virtualRegistry(ir.Ids, value, bounds);
     for (storage.virtualizes.items) |value| try payload.virtualize(ir.Ids, value, bounds);
     for (storage.virtual_calls.items) |value| try payload.virtualCall(ir.Ids, value, bounds);
-    for (storage.reach_segments.items) |range| try require(verify.stringFits(range, graph.strings.items));
-    for (storage.reach_alternatives.items) |value| try payload.reachAlternative(ir.Ids, value, bounds);
-    for (storage.reaches.items) |value| try payload.reach(ir.Ids, value, bounds);
     for (storage.nullable_unwraps.items) |value| try payload.nullableUnwrap(ir.Ids, value, bounds);
     for (storage.testing_expect_errors.items) |value| try payload.testingExpectError(ir.Ids, value, bounds);
     for (storage.error_propagations.items) |value| try payload.errorPropagation(ir.Ids, value, bounds);
@@ -249,9 +246,6 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtual_registries = storage.virtual_registries.items.len,
         .virtualizes = storage.virtualizes.items.len,
         .virtual_calls = storage.virtual_calls.items.len,
-        .reach_segments = storage.reach_segments.items.len,
-        .reach_alternatives = storage.reach_alternatives.items.len,
-        .reaches = storage.reaches.items.len,
         .nullable_unwraps = storage.nullable_unwraps.items.len,
         .testing_expect_errors = storage.testing_expect_errors.items.len,
         .error_propagations = storage.error_propagations.items.len,

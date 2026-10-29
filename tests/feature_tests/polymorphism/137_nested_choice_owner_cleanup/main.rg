@@ -12,7 +12,17 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-make := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) {
+make := (
+    .self         : &Cell,
+    .mode         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Owned, (..failed))) {
+    assume error_tracer
+
     if mode == 0 {
         result = ..ok ..none
         return

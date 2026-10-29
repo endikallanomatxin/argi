@@ -21,11 +21,27 @@ implement Deinit#(Resource) (
     }
 )
 
-fail := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_error)
 }
 
-propagate := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error, ..cleanup_error))) {
+propagate := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error, ..cleanup_error))) {
+    assume error_tracer
+
     handle := Resource()
     value := fail()!
     if dummy_counter != 1 {

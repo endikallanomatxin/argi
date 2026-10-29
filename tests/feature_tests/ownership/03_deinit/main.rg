@@ -1,4 +1,4 @@
-Resource: Type = ()
+Resource: Type = (.ffi: $&ForeignFunctionInterface)
 
 dummy_counter :: Int32 = 0
 dummy_status :: Int32 = 0
@@ -6,16 +6,21 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-ResourceInitArgs: Type = (.counter: $&Int32, .status: $&Int32)
+ResourceInitArgs: Type = (
+    .counter : $&Int32,
+    .status  : $&Int32,
+    .ffi     : $&ForeignFunctionInterface
+)
 
 implement Init#(Resource, ResourceInitArgs) (
     .Result : Type = Resource
 
     .init = ResourceInitArgs -> (.result: Result) {
+        assume ffi
         _init_counter ::= ~counter
         _init_status ::= ~status
 
-        result = ()
+        result = (.ffi = ffi)
 
         puts(.string = "Initializing resource\n")
         global_counter_ptr = _init_counter
@@ -25,13 +30,15 @@ implement Init#(Resource, ResourceInitArgs) (
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
+        assume ffi := self&.ffi
         puts(.string = "Deinitializing resource\n")
         global_counter_ptr&= global_counter_ptr&+ 1
         global_status_ptr&= 0
     }
 )
 
-verify := (.counter: $&Int32, .status: $&Int32) -> () {
+verify := (.counter: $&Int32, .status: $&Int32, .ffi: $&ForeignFunctionInterface) -> () {
+    assume ffi
     puts(.string = "Verifying resource\n")
     if counter&!= 1 {
         status&= 7

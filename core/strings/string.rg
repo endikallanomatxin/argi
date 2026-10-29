@@ -24,8 +24,16 @@ String := (
 )
 
 string_with_length := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .length: UIntNative
+    .allocator    : $&AllocatorType,
+    .length       : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if length > _string_max_result_length().length {
@@ -49,8 +57,16 @@ string_with_length := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .capacity: UIntNative
+    .allocator    : $&AllocatorType,
+    .capacity     : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     actual_capacity ::= capacity
@@ -76,12 +92,20 @@ string_with_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 StringInitArgs: Type = #(.A: Type: Allocator) (
     .allocator : $&A,
     .length    : UIntNative = 0
+    ,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 )
 
 implement#(.A: Type: Allocator) Init#(String, StringInitArgs#(A)) (
     .Result : Type = Errable#(String, (..out_of_memory))
 
     .init = StringInitArgs#(A) -> (.result: Result) {
+        assume error_tracer
+
         result = string_with_length(.allocator = allocator, .length = length)
     }
 )
@@ -94,9 +118,17 @@ implement Deinit#(String) (
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
     .reasons : Type = (..out_of_memory)
-    .copy    = (.self: &String, .allocator: $&Provider) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+    .copy    = (
+        .self         : &String,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(String, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
 
         if self&._length > _string_max_result_length().length {
@@ -132,9 +164,17 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
 )
 
 -- The trailing NUL belongs to C interop, outside the logical byte range.
-string_byte_reference := (.string: &String, .index: UIntNative) -> (
-    .result : Errable#(&UInt8, (..out_of_bounds))
-) {
+string_byte_reference := (
+    .string       : &String,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(&UInt8, (..out_of_bounds))) {
+    assume error_tracer
+
     if index >= string&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -144,9 +184,17 @@ string_byte_reference := (.string: &String, .index: UIntNative) -> (
     ).reference
 }
 
-_string_get_byte := (.view: &String, .index: UIntNative) -> (
-    .result : Errable#(UInt8, (..out_of_bounds))
-) {
+_string_get_byte := (
+    .view         : &String,
+    .index        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(UInt8, (..out_of_bounds))) {
+    assume error_tracer
+
     reference ::= string_byte_reference(.string = view, .index = index)!
     result = ..ok reference&
 }
@@ -228,16 +276,34 @@ _string_growth_capacity := (.self: &String, .min_capacity: UIntNative) -> (.valu
 }
 
 ensure_capacity := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&String, .capacity: UIntNative, .allocator: $&AllocatorType
+    .self         : $&String,
+    .capacity     : UIntNative,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     result = ensure_capacity_growing(self, .target_capacity = capacity, .allocator = allocator)
 }
 
 ensure_capacity_growing := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&String, .target_capacity: UIntNative, .allocator: $&AllocatorType
+    .self            : $&String,
+    .target_capacity : UIntNative,
+    .allocator       : $&AllocatorType,
+    .error_tracer    : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if target_capacity > _string_max_result_length().length {
@@ -323,8 +389,17 @@ _string_append_bytes := (.self: $&String, .source: ArrayView#(.t: UInt8)) -> () 
 }
 
 _string_push_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&String, .byte: UInt8, .allocator: $&AllocatorType
+    .self         : $&String,
+    .byte         : UInt8,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if self&._length >= _string_max_result_length().length {
@@ -354,8 +429,17 @@ _string_push_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 push_c_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&String, .text: &CChar, .allocator: $&AllocatorType
+    .self         : $&String,
+    .text         : &CChar,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory, ..invalid_utf8))) {
+    assume error_tracer
+
     assume allocator
 
     append_length ::= c_string_length(.text = text).length
@@ -399,8 +483,17 @@ push_c_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 push_view := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&String, .view: StringView, .allocator: $&AllocatorType
+    .self         : $&String,
+    .view         : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     limit ::= _string_max_result_length().length
@@ -466,8 +559,17 @@ _trusted_c_string_view := (.text: &CChar) -> (.view: StringView) {
 }
 
 concat_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .left: &StringView, .right: &StringView, .allocator: $&AllocatorType
+    .left         : &StringView,
+    .right        : &StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     limit ::= _string_max_result_length().length
@@ -506,8 +608,17 @@ concat_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 implement Add#(&String, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: &CChar, .allocator: $&Provider
+        .left         : &String,
+        .right        : &CChar,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
 
         left_view ::= view(left)
@@ -522,8 +633,17 @@ implement Add#(&String, &CChar) (
 implement Add#(&String, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: &StringView, .allocator: $&Provider
+        .left         : &String,
+        .right        : &StringView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
 
         left_view ::= view(left)
@@ -535,8 +655,17 @@ implement Add#(&String, &StringView) (
 implement Add#(&String, StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: StringView, .allocator: $&Provider
+        .left         : &String,
+        .right        : StringView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
         left_view ::= view(left)
         result = concat_views(&left_view, &right)
@@ -546,8 +675,17 @@ implement Add#(&String, StringView) (
 implement Add#(&String, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &String, .right: &String, .allocator: $&Provider
+        .left         : &String,
+        .right        : &String,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
 
         left_view ::= view(left)
@@ -560,8 +698,17 @@ implement Add#(&String, &String) (
 implement Add#(&StringView, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: &CChar, .allocator: $&Provider
+        .left         : &StringView,
+        .right        : &CChar,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
 
         right_text ::= string_from_c_string(.text = right)!
@@ -575,8 +722,17 @@ implement Add#(&StringView, &CChar) (
 implement Add#(&StringView, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: &StringView, .allocator: $&Provider
+        .left         : &StringView,
+        .right        : &StringView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
 
         result = concat_views(.left = left, .right = right)
@@ -586,8 +742,17 @@ implement Add#(&StringView, &StringView) (
 implement Add#(&StringView, StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: StringView, .allocator: $&Provider
+        .left         : &StringView,
+        .right        : StringView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
         result = concat_views(left, &right)
     }
@@ -596,8 +761,17 @@ implement Add#(&StringView, StringView) (
 implement Add#(&StringView, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left: &StringView, .right: &String, .allocator: $&Provider
+        .left         : &StringView,
+        .right        : &String,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
     ) -> (.result: Result) {
+        assume error_tracer
+
         assume allocator
 
         right_view ::= view(right)
@@ -607,9 +781,18 @@ implement Add#(&StringView, &String) (
 )
 
 implement#(.Provider: Type: Allocator) Concatenation#(StringView, &String, Provider) (
-    .join = (.left: StringView, .right: &String, .allocator: $&Provider) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+    .join = (
+        .left         : StringView,
+        .right        : &String,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(String, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
         right_view := view(right)
 
@@ -618,9 +801,18 @@ implement#(.Provider: Type: Allocator) Concatenation#(StringView, &String, Provi
 )
 
 implement#(.Provider: Type: Allocator) Concatenation#(StringView, StringView, Provider) (
-    .join = (.left: StringView, .right: StringView, .allocator: $&Provider) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+    .join = (
+        .left         : StringView,
+        .right        : StringView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(String, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
 
         result = concat_views(&left, &right)
@@ -628,9 +820,18 @@ implement#(.Provider: Type: Allocator) Concatenation#(StringView, StringView, Pr
 )
 
 implement#(.Provider: Type: Allocator) Concatenation#(&String, StringView, Provider) (
-    .join = (.left: &String, .right: StringView, .allocator: $&Provider) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+    .join = (
+        .left         : &String,
+        .right        : StringView,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(String, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
         left_view := view(left)
 
@@ -639,9 +840,18 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, StringView, Provi
 )
 
 implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider) (
-    .join = (.left: &String, .right: &String, .allocator: $&Provider) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) {
+    .join = (
+        .left         : &String,
+        .right        : &String,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(String, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
         left_view := view(left)
         right_view := view(right)
@@ -653,8 +863,16 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
 -- Copy before validation: allocator callbacks may mutate borrowed input bytes.
 -- Only the independent, fully validated text escapes this function.
 string_from_bytes := #(.Provider: Type: Allocator) (
-    .bytes: ArrayView#(UInt8), .allocator: $&Provider
+    .bytes        : ArrayView#(UInt8),
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
     size ::= length(&bytes).count
     text ::= string_with_capacity(.allocator = allocator, .capacity = size)!
@@ -664,8 +882,17 @@ string_from_bytes := #(.Provider: Type: Allocator) (
 }
 
 push_ascii := #(.Provider: Type: Allocator) (
-    .self: $&String, .byte: UInt8, .allocator: $&Provider
+    .self         : $&String,
+    .byte         : UInt8,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
     if byte >= 128 {
         result = ..error(.reason = ..invalid_ascii)
@@ -676,8 +903,17 @@ push_ascii := #(.Provider: Type: Allocator) (
 }
 
 push_scalar := #(.Provider: Type: Allocator) (
-    .self: $&String, .scalar: UnicodeScalar, .allocator: $&Provider
+    .self         : $&String,
+    .scalar       : UnicodeScalar,
+    .allocator    : $&Provider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
     encoded ::= zeroed#(.t: [4]UInt8)()
     storage ::= view($&encoded)
@@ -693,7 +929,16 @@ push_scalar := #(.Provider: Type: Allocator) (
     result = ..ok Void()
 }
 
-_validate_string := (.self: &String) -> (.result: Errable#(Void, (..invalid_utf8))) {
+_validate_string := (
+    .self         : &String,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..invalid_utf8))) {
+    assume error_tracer
+
     if self&._length == 0 {
         result = ..ok Void()
         return
@@ -708,9 +953,18 @@ _validate_string := (.self: &String) -> (.result: Errable#(Void, (..invalid_utf8
     result = ..ok Void()
 }
 
-set_ascii := (.self: $&String, .index: UIntNative, .byte: UInt8) -> (
-    .result : Errable#(Void, (..invalid_ascii, ..out_of_bounds))
-) {
+set_ascii := (
+    .self         : $&String,
+    .index        : UIntNative,
+    .byte         : UInt8,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_bounds))) {
+    assume error_tracer
+
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -726,9 +980,17 @@ set_ascii := (.self: $&String, .index: UIntNative, .byte: UInt8) -> (
     result = ..ok Void()
 }
 
-append_ascii_assume_capacity := (.self: $&String, .byte: UInt8) -> (
-    .result : Errable#(Void, (..invalid_ascii))
-) {
+append_ascii_assume_capacity := (
+    .self         : $&String,
+    .byte         : UInt8,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..invalid_ascii))) {
+    assume error_tracer
+
     if byte >= 128 {
         result = ..error(.reason = ..invalid_ascii)
         return

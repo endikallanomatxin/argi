@@ -53,8 +53,16 @@ implement Init#(Path, PathInitArgs) (
 )
 
 path_with_view := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .view: StringView, .allocator: $&AllocatorType
+    .view         : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     text ::= string_with_capacity(.allocator = allocator, .capacity = view._length)!
@@ -71,9 +79,17 @@ implement Deinit#(Path) (
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
     .reasons : Type = (..out_of_memory)
-    .copy    = (.self: &Path, .allocator: $&Provider) -> (
-        .result : Errable#(Path, (..out_of_memory))
-    ) {
+    .copy    = (
+        .self         : &Path,
+        .allocator    : $&Provider,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Path, (..out_of_memory))) {
+        assume error_tracer
+
         assume allocator
 
         text ::= copy(&self&.text, .allocator = allocator)!
@@ -200,8 +216,17 @@ extension := (.self: &Path) -> (.value: ?StringView) {
 }
 
 join_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .left: &StringView, .right: &StringView, .allocator: $&AllocatorType
+    .left         : &StringView,
+    .right        : &StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     native :: UIntNative = 0
@@ -271,8 +296,17 @@ join_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 join := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .left: &Path, .right: &Path, .allocator: $&AllocatorType
+    .left         : &Path,
+    .right        : &Path,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     left_view ::= view(left)

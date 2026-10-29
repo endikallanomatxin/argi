@@ -4,5 +4,5 @@ const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNo
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/contracts/195X_init_generic_default_type" {
-    try expectFrontendFailureWithoutNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "arguments do not match the selected contract operation, including completed defaults", "no function named");
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "arguments do not match the selected contract operation, including defaults", "no function named");
 }

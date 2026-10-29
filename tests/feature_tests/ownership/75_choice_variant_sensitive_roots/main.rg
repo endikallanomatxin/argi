@@ -1,6 +1,14 @@
 make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .condition: Bool
+    .allocator    : $&AllocatorType,
+    .condition    : Bool,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     if condition {

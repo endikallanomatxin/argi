@@ -21,9 +21,18 @@ implement HashPolicy#(Policy, Int32) (
 FailAllocator: Type = ()
 
 implement Allocator#(FailAllocator) (
-    .allocate = (.self: $&FailAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result: Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&FailAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         result = ..error(.reason = ..out_of_memory)
     }
 )

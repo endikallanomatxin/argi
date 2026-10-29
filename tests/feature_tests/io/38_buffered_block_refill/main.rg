@@ -1,9 +1,16 @@
 Source := (.count: UIntNative)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source) -> (
-        .result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-    ) {
+    .read_byte = (
+        .self         : $&Source,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) {
+        assume error_tracer
+
         if self&.count == 4 {
             result = ..ok ..end
             return

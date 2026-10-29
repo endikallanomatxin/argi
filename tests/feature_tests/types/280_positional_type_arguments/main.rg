@@ -4,7 +4,16 @@ Reasons: Type = (..unavailable)
 
 Pair := #(.left: Type, .right: Type) (.left: left, .right: right)
 
-checked := (.value: Int32) -> (.result: Errable#(Int32, Reasons)) {
+checked := (
+    .value        : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Int32, Reasons)) {
+    assume error_tracer
+
     if value < 0 {
         result = ..error(.reason = ..unavailable)
         return
@@ -13,11 +22,29 @@ checked := (.value: Int32) -> (.result: Errable#(Int32, Reasons)) {
     result = ..ok value
 }
 
-echo := #(.t: Type) (.value: t) -> (.result: Errable#(t, Reasons)) {
+echo := #(.t: Type) (
+    .value        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(t, Reasons)) {
+    assume error_tracer
+
     result = ..ok value
 }
 
-open_echo := #(.t: Type) (.value: t) -> (.result: Errable#(t)) {
+open_echo := #(.t: Type) (
+    .value        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(t)) {
+    assume error_tracer
+
     result = ..ok value
 }
 

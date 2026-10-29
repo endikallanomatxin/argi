@@ -431,7 +431,7 @@ const Context = struct {
             .address_of,
             .address_of_mut,
             .dereference,
-            .reach_directive,
+
             .type_name,
             .pointer_type,
             .pointer_type_mut,
@@ -486,7 +486,6 @@ const Context = struct {
             .while_statement => self.lowerWhile(node),
             .match_statement => self.lowerMatch(node),
             .defer_statement => self.lowerDefer(node),
-            .reach_directive => self.lowerReach(node),
             .index_assignment => self.lowerIndexAssignment(node, expected),
             .address_of, .address_of_mut => self.lowerAddress(node, expected),
             .dereference => self.lowerDereference(node, expected),
@@ -595,18 +594,6 @@ const Context = struct {
             })
         else
             try self.writer.addUnresolvedBinding(name_range, source, initialization, mutability);
-        if (declaration.value) |value_node| {
-            if (self.tree.tag(value_node) == .reach_directive and declared_ty != null) {
-                const visible_bindings = try self.captureVisibleBindings();
-                _ = try self.writer.addPendingOperation(.{ .resolve_local_reach = .{
-                    .node = value.?.node,
-                    .reach = value.?.node,
-                    .binding = binding,
-                    .visible_bindings = visible_bindings,
-                    .owner_function = self.current_function,
-                } });
-            }
-        }
         try self.captureBindingCleanup(node, binding);
         const name = self.graph.semantic.bindings.items[@intFromEnum(binding)].name;
         try self.bindings.append(.{ .name = name, .id = binding, .ty = semantic_ty });
@@ -765,7 +752,7 @@ const Context = struct {
         return self.resolved(node, expected, .{ .value_sequence = block });
     }
 
-    // Reporting is an ordinary reached call. A bare return then follows the
+    // Reporting is an ordinary call. A bare return then follows the
     // enclosing function's output and cleanup rules.
     fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: entities.ModuleBindingId) !entities.ModuleBlockId {
         const error_use = try self.resolved(node, null, .{ .binding_use = failure });
@@ -1263,7 +1250,7 @@ const Context = struct {
                     has_tracer = has_tracer or std.mem.eql(u8, self.graph.text(field.name), "tracer");
                 }
                 if (has_reason and !has_tracer) {
-                    // Capturing the tracer is an ordinary reached call, so its
+                    // Capturing the tracer is an ordinary call, so its
                     // receiver dependency participates in safety summaries.
                     const location = try self.syntheticErrorCall(node, "error_location_id", null);
                     const trace = try self.syntheticErrorCall(node, "capture_error_tracer", location);
@@ -1671,26 +1658,6 @@ const Context = struct {
         defer self.defer_loop_depth = previous_loop_depth;
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         return self.pending(node, .{ .resolve_defer = .{ .node = self.nextNodeId(), .value = value.node } }, try self.builtin(.Void));
-    }
-
-    fn lowerReach(self: *Context, node: syn.NodeIndex) !Lowered {
-        const directive = self.tree.reachDirective(node).?;
-        const alt_start: u32 = @intCast(self.graph.semantic.reach_alternatives.items.len);
-        for (directive.alternatives) |alt_node| {
-            const alt = self.tree.reachAlternative(alt_node).?;
-            const seg_start: u32 = @intCast(self.graph.semantic.reach_segments.items.len);
-            for (alt.segments) |segment| {
-                try self.graph.semantic.reach_segments.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(segment))));
-            }
-            try self.graph.semantic.reach_alternatives.append(self.allocator, .{
-                .segments = .{ .start = seg_start, .len = @intCast(alt.segments.len) },
-            });
-        }
-        const reach_id: entities.ModuleReachId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.reaches.items.len)));
-        try self.graph.semantic.reaches.append(self.allocator, .{
-            .alternatives = .{ .start = alt_start, .len = @intCast(directive.alternatives.len) },
-        });
-        return self.resolved(node, try self.builtin(.Void), .{ .reach_directive = reach_id });
     }
 
     fn lowerAddress(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {

@@ -5,9 +5,18 @@ Token := (.value: Int32)
 implement ImplicitlyCopyable#(Token) ()
 
 implement TestEquality#(Token) (
-    .check_equal = (.expected: Token, .actual: Token, .message: StringView) -> (
-        .result: Errable#(Void, (..test_failed))
-    ) {
+    .check_equal = (
+        .expected     : Token,
+        .actual       : Token,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..test_failed))) {
+        assume error_tracer
+
         calls = calls + 1
         if expected.value == actual.value {
             result = ..ok Void()
@@ -17,9 +26,17 @@ implement TestEquality#(Token) (
     }
 )
 
-assert_same := #(.T: Type: TestEquality#(T)) (.expected: T, .actual: T) -> (
-    .result: Errable#(Void, (..test_failed))
-) {
+assert_same := #(.T: Type: TestEquality#(T)) (
+    .expected     : T,
+    .actual       : T,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = expect_equal(.expected = expected, .actual = actual)
 }
 

@@ -150,9 +150,6 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         try payload.virtualCall(graph_mod.Ids, value, bounds);
         try require(graph.virtual_registries.items[@intFromEnum(value.safety_methods)].receiver_input_index == value.self_input_index);
     }
-    for (graph.reach_segments.items) |range| try require(verify.stringFits(range, graph.strings.items));
-    for (graph.reach_alternatives.items) |value| try payload.reachAlternative(graph_mod.Ids, value, bounds);
-    for (graph.reaches.items) |value| try payload.reach(graph_mod.Ids, value, bounds);
     for (graph.nullable_unwraps.items) |value| try payload.nullableUnwrap(graph_mod.Ids, value, bounds);
     for (graph.testing_expect_errors.items) |value| try payload.testingExpectError(graph_mod.Ids, value, bounds);
     for (graph.error_propagations.items) |value| try payload.errorPropagation(graph_mod.Ids, value, bounds);
@@ -399,9 +396,6 @@ fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
         .virtual_registries = graph.virtual_registries.items.len,
         .virtualizes = graph.virtualizes.items.len,
         .virtual_calls = graph.virtual_calls.items.len,
-        .reach_segments = graph.reach_segments.items.len,
-        .reach_alternatives = graph.reach_alternatives.items.len,
-        .reaches = graph.reaches.items.len,
         .nullable_unwraps = graph.nullable_unwraps.items.len,
         .testing_expect_errors = graph.testing_expect_errors.items.len,
         .error_propagations = graph.error_propagations.items.len,

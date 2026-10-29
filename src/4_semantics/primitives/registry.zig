@@ -35,7 +35,7 @@ pub const specs = [_]Spec{
     .{ .primitive = .read_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "read_reference", .signatures = &.{"#(.t: Type)(.base: $&t) -> (.reference: &t)"} },
     .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocation.rg", .name = "trusted_establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.contract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
     .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/allocation_slots.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any, .index: ?UIntNative = ..none) -> (.reference: $&t)"} },
-    .{ .primitive = .native_allocated_storage, .operating_systems = &.{ .linux, .macos }, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative) -> (.address: UIntNative)"} },
+    .{ .primitive = .native_allocated_storage, .operating_systems = &.{ .linux, .macos }, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative)"} },
     .{ .primitive = .native_allocated_storage, .operating_systems = &.{.windows}, .path = "core/platforms/windows/page_mapping.rg", .name = "_memory_acquire_aligned", .signatures = &.{"(.length: UIntNative, .alignment: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
     .{ .primitive = .acquisition_subaddress, .path = "core/memory/heap_allocation/Memory.rg", .name = "_trusted_acquisition_subaddress", .signatures = &.{"(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative)"} },
     .{ .primitive = .relocate, .path = "core/memory/relocation.rg", .name = "relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },
@@ -287,7 +287,7 @@ pub fn opaqueCleanupTransition(primitive: primitives.SafetyPrimitive) ?struct { 
 }
 
 /// Operand positions come from primitive identity, not completed arity.
-/// Reached capabilities may follow the explicit inputs.
+/// Auxiliary capability inputs do not change the represented operand positions.
 pub const OpaqueMoveOperands = struct {
     owner: usize,
     storage: ?usize,

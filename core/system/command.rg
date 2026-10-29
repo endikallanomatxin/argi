@@ -55,11 +55,18 @@ _valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
 -- name; aliases and defaults are resolved without copying argument bytes.
 -- Names exclude ASCII controls, spaces and '='. Defaults require value options.
 parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .source    : &t,
-    .specs     : ArrayView#(.t: CliSpec),
-    .start     : UIntNative               = 0,
-    .allocator : $&AllocatorType
+    .source       : &t,
+    .specs        : ArrayView#(.t: CliSpec),
+    .start        : UIntNative               = 0,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(CliMatches, CliReasons)) {
+    assume error_tracer
+
     assume allocator
     count ::= length(&specs).count
     index :: UIntNative = 0
@@ -205,11 +212,18 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
 }
 
 write_cli_help := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer  : $&WriterType,
-    .program : StringView,
-    .about   : StringView,
-    .specs   : ArrayView#(.t: CliSpec)
+    .writer       : $&WriterType,
+    .program      : StringView,
+    .about        : StringView,
+    .specs        : ArrayView#(.t: CliSpec),
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+    assume error_tracer
+
     write(writer, .value = about)!
     write(writer, .value = "\nUsage: ")!
     write(writer, .value = program)!

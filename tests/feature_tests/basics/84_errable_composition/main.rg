@@ -1,8 +1,24 @@
-other := () -> (.result: Errable#(.t: Void, .reasons: (..empty))) {
+other := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..empty))) {
+    assume error_tracer
+
     result = ..error(.reason = ..empty)
 }
 
-bounded := () -> (.result: Errable#(.t: Void, .reasons: (..composition_failure)) = ..ok Void()) {
+bounded := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..composition_failure)) = ..ok Void()) {
+    assume error_tracer
+
     other()
 }
 
@@ -10,11 +26,29 @@ bounded := () -> (.result: Errable#(.t: Void, .reasons: (..composition_failure))
 
 Box := (.number: Int32)
 
-boxed := #(.t: Type) (.value: t) -> (.result: Errable#(.t: t, .reasons: (..composition_failure))) {
+boxed := #(.t: Type) (
+    .value        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: t, .reasons: (..composition_failure))) {
+    assume error_tracer
+
     result = ..ok ~value
 }
 
-pass := #(.t: Type) (.value: t) -> (.result: Errable#(.t: t, .reasons: (..composition_failure))) {
+pass := #(.t: Type) (
+    .value        : t,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: t, .reasons: (..composition_failure))) {
+    assume error_tracer
+
     payload ::= ~boxed(.value = ~value)!
     result = ..ok ~payload
 }

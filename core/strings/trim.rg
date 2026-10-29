@@ -59,9 +59,18 @@ trim := (.self: StringView) -> (.view: StringView) {
 
 -- Validate by subtraction before forming a borrowed reference. Empty results
 -- use static storage, including a slice at the source extent.
-slice := (.self: StringView, .start: UIntNative, .count: UIntNative) -> (
-    .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8_boundary))
-) {
+slice := (
+    .self         : StringView,
+    .start        : UIntNative,
+    .count        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8_boundary))) {
+    assume error_tracer
+
     if start > self._length {
         result = ..error(.reason = ..out_of_bounds)
         return

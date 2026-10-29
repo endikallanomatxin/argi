@@ -15,7 +15,7 @@ not permission to publish or execute a unit.
 | Contextual values | Expected types and aggregate shapes | Nested literal types, including in previously created nodes |
 | Generic/associated types | Bound parameters and conformances | Fields, defaults and nullable/Errable representations |
 | Error inference | Available bodies and propagation paths | Reason sets and revised propagation result types |
-| Reached inputs and conformance validation | Current signatures and lexical contexts | Updated calls and selected operation bodies |
+| Conformance validation | Declared operation signatures and lexical assumptions | Selected operation bodies |
 | Compile-time request materialization | Stable recipes and available semantic dependencies | Executable bodies needing ordinary resolution and cleanup |
 
 The inner fixed point repeats when these facts change. It is not restricted to
@@ -34,6 +34,12 @@ Checked compilation also performs Safety and once verification before execution
 publication. Neither a published function signature nor an empty worklist replaces
 these boundaries.
 
+Executable field defaults use the same captured-expression recipes for concrete
+and generic signatures. Each omitted field instantiates its recipe with the
+field's expected type and the caller's lexical assumptions. Addressed temporaries
+belong to that caller's scope; neither the expression's storage nor its effects
+are shared between calls. Literal defaults remain inline.
+
 ## Ownership staging versus backend lowering
 
 Ownership staging is semantic preparation shared by LLVM and bytecode. An early
@@ -51,8 +57,7 @@ including checked replacement plans, rather than rediscovering destruction rules
 ## Transaction ownership
 
 Graph rollback owns provisional IDs and reversible completions. Resolver undo
-owns auxiliary references to those IDs, including caches, reached calls and
-captures. Contract checkpoints own conformance resolution state. Virtual-signature
+owns auxiliary references to those IDs, including caches and captured expressions. Contract checkpoints own conformance resolution state. Virtual-signature
 diagnostics have a different lifetime: generic applicability probing may discover
 an invalid conversion that must still explain why the enclosing call failed after
 its graph is rolled back. These source-based explanations survive local probes;

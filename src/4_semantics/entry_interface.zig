@@ -6,9 +6,8 @@ pub const InputPolicy = enum { program, isolated };
 
 /// Classify the host-provided argument, not its type spelling. The generated
 /// ordinary call checks compatibility with the actual System value. Program
-/// entries may declare other default/reached inputs; isolated interfaces expose
-/// only optional System. Generated captures and propagated inputs remain the
-/// responsibility of ordinary call resolution.
+/// entries may declare other defaulted inputs; isolated interfaces expose only
+/// optional System. Ordinary call resolution completes the declared inputs.
 pub fn classifyInput(tree: *const syn.FileSyntaxTree, source: []const u8, syntax: ?syn.NodeIndex, policy: InputPolicy) error{InvalidEntryInputs}!Input {
     const input = syntax orelse return .none;
     const literal = tree.structTypeLiteral(input) orelse return error.InvalidEntryInputs;
@@ -24,7 +23,7 @@ pub fn classifyInput(tree: *const syn.FileSyntaxTree, source: []const u8, syntax
 }
 
 pub const comptime_input_message = "compile-time entries accept no inputs or one '.system: System' input; pass ordinary arguments to functions inside the entry body";
-pub const test_input_message = "tests accept no inputs or one '.system: System' input";
+pub const test_input_message = "test inputs must use a record signature; System is supplied by the test entry and other inputs use ordinary defaults and assumptions";
 
 pub const system_scope = @embedFile("entry_system_scope.rg");
 pub const bootstrap_source = "bootstrap := () -> () {\n" ++ system_scope ++ "}\n";
@@ -54,8 +53,8 @@ test "entry inputs share shape rules without checking type spellings" {
         .{ .inputs = ".system: SystemAlias", .policy = .isolated, .expected = .system },
         .{ .inputs = ".value: Int32", .policy = .isolated, .expected = null },
         .{ .inputs = ".system: System, .value: Int32", .policy = .isolated, .expected = null },
-        .{ .inputs = ".writer: Int32 = reach writer", .policy = .program, .expected = .none },
-        .{ .inputs = ".system: System, .writer: Int32 = reach writer", .policy = .program, .expected = .system },
+        .{ .inputs = ".writer: Int32", .policy = .program, .expected = .none },
+        .{ .inputs = ".system: System, .writer: Int32", .policy = .program, .expected = .system },
     }) |case| {
         const source = try std.fmt.allocPrint(a, "entry := ({s}) -> () {{}}", .{case.inputs});
         defer a.free(source);

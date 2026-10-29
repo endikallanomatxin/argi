@@ -1,15 +1,39 @@
 ..test_error
 
-fail := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+fail := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_error)
 }
 
-middle := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+middle := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     value := fail()!
     result = ..ok value
 }
 
-top := () -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+top := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) {
+    assume error_tracer
+
     value := middle()!! "loading project config"
     result = ..ok value
 }

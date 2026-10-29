@@ -1,9 +1,16 @@
 replace := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self        : StringView,
-    .pattern     : StringView,
-    .replacement : StringView,
-    .allocator   : $&AllocatorType,
+    .self         : StringView,
+    .pattern      : StringView,
+    .replacement  : StringView,
+    .allocator    : $&AllocatorType,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))) {
+    assume error_tracer
+
     if pattern._length == 0 {
         result = ..error(.reason = ..empty_pattern)
         return

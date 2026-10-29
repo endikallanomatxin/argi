@@ -4,12 +4,21 @@
 -- the language's transfer rules, independently of this native atomic storage.
 CancellationSource := (._state: AtomicUInt32)
 
-CancellationSourceInitArgs: Type = (.ffi: $&ForeignFunctionInterface = reach ffi)
+CancellationSourceInitArgs: Type = (
+    .ffi          : $&ForeignFunctionInterface,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(CancellationSource, CancellationSourceInitArgs) (
     .Result : Type = Errable#(CancellationSource, (..out_of_memory))
 
     .init = CancellationSourceInitArgs -> (.result: Result) {
+        assume error_tracer
+
         _init_ffi ::= ffi
 
         state ::= AtomicUInt32(.ffi = _init_ffi)!
@@ -47,9 +56,17 @@ implement ImplicitlyCopyable#(CancellationContext) ()
 
 -- The caller supplies a monotonic reading to make checkpoints deterministic
 -- and avoid unnecessary system calls. Cancellation wins when both apply.
-check_cancelled := (.self: CancellationContext, .now: MonotonicInstant) -> (
-    .result : Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()
-) {
+check_cancelled := (
+    .self         : CancellationContext,
+    .now          : MonotonicInstant,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()) {
+    assume error_tracer
+
     match self.token {
         ..none {}
         ..some entry {

@@ -7,14 +7,32 @@ Cursor := (.next: Int32 = 1)
 Buffered := #(.Base: Type) (.base: Base)
 
 implement ByteSource#(Cursor) (
-    .read_byte = (.self: $&Cursor) -> (.result: Int32) {
+    .read_byte = (
+        .self         : $&Cursor,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Int32) {
+        assume error_tracer
+
         result = self&.next
         self&.next = self&.next + 1
     }
 )
 
 implement#(.T: Type: ByteSource#(T)) ByteSource#(Buffered#(.Base: T)) (
-    .read_byte = (.self: $&Buffered#(T)) -> (.result: Int32) {
+    .read_byte = (
+        .self         : $&Buffered#(T),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Int32) {
+        assume error_tracer
+
         result = ByteSource#(T).read_byte($&self&.base).result
     }
 )

@@ -121,9 +121,17 @@ _general_purpose_bit := (.index: UIntNative) -> (.bit: UIntNative) {
     }
 }
 
-_general_purpose_small_address := (.self: $&GeneralPurposeAllocator, .slot_size: UIntNative) -> (
-    .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
-) {
+_general_purpose_small_address := (
+    .self         : $&GeneralPurposeAllocator,
+    .slot_size    : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) {
+    assume error_tracer
+
     bucket_address :: UIntNative = self&._bucket_head
 
     while bucket_address != 0 {
@@ -205,8 +213,17 @@ _general_purpose_small_address := (.self: $&GeneralPurposeAllocator, .slot_size:
 }
 
 _general_purpose_large_address := (
-    .self: $&GeneralPurposeAllocator, .size: UIntNative, .alignment: UIntNative
+    .self         : $&GeneralPurposeAllocator,
+    .size         : UIntNative,
+    .alignment    : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) {
+    assume error_tracer
+
     allocated ::= allocate_bytes(
         $&self&._backing_allocator, .size = size, .alignment = alignment
     )
@@ -256,9 +273,18 @@ has_live_allocations := (.self: &GeneralPurposeAllocator) -> (.has_live: Bool) {
 }
 
 implement Allocator#(GeneralPurposeAllocator) (
-    .allocate = (.self: $&GeneralPurposeAllocator, .size: UIntNative, .alignment: UIntNative) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&GeneralPurposeAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+        assume error_tracer
+
         _require_allocation_alignment(.alignment = alignment)
         slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
         mapped :: Errable#(_GeneralPurposeMapped, (..out_of_memory))

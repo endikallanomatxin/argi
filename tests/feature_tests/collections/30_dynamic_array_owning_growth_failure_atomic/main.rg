@@ -15,8 +15,16 @@ implement Deinit#(Tracked) (
 )
 
 make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .id: Int32
+    .allocator    : $&AllocatorType,
+    .id           : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
+    assume error_tracer
+
     assume allocator
 
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
@@ -114,9 +122,18 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Allocator#(FailSecondAllocator) (
-    .allocate = (.self: $&FailSecondAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) {
+    .allocate = (
+        .self         : $&FailSecondAllocator,
+        .size         : UIntNative,
+        .alignment    : UIntNative                         = 1,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
+        assume error_tracer
+
         if self&.allocations != 0 {
             result = ..error(.reason = ..out_of_memory)
             return

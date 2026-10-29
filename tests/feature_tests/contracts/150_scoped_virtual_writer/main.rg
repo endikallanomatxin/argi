@@ -1,7 +1,13 @@
 Output#(.Stream: Type): Contract = (
-    .write_byte : (.self: $&Stream, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed))
-    ) where {
+    .write_byte : (
+        .self         : $&Stream,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed))) where {
         on result ..ok {}
         on result ..error { depends_on(result, error_tracer) }
     }
@@ -11,13 +17,31 @@ Output#(.Stream: Type): Contract = (
 Sink := (.last: UInt8 = 0, .flushed: Bool = false)
 
 implement Output#(Sink) (
-    .write_byte = (.self: $&Sink, .byte: UInt8) -> (
-        .result: Errable#(Void, (..stream_write_failed))
-    ) {
+    .write_byte = (
+        .self         : $&Sink,
+        .byte         : UInt8,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(Void, (..stream_write_failed))) {
+        assume error_tracer
+
         self&.last = byte
         result = ..ok Void()
     }
-    .flush = (.self: $&Sink) -> () { self&.flushed = true }
+    .flush = (
+        .self         : $&Sink,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> () {
+        assume error_tracer
+        self&.flushed = true
+    }
 )
 
 -- An ordinary identity with the same spelling must not populate the virtual slot.

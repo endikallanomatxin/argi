@@ -6,7 +6,7 @@ const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const functions_mod = @import("generic_functions.zig");
 const contracts_mod = @import("contracts.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const ir = @import("../module/parameterized/ir.zig");
@@ -28,7 +28,6 @@ pub const Result = union(enum) {
     none,
     deferred,
     ambiguous,
-    missing_reach: graph_mod.Field,
     incompatible_arguments,
 };
 
@@ -165,11 +164,11 @@ pub const Resolver = struct {
 
     /// Infer unknown participants from operation inputs and lexical capabilities.
     /// Associated results never select an implementation.
-    pub fn inferOperation(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: []const u8, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
-        return self.inferOperationWithArguments(declaration, prefix, operation_name, input, reach, .{ .start = 0, .len = 0 });
+    pub fn inferOperation(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: []const u8, input: graph_mod.GlobalNodeId, lexical_context: call_context.Context) !Result {
+        return self.inferOperationWithArguments(declaration, prefix, operation_name, input, lexical_context, .{ .start = 0, .len = 0 });
     }
 
-    pub fn inferOperationWithArguments(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: []const u8, input: graph_mod.GlobalNodeId, reach: reach_context.Context, arguments: primitives.Range(graph_mod.GlobalGenericArgId)) !Result {
+    pub fn inferOperationWithArguments(self: *Resolver, declaration: graph_mod.GlobalFamilyDefinitionId, prefix: []const Participant, operation_name: []const u8, input: graph_mod.GlobalNodeId, lexical_context: call_context.Context, arguments: primitives.Range(graph_mod.GlobalGenericArgId)) !Result {
         const allocator = self.core.allocator;
         const Candidate = struct { module: usize, template: storage_mod.ContractConformance, participants: []const graph_mod.GlobalTypeId };
         var candidates: std.ArrayList(Candidate) = .empty;
@@ -179,10 +178,6 @@ pub const Resolver = struct {
         }
         var has_prefix = false;
         var deferred = false;
-        var missing_reach: ?graph_mod.Field = null;
-        for (0..reach.bindingCount()) |index| {
-            if (self.graph.isBindingTypeUnresolved(reach.bindingAt(index))) deferred = true;
-        }
         const supplied = self.graph.node(input).content.struct_value_literal;
         for ([_]@TypeOf(supplied.fields){ supplied.fields, supplied.assumed_fields }) |fields| {
             for (self.graph.value_fields.items[fields.start..][0..fields.len]) |field| {
@@ -226,7 +221,7 @@ pub const Resolver = struct {
                 const operation = for (storage.contract_operations.items[template.operations.start..][0..template.operations.len]) |candidate| {
                     if (std.mem.eql(u8, module.text(candidate.name), operation_name)) break candidate;
                 } else continue :templates;
-                break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, reach, &bindings, arguments, template.associated_arguments) catch |err| switch (err) {
+                break :blk self.functions.inferImplementationInput(module_index, operation, template.parameters, input, lexical_context, &bindings, arguments, template.associated_arguments) catch |err| switch (err) {
                     error.ConflictingGenericArgument => null,
                     else => return err,
                 } orelse continue :templates;
@@ -248,26 +243,13 @@ pub const Resolver = struct {
                 };
             }
             const fields = types.fields(self.graph, operation_input) orelse continue;
-            switch (try self.core.matchCallInputWithReach(fields, input, reach)) {
+            switch (self.core.matchCallInput(fields, input)) {
                 .applicable => {},
                 .deferred => {
                     deferred = true;
                     continue;
                 },
-                .no_match => {
-                    if (self.core.matchCallInput(fields, input) == .applicable) {
-                        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
-                            if (self.core.recordFieldValue(supplied, position, self.graph.text(field.name)) != null) continue;
-                            const fallback = field.default_value orelse continue;
-                            if (self.graph.node(fallback).content != .reach_directive) continue;
-                            if (try self.core.probeReachedDefault(reach, field, fallback) == .unavailable) {
-                                missing_reach = field;
-                                break;
-                            }
-                        }
-                    }
-                    continue;
-                },
+                .no_match => continue,
             }
             try candidates.append(allocator, .{ .module = module_index, .template = template, .participants = participants });
             retained = true;
@@ -298,7 +280,6 @@ pub const Resolver = struct {
         if (selected) |index| return .{ .selected = .{ .participants = try allocator.dupe(graph_mod.GlobalTypeId, candidates.items[index].participants) } };
         if (!has_prefix) return .none;
         if (deferred) return .deferred;
-        if (missing_reach) |field| return .{ .missing_reach = field };
         return .incompatible_arguments;
     }
 };

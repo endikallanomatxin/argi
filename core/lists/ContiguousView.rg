@@ -2,9 +2,16 @@
 ContiguousView#(.View: Type): Contract = (
     .Reference : Type
     .base      : (.self: &View) -> (.pointer: Reference)
-    .subrange  : (.self: &View, .start: UIntNative, .count: UIntNative) -> (
-        .result : Errable#(View, (..out_of_bounds))
-    )
+    .subrange  : (
+        .self         : &View,
+        .start        : UIntNative,
+        .count        : UIntNative,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(View, (..out_of_bounds)))
 )
 
 data := #(.View: Type: ContiguousView#(View)) (.self: &View) -> (
@@ -14,8 +21,17 @@ data := #(.View: Type: ContiguousView#(View)) (.self: &View) -> (
 }
 
 slice := #(.View: Type: ContiguousView#(View)) (
-    .self: &View, .start: UIntNative, .count: UIntNative
+    .self         : &View,
+    .start        : UIntNative,
+    .count        : UIntNative,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(View, (..out_of_bounds))) {
+    assume error_tracer
+
     result = ContiguousView#(View).subrange(.self = self, .start = start, .count = count)
 }
 

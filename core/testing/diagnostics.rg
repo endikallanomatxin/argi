@@ -44,24 +44,50 @@ _testing_detail := (.self: &_TestDiagnostic) -> (.text: StringView) {
     text = (._data = &self&._bytes[0], ._length = self&._length)
 }
 
-_testing_failure := (.detail: StringView, .message: StringView) -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_testing_failure := (
+    .detail       : StringView,
+    .message      : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     if message._length != 0 { add_context(.context = message) }
     test_fail_impl()!! detail
 
     result = ..ok Void()
 }
 
-fail := (.message: StringView) -> (.result: Errable#(Void, (..test_failed))) {
+fail := (
+    .message      : StringView,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     test_fail_impl()!! message
 
     result = ..ok Void()
 }
 
-_assert_equal_integer := #(.t: Type: Int) (.expected: t, .actual: t, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_assert_equal_integer := #(.t: Type: Int) (
+    .expected     : t,
+    .actual       : t,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     if expected == actual {
         result = ..ok Void()
         return
@@ -76,9 +102,18 @@ _assert_equal_integer := #(.t: Type: Int) (.expected: t, .actual: t, .message: S
     result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-_assert_equal_float := #(.t: Type: Float) (.expected: t, .actual: t, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_assert_equal_float := #(.t: Type: Float) (
+    .expected     : t,
+    .actual       : t,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     if expected == actual {
         result = ..ok Void()
         return
@@ -93,9 +128,18 @@ _assert_equal_float := #(.t: Type: Float) (.expected: t, .actual: t, .message: S
     result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-_assert_equal_bool := (.expected: Bool, .actual: Bool, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_assert_equal_bool := (
+    .expected     : Bool,
+    .actual       : Bool,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     if expected == actual {
         result = ..ok Void()
         return
@@ -116,11 +160,18 @@ _testing_lengths := (.self: $&_TestDiagnostic, .expected: UIntNative, .actual: U
 }
 
 _testing_compare_byte_ranges := (
-    .expected : ArrayView#(UInt8),
-    .actual   : ArrayView#(UInt8),
-    .kind     : StringView,
-    .message  : StringView         = ""
+    .expected     : ArrayView#(UInt8),
+    .actual       : ArrayView#(UInt8),
+    .kind         : StringView,
+    .message      : StringView                         = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     common ::= length(&expected).count
 
     if length(&actual).count < common { common = length(&actual).count }
@@ -168,9 +219,18 @@ _testing_compare_byte_ranges := (
     result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-_assert_text_views := (.expected: StringView, .actual: StringView, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_assert_text_views := (
+    .expected     : StringView,
+    .actual       : StringView,
+    .message      : StringView                         = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = _testing_compare_byte_ranges(
         .expected = string_bytes(.text = expected)
         .actual   = string_bytes(.text = actual)
@@ -179,17 +239,35 @@ _assert_text_views := (.expected: StringView, .actual: StringView, .message: Str
     )
 }
 
-_assert_owned_strings := (.expected: &String, .actual: &String, .message: StringView = "") -> (
-    .result : Errable#(Void, (..test_failed))
-) {
+_assert_owned_strings := (
+    .expected     : &String,
+    .actual       : &String,
+    .message      : StringView = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = expect_equal_strings(
         .expected = view(expected), .actual = view(actual), .message = message
     )
 }
 
 expect_equal_views := #(.t: Type) (
-    .expected: ArrayView#(.t: t), .actual: ArrayView#(.t: t), .message: StringView = ""
+    .expected     : ArrayView#(.t: t),
+    .actual       : ArrayView#(.t: t),
+    .message      : StringView                         = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     expected_length ::= length(&expected).count
     actual_length ::= length(&actual).count
     common ::= expected_length
@@ -222,8 +300,17 @@ expect_equal_views := #(.t: Type) (
 }
 
 expect_equal_bytes := (
-    .expected: ArrayView#(.t: UInt8), .actual: ArrayView#(.t: UInt8), .message: StringView = ""
+    .expected     : ArrayView#(.t: UInt8),
+    .actual       : ArrayView#(.t: UInt8),
+    .message      : StringView                         = "",
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
 ) -> (.result: Errable#(Void, (..test_failed))) {
+    assume error_tracer
+
     result = _testing_compare_byte_ranges(
         .expected = expected, .actual = actual, .message = message, .kind = "bytes"
     )

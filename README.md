@@ -20,8 +20,7 @@ It’s an early work-in-progress.
 - 🎯 Explicitness without annoyance:
   - ⚠️ Side effects are explicit.
   - 🔐 Capability-based design for resource management.
-  - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
-    dependencies through intermediate calls.
+  - 🪶 `assume` for lexical implicit arguments, with dependencies declared in signatures.
 - 🚫 No objects or inheritance.
 - 🔀 Polymorphism:
   - ⚙️ Compile-time parameters specialize types and functions.

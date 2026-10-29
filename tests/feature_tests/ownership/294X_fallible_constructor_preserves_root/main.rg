@@ -2,12 +2,21 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 Owned := (.allocation: Allocation)
 
-OwnedInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (.allocator: $&AllocatorProvider)
+OwnedInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
+    .allocator    : $&AllocatorProvider,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, OwnedInitArgs#(AllocatorProvider)) (
     .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
 
     .init = OwnedInitArgs#(AllocatorProvider) -> (.result: Result) {
+        assume error_tracer
+
         _init_allocator ::= ~allocator
 
         constructed :: Owned

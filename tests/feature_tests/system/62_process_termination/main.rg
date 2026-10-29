@@ -7,6 +7,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         while true {
             unwrap_or_abort(
                 .value = sleep(
+                    .self     = clock
                     .duration = unwrap_or_abort(
                         .value = duration_from_seconds(.seconds = 1)
                     ).result
@@ -20,6 +21,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     args: [1]StringView = ("wait")
     child ::= unwrap_or_abort(
         .value = spawn(
+            .self       = proc_man
             .executable = executable
             .arguments  = view(.self = &args)
             .stdin      = ..pipe
@@ -53,6 +55,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     deinit(.self = $&child)
     orphan ::= unwrap_or_abort(
         .value = spawn(
+            .self       = proc_man
             .executable = executable
             .arguments  = view(.self = &args)
             .stdout     = ..pipe

@@ -40,21 +40,35 @@ run := (.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_mem
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer := (.marker: UInt8)
 
-FailTracerInitArgs: Type = ()
+FailTracerInitArgs: Type = (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+)
 
 implement Init#(FailTracer, FailTracerInitArgs) (
     .Result : Type = Errable#(.t: FailTracer, .reasons: (..out_of_memory))
 
     .init = FailTracerInitArgs -> (.result: Result) {
+        assume error_tracer
+
         constructed :: FailTracer
 
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-failed_init := () -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
+failed_init := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
     assume error_tracer: $&Virtual#(.contract: ErrorTracer) = [
-        FailTracer()!
+        FailTracer(.error_tracer = error_tracer)!
         | to_virtual($&_)
         | $&_
     ]
@@ -127,9 +141,17 @@ implement ErrorTracer#(FailTracer) (
 
     .reset_context = (.self: $&FailTracer) -> () {}
 
-    .report = (.self: $&FailTracer, .writer: $&Virtual#(.contract: Writer)) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) {
+    .report = (
+        .self         : $&FailTracer,
+        .writer       : $&Virtual#(.contract: Writer),
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+        assume error_tracer
+
         result = ..ok Void()
     }
 )

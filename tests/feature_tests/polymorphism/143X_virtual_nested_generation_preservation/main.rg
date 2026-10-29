@@ -1,9 +1,16 @@
 ..failed
 
 Editor#(.Participant: Type): Contract = (
-    .edit : (.self: &Participant, .target: $&Int32, .mode: Int32) -> (
-        .result: Errable#(?Int32, (..failed))
-    ) where {
+    .edit : (
+        .self         : &Participant,
+        .target       : $&Int32,
+        .mode         : Int32,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+            NoopErrorTracer()
+            | to_virtual#(.contract: ErrorTracer)($&_)
+            | $&_
+        ]
+    ) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { invalidates(target) }
             on result ..none {}
@@ -24,9 +31,18 @@ implement Resetter#(Cell) (.reset = _impl_reset_Cell)
 
 _impl_reset_Cell := (.self: &Cell, .target: $&Int32) -> () { target&= 42 }
 
-_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (
-    .result: Errable#(?Int32, (..failed))
-) {
+_impl_edit_Cell := (
+    .self         : &Cell,
+    .target       : $&Int32,
+    .mode         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     if mode == 2 {
         result = ..error(.reason = ..failed)
         return
@@ -42,9 +58,18 @@ _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (
     result = ..ok ..none
 }
 
-apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32, .mode: Int32) -> (
-    .result: Errable#(?Int32, (..failed))
-) {
+apply_edit := (
+    .editor       : &Virtual#(Editor),
+    .target       : $&Int32,
+    .mode         : Int32,
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> (.result: Errable#(?Int32, (..failed))) {
+    assume error_tracer
+
     result = edit(editor, target, mode)
 }
 

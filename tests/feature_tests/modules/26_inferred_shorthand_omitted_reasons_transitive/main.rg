@@ -1,4 +1,12 @@
-run := () -> !Int32 {
+run := (
+    .error_tracer : $&Virtual#(.contract: ErrorTracer) = [
+        NoopErrorTracer()
+        | to_virtual#(.contract: ErrorTracer)($&_)
+        | $&_
+    ]
+) -> !Int32 {
+    assume error_tracer
+
     dep := import ("./dep")
     value := dep.load()!
     result = ..ok value
