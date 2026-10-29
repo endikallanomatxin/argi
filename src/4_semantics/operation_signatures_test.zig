@@ -161,7 +161,7 @@ test "fallible core operations require an ordinary tracer input" {
         \\    text ::= "hello"
         \\    bytes_get(.view = &text, .index = 0)
         \\}
-    }}, .diagnostic = .{ .message = "no generic function named 'bytes_get' accepts arguments" } });
+    }}, .diagnostic = .{ .message = "call to 'bytes_get' is missing required argument '.error_tracer'" } });
     _ = try environment.check(.{ .name = "intermediate_tracer_is_required", .files = &.{.{ .path = "main.rg", .code =
         \\read := (.text: StringView) -> (.result: UInt8) {
         \\    result = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
@@ -170,7 +170,7 @@ test "fallible core operations require an ordinary tracer input" {
         \\    assume error_tracer ::= $&noop_error_tracer
         \\    read(.text = "hello")
         \\}
-    }}, .diagnostic = .{ .message = "no generic function named 'bytes_get' accepts arguments" } });
+    }}, .diagnostic = .{ .message = "call to 'bytes_get' is missing required argument '.error_tracer'" } });
     _ = try environment.check(.{ .name = "explicit_tracer_forwarding", .files = &.{.{ .path = "main.rg", .code =
         \\read := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: UInt8) {
         \\    assume error_tracer
@@ -179,6 +179,38 @@ test "fallible core operations require an ordinary tracer input" {
         \\main := () -> (.status_code: Int32) {
         \\    assume error_tracer ::= $&noop_error_tracer
         \\    status_code = read(.text = "hello") | convert#(.to: Int32)(_)
+        \\}
+    }} });
+}
+
+test "missing input diagnostics share ordinary and generic record matching" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    const generic =
+        \\inspect := #(.T: Type) (.value: T, .context: Bool) -> () {}
+        \\
+    ;
+    for ([_][]const u8{
+        "inspect(.value = 42)",
+        "inspect#(.T: Int32)(.value = 42)",
+    }, 0..) |call, index| {
+        const source = try std.fmt.allocPrint(std.testing.allocator, "{s}main := () -> () {{ {s} }}", .{ generic, call });
+        defer std.testing.allocator.free(source);
+        _ = try environment.check(.{ .name = if (index == 0) "missing_inferred_input" else "missing_explicit_input", .files = &.{.{ .path = "main.rg", .code = source }}, .diagnostic = .{ .message = "call to 'inspect' is missing required argument '.context'" } });
+    }
+    _ = try environment.check(.{ .name = "missing_ordinary_input", .files = &.{.{ .path = "main.rg", .code =
+        \\inspect := (.value: Int32, .context: Bool) -> () {}
+        \\main := () -> () { inspect(.value = 42) }
+    }}, .diagnostic = .{ .message = "call to 'inspect' is missing required argument '.context'" } });
+    _ = try environment.check(.{ .name = "mismatch_before_missing_input", .files = &.{.{ .path = "main.rg", .code = generic ++
+        \\main := () -> () { inspect#(.T: Int32)(.value = true) }
+    }}, .diagnostic = .{ .message = "no generic function named 'inspect' accepts arguments", .forbidden = &.{"missing required argument"} } });
+    _ = try environment.check(.{ .name = "ordinary_assumed_and_default_inputs", .files = &.{.{ .path = "main.rg", .code = generic ++
+        \\with_default := (.context: Bool = false) -> () {}
+        \\main := () -> () {
+        \\    assume context := true
+        \\    inspect(.value = 42)
+        \\    with_default()
         \\}
     }} });
 }

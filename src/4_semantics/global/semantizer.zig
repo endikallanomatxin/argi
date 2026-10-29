@@ -3406,14 +3406,15 @@ fn diagnoseUnresolvedCall(
                 if (contextual_matches < 2) continue;
             }
 
-            if (try generic_functions.probeGenericCallFailure(
+            var call_failure = try generic_functions.probeGenericCallFailure(
                 module_index,
                 module,
                 reference,
                 input_id,
                 call_context.Context.fromModule(offsets[module_index], call.owner_function),
-            )) |failure| {
-                defer allocator.free(failure.actual_name);
+            );
+            defer call_failure.deinit(allocator);
+            if (call_failure.constraint) |failure| {
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, source),
                     .semantic,
@@ -3427,6 +3428,11 @@ fn diagnoseUnresolvedCall(
                 );
                 return true;
             }
+
+            if (!call_failure.conflicting_missing_inputs) if (call_failure.missing_input) |missing| {
+                try diagnostics.add(location, .semantic, "call to '{s}' is missing required argument '.{s}'; supply it explicitly or through a lexical 'assume'", .{ name, missing });
+                return true;
+            };
 
             // Materialized specializations must not hide the intrinsic's useful
             // rejection diagnostic for an incompatible explicit type argument.
@@ -3490,10 +3496,18 @@ fn diagnoseUnresolvedCall(
             };
             var applicable_functions: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer applicable_functions.deinit(allocator);
+            var missing_input: ?primitives.StringRange = null;
+            var conflicting_missing_inputs = false;
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
                 if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
-                switch (diagnostic_core.matchCallInput(function.input, input_id)) {
+                const inspection = diagnostic_core.inspectRecordFields(function.input, input);
+                if (inspection.missing) |missing| {
+                    if (missing_input) |previous| {
+                        if (!std.mem.eql(u8, graph.text(previous), graph.text(missing))) conflicting_missing_inputs = true;
+                    } else missing_input = missing;
+                }
+                switch (inspection.status) {
                     .applicable => {},
                     .no_match, .deferred => continue,
                 }
@@ -3556,6 +3570,11 @@ fn diagnoseUnresolvedCall(
                 );
                 return true;
             }
+
+            if (applicable_functions.items.len == 0 and !conflicting_missing_inputs) if (missing_input) |missing| {
+                try diagnostics.add(location, .semantic, "call to '{s}' is missing required argument '.{s}'; supply it explicitly or through a lexical 'assume'", .{ name, graph.text(missing) });
+                return true;
+            };
 
             if (candidates.items.len == 1 and diagnostic_core.recordFieldNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];

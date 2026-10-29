@@ -56,7 +56,7 @@ test "functions/21X_assume_no_propagation" {
         \\    assume number :: Int32 = 42
         \\    child()
         \\}
-    , null, "no function named 'take' accepts arguments", false);
+    , null, "call to 'take' is missing required argument '.number'", false);
 }
 
 test "functions/22X_assume_incompatible_default" {
@@ -87,7 +87,7 @@ test "functions/26X_assume_scope_does_not_escape" {
         \\    if true { assume number }
         \\    take()
         \\}
-    , null, "no function named 'take' accepts arguments", false);
+    , null, "call to 'take' is missing required argument '.number'", false);
 }
 
 test "basics/25X_numeric_binding_type" {

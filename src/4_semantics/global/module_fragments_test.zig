@@ -222,8 +222,10 @@ test "generic diagnostic probes select without instantiating the chosen body" {
         const call = operation.resolve_call;
         const reference = input.semantic.external_refs.items[@intFromEnum(call.callee)];
         if (!std.mem.eql(u8, input.text(reference.name), "make")) continue;
-        const failure = try session.resolvers.generic_functions.probeGenericCallFailure(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), @import("call_context.zig").Context.fromModule(offsets, call.owner_function));
-        try std.testing.expectEqual(null, failure);
+        var failure = try session.resolvers.generic_functions.probeGenericCallFailure(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), @import("call_context.zig").Context.fromModule(offsets, call.owner_function));
+        defer failure.deinit(a);
+        try std.testing.expectEqual(null, failure.constraint);
+        try std.testing.expectEqual(null, failure.missing_input);
         try std.testing.expect(!try session.resolvers.generic_functions.collectImplicitGenericAmbiguity(0, &modules[0], reference, @import("globalizer.zig").globalNode(offsets, call.input), &candidates));
         checked += 1;
     }

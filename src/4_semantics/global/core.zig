@@ -1324,30 +1324,42 @@ pub const Resolver = struct {
     /// Probe a record without assigning its contextual type or executing defaults.
     /// Calls and ordinary aggregate literals share the same field/value rules.
     pub fn matchRecordFields(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: @FieldType(global_sg.Node.Content, "struct_value_literal")) RecordMatch {
-        if (!self.recordFieldNamesMatch(expected_fields, literal)) return .no_match;
+        return self.inspectRecordFields(expected_fields, literal).status;
+    }
+
+    pub const RecordInspection = struct {
+        status: RecordMatch,
+        missing: ?primitives.StringRange = null,
+    };
+
+    /// Report missing inputs only after every supplied value has matched. This
+    /// keeps diagnostics and applicability on the same contextual typing rules.
+    pub fn inspectRecordFields(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: @FieldType(global_sg.Node.Content, "struct_value_literal")) RecordInspection {
+        if (!self.recordFieldNamesMatch(expected_fields, literal)) return .{ .status = .no_match };
+        var missing: ?primitives.StringRange = null;
         for (0..expected_fields.len) |expected_offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(expected_offset))];
             const supplied = self.callArgument(literal, expected_offset, expected.name);
             if (supplied) |node| {
                 if (self.graph.isTypeUnresolved(expected.ty)) {
-                    return .deferred;
+                    return .{ .status = if (missing != null) .no_match else .deferred };
                 }
                 const supplied_node = self.graph.nodes.items[@intFromEnum(node)];
                 if (self.graph.node(node).ty) |actual| {
                     if (self.graph.isTypeUnresolved(actual)) {
-                        return .deferred;
+                        return .{ .status = if (missing != null) .no_match else .deferred };
                     }
                     if (!types.equal(self.graph, actual, expected.ty) and
                         !self.valueTypesCompatible(actual, expected.ty) and
                         !types.isBuiltin(self.graph, expected.ty, .Any) and
-                        !self.contextualLiteralFits(node, expected.ty)) return .no_match;
+                        !self.contextualLiteralFits(node, expected.ty)) return .{ .status = .no_match };
                 } else if (!self.contextualLiteralFits(node, expected.ty)) switch (supplied_node.content) {
-                    .string_literal, .struct_value_literal => return .no_match,
-                    else => return .deferred,
+                    .string_literal, .struct_value_literal => return .{ .status = .no_match },
+                    else => return .{ .status = if (missing != null) .no_match else .deferred },
                 };
-            } else if (expected.default_value == null) return .no_match;
+            } else if (expected.default_value == null and missing == null) missing = expected.name;
         }
-        return .applicable;
+        return .{ .status = if (missing != null) .no_match else .applicable, .missing = missing };
     }
 
     pub fn recordFieldNamesMatch(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: anytype) bool {
@@ -2196,6 +2208,22 @@ test "call input matching distinguishes deferred arguments from mismatches" {
     graph.nodes.items[0].ty = int_ty;
     const matched = resolver.matchCallInput(expected, @enumFromInt(1));
     try std.testing.expectEqual(Resolver.RecordMatch.applicable, matched);
+
+    const context_name = try graph.addString(allocator, "context");
+    try graph.fields.insert(allocator, 0, .{ .name = context_name, .ty = bool_ty, .source = .{ .file_index = 0, .offset = 0 } });
+    const literal = graph.node(@enumFromInt(1)).content.struct_value_literal;
+    const two_fields: global_sg.FieldRange = .{ .start = 0, .len = 2 };
+    const missing = resolver.inspectRecordFields(two_fields, literal);
+    try std.testing.expectEqual(Resolver.RecordMatch.no_match, missing.status);
+    try std.testing.expectEqual(context_name, missing.missing.?);
+    // A later mismatch or pending supplied value must not produce a misleading
+    // missing-input explanation; the established rejection remains no_match.
+    graph.nodes.items[0].ty = bool_ty;
+    try std.testing.expectEqual(null, resolver.inspectRecordFields(two_fields, literal).missing);
+    graph.nodes.items[0].ty = null;
+    const pending = resolver.inspectRecordFields(two_fields, literal);
+    try std.testing.expectEqual(Resolver.RecordMatch.no_match, pending.status);
+    try std.testing.expectEqual(null, pending.missing);
 }
 test "record literals and call arguments reject unknown fields even when defaults cover every field" {
     const allocator = std.testing.allocator;

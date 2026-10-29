@@ -55,6 +55,24 @@ pub const ConstraintFailure = struct {
     parameter_name: []const u8,
 };
 
+pub const CallFailure = struct {
+    constraint: ?ConstraintFailure = null,
+    missing_input: ?[]const u8 = null,
+    conflicting_missing_inputs: bool = false,
+
+    pub fn deinit(self: *CallFailure, allocator: std.mem.Allocator) void {
+        if (self.constraint) |failure| allocator.free(failure.actual_name);
+        if (self.missing_input) |name| allocator.free(name);
+        self.* = .{};
+    }
+
+    fn recordMissing(self: *CallFailure, allocator: std.mem.Allocator, name: []const u8) !void {
+        if (self.missing_input) |previous| {
+            if (!std.mem.eql(u8, previous, name)) self.conflicting_missing_inputs = true;
+        } else self.missing_input = try allocator.dupe(u8, name);
+    }
+};
+
 pub const Resolver = struct {
     active_instance: ?*InstanceContext = null,
     capture_lookup_context: ?*anyopaque = null,
@@ -73,7 +91,7 @@ pub const Resolver = struct {
     register_defer: ?*const fn (*anyopaque, global_sg.GlobalNodeId, global_sg.GlobalNodeId) anyerror!void = null,
     ownership_checkpoint: ?*const fn (*anyopaque) @import("ownership.zig").Resolver.ParameterizedCheckpoint = null,
     rollback_ownership: ?*const fn (*anyopaque, @import("ownership.zig").Resolver.ParameterizedCheckpoint) void = null,
-    constraint_diagnostic: ?*?ConstraintFailure = null,
+    call_diagnostic: ?*CallFailure = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     selection_profile: SelectionProfile = .{},
@@ -670,7 +688,7 @@ pub const Resolver = struct {
             phase_start = self.profileTimestamp();
             applicability_start = phase_start;
             applicability_active = true;
-            switch (try self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+            switch (try self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input, true)) {
                 .no_match => {
                     if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                     continue;
@@ -1260,7 +1278,7 @@ pub const Resolver = struct {
                 const constraint_ok = try contracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
 
                 if (!constraint_ok) {
-                    if (self.constraint_diagnostic != null and
+                    if (self.call_diagnostic != null and
                         try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings)) failure = .{
                         .contract_decl = try contracts.constraintDefinition(module_index, constraint_id),
                         .actual = concrete,
@@ -1570,7 +1588,7 @@ pub const Resolver = struct {
             phase_start = self.profileTimestamp();
             applicability_start = phase_start;
             applicability_active = true;
-            switch (try self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+            switch (try self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input, true)) {
                 .no_match => continue,
                 .deferred => {
                     saw_deferred = true;
@@ -1688,13 +1706,13 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         rejected: ?ConstraintCheck.Failure,
     ) !void {
-        const diagnostic = self.constraint_diagnostic orelse return;
-        if (diagnostic.* != null) return;
+        const diagnostic = self.call_diagnostic orelse return;
+        if (diagnostic.constraint != null) return;
         const failure = rejected orelse return;
         // A bound can fail on a candidate whose other arguments do not fit.
         // Only explain constraints for otherwise compatible signatures, using
         // the same matcher as function applicability rather than a second rule set.
-        switch (try self.matchParameterizedInput(module_index, pattern, bindings, input)) {
+        switch (try self.matchParameterizedInput(module_index, pattern, bindings, input, false)) {
             .applicable => {},
             else => return,
         }
@@ -1704,7 +1722,7 @@ pub const Resolver = struct {
         // first explanation now, before later candidate work or rollback.
         try @import("type_names.zig").appendTypeName(&name, self.graph, failure.actual);
         const text = try name.toOwnedSlice();
-        diagnostic.* = .{
+        diagnostic.constraint = .{
             .function = declaration,
             .contract_decl = failure.contract_decl,
             .actual_name = text,
@@ -1722,33 +1740,35 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         input: global_sg.GlobalNodeId,
         lexical_context: CallContext,
-    ) !?ConstraintFailure {
+    ) !CallFailure {
         var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
-        const saved_diagnostics = self.constraint_diagnostic;
+        const saved_diagnostics = self.call_diagnostic;
         defer {
             speculation.deinit();
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
-            self.constraint_diagnostic = saved_diagnostics;
+            self.call_diagnostic = saved_diagnostics;
         }
-        var failure: ?ConstraintFailure = null;
-        errdefer if (failure) |value| self.allocator.free(value.actual_name);
-        self.constraint_diagnostic = &failure;
+        var failure: CallFailure = .{};
+        errdefer failure.deinit(self.allocator);
+        self.call_diagnostic = &failure;
         // Explain applicability only. A selected body's errors belong to normal
         // instantiation, not to this diagnostic probe or its discarded effects.
         const selected = selection: {
             if (try self.generics.resolveCallArguments(current_module, reference)) |relocated| {
                 _ = self.selectExplicitGenericFunction(current_module, module, reference, relocated, input, lexical_context, false, null) catch |err| {
                     if (err == error.OutOfMemory) return err;
+                    if (err == error.AmbiguousGenericFunction) break :selection true;
                     break :selection false;
                 };
             } else {
                 _ = self.selectImplicitGenericFunction(current_module, module, reference, input, lexical_context) catch |err| {
                     if (err == error.OutOfMemory) return err;
+                    if (err == error.AmbiguousGenericFunction) break :selection true;
                     break :selection false;
                 };
             }
@@ -1757,8 +1777,8 @@ pub const Resolver = struct {
         if (selected) {
             // A successful selection is not a constraint error even if other
             // candidates failed their bounds.
-            if (failure) |value| self.allocator.free(value.actual_name);
-            return null;
+            failure.deinit(self.allocator);
+            return .{};
         }
         return failure;
     }
@@ -1807,7 +1827,7 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) !core_mod.Resolver.RecordMatch {
+    fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId, report_missing: bool) !core_mod.Resolver.RecordMatch {
         var speculation = self.beginSpeculation();
         const saved_stats = self.generics.stats;
         defer {
@@ -1831,7 +1851,14 @@ pub const Resolver = struct {
             else => .no_match,
         };
         const fields = global_types.fields(self.graph, ty) orelse return if (self.unresolvedSignature(ty) == .deferred) .deferred else .no_match;
-        return self.core.matchCallInput(fields, input);
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return .no_match,
+        };
+        const inspection = self.core.inspectRecordFields(fields, literal);
+        if (report_missing) if (self.call_diagnostic) |diagnostic| if (inspection.missing) |name|
+            try diagnostic.recordMissing(self.allocator, self.graph.text(name));
+        return inspection.status;
     }
 
     pub fn inferInputType(
