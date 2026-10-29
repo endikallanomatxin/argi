@@ -77,6 +77,14 @@ native progress. Buffered adapters forward the underlying error, including its
 original tracer. Stream errors and unrepresentable totals are reported through
 an `Errable`; failure may follow consumed input and already written output.
 
+File streams retain their read/write access mode. Reads from write-only files
+and writes to read-only files report `stream_read_failed` and
+`stream_write_failed` before calling native stdio. Standard input is readable;
+standard output and error are writable. `File()` creates a closed handle.
+Adopting a native stream with `file_from_stream` requires explicit `readable`
+and `writable` arguments matching that stream's mode; these declarations do not
+grant additional native access.
+
 For File streams, a native stdio read error, including an interruption reported
 by stdio, becomes `stream_read_failed`, not EOF or a successful zero-byte read.
 BufferedReader preserves that error. This boundary does not automatically retry

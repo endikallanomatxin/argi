@@ -1,7 +1,7 @@
 main := (.system: System) -> (.status_code: Int32) {
     assume error_tracer ::= $&noop_error_tracer
     assume ffi := system.ffi
-    file ::= file_from_stream(.stream_address = 0, .should_close = 0 == 1)
+    file ::= File()
     path ::= from_literal(.data = "tests/feature_tests/io/13_file_open_error/build/missing.txt")
 
     open_result ::= open(.p = $&file, .path = path, .mode = ..read)

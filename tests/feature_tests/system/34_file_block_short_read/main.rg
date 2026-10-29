@@ -51,7 +51,7 @@ main := (.system: System) -> (.status_code: Int32) {
         return
     }
 
-    -- A native write-only stream reports read failures through both protocols.
+    -- A write-only File rejects reads through both protocols before native I/O.
     denied_read: [1]UInt8 = (99)
     match read(.self = $&file, .buffer = view($&denied_read)) {
         ..ok _ { abort }

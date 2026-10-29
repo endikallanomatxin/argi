@@ -14,10 +14,11 @@ File := (
     ._ffi           : $&ForeignFunctionInterface
     .stream_address : UIntNative                 = 0
     .should_close   : Bool                       = 0 == 1
+    ._readable      : Bool                       = false
+    ._writable      : Bool                       = false
 )
 
-_acquire_file := once _FileInitArgs -> (.result: File) {
-
+_init_file := _FileInitArgs -> (.result: File) {
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
@@ -26,11 +27,15 @@ FileInitArgs: Type = _FileInitArgs
 implement Init#(File, FileInitArgs) (
     .Result : Type = File
 
-    .init = _acquire_file
+    .init = _init_file
 )
 
 file_from_stream := (
-    .ffi: $&ForeignFunctionInterface, .stream_address: UIntNative, .should_close: Bool
+    .ffi            : $&ForeignFunctionInterface,
+    .stream_address : UIntNative,
+    .should_close   : Bool,
+    .readable       : Bool,
+    .writable       : Bool
 ) -> (.result: File) {
     _init_ffi ::= ffi
     _init_stream_address ::= stream_address
@@ -40,6 +45,8 @@ file_from_stream := (
         ._ffi           = _init_ffi
         .stream_address = _init_stream_address
         .should_close   = _init_should_close
+        ._readable      = readable
+        ._writable      = writable
     )
 }
 
@@ -84,6 +91,8 @@ open := (
         ._ffi           = ffi
         .stream_address = opened | convert#(.to: UIntNative)(_)
         .should_close   = 1 == 1
+        ._readable      = is(.value = mode, .variant = ..read)
+        ._writable      = is(.value = mode, .variant = ..read) == false
     )
 
     if p&.stream_address == 0 {
@@ -115,6 +124,7 @@ init_stdin := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
         ._ffi           = ffi
         .stream_address = _standard_stream(.descriptor = 0, .ffi = ffi)
         .should_close   = false
+        ._readable      = true
     )
 }
 
@@ -123,6 +133,7 @@ init_stdout := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
         ._ffi           = ffi
         .stream_address = _standard_stream(.descriptor = 1, .ffi = ffi)
         .should_close   = false
+        ._writable      = true
     )
 }
 
@@ -131,6 +142,7 @@ init_stderr := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
         ._ffi           = ffi
         .stream_address = _standard_stream(.descriptor = 2, .ffi = ffi)
         .should_close   = false
+        ._writable      = true
     )
 }
 
@@ -175,7 +187,7 @@ implement Reader#(File) (
 
         assume ffi := self&._ffi
 
-        if self&.stream_address == 0 {
+        if self&.stream_address == 0 or self&._readable == false {
             result = ..error(.reason = ..stream_read_failed)
             return
         }
@@ -213,7 +225,7 @@ _read_file := (
 
     assume ffi := self&._ffi
 
-    if self&.stream_address == 0 {
+    if self&.stream_address == 0 or self&._readable == false {
         result = ..error(.reason = ..stream_read_failed)
         return
     }
@@ -238,7 +250,7 @@ _file_write_block := (
 
     assume ffi := self&._ffi
 
-    if self&.stream_address == 0 {
+    if self&.stream_address == 0 or self&._writable == false {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
@@ -301,7 +313,7 @@ implement Writer#(File) (
 
         assume ffi := self&._ffi
 
-        if self&.stream_address == 0 {
+        if self&.stream_address == 0 or self&._writable == false {
             result = ..error(.reason = ..stream_write_failed)
             return
         }

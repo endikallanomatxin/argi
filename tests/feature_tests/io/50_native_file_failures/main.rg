@@ -23,7 +23,9 @@ main := (.system: System) -> () {
     assume ffi := system.ffi
     first ::= failed_stream().address
     if first == 0 { abort }
-    file ::= file_from_stream(.stream_address = first, .should_close = true)
+    file ::= file_from_stream(
+        .stream_address = first, .should_close = true, .readable = false, .writable = true
+    )
     match Writer#().flush(.self = $&file) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_flush_failed { abort } }
@@ -40,7 +42,9 @@ main := (.system: System) -> () {
 
     second ::= failed_stream().address
     if second == 0 { abort }
-    buffered_file ::= file_from_stream(.stream_address = second, .should_close = true)
+    buffered_file ::= file_from_stream(
+        .stream_address = second, .should_close = true, .readable = false, .writable = true
+    )
     {
         storage: [1]UInt8 = (0)
         buffered ::= BufferedWriter(.base = $&buffered_file, .buffer = view($&storage))
@@ -60,7 +64,9 @@ main := (.system: System) -> () {
     while mode < 3 {
         address ::= interrupted_input().address
         if address == 0 { abort }
-        input ::= file_from_stream(.stream_address = address, .should_close = true)
+        input ::= file_from_stream(
+            .stream_address = address, .should_close = true, .readable = true, .writable = false
+        )
         bytes: [2]UInt8 = (99, 99)
         if mode == 0 {
             match Reader#().read_byte(.self = $&input) {
@@ -93,7 +99,9 @@ main := (.system: System) -> () {
         if mode == 2 { native_buffering = 1 }
         address ::= interrupted_output(.buffered = native_buffering).address
         if address == 0 { abort }
-        output ::= file_from_stream(.stream_address = address, .should_close = true)
+        output ::= file_from_stream(
+            .stream_address = address, .should_close = true, .readable = false, .writable = true
+        )
         bytes: [2]UInt8 = (65, 66)
         if mode == 0 {
             match Writer#().write_byte(.self = $&output, .byte = 65) {

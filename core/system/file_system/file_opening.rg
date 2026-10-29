@@ -27,7 +27,7 @@ _open_c_file := (
     assume error_tracer
 
     assume ffi := file_system&._ffi
-    file ::= file_from_stream(.stream_address = 0, .should_close = false)
+    file ::= File()
     opened ::= open(.p = $&file, .path = path, .mode = mode)
     if is(.value = opened, .variant = ..ok) {
         result = ..ok ~file
