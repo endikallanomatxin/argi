@@ -522,6 +522,70 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     try session.close();
 }
 
+test "REPL resource-bearing prelude survives failed reset and releases poisoned storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
+    defer sf.freeList(&allocator, &files);
+    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(files.items);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var session: interactive.Interactive = undefined;
+    try session.initPrepared(failing.allocator(), diagnostics.source_files, prepared, .{});
+    var deinitialized = false;
+    defer if (!deinitialized) session.deinit();
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    var errors = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer errors.deinit();
+    var host_output = @import("../execution/host_output.zig").Output{ .writer = &output.writer, .error_writer = &errors.writer };
+    const bindings = host_output.bindings();
+    session.runtime.context.host_bindings = &bindings;
+
+    const owning_prelude = prelude ++ "\nowned ::= unwrap_or_abort(.value = String(.length = 8))\n";
+    try std.testing.expectError(error.ExecutionAborted, session.initializePrelude(owning_prelude ++ "abort\n"));
+    try std.testing.expect(session.prelude == null);
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.context.storage.acquisitions.entries.items.len);
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    const failed_revision = session.compiler.revision;
+    try std.testing.expectError(error.ExecutionContextPoisoned, session.submitStatements("print(\"unavailable\")"));
+    try std.testing.expectEqual(failed_revision, session.compiler.revision);
+    try std.testing.expectEqualStrings("", output.written());
+
+    // Reset discards the trapped context without executing user destructors.
+    try session.reset();
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+    try session.initializePrelude(owning_prelude);
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    const namespace = session.compiler.namespace;
+    const revision = session.compiler.revision;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, session.reset());
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(namespace, session.compiler.namespace);
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(.ready, session.runtime.context.state);
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    try std.testing.expectEqual(@as(i128, 8), (try session.submitInput("byte_length(&owned).count")).?.value.runtime.integer);
+
+    // A healthy reset performs ordinary cleanup, then recreates the prelude.
+    try session.reset();
+    try std.testing.expect(session.compiler.namespace != namespace);
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.context.storage.acquisitions.entries.items.len);
+    try std.testing.expect(session.runtime.context.storage.acquisitions.entries.items[0].live);
+    try session.close();
+    try std.testing.expectEqual(.fresh, session.runtime.context.state);
+    try std.testing.expectEqual(@as(u32, 0), session.runtime.context.bindings.count());
+    session.deinit();
+    deinitialized = true;
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+}
+
 test "REPL presents compiler types and reuses them in layout queries" {
     var session: interactive.Interactive = undefined;
     try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});

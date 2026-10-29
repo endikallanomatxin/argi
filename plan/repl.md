@@ -32,15 +32,11 @@ JIT and complete native-backend parity are not prerequisites.
    test runner. Compare values, observable effects and cleanup counts. Cover
    replacement, aliases, early exits, numeric boundaries and dispatch between old
    and new code units; retain internal tests for exhaustive local rules.
-3. Close the failure-lifecycle matrix: rejected commands and preparation failures
-   publish nothing; traps, budget exhaustion, cancellation and host callback
-   failures prevent further execution until reset. Extend host-resource and
-   allocation-failure coverage to the resource-bearing bundled prelude. A minimal
-   prelude already covers allocation/resize failures through preparation and
-   execution, publication boundaries, reset and retry; initialization traps are
-   covered separately. Document which effects cannot be undone and how
-   context-owned resources are released without user cleanup. Never promise
-   transactional rollback of execution.
+3. Complete allocation/resize failure sweeps during initialization of the
+   resource-bearing bundled prelude, including budget and host callback failures.
+   Verify publication, poison/reset and retry boundaries. Document effects that
+   cannot be undone and context-owned resource release without user cleanup;
+   never promise transactional rollback of execution.
 4. Measure 10/100/1,000-command sessions, then longer resource/definition/rejection
    workloads using the existing execution benchmark. Separate setup, frontend,
    lowering, verification and execution; report per-command latency and retained
