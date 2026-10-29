@@ -339,7 +339,7 @@ fn compileResolvedPlan(
         .environ_map = environ_map,
         .target = flags.target,
     }, plan.module_dir);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     var frontend_options = options.frontend_options;
     frontend_options.collect_stats = flags.stats;
     frontend_options.module_jobs = flags.frontend_jobs.resolve();

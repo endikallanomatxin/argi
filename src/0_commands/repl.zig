@@ -45,7 +45,7 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
     const allocator = arena.allocator();
     var files = try sf.collectCoreWithOptions(&allocator, io, options);
     defer sf.freeList(&allocator, &files);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -390,7 +390,7 @@ test "REPL presents persistent string literals as escaped text" {
     const allocator = std.testing.allocator;
     var sources = @import("../execution/submissions.zig").Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diag.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diag.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "StringView := (._data: &UInt8, ._length: UIntNative)");
     var core = loaded.*;
@@ -411,7 +411,7 @@ test "REPL standard prelude supplies output and persistent allocation across res
     const allocator = arena.allocator();
     var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
     defer sf.freeList(&allocator, &files);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -481,7 +481,7 @@ test "REPL checked core allocations use virtual regions and explicit release" {
     const a = arena.allocator();
     var files = try sf.collectCoreWithOptions(&a, std.testing.io, .{ .fallback_core_dir = "core" });
     defer sf.freeList(&a, &files);
-    var diagnostics = diag.Diagnostics.init(&a, files.items);
+    var diagnostics = try diag.Diagnostics.init(&a, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -528,7 +528,7 @@ test "REPL resource-bearing prelude survives failed reset and releases poisoned 
     const allocator = arena.allocator();
     var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
     defer sf.freeList(&allocator, &files);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -617,7 +617,7 @@ test "REPL bundled prelude runtime allocation failures preserve publication boun
     const allocator = arena.allocator();
     var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
     defer sf.freeList(&allocator, &files);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -699,7 +699,7 @@ test "REPL resource prelude releases failed source and backend allocations" {
             var sources = @import("../execution/submissions.zig").Sources.init(a);
             defer sources.deinit();
             var source_allocator = a;
-            var messages = diag.Diagnostics.init(&source_allocator, &.{});
+            var messages = try diag.Diagnostics.init(&source_allocator, &.{});
             defer messages.deinit();
             const saved = try sources.beginBatch(&messages);
             {
@@ -718,7 +718,7 @@ test "REPL resource prelude releases failed source and backend allocations" {
     const allocator = arena.allocator();
     var files = try sf.collectCoreWithOptions(&allocator, std.testing.io, .{ .fallback_core_dir = "core" });
     defer sf.freeList(&allocator, &files);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();

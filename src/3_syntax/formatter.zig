@@ -43,7 +43,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     defer arena.deinit();
     const temporary = arena.allocator();
     const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&temporary, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&temporary, &files);
     defer diagnostics.deinit();
     var lex = tokenizer.Tokenizer.init(temporary, &diagnostics, source, diagnostics.source_db.fileId(0));
     const tokens = try lex.tokenize();
@@ -222,7 +222,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         // Token identity alone is insufficient: newlines can end expressions.
         // Refuse an edit that changes the syntax of an initially valid file.
         const result_files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = result }};
-        var result_diagnostics = diagnostic.Diagnostics.init(&temporary, &result_files);
+        var result_diagnostics = try diagnostic.Diagnostics.init(&temporary, &result_files);
         defer result_diagnostics.deinit();
         var parser = try syntaxer.Syntaxer.init(temporary, formatted_tokens, result, &result_diagnostics);
         defer parser.deinit();
@@ -336,7 +336,7 @@ const Layout = struct {
         // does not syntax successfully. Preserve its manual layout in that case;
         // never guess statement boundaries from adjacent identifiers.
         const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
-        var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+        var diagnostics = try diagnostic.Diagnostics.init(&allocator, &files);
         defer diagnostics.deinit();
         var parser = try syntaxer.Syntaxer.init(allocator, tokens, source, &diagnostics);
         defer parser.deinit();
@@ -1153,7 +1153,7 @@ test "formatter expands long calls into complete argument rows" {
 
 fn testSyntaxTree(allocator: std.mem.Allocator, source: []const u8) !?syn.FileSyntaxTree {
     const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var lex = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     const tokens = try lex.tokenize();

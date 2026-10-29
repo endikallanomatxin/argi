@@ -14,7 +14,7 @@ fn execute(source: []const u8, limits: vm.Limits) !i128 {
         .{ .path = "app/main.rg", .code = source },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
     };
-    var diagnostics = diag.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diag.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -1010,7 +1010,7 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
         },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -1076,7 +1076,7 @@ test "bytecode retained lowering publishes stable programs for independent entri
         },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -1194,7 +1194,7 @@ test "compile-time evaluation proves its dependency unit before execution" {
         },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -1273,7 +1273,7 @@ test "bytecode safety preserves observations through returned reference aliases"
             .{ .path = "app/main.rg", .code = source },
             .{ .path = "deinit_core/main.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())" },
         };
-        var diagnostics = diag.Diagnostics.init(&a, &files);
+        var diagnostics = try diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
         defer pipeline.deinit();
@@ -1328,7 +1328,7 @@ test "compile-time evaluation retains selected cleanup in its dependency unit" {
         \\Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())
         },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -1664,7 +1664,7 @@ test "anonymous compile-time entries cannot observe mutable runtime globals" {
             "read_runtime := () -> (.result: Int32)  {{ result = runtime_value }}\n" ++
             "main := () -> (.status_code: Int32)  {{ status_code = #run () -> (.result: Int32) {{ {s} }} }}", .{body});
         const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
-        var diagnostics = diag.Diagnostics.init(&a, &files);
+        var diagnostics = try diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
         defer pipeline.deinit();
@@ -1727,7 +1727,7 @@ test "anonymous compile-time entries diagnose unsupported argument interfaces" {
         else
             try std.fmt.allocPrint(a, "main := () -> ()  {{ #run ({s}) -> () {{}} }}", .{inputs});
         const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
-        var diagnostics = diag.Diagnostics.init(&a, &files);
+        var diagnostics = try diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
         defer pipeline.deinit();
@@ -1754,7 +1754,7 @@ test "nested compile-time entries retain their output representation boundary" {
         \\    }
         \\}
     }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -1779,7 +1779,7 @@ test "anonymous compile-time entries cannot export temporary references" {
         \\    }
         \\}
     }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -2248,7 +2248,7 @@ test "comptime evaluation releases transient proofs with a retained graph alloca
         .code = "answer := () -> (.result: Int32) { result = 42 }\n" ++
             "main := () -> (.status_code: Int32) { status_code = answer() }\n",
     }};
-    var diagnostics = diag.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diag.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -2573,7 +2573,7 @@ test "bytecode failed lowering does not retain host requirements" {
         },
         .{ .path = "ffi_core/main.rg", .origin = .bundled_core, .code = "ForeignFunctionInterface: Type = ()" },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -2735,7 +2735,7 @@ test "bytecode memory adapters consume registered identities rather than declara
         .{ .path = "core/libc/libc.rg", .origin = .bundled_core, .code = "_free(.address: UIntNative) -> (): ExternFunction\n_aligned_free(.address: UIntNative) -> (): ExternFunction\n_malloc(.size: UIntNative) -> (.address: UIntNative): ExternFunction\n_aligned_alloc(.alignment: UIntNative, .size: UIntNative) -> (.address: UIntNative): ExternFunction" },
         .{ .path = "ffi_core/main.rg", .origin = .bundled_core, .code = "ForeignFunctionInterface: Type = ()" },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -2866,7 +2866,7 @@ test "bytecode virtual tables verify receiver access descriptors" {
         \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
         \\}
     }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3123,7 +3123,7 @@ test "replacement summaries preserve historical references in returned arrays" {
             .{ .path = "app/main.rg", .code = source },
             .{ .path = "deinit_core/main.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())" },
         };
-        var diagnostics = diag.Diagnostics.init(&a, &files);
+        var diagnostics = try diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
         defer pipeline.deinit();
@@ -3164,7 +3164,7 @@ test "conditional replacement renews selected symbolic input without renewing co
             .{ .path = "app/main.rg", .code = source },
             .{ .path = "deinit_core/main.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())" },
         };
-        var diagnostics = diag.Diagnostics.init(&a, &files);
+        var diagnostics = try diag.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
         defer pipeline.deinit();
@@ -3183,7 +3183,7 @@ test "VM failures retain bounded caller locations and reset clears them" {
         \\middle := () -> ()  { fail() }
         \\main := () -> ()  { middle() }
     }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3239,7 +3239,7 @@ test "compile-time failures preserve nested caller sources after evaluator teard
         \\    status_code = #run () -> (.value: Int32) { value = middle() }
         \\}
     }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3276,7 +3276,7 @@ test "compile-time expression failures retain source after evaluator teardown" {
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := (.value: Int32) -> (.result: Int32)  { result = value }" }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3353,7 +3353,7 @@ test "registered core allocation metadata executes through ordinary generic spec
         \\}
         },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3390,7 +3390,7 @@ test "allocation metadata retains generic cleanup evidence without checking unus
         \\}
         },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .semantizing = .{ .exhaustive_function_bodies = false } });
     defer pipeline.deinit();
@@ -3445,7 +3445,7 @@ test "prepared acquisition bytecode rejects altered receipt value and cleanup de
         \\}
         },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3572,7 +3572,7 @@ test "bytecode publishes only used session bindings and rolls back failed extens
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "helper := () -> (.result: Int32 = 42) {}" }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3642,7 +3642,7 @@ test "bytecode imported bodies retain verified origins and global initialization
         },
         .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
     };
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -3781,7 +3781,7 @@ test "virtual contract declarations retain domains without concrete implementati
         \\)
         \\main := () -> (.status_code: Int32 = 0)  {}
     }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();

@@ -352,7 +352,7 @@ pub const LanguageService = struct {
         var work = arena.allocator();
 
         const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&work, &one_file);
+        var diagnostics = try diag.Diagnostics.init(&work, &one_file);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{});
         defer pipeline.deinit();
@@ -625,7 +625,7 @@ pub const LanguageService = struct {
             owned.code = try work.dupe(u8, source.code);
         }
         snapshot.files = files;
-        var diagnostics = diag.Diagnostics.init(&work, files);
+        var diagnostics = try diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = true } });
         defer pipeline.deinit();

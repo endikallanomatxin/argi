@@ -385,7 +385,7 @@ test "submission sources retain immutable modules and rejected source diagnostic
     var diagnostic_arena = std.heap.ArenaAllocator.init(a);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
     defer diagnostics.deinit();
     const first = try sources.loadModule(&diagnostics, "first := () -> () {}\n");
     const prefix = try sources.appendModuleViews(&.{}, first);
@@ -411,7 +411,7 @@ test "source submissions compile and execute incrementally without history repla
     const a = arena.allocator();
     var sources = Sources.init(a);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var compiler = try @import("compilation_session.zig").CompilationSession.init(a, &.{}, .{ .exhaustive_function_bodies = false });
     defer compiler.deinit();

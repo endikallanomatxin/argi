@@ -389,7 +389,7 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
     defer first.deinit(a);
@@ -439,7 +439,7 @@ test "compilation session rejects unsafe source without publishing definitions" 
     const a = arena.allocator();
     const source = "escape := () -> (.result: &Int32) { value ::= 7\n result = &value }\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
@@ -464,7 +464,7 @@ test "compilation session rejects unsafe source without publishing definitions" 
 
 fn prepareWithAllocationFailures(allocator: std.mem.Allocator) !void {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "candidate") };
     defer module.deinit(a);
@@ -494,7 +494,7 @@ test "compilation session shares one graph across executable publications" {
     const a = arena.allocator();
     const source = "identity := (.value: Int32) -> (.result: Int32) { result = value }\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var modules: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
     defer {
@@ -545,7 +545,7 @@ fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !voi
     const a = std.testing.allocator;
     const source = "command := () -> () { helper() }\nhelper := () -> () {}\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
@@ -607,7 +607,7 @@ test "continuation scopes retain direct owners and clean nested owners" {
         "command := () -> () { retained: Resource = ()\n { temporary: Resource = () } }\n" ++
         "exit_command := () -> () {}\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
@@ -666,7 +666,7 @@ test "execution session publishes commands and runs checked exit before reset" {
     const a = arena.allocator();
     const source = "command := () -> () { retained: Int32 = 42 }\nexit_command := () -> () {}\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
@@ -704,7 +704,7 @@ test "execution session resolves accepted bindings in later command modules" {
     const first_source = "command := () -> () { retained :: Int32 = 42 }\n";
     const second_source = "update := () -> () { retained = 7 }\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = first_source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var first = try sourceModule(a, first_source, &diagnostics);
     defer first.deinit(a);
@@ -738,7 +738,7 @@ fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &files);
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
@@ -771,7 +771,7 @@ test "unit selection retains dormant bodies and checks them when selected later"
     var diagnostic_arena = std.heap.ArenaAllocator.init(a);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\unused := () -> (.result: &Int32) {
@@ -806,7 +806,7 @@ test "unit selection retains dormant bodies and checks them when selected later"
 
 test "unit selection preserves pending binding types for later materialization" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
@@ -870,7 +870,7 @@ test "unit selection preserves pending binding types for later materialization" 
 
 test "virtual signature completion is stable across repeated unit preparation" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
@@ -909,7 +909,7 @@ test "virtual signature completion is stable across repeated unit preparation" {
 
 test "semantic unit completion keeps the same graph open for later roots" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
@@ -950,7 +950,7 @@ test "semantic unit completion keeps the same graph open for later roots" {
 
 test "compilation units do not inherit preceding command roots" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\first := () -> () { first_value :: Int32 = 7 }
@@ -985,7 +985,7 @@ test "compilation units do not inherit preceding command roots" {
 
 test "semantic storage domain metadata is released with its graph owner" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\Readable#(.Source: Type): Contract = (
@@ -1021,7 +1021,7 @@ fn rejectEvaluatedCandidate(allocator: std.mem.Allocator) !void {
     var diagnostic_arena = std.heap.ArenaAllocator.init(a);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\answer := () -> (.result: Int32) {
@@ -1060,7 +1060,7 @@ fn reuseSummariesWithAllocationFailures(allocator: std.mem.Allocator) !void {
     var diagnostic_arena = std.heap.ArenaAllocator.init(a);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\command := () -> () { helper() }

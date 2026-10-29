@@ -16,7 +16,7 @@ fn parseTestSource(path: []const u8, source: []const u8) !syntax_tree.FileSyntax
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
 
     var error_offset: usize = 0;
@@ -191,7 +191,7 @@ test "compact syntaxing parses comparisons and specializations under allocation 
     defer arena.deinit();
     const base = arena.allocator();
     const files = [_]source_files.SourceFile{.{ .path = "speculation.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&base, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&base, &files);
     defer diagnostics.deinit();
     var lex = tokenizer.Tokenizer.init(base, &diagnostics, source, diagnostics.source_db.fileId(0));
     _ = try lex.tokenize();

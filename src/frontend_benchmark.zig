@@ -21,7 +21,7 @@ fn measure(io: std.Io, files: []const sf.SourceFile, session: ?*ModuleCache, edi
     const allocator = arena.allocator();
     const inputs = try allocator.dupe(sf.SourceFile, files);
     if (edit) |index| inputs[index].code = try std.fmt.allocPrint(allocator, "{s}\n-- benchmark revision {d}\n", .{ inputs[index].code, revision });
-    var diagnostics = diag.Diagnostics.init(&allocator, inputs);
+    var diagnostics = try diag.Diagnostics.init(&allocator, inputs);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{
         .collect_stats = true,

@@ -120,7 +120,7 @@ test "LSP syntax cache replaces changed files and releases departed sources" {
 // The caller owns all artifacts through its arena.
 pub fn load_files(work: std.mem.Allocator, sources: []const sf.SourceFile) ![]File {
     var work_copy = work;
-    var diagnostics = diag.Diagnostics.init(&work_copy, sources);
+    var diagnostics = try diag.Diagnostics.init(&work_copy, sources);
     defer diagnostics.deinit();
     const files = try work.alloc(File, sources.len);
     for (sources, files, 0..) |source, *file, index| {

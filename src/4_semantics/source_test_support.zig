@@ -25,7 +25,7 @@ fn check(name: []const u8, source: []const u8, marker: ?[]const u8, expected: ?[
     var messages = std.heap.ArenaAllocator.init(a);
     defer messages.deinit();
     const diagnostic_allocator = messages.allocator();
-    var diagnostics = Diagnostics.init(&diagnostic_allocator, &files);
+    var diagnostics = try Diagnostics.init(&diagnostic_allocator, &files);
     defer diagnostics.deinit();
     var frontend = Frontend.init(a, std.testing.io, &diagnostics, .{});
     defer frontend.deinit();

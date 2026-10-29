@@ -7623,7 +7623,7 @@ test "opaque summary runtime recovers hidden external dependencies" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -7659,7 +7659,7 @@ test "opaque receiver effects select only their mapped storage domain" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -7868,7 +7868,7 @@ test "structural auto deinit marks nested fields and parent dead" {
         .fields = .{ .start = 0, .len = 1 },
     });
 
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
@@ -8275,7 +8275,7 @@ test "recursive summary helper instantiates converged outputs" {
     defer arena.deinit();
     var allocator = arena.allocator();
 
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -8598,7 +8598,7 @@ test "storage capability consumption agrees between primitives and summaries" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var graph = try allocationPrimitiveTestGraph(allocator, 12);
     defer graph.deinit(allocator);
@@ -8897,7 +8897,7 @@ fn choiceAccessEvaluatesOnce(take_address: bool, concrete: bool) !void {
     try graph.node_refs.appendSlice(a, &.{ @enumFromInt(1), @enumFromInt(2) });
     try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 2 }, .ret_val = @enumFromInt(2) });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -8958,7 +8958,7 @@ test "field writes retain the evaluated destination when their RHS retargets its
         .{ .nodes = .{ .start = 2, .len = 1 } },
     });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(1) });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -9172,7 +9172,7 @@ test "consuming a value ends nested owned roots while preserving borrowed depend
         .ty = @enumFromInt(1),
         .mutability = .variable,
     });
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
@@ -9195,7 +9195,7 @@ test "conditional opaque empty proofs retain current call and storage identity" 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -9502,7 +9502,7 @@ test "safety continuations retain temporal state while candidate forks remain is
     defer arena.deinit();
     const a = arena.allocator();
     const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "command.rg", .code = "value" }};
-    var diags = diagnostics.Diagnostics.init(&a, &files);
+    var diags = try diagnostics.Diagnostics.init(&a, &files);
     defer diags.deinit();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
@@ -9548,7 +9548,7 @@ test "summary dereferences require a known referent rather than a synthetic chil
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -9569,7 +9569,7 @@ test "projected symbolic fields retain identity across branches without ending s
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -9639,7 +9639,7 @@ test "projected symbolic payload types survive lazy branch materialization" {
         .{ .name = name, .source = source, .value = 0, .payload_type = @enumFromInt(1) },
         .{ .name = name, .source = source, .value = 1 },
     });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -9689,7 +9689,7 @@ test "projected symbolic array elements retain independent generations without e
         .{ .source = source, .ty = @enumFromInt(0), .content = .{ .array_index = .{ .array_ptr = @enumFromInt(0), .index = @enumFromInt(1), .element_type = @enumFromInt(0), .array_type = @enumFromInt(1) } } },
     });
     try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -9746,7 +9746,7 @@ test "replacement initialization proof observes destination after RHS preparatio
         .{ .source = source, .ty = null, .content = .{ .int_literal = 0 } },
     });
     try graph.auto_deinits.append(allocator, .{ .storage = .{ .indirect = @enumFromInt(1) }, .deinit_fn = null });
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
@@ -9786,7 +9786,7 @@ test "projected consumption retains other participant generations for caller ali
         .{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_write } },
     });
     for ([_]u32{ 0, 2, 3, 3 }) |ty| try graph.fields.append(allocator, .{ .name = name, .ty = @enumFromInt(ty), .source = source });
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
@@ -9889,7 +9889,7 @@ test "write pointer capture distinguishes symbolic slots from temporary referenc
         .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(0) } },
         .{ .source = source, .ty = @enumFromInt(1), .content = .{ .move_value = @enumFromInt(0) } },
     });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -9928,7 +9928,7 @@ test "symbolic summary destinations never reevaluate their argument syntax" {
         .{ .source = source, .ty = @enumFromInt(1), .content = .{ .address_of = @enumFromInt(2) } },
     });
     try graph.value_fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(3) });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -9955,7 +9955,7 @@ test "symbolic stored references survive snapshots and joins without inventing e
         .{ .builtin = .Int32 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
     });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10004,7 +10004,7 @@ test "initial symbolic reference reads intern referents independently of slot ow
         .{ .builtin = .Int32 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
     });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10039,7 +10039,7 @@ test "choice output materialization preserves existing symbolic storage lifetime
         .{ .builtin = .Int32 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
     });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10072,7 +10072,7 @@ test "symbolic choice tag refinement preserves children and drops incompatible b
     const a = arena.allocator();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10105,7 +10105,7 @@ test "symbolic cleanup availability refines only a live common incarnation" {
     const a = arena.allocator();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10150,7 +10150,7 @@ test "symbolic generation joins renew current observations without renewing hist
     });
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     for (0..2) |_| try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10197,7 +10197,7 @@ test "loop symbolic observations canonicalize only without retained historical a
     });
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     for (0..2) |_| try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
@@ -10281,7 +10281,7 @@ test "virtual input storage domains exist before concrete handles" {
     try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(2), .mutability = .constant });
     try graph.binding_refs.append(a, @enumFromInt(0));
     const function: graph_mod.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 0, .len = 1 } };
-    var diags = diagnostics.Diagnostics.init(&a, &.{});
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();

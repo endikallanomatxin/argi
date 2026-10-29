@@ -322,6 +322,7 @@ fn collectImportDirsFromSource(
 ) !void {
     var error_offset: usize = 0;
     const selected = @import("target_selection.zig").selectImports(alloc.*, source_code, target, &error_offset) catch |err| {
+        if (err == error.OutOfMemory) return err;
         var line: usize = 1;
         var column: usize = 1;
         for (source_code[0..@min(error_offset, source_code.len)]) |byte| {
@@ -389,9 +390,12 @@ fn collectModuleImportsWithAliases(alloc: *const std.mem.Allocator, io: std.Io, 
     for (sources) |source| {
         var error_offset: usize = 0;
         const selected = try @import("target_selection.zig").selectImports(temporary, source.code, target, &error_offset);
-        var diagnostics = @import("diagnostic.zig").Diagnostics.init(&temporary, &.{source});
+        var diagnostics = try @import("diagnostic.zig").Diagnostics.init(&temporary, &.{source});
         var lexer = @import("../2_tokens/tokenizer.zig").Tokenizer.init(temporary, &diagnostics, selected, diagnostics.source_db.fileId(0));
-        const tokens = lexer.tokenize() catch continue; // Ordinary parsing diagnoses invalid sources.
+        const tokens = lexer.tokenize() catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => continue, // Ordinary parsing diagnoses invalid sources.
+        };
         if (diagnostics.hasErrors()) continue;
         try scans.append(temporary, .{ .source = source, .tokens = tokens });
         for (tokens.contents, 0..) |token, index| {
@@ -1142,4 +1146,20 @@ test "module directory privacy ignores the installation prefix" {
     try validateDirectoryPrivacy("/outside/main.rg", "/tools/_installation/more/math/linear_algebra", "/tools/_installation/more");
     try validateDirectoryPrivacy("/project/tree/branch/main.rg", "/project/tree/_detail", null);
     try validateDirectoryPrivacy("/outside/main.rg", "/tools/_installation/more/math/linear_algebra", "/tools/_installation/more/math");
+}
+
+test "import discovery propagates source indexing and token allocation failures" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    for (0..128) |_| try source.appendSlice(std.testing.allocator, "value := 42\n");
+    try @import("../test_support.zig").checkAllocationAndResizeFailures(std.testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator, code: []const u8) !void {
+            var imports = ImportList.init(allocator);
+            defer freeImportList(&allocator, &imports);
+            const sources = [_]SourceFile{.{ .path = "memory/main.rg", .code = code }};
+            // Retained aliases require the token scan even without a new import.
+            try collectModuleImportsWithAliases(&allocator, std.testing.io, &sources, &imports, .{}, &.{.{ .name = "retained", .dir = "." }});
+            try std.testing.expectEqual(@as(usize, 0), imports.items.len);
+        }
+    }.run, .{source.items});
 }

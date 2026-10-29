@@ -288,7 +288,7 @@ pub const Scheduler = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        var fallback = @import("../../1_base/diagnostic.zig").Diagnostics.init(&a, &.{});
+        var fallback = try @import("../../1_base/diagnostic.zig").Diagnostics.init(&a, &.{});
         defer fallback.deinit();
         return self.evaluateReadyWithDiagnostics(contracts, &fallback, finalized, pending_bodies);
     }

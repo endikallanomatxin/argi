@@ -37,7 +37,7 @@ pub fn run(execution_allocator: std.mem.Allocator, io: std.Io, environ: ?*const 
     }
     const directory = path orelse return error.InvalidVmArguments;
     const files = try sf.collectModuleWithOptions(&allocator, io, .{ .environ_map = environ }, directory);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{ .entry_module_dir = directory, .module_jobs = jobs });
     defer pipeline.deinit();

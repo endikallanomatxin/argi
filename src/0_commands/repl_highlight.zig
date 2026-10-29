@@ -16,7 +16,7 @@ pub fn render(allocator: std.mem.Allocator, output: *std.Io.Writer, line: []cons
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var diagnostics = @import("../1_base/diagnostic.zig").Diagnostics.init(&a, &.{});
+    var diagnostics = try @import("../1_base/diagnostic.zig").Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var scanner = tokenizer.Tokenizer.init(a, &diagnostics, line, .unknown);
     defer scanner.deinit();

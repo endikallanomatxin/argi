@@ -41,11 +41,11 @@ pub const Diagnostics = struct {
     pub fn init(
         a: *const std.mem.Allocator,
         files: []const sf.SourceFile,
-    ) Diagnostics {
+    ) !Diagnostics {
         return .{
             .arena = a,
             .source_files = files,
-            .source_db = source_db.SourceDb.init(a.*, files) catch unreachable,
+            .source_db = try source_db.SourceDb.init(a.*, files),
             .list = std.array_list.Managed(Diagnostic).init(a.*),
         };
     }
@@ -216,7 +216,7 @@ test "diagnostic source maps preserve semantic offsets and borrowed presentation
         .{ .path = "generated.rg", .code = "header\nvalue\nfooter" },
         .{ .path = "input.rg", .code = "value" },
     };
-    var diagnostics = Diagnostics.init(&allocator, &files);
+    var diagnostics = try Diagnostics.init(&allocator, &files);
     defer {
         for (diagnostics.list.items) |item| allocator.free(item.msg);
         diagnostics.deinit();
@@ -238,7 +238,7 @@ test "diagnostic source maps preserve semantic offsets and borrowed presentation
 
 test "diagnostics retain errors without source metadata" {
     const a = std.testing.allocator;
-    var diagnostics = Diagnostics.init(&a, &.{});
+    var diagnostics = try Diagnostics.init(&a, &.{});
     defer {
         for (diagnostics.list.items) |item| a.free(item.msg);
         diagnostics.deinit();
@@ -253,7 +253,7 @@ test "diagnostics retain errors without source metadata" {
 }
 
 fn exerciseDiagnosticIndexAllocationFailures(allocator: std.mem.Allocator) !void {
-    var diagnostics = Diagnostics.init(&allocator, &.{});
+    var diagnostics = try Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     for (0..8) |_| {
         const original = diagnostics.appendSource(.{ .path = "original.rg", .code = "42" }) catch |err| {
@@ -280,4 +280,22 @@ fn exerciseDiagnosticIndexAllocationFailures(allocator: std.mem.Allocator) !void
 
 test "diagnostic source and mapping growth remains atomic on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, exerciseDiagnosticIndexAllocationFailures, .{});
+}
+
+test "diagnostic initialization releases partially built source indexes on allocation failure" {
+    const files = [_]sf.SourceFile{
+        .{ .path = "first.rg", .code = "first\nsecond\nthird" },
+        .{ .path = "second.rg", .code = "one\ntwo" },
+        .{ .path = "third.rg", .code = "last\n" },
+    };
+    try @import("../test_support.zig").checkAllocationAndResizeFailures(std.testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator, sources: []const sf.SourceFile) !void {
+            var diagnostics = try Diagnostics.init(&allocator, sources);
+            defer diagnostics.deinit();
+            try std.testing.expectEqual(sources.len, diagnostics.source_db.files.len);
+            const location: tok.Location = .{ .file = diagnostics.source_db.fileId(0), .offset = 6 };
+            try std.testing.expectEqualStrings("first.rg", diagnostics.path(location));
+            try std.testing.expectEqual(@as(u32, 2), diagnostics.lineColumn(location).line);
+        }
+    }.run, .{&files});
 }

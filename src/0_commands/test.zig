@@ -46,7 +46,7 @@ fn discoverTests(
 ) ![]DiscoverTest {
     var files = try sf.collectModuleWithOptions(&allocator, io, options, module_dir);
     defer sf.freeList(&allocator, &files);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{ .target = options.target, .semantizing = .{ .root_selection = .requests_only } });
     defer pipeline.deinit();

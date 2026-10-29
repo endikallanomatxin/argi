@@ -137,7 +137,7 @@ test "finish lowers explicit bundled contract bounds in one pass" {
     const allocator = std.testing.allocator;
     const source = "consume := #(.Value: Type: PreludeContract) (.value: Value) -> ()  {}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &input_sources);
     defer diagnostics.deinit();
     var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     _ = try tokenizer_context.tokenize();
@@ -179,7 +179,7 @@ test "qualified external signature lowers without a contract catalog" {
         "    result = score(.value = value).result\n" ++
         "}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &input_sources);
     defer diagnostics.deinit();
     var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     _ = try tokenizer_context.tokenize();

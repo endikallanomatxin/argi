@@ -32,7 +32,7 @@ pub const bootstrap_source = "bootstrap := () -> () {\n" ++ system_scope ++ "}\n
 /// Only the selected execution environment decides which host effects exist.
 pub fn parseSystemScope(allocator: std.mem.Allocator) !syn.FileSyntaxTree {
     const diagnostics_mod = @import("../1_base/diagnostic.zig");
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     var tokenizer = @import("../2_tokens/tokenizer.zig").Tokenizer.init(allocator, &diagnostics, bootstrap_source, @enumFromInt(0));
     defer tokenizer.deinit();
@@ -58,7 +58,7 @@ test "entry inputs share shape rules without checking type spellings" {
     }) |case| {
         const source = try std.fmt.allocPrint(a, "entry := ({s}) -> () {{}}", .{case.inputs});
         defer a.free(source);
-        var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+        var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
         defer diagnostics.deinit();
         var tokenizer = @import("../2_tokens/tokenizer.zig").Tokenizer.init(a, &diagnostics, source, @enumFromInt(0));
         defer tokenizer.deinit();

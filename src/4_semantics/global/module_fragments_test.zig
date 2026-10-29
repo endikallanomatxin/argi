@@ -12,7 +12,7 @@ const Recipe = @import("../module/parameterized/ir.zig").ParameterizedNodeId;
 
 fn buildCondition(allocator: std.mem.Allocator, path: []const u8, source: []const u8, condition: ?*?Recipe) !module.ModuleSemanticGraph {
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = path, .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &sources);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &sources);
     defer diagnostics.deinit();
     var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     defer tokenizer.deinit();
@@ -275,7 +275,7 @@ test "module fragments retain declaration identities and share lexical and quali
         .{ .path = "/project/pkg/selected.rg", .code = fragment_source },
         .{ .path = "/project/client/main.rg", .code = client_source },
     };
-    var source_diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    var source_diagnostics = try diagnostics_mod.Diagnostics.init(&a, &sources);
     defer source_diagnostics.deinit();
     var base = try build(a, sources[0].path, base_source);
     defer base.deinit(a);
@@ -306,7 +306,7 @@ test "module fragments retain declaration identities and share lexical and quali
 
     var scratch = std.heap.ArenaAllocator.init(a);
     defer scratch.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var safety = @import("../safety/checker.zig").SafetyChecker.init(scratch.allocator(), &diagnostics, &result.graph);
     defer safety.deinit();
@@ -392,7 +392,7 @@ test "module fragments select contract implementations in the shared namespace" 
     try std.testing.expectEqual(@as(usize, 1), functions.len);
     var scratch = std.heap.ArenaAllocator.init(a);
     defer scratch.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var safety = @import("../safety/checker.zig").SafetyChecker.init(scratch.allocator(), &diagnostics, &result.graph);
     defer safety.deinit();
@@ -461,7 +461,7 @@ test "module conditions use checked staged execution and retain frozen decisions
     var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
     defer base.deinit(a);
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &sources);
     defer diagnostics.deinit();
     var session: sema.Session = undefined;
     try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
@@ -487,7 +487,7 @@ test "module conditions resume when a selected dependency fragment becomes avail
     defer dependency.deinit(a);
     const modules = [_]module.ModuleSemanticGraph{ base, dependency };
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &sources);
     defer diagnostics.deinit();
     var session: sema.Session = undefined;
     try session.init(a, modules[0..1], .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
@@ -513,7 +513,7 @@ test "module conditions reject nonboolean results and execution traps" {
         var diagnostic_arena = std.heap.ArenaAllocator.init(a);
         defer diagnostic_arena.deinit();
         const diagnostic_allocator = diagnostic_arena.allocator();
-        var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &sources);
+        var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &sources);
         defer diagnostics.deinit();
         var session: sema.Session = undefined;
         try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
@@ -539,7 +539,7 @@ test "unresolved module conditions cannot publish a completed semantic graph" {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     const diagnostic_allocator = arena.allocator();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &sources);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &sources);
     defer diagnostics.deinit();
     var session: sema.Session = undefined;
     try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });
@@ -560,7 +560,7 @@ test "checked module decisions select source fragments without evaluating discar
     var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
     defer base.deinit(a);
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &sources);
     defer diagnostics.deinit();
     var session: sema.Session = undefined;
     try session.init(a, &.{base}, .{ .diagnostics = &diagnostics });
@@ -616,7 +616,7 @@ test "cached modules retain executable condition recipes and source identities" 
     var restored = try codec.decode(arena.allocator(), bytes, fingerprint);
     try std.testing.expectEqual(graph.conditions.items[0], restored.conditions.items[0]);
     const sources = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "/project/pkg/base.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &sources);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &sources);
     defer diagnostics.deinit();
     var session: sema.Session = undefined;
     try session.init(a, &.{restored}, .{ .diagnostics = &diagnostics });
@@ -634,7 +634,7 @@ test "staged evaluation checks safety without source text" {
     var recipe: ?Recipe = null;
     var base = try buildCondition(a, "/project/pkg/base.rg", source, &recipe);
     defer base.deinit(a);
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var session: sema.Session = undefined;
     try session.init(a, &.{base}, .{ .diagnostics = &diagnostics, .exhaustive_function_bodies = false });

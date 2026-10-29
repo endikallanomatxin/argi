@@ -3599,7 +3599,7 @@ test "global codegen prunes bodies outside the executable call graph" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
     defer generator.deinit();
@@ -3641,7 +3641,7 @@ test "native calls preserve nested reference evidence with direct and indirect r
         .source = .{ .file_index = 0, .offset = 0 },
         .ty = @enumFromInt(ty),
     });
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
     defer generator.deinit();
@@ -3688,7 +3688,7 @@ test "native identity casts retain reference storage evidence" {
         .ty = @enumFromInt(1),
         .content = .{ .binding_use = @enumFromInt(0) },
     });
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
     defer generator.deinit();
@@ -3725,7 +3725,7 @@ test "captured native writes commit reference evidence and reject mismatched com
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
     defer generator.deinit();
@@ -3782,7 +3782,7 @@ test "native foreign release ABI depends on registered identity rather than symb
         .source = .{ .file_index = 0, .offset = 0 },
         .ty = @enumFromInt(0),
     });
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(allocator, std.testing.io, &graph, &diagnostics, .{});
     defer generator.deinit();
@@ -3839,7 +3839,7 @@ test "native and bytecode metadata primitives share selected type geometry" {
     try graph.binding_refs.append(a, @enumFromInt(0));
     try graph.generic_arguments.append(a, .{ .name = try graph.addString(a, "t"), .value = .{ .type = @enumFromInt(3) } });
     try graph.generic_function_instances.append(a, .{ .function = @enumFromInt(0), .parameterized_definition = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } });
-    var diagnostics = diagnostic.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostic.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     var generator = try CodeGenerator.init(a, std.testing.io, &graph, &diagnostics, .{});
     defer generator.deinit();

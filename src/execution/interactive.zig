@@ -68,7 +68,7 @@ pub const Interactive = struct {
         self.diagnostic_arena = .init(allocator);
         errdefer self.diagnostic_arena.deinit();
         self.diagnostic_allocator = allocator;
-        self.diagnostics = .init(&self.diagnostic_allocator, files);
+        self.diagnostics = try .init(&self.diagnostic_allocator, files);
         self.diagnostics.message_allocator = self.diagnostic_arena.allocator();
         errdefer self.diagnostics.deinit();
         self.sources = .init(allocator);
@@ -264,10 +264,12 @@ pub const Interactive = struct {
     pub fn reset(self: *Interactive) !void {
         if (self.closed) return error.InteractiveSessionClosed;
         // Allocate the replacement first: failure cannot discard live owners.
+        var replacement_diagnostics = try diagnostics_mod.Diagnostics.init(&self.diagnostic_allocator, self.initial_files);
+        var transferred = false;
+        errdefer if (!transferred) replacement_diagnostics.deinit();
         var options = self.options;
         options.diagnostics = &self.diagnostics;
         var replacement = if (self.initial_semantic) |prepared| try compilation.CompilationSession.initPrepared(self.allocator, prepared, &self.diagnostics) else try compilation.CompilationSession.init(self.allocator, self.initial_modules, options);
-        var transferred = false;
         errdefer if (!transferred) replacement.deinit();
         if (self.runtime.context.state != .poisoned) {
             self.diagnostics.list.clearRetainingCapacity();
@@ -283,7 +285,7 @@ pub const Interactive = struct {
         self.diagnostics.deinit();
         self.sources.deinit();
         _ = self.diagnostic_arena.reset(.free_all);
-        self.diagnostics = .init(&self.diagnostic_allocator, self.initial_files);
+        self.diagnostics = replacement_diagnostics;
         self.diagnostics.message_allocator = self.diagnostic_arena.allocator();
         self.rejected_sources = null;
         self.source_checkpoint = null;
@@ -442,7 +444,7 @@ test "interactive expression owners retain cleanup until checked exit" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
     // This isolated fixture supplies the standard lifecycle identity through
@@ -471,7 +473,7 @@ test "interactive rejected reset cleanup reclaims unpublished source batches" {
     const a = std.testing.allocator;
     var sources = submissions.Sources.init(a);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
         "ForeignFunctionInterface: Type = ()\n" ++
@@ -763,7 +765,7 @@ test "interactive inherited assumptions supply selected nested cleanup" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
@@ -818,7 +820,7 @@ test "interactive source IDs retain original metadata across commands" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "ImplicitlyCopyable#(.T: Type): Contract = ()\n" ++
         "SourceLocationId := (.value: UInt32)\n" ++
@@ -1098,7 +1100,7 @@ test "interactive deferred owners retain their checked cleanup" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
@@ -1147,7 +1149,7 @@ test "interactive scalar host calls require explicit bindings before publication
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "ForeignFunctionInterface: Type = ()\nhost_increment(.value: Int32) -> (.result: Int32): ExternFunction\nhost_reference(.value: &Int32) -> (.result: Int32): ExternFunction");
     var core = loaded.*;
@@ -1250,7 +1252,7 @@ test "interactive partial records clean initialized owners at exit" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
@@ -1278,7 +1280,7 @@ test "interactive owning arrays complete cleanup across submissions" {
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
@@ -1491,7 +1493,7 @@ test "interactive virtual methods link host calls against their retained code un
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "ForeignFunctionInterface: Type = ()\n" ++
         "host_increment(.value: Int32) -> (.result: Int32): ExternFunction\n" ++
@@ -1534,7 +1536,7 @@ test "interactive cancellation preserves completed effects and stops later host 
     const a = std.testing.allocator;
     var sources = submissions.Sources.init(a);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "ForeignFunctionInterface: Type = ()\nhost_step() -> (): ExternFunction");
     var core = loaded.*;
@@ -1622,7 +1624,7 @@ test "interactive exit cleans the live sibling of an incomplete choice payload" 
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())");
     var core = loaded.*;
@@ -1654,7 +1656,7 @@ test "interactive Init wrappers retain assumed capabilities from earlier command
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Init#(.Target: Type, .Args: Type): Contract = (.Result: Type, .init: Args -> (.result: Result))");
     var core = loaded.*;
@@ -1885,7 +1887,7 @@ test "interactive Init selects target before inferring implementation parameters
     const allocator = std.testing.allocator;
     var sources = submissions.Sources.init(allocator);
     defer sources.deinit();
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
     const loaded = try sources.loadModule(&diagnostics, "Init#(.Target: Type, .Args: Type): Contract = (.Result: Type, .init: Args -> (.result: Result))");
     var core = loaded.*;
@@ -1949,4 +1951,33 @@ test "interactive Init selects target before inferring implementation parameters
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(@as(u64, 9), (try session.submitInput("Point(.provider = &provider, .value = 9).value")).?.value.runtime.integer);
     try session.close();
+}
+
+test "interactive reset preserves accepted state when replacement source indexes cannot allocate" {
+    const files = [_]@import("../1_base/source_files.zig").SourceFile{
+        .{ .path = "first.rg", .code = "first\n" },
+        .{ .path = "second.rg", .code = "second\n" },
+    };
+    // The file table and each file's line index can fail independently.
+    for (0..files.len + 1) |offset| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var session: Interactive = undefined;
+        try session.initWithSources(failing.allocator(), &files, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+        defer session.deinit();
+        try session.submitStatements("value :: Int32 = 42");
+        const revision = session.compiler.revision;
+        const namespace = session.compiler.namespace;
+        const source_count = session.diagnostics.source_files.len;
+        failing.fail_index = failing.alloc_index + offset;
+        try std.testing.expectError(error.OutOfMemory, session.reset());
+        failing.fail_index = std.math.maxInt(usize);
+        try std.testing.expectEqual(revision, session.compiler.revision);
+        try std.testing.expectEqual(namespace, session.compiler.namespace);
+        try std.testing.expectEqual(source_count, session.diagnostics.source_files.len);
+        try std.testing.expectEqual(.ready, session.runtime.context.state);
+        try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("value")).?.value.runtime.integer);
+        try session.reset();
+        try std.testing.expectEqual(files.len, session.diagnostics.source_files.len);
+        try session.close();
+    }
 }

@@ -31,7 +31,7 @@ fn compileWithExecution(files: []const sf.SourceFile, session: ?*ModuleCache, op
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&allocator, files);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{
         .module_cache = session,
@@ -778,7 +778,7 @@ test "module frontend initializes interactive execution without a program entry"
         .code = "answer := () -> (.result: Int32) { result = 42 }\n",
         .origin = .bundled_core,
     }};
-    var diagnostics = diag.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diag.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -801,7 +801,7 @@ fn retainFrontendSelections(allocator: std.mem.Allocator) !void {
     var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -834,7 +834,7 @@ test "frontend evaluates module conditions before selecting main and program ent
     const a = arena.allocator();
     const source = "noop_error_tracer :: () = ()\nchoose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing()!!! } }";
     const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .entry_module_dir = "/project" });
     defer pipeline.deinit();
@@ -866,7 +866,7 @@ fn stagedFrontendAllocationFailures(allocator: std.mem.Allocator) !void {
     var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
     defer diagnostics.deinit();
     // Frontend safety facts share the invocation arena, as in CLI compilation.
     // Inject failure into arena growth and verify the whole invocation releases.
@@ -887,7 +887,7 @@ test "computed test discovery excludes main and dormant test bodies" {
     const a = arena.allocator();
     const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected := () -> () { missing_test() } } #else { test discarded := () -> () {} }";
     const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .semantizing = .{ .root_selection = .requests_only, .exhaustive_function_bodies = true } });
     defer pipeline.deinit();
@@ -908,7 +908,7 @@ test "prepared interactive modules retain selected namespaces across commands an
     const a = arena.allocator();
     const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { unused_main() }\n#if choose() { answer := () -> (.result: Int32) { result = 42 } } #else { missing := import(\"./missing\") }";
     const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source, .origin = .bundled_core }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
@@ -936,7 +936,7 @@ fn preparedSessionAllocationFailures(allocator: std.mem.Allocator) !void {
     var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer diagnostic_arena.deinit();
     const diagnostic_allocator = diagnostic_arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&diagnostic_allocator, &files);
+    var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
     defer diagnostics.deinit();
     var invocation = std.heap.ArenaAllocator.init(allocator);
     defer invocation.deinit();

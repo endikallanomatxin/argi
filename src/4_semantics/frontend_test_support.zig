@@ -107,7 +107,7 @@ pub const Environment = struct {
         var invocation = std.heap.ArenaAllocator.init(a);
         defer invocation.deinit();
         const work = invocation.allocator();
-        var diagnostics = diag.Diagnostics.init(&work, files);
+        var diagnostics = try diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{
             .entry_module_dir = root,
@@ -190,7 +190,7 @@ test "frontend diagnostic matching checks all candidate locations and source ori
     defer messages.deinit();
     const a = messages.allocator();
     const files = [_]sf.SourceFile{.{ .path = "case/main.rg", .code = "first second" }};
-    var diagnostics = diag.Diagnostics.init(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     const file = diagnostics.source_db.fileId(0);
     try diagnostics.add(.{ .file = file, .offset = 0 }, .semantic, "same diagnostic", .{});

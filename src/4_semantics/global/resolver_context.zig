@@ -378,7 +378,7 @@ test "resolver contexts keep their graphs and pending evaluation independent" {
 
 fn registrationModule(allocator: std.mem.Allocator, dir: []const u8, source: []const u8) !module_sg.ModuleSemanticGraph {
     const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "main.rg", .code = source }};
-    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(allocator, &diagnostics, source, @enumFromInt(0));
     defer tokenizer.deinit();

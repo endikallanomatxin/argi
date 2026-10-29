@@ -172,7 +172,7 @@ test "parameterized bodies own call metadata and binding ranges during lowering"
 
 fn parseSource(allocator: std.mem.Allocator, source: []const u8, file_id: source_db.FileId) !syn.FileSyntaxTree {
     const files = [_]source_files.SourceFile{ .{ .path = "a.rg", .code = source }, .{ .path = "b.rg", .code = source } };
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, file_id);
     defer tokenizer_context.deinit();

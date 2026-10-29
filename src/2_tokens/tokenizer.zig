@@ -653,7 +653,7 @@ fn expectTokenizerDiagnostics(source: []const u8, should_diagnose: bool) !void {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&allocator, files[0..]);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files[0..]);
     defer diagnostics.deinit();
 
     var tokenizer_ctx = Tokenizer.init(
@@ -677,7 +677,7 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&allocator, files[0..]);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files[0..]);
     defer diagnostics.deinit();
 
     var tokenizer_ctx = Tokenizer.init(
@@ -759,7 +759,7 @@ test "character literals contain exactly one Unicode scalar" {
     inline for (cases) |case| {
         const files = [_]sf.SourceFile{.{ .path = "unicode_literal.rg", .code = case[0] }};
         const allocator = std.testing.allocator;
-        var diagnostics = diag.Diagnostics.init(&allocator, &files);
+        var diagnostics = try diag.Diagnostics.init(&allocator, &files);
         defer diagnostics.deinit();
         var tokenizer = Tokenizer.init(allocator, &diagnostics, case[0], diagnostics.source_db.fileId(0));
         defer tokenizer.deinit();

@@ -4192,7 +4192,7 @@ test "semantic session forks prepare independent module additions" {
 
 test "argument diagnostics tolerate absent source metadata" {
     const a = std.testing.allocator;
-    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &.{});
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
     defer diagnostics.deinit();
     const graph: global_sg.GlobalSemanticGraph = .{};
     const location = argumentFieldLocation(&graph, &diagnostics, .{ .file_index = 0, .offset = 12 }, "value");

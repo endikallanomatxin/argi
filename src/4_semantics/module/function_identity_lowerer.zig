@@ -128,7 +128,7 @@ test "source metadata identities require canonical trusted declarations" {
         defer arena.deinit();
         const a = arena.allocator();
         const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = case.path, .code = source }};
-        var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+        var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(a, &diagnostics, source, @enumFromInt(0));
         defer tokenizer.deinit();
@@ -168,7 +168,7 @@ test "trace helper metadata requires the registered core path and keeps ordinary
         defer arena.deinit();
         const a = arena.allocator();
         const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = case.path, .code = source }};
-        var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+        var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &files);
         defer diagnostics.deinit();
         var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(a, &diagnostics, source, @enumFromInt(0));
         defer tokenizer.deinit();
