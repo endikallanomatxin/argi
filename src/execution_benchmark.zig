@@ -50,7 +50,7 @@ const Memory = struct {
     }
 };
 
-const Scenario = enum { update, bindings, calls, aggregates, branches, specializations, specialization_reuse, resources, definitions, rejections, resets };
+const Scenario = enum { update, bindings, calls, aggregates, float_parsing, branches, specializations, specialization_reuse, resources, definitions, rejections, resets };
 const Modules = enum { minimal, core, prelude };
 
 fn elapsed(io: std.Io, start: i96) u64 {
@@ -185,6 +185,7 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     if (session.runtime.context.allocation_profile) |counts| {
         std.debug.print("# transfers,{d},{d},{d},{d}\n", .{ commands, counts.call_input_cells, counts.nested_output_cells, counts.write_destination_cells });
         std.debug.print("# backing,{d},{d},{d},{d},{d}\n", .{ commands, counts.aggregate_cells, counts.partial_cells, counts.projection_cells, counts.virtual_bytes });
+        std.debug.print("# aggregate-sources,{d},{d},{d}\n", .{ commands, counts.aggregate_update_cells, counts.partial_snapshot_cells });
         if (session.runtime.context.state != .fresh) try reportBacking(session, commands);
     }
     if (scenario == .specializations or scenario == .specialization_reuse) {
@@ -222,7 +223,14 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
     }
     // Check the actual retained value without adding a measurement submission.
     const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
-    const frame = session.runtime.context.bindings.get(bindings[bindings.len - 1]) orelse return error.MissingBenchmarkBinding;
+    const binding = if (scenario == .float_parsing) named: {
+        const graph = &session.compiler.semantic.relocation.graph;
+        for (bindings) |id| {
+            if (std.mem.eql(u8, graph.text(graph.binding(id).name), "value")) break :named id;
+        }
+        return error.MissingBenchmarkBinding;
+    } else bindings[bindings.len - 1];
+    const frame = session.runtime.context.bindings.get(binding) orelse return error.MissingBenchmarkBinding;
     const slots = try session.runtime.context.storage.slots(frame);
     const retained = try slots.get(0);
     if (scenario == .aggregates) {
@@ -385,6 +393,7 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                     .update => try allocator.dupe(u8, "value = 42"),
                     .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
                     .aggregates => try allocator.dupe(u8, "value = make_array(42)"),
+                    .float_parsing => try allocator.dupe(u8, "if unwrap_or_abort(.value = parse_float64(.text = \"42.0\")).result != 42.0 { abort }"),
                     .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
                     .specializations, .specialization_reuse => try std.fmt.allocPrint(allocator, "value = branch_workload#(.tag = {d})(.condition = condition)", .{if (scenario == .specializations) index else @as(usize, 0)}),
                     .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
@@ -406,6 +415,17 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
                 } else if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
                 submitted catch |err| {
                     std.debug.print("Stopped after {d} commands: {s}; retained {d:.3} MiB, peak {d:.3} MiB\n", .{ index - 1, @errorName(err), mib(memory.live), mib(memory.peak) });
+                    if (session.runtime.context.state != .fresh) {
+                        std.debug.print("# stopped_aggregate_sources,updates={d},partial_snapshots={d}\n", .{ allocation_profile.aggregate_update_cells, allocation_profile.partial_snapshot_cells });
+                        std.debug.print("# stopped_runtime,cells={d},frames={d},arena_bytes={d},aggregate_cells={d},partial_cells={d},projection_cells={d}\n", .{
+                            session.runtime.context.storage.cells,
+                            session.runtime.context.storage.frames.items.len,
+                            session.runtime.context.arena.queryCapacity(),
+                            allocation_profile.aggregate_cells,
+                            allocation_profile.partial_cells,
+                            allocation_profile.projection_cells,
+                        });
+                    }
                     try session.diagnostics.dump();
                     return err;
                 };
@@ -498,10 +518,11 @@ pub fn main(init: std.process.Init) !void {
     const modules = if (args.len >= 3) std.meta.stringToEnum(Modules, args[2]) orelse return error.InvalidArguments else .minimal;
     const scenario = if (args.len >= 4) std.meta.stringToEnum(Scenario, args[3]) orelse return error.InvalidArguments else .update;
     if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
+    if (scenario == .float_parsing and modules == .minimal) return error.FloatParsingRequiresCore;
     if (scenario == .resets and resolution_profile) return error.ResetResolutionProfileUnsupported;
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
-    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|aggregates|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|aggregates|float_parsing|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
     std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
     if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
     if (scenario == .specializations or scenario == .specialization_reuse) std.debug.print("# specializations,commands,instances,body_top_level_statements,graph_nodes,graph_bindings,graph_types\n", .{});

@@ -15,6 +15,8 @@ pub const AllocationProfile = struct {
     nested_output_cells: u64 = 0,
     write_destination_cells: u64 = 0,
     aggregate_cells: u64 = 0,
+    aggregate_update_cells: u64 = 0,
+    partial_snapshot_cells: u64 = 0,
     partial_cells: u64 = 0,
     projection_cells: u64 = 0,
     virtual_bytes: u64 = 0,
@@ -881,6 +883,7 @@ pub const Storage = struct {
         errdefer self.cells -= cells;
         const result = try record.read(self.allocator, path);
         if (self.allocation_profile) |counts| counts.aggregate_cells +|= cells;
+        if (self.allocation_profile) |counts| counts.partial_snapshot_cells +|= cells;
         return result;
     }
     fn child(value: b.Value, projection: v.Projection) !b.Value {
@@ -1233,6 +1236,7 @@ pub const Storage = struct {
         const changed = try self.update(old, path[1..], value);
         if (path[0] == .variant) {
             const payload = try self.allocate(1);
+            if (self.allocation_profile) |counts| counts.aggregate_update_cells +|= 1;
             payload[0] = changed;
             return .{ .choice = .{ .variant = base.choice.variant, .payload = &payload[0] } };
         }
@@ -1242,6 +1246,7 @@ pub const Storage = struct {
             .variant => unreachable,
         };
         const result = try self.allocate(elements.len);
+        if (self.allocation_profile) |counts| counts.aggregate_update_cells +|= elements.len;
         @memcpy(result, elements);
         result[index] = changed;
         return switch (path[0]) {

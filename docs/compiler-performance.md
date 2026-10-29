@@ -1,5 +1,49 @@
 # Measuring compiler frontend performance
 
+## Repeated decimal parsing in the VM
+
+The `float_parsing` execution scenario repeatedly parses `"42.0"` as Float64
+and checks the result, without retaining numbered results or new user bindings.
+Use `core` or `prelude`; the latter supplies persistent tracing assumptions.
+
+```sh
+zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 10 prelude float_parsing 1024
+zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 100 prelude float_parsing 1024
+```
+
+An isolated Linux x86-64 ReleaseSafe run after `46b05ca6e` with this benchmark
+addition completed 53 commands before the 54th hit the unchanged 1,000,000-cell
+execution quota. This is an expected reproduction of a limitation, not a passing
+100-command benchmark. A separate ten-command run completed with clean teardown.
+
+| Point | Runtime arena bytes | Aggregate cells requested | Projection cells requested |
+|---|---:|---:|---:|
+| Prelude/setup | 1,861,748 | 8,253 | 9 |
+| 10 commands | 18,340,884 | 188,993 | 1,400 |
+| Failure during command 54 | 102,766,470 | 977,798 | 7,468 |
+
+At failure, charged storage was 999,877 cells with 8,999 frame identities.
+The aggregate counter accounts for about 98% of that charge. Counters are
+cumulative successful payload requests, not a complete liveness analysis.
+At ten commands, visible backing remained the prelude's 4,119 aggregate cells,
+one projection and 352 virtual-descriptor bytes. Retired frame slot buffers were
+484,968 bytes versus 367,928 at setup; they do not explain the arena growth.
+
+`Storage.update` reconstructs immutable aggregate paths, and `readPartial`
+materializes immutable snapshots. The `aggregate-sources` rows separate these
+successful requests. In a follow-up ten-command run, updates requested 175,440
+cells (about 97% of the 180,740 aggregate cells added after setup), while partial
+snapshot requests stayed at their setup count of four. Immutable path updates,
+not repeated partial reads, dominate this workload.
+This reproducer belongs with aggregate reclamation, rather than a larger quota
+or a float-specific execution exception. External `Vm.invoke` results and all
+other roots still require a lifetime policy before collection is safe.
+
+Logs: `.zig-cache/float-parsing-retention-fixed.csv` and
+`.zig-cache/float-parsing-retention-10.csv`; source attribution is in
+`.zig-cache/float-parsing-attribution.csv`. Failure output includes quota,
+frame, arena and payload counters for any execution benchmark scenario.
+
 ## Replacing a live aggregate
 
 The `aggregates` execution scenario repeatedly assigns the result of one reused
