@@ -5,6 +5,8 @@ semantics, Safety and VM; full LLVM parity and JIT are not release requirements.
 
 ## Acceptance work
 
+Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
+
 - Define supported everyday programs through executable cases: text, collections,
   imports, generic functions/contracts, partial initialization, persistent owners
   and references, `#run` and `#if`. Inventory lowerer/verifier restrictions and
