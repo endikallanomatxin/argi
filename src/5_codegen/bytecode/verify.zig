@@ -104,9 +104,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (f.outputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.output.start + i].ty)) return error.InvalidBytecode;
         }
         try verifyCleanup(allocator, program.graph, &cleanup_counts, &cleanup_equal, f);
+        var reads: std.ArrayList(Slot) = .empty;
+        defer reads.deinit(allocator);
         for (f.code) |inst| {
-            var reads: std.ArrayList(Slot) = .empty;
-            defer reads.deinit(allocator);
+            reads.clearRetainingCapacity();
             var single: [1]Slot = undefined;
             for (destinations(inst, &single)) |dst| if (dst >= f.slots.len) return error.InvalidBytecode;
             try readSlots(allocator, inst, &reads);
@@ -446,8 +447,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             } else try allocator.dupe(u8, states[pc].?);
             var transferred = false;
             defer if (!transferred) allocator.free(initialized);
-            var reads: std.ArrayList(Slot) = .empty;
-            defer reads.deinit(allocator);
+            reads.clearRetainingCapacity();
             const inst = f.code[pc];
             try readSlots(allocator, inst, &reads);
             for (reads.items) |slot| if (initialized[slot] == 0) return error.UninitializedBytecodeSlot;

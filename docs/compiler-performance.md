@@ -1,5 +1,30 @@
 # Measuring compiler frontend performance
 
+## Reusing verifier operand scratch
+
+Structural checks and definite-initialization propagation now share one temporary
+operand list per function. Each instruction clears its length, retaining only
+the buffer capacity; the function's exit frees it on success or failure. This
+removes per-instruction allocations without caching analysis results or changing
+the initialization worklist and its intersections.
+
+Three alternating isolated Linux x86-64 ReleaseSafe runs of the existing
+`execution-benchmark --verifier` control, before/after this change:
+
+| Shape | Slots | Median before ms | Median after ms | Requested bytes before / after | Peak bytes before / after |
+|---|---:|---:|---:|---:|---:|
+| Linear | 1,000 | 2.368 | 1.911 | 25,421 / 25,289 | 25,289 / 25,289 |
+| Diamonds | 1,000 | 60.983 | 39.001 | 3,341,561 / 3,077,429 | 2,077,429 / 2,077,429 |
+
+Every run retained zero bytes. Timing varies (the after diamond runs ranged
+from 21.044 to 40.265 ms), so this is a verifier microbenchmark improvement,
+not a measured reduction in total compilation time. Join-state storage still
+dominates the peak and is unchanged.
+
+Logs: `.zig-cache/verifier-scratch-{before,after}.csv` and their `-2`/`-3`
+repetitions. All 114 bytecode internal tests pass, including allocation-failure
+and initialization-join coverage.
+
 ## Repeated decimal parsing in the VM
 
 The `float_parsing` execution scenario repeatedly parses `"42.0"` as Float64
