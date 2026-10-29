@@ -323,9 +323,16 @@ test "bytecode VM retains invocations and resets poisoned execution contexts" {
     defer executor.deinit();
     var result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
     const context = executor.context().storage.context;
+    const first = result;
     result = try executor.invoke(@enumFromInt(0), result);
     try std.testing.expectEqual(context, executor.context().storage.context);
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
+    var external = [_]b.Value{.{ .integer = 7 }};
+    const copied = try executor.invoke(@enumFromInt(0), &.{.{ .array = &external }});
+    external[0] = .{ .integer = 99 };
+    try std.testing.expectEqual(@as(u64, 7), copied[0].array[0].integer);
+    try std.testing.expectEqual(@as(u64, 42), first[0].array[0].integer);
+    try std.testing.expectEqual(@as(u64, 42), result[0].array[0].integer);
     const cells = executor.context().storage.cells;
     try std.testing.expectError(error.InvalidArguments, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .boolean = false }} }}));
     try std.testing.expectError(error.InvalidEntry, executor.invoke(@enumFromInt(99), &.{}));

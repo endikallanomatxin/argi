@@ -296,6 +296,10 @@ pub const Vm = struct {
     // Invoke within retained execution storage. Calls share the memory budget
     // and context identity; each invocation receives a fresh instruction budget.
     // Program validation and ordinary safety checking are not repeated here.
+    // Returned value envelopes and immutable payload snapshots are borrowed
+    // until context reset/destruction (or a fresh run). Later invoke calls do
+    // not invalidate them. References inside values still obey their target's
+    // lifetime. Retain the program and graph metadata for that same duration.
     pub fn invoke(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
         self.failure_trace.clearRetainingCapacity();
         if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;

@@ -110,6 +110,18 @@ Logs: `.zig-cache/mutable-aggregate-float-{100,1000}.csv`,
 
 ## Replacing a live aggregate
 
+The retained VM API borrows input envelopes only for the invocation and copies
+their value data into context storage. Results returned by `Vm.invoke` and
+`invokeExpression`, including immutable aggregate snapshots, remain borrowed
+from that context until reset, destruction or a fresh `run`/`runExpression`.
+Later retained invocations preserve earlier results. A fresh run can receive
+the previous result as input: it copies that input before freeing old backing.
+With a shared context, destroying one VM does not destroy the context; program
+and graph metadata must still outlive values that depend on it. References in
+returned values obey target validity separately; snapshot lifetime grants no
+permission to access dead storage. Any collector must preserve external results
+under this contract rather than tracing only live language frames.
+
 The `aggregates` execution scenario repeatedly assigns the result of one reused
 function to a single `[16]Int32` session binding. It creates no numbered results
 or additional user bindings. Every sample checks that the retained array has
