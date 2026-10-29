@@ -202,15 +202,30 @@ pub const Editor = struct {
                 },
                 0...2, 5...7, 9, 11...12, 14...26, 28...31 => continue,
                 else => {
-                    if (self.line.items.len == max_line) continue;
+                    // A terminal character can arrive in separate reads. Never
+                    // redraw between its UTF-8 bytes or split it at the limit.
+                    var encoded: [4]u8 = undefined;
+                    encoded[0] = byte;
+                    const expected = std.unicode.utf8ByteSequenceLength(byte) catch 1;
+                    var count: usize = 1;
+                    while (count < expected) {
+                        const next = input.peekByte() catch |err| switch (err) {
+                            error.EndOfStream => break,
+                            else => return err,
+                        };
+                        if (next & 0xc0 != 0x80) break;
+                        encoded[count] = try input.takeByte();
+                        count += 1;
+                    }
+                    if (self.line.items.len + count > max_line) continue;
                     if (byte == '}' and automatic_indent >= 4 and cursor == automatic_indent and self.line.items.len == automatic_indent) {
                         try self.line.replaceRange(self.allocator, 0, 4, &.{});
                         cursor -= 4;
                         automatic_indent -= 4;
                     }
-                    try self.line.insert(self.allocator, cursor, byte);
+                    try self.line.insertSlice(self.allocator, cursor, encoded[0..count]);
                     automatic_indent = 0;
-                    cursor += 1;
+                    cursor += count;
                 },
             }
             try self.redraw(output, prompt, cursor);
@@ -243,6 +258,26 @@ test "REPL editing preserves UTF-8 and cancels without recording a line" {
     try std.testing.expectEqualStrings("a€", (try editor.read(&input, &output.writer, "")).?);
     try std.testing.expect(!editor.cancelled);
     try std.testing.expectEqual(@as(usize, 1), editor.history.items.len);
+}
+
+test "REPL redraw keeps typed UTF-8 characters complete" {
+    var editor: Editor = .{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+    var input = std.Io.Reader.fixed("a界€ñ\n");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try std.testing.expectEqualStrings("a界€ñ", (try editor.read(&input, &output.writer, "")).?);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(output.written()));
+}
+
+test "REPL truncated UTF-8 does not consume editing controls" {
+    var editor: Editor = .{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+    var input = std.Io.Reader.fixed("\xc3\x7fok\n\xe2\n");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try std.testing.expectEqualStrings("ok", (try editor.read(&input, &output.writer, "")).?);
+    try std.testing.expectEqualStrings("\xe2", (try editor.read(&input, &output.writer, "")).?);
 }
 
 test "REPL Delete removes one UTF-8 character without consuming neighbouring input" {
