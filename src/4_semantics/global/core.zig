@@ -1411,11 +1411,6 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn completeCallInput(self: *Resolver, function_id: global_sg.GlobalFunctionId, input_node: global_sg.GlobalNodeId) !bool {
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-        return self.completeRecordFields(function.input, input_node);
-    }
-
     fn completeCallInputWithContext(
         self: *Resolver,
         function_id: global_sg.GlobalFunctionId,
@@ -2118,17 +2113,6 @@ pub const Resolver = struct {
         // Local lexical imports are lowered to their original path spelling.
         // Reuse the linker algorithm so every source import has one identity rule.
         return module_linker.resolveImportPath(self.allocator, self.graph, self.modules, current_module, qualifier);
-    }
-
-    fn findModuleBySpelling(self: *Resolver, spelling: []const u8) !global_sg.GlobalModuleId {
-        var found: ?global_sg.GlobalModuleId = null;
-        for (self.graph.modules.items, 0..) |module, index| {
-            const dir = self.graph.text(module.dir);
-            if (!std.mem.eql(u8, dir, spelling) and !std.mem.eql(u8, std.fs.path.basename(dir), spelling)) continue;
-            if (found != null) return error.AmbiguousModuleReference;
-            found = @enumFromInt(@as(u32, @intCast(index)));
-        }
-        return found orelse error.UnknownModuleReference;
     }
 
     pub fn appendNode(self: *Resolver, source: primitives.SourceRef, ty: global_sg.GlobalTypeId, content: global_sg.Node.Content) !global_sg.GlobalNodeId {

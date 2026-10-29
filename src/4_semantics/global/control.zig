@@ -798,14 +798,6 @@ pub const Resolver = struct {
         };
     }
 
-    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.ForMode) !global_sg.GlobalTypeId {
-        return switch (mode) {
-            .value, .move => payload,
-            .borrow => self.pointer(payload, .read_only),
-            .mut_borrow => self.pointer(payload, .read_write),
-        };
-    }
-
     fn pointer(self: *Resolver, child: global_sg.GlobalTypeId, mutability: primitives.PointerMutability) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
             .pointer => |value| if (value.child == child and value.mutability == mutability)
