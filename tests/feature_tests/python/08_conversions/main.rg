@@ -61,7 +61,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         .value = python.import_module(.self = &interpreter, .name = "json")
     ).result
     dumps ::= unwrap_or_abort(.value = python.attribute(.self = &json, .name = "dumps")).result
-    call_values: [1]python.Argument = (..object&converted)
+    call_values: [1]python.Argument = ([..object&converted])
     call_arguments ::= unwrap_or_abort(
         .value = python.positional_arguments(
             .self = &interpreter, .values = view(.self = &call_values)

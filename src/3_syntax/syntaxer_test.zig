@@ -140,6 +140,7 @@ test "compact syntaxing distinguishes choice definitions from choice value colle
         .{ .source = "Choice := (..items [2]Resource, ..empty)", .tag = .choice_type_literal },
         .{ .source = "values: [2]Choice = (..pair(.left = (.id = 7), .right = (.id = 11)), ..empty)", .tag = .list_literal },
         .{ .source = "values: [2]Choice = (..number 7, ..number 11)", .tag = .list_literal },
+        .{ .source = "values: [1]Choice = ([..object&converted])", .tag = .list_literal },
     };
     for (cases) |case| {
         var tree = try parseTestSource("choices.rg", case.source);
