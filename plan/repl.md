@@ -36,12 +36,10 @@ JIT and complete native-backend parity are not prerequisites.
    test runner. Compare values, observable effects and cleanup counts. Cover
    replacement, aliases, early exits, numeric boundaries and dispatch between old
    and new code units; retain internal tests for exhaustive local rules.
-3. Complete allocation/resize failure sweeps for frontend preparation and
-   executable-unit lowering/verification of the resource-bearing bundled prelude.
-   VM preparation and execution already sweep a reused verified unit exhaustively;
-   the full interactive path currently probes publication boundaries. Preserve
-   publication, poison/reset and retry guarantees without promising transactional
-   rollback of execution.
+3. Complete allocation/resize failure sweeps for frontend preparation of the
+   resource-bearing bundled prelude. The full interactive path currently probes
+   publication boundaries. Preserve semantic rollback and retry without promising
+   transactional rollback of execution.
 4. Measure 10/100/1,000-command sessions, then longer resource/definition/rejection
    workloads using the existing execution benchmark. Separate setup, frontend,
    lowering, verification and execution; report per-command latency and retained

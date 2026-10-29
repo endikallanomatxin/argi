@@ -15,6 +15,13 @@ const choiceVariant = b.choiceVariant;
 // Only this module constructs a verified handle. Its program and all borrowed
 // metadata must remain immutable and alive until the handle is released.
 const Publication = struct { program: Program };
+
+// Reconstructing a descriptor can reject malformed bytecode, but allocator
+// failure says nothing about the validity of the program being verified.
+fn descriptorFailure(err: anyerror) error{ OutOfMemory, InvalidBytecode } {
+    return if (err == error.OutOfMemory) error.OutOfMemory else error.InvalidBytecode;
+}
+
 pub const Verified = opaque {
     pub fn create(allocator: std.mem.Allocator, scratch: std.mem.Allocator, value: Program) !*const Verified {
         try verify(scratch, value);
@@ -152,7 +159,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const metadata = @import("../allocation_metadata.zig");
                     const ty = metadata.participant(program.graph, id) catch return error.InvalidBytecode;
                     if (owning_types[@intFromEnum(ty)]) _ = try cleanup_counts.count(allocator, program.graph, ty);
-                    const expected = metadata.reservation(arena.allocator(), program.graph, ty, f.slots[x.receipt], &cleanup_counts, owning_types[@intFromEnum(ty)]) catch return error.InvalidBytecode;
+                    const expected = metadata.reservation(arena.allocator(), program.graph, ty, f.slots[x.receipt], &cleanup_counts, owning_types[@intFromEnum(ty)]) catch |err| return descriptorFailure(err);
                     if (expected.endian != x.layout.endian or !std.meta.eql(expected.geometry, x.layout.geometry) or !std.meta.eql(expected.receipt, x.layout.receipt) or !@import("numeric_layout.zig").equal(expected.physical, x.layout.physical) or expected.values.nodes.len != x.layout.values.nodes.len) return error.InvalidBytecode;
                     for (expected.values.nodes, x.layout.values.nodes) |left, right| if (!std.meta.eql(left, right)) return error.InvalidBytecode;
                     if ((expected.cleanup == null) != (x.layout.cleanup == null)) return error.InvalidBytecode;
@@ -193,7 +200,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                             if (!try cleanup_equal.compare(cleanup_counts.retained(target.pointer.child), layout, 0)) return error.InvalidBytecode;
                         }
                     }
-                    const expected = (if (x.receipt != null) @import("numeric_layout.zig").compileAcquired(arena.allocator(), program.graph, target.pointer.child) else @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child)) catch return error.InvalidBytecode;
+                    const expected = (if (x.receipt != null) @import("numeric_layout.zig").compileAcquired(arena.allocator(), program.graph, target.pointer.child) else @import("numeric_layout.zig").compile(arena.allocator(), program.graph, target.pointer.child)) catch |err| return descriptorFailure(err);
                     if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
                 },
                 .erase_reference => |x| {
@@ -209,7 +216,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.permission != to.pointer.mutability or x.endian != program.graph.target.arch.endian()) return error.InvalidBytecode;
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
-                    const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, from.pointer.child) catch return error.InvalidBytecode;
+                    const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, from.pointer.child) catch |err| return descriptorFailure(err);
                     if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
                 },
                 .offset_reference => |x| {
@@ -653,7 +660,7 @@ fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, coun
     _ = b.cleanupFlagCount(f.cleanup) catch return error.InvalidBytecode;
     for (f.cleanup, 0..) |entry, index| {
         if (entry.root >= f.slots.len or (index != 0 and f.cleanup[index - 1].root >= entry.root)) return error.InvalidBytecode;
-        _ = counts.count(a, graph, f.slots[entry.root]) catch return error.InvalidBytecode;
+        _ = counts.count(a, graph, f.slots[entry.root]) catch |err| return descriptorFailure(err);
         if (!try equal.compare(counts.retained(f.slots[entry.root]), entry.layout, 0)) return error.InvalidBytecode;
     }
 }

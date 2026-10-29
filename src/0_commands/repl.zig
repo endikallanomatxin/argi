@@ -689,7 +689,7 @@ test "REPL bundled prelude runtime allocation failures preserve publication boun
     try std.testing.expect(trapped > 0);
 }
 
-test "REPL resource prelude VM releases every failed execution allocation" {
+test "REPL resource prelude lowering verification and VM release failed allocations" {
     const bytecode = @import("../5_codegen/bytecode/bytecode.zig");
     const vm_mod = @import("../execution/vm.zig");
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -710,16 +710,60 @@ test "REPL resource prelude VM releases every failed execution allocation" {
     const checked = command.candidate.checked.?;
     const semantic = command.candidate.semantic.?;
     const layout = try @import("../5_codegen/bytecode/session_layout.zig").build(allocator, checked.graph, semantic.resolvers.expressions.session_bindings.items);
+    const LoweringProbe = struct {
+        fn run(a: std.mem.Allocator, candidate: *const @import("../execution/compilation_session.zig").CompilationSession.Candidate, catalogue: bytecode.Session, messages: *const diag.Diagnostics) !void {
+            var code = std.heap.ArenaAllocator.init(a);
+            defer code.deinit();
+            var scratch = std.heap.ArenaAllocator.init(a);
+            defer scratch.deinit();
+            const proof = candidate.checked.?;
+            var lowering = try @import("../5_codegen/bytecode/lower.zig").Lower.init(code.allocator(), proof.graph, .{ .session = catalogue, .scratch_allocator = scratch.allocator(), .proofs = &proof.bodies });
+            lowering.annotations = &proof.annotations;
+            lowering.diagnostics = messages;
+            const executable = try lowering.compile(candidate.entry.?);
+            try std.testing.expect(executable.function(candidate.entry.?) != null);
+        }
+    };
+    const catalogue: bytecode.Session = .{ .namespace = session.compiler.namespace, .bindings = layout };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, LoweringProbe.run, .{ &command.candidate, catalogue, &session.diagnostics });
+    var lowering_baseline = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    try LoweringProbe.run(lowering_baseline.allocator(), &command.candidate, catalogue, &session.diagnostics);
+    try std.testing.expectEqual(lowering_baseline.allocated_bytes, lowering_baseline.freed_bytes);
+    for (0..lowering_baseline.resize_index) |index| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = index });
+        LoweringProbe.run(failing.allocator(), &command.candidate, catalogue, &session.diagnostics) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        };
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
     var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.init(allocator, checked.graph, .{ .session = .{ .namespace = session.compiler.namespace, .bindings = layout } });
     lower.annotations = &checked.annotations;
     lower.diagnostics = &session.diagnostics;
     const program = try lower.compile(command.function);
+    const VerificationProbe = struct {
+        fn run(a: std.mem.Allocator, candidate_program: bytecode.Program) !void {
+            const unit = try bytecode.Verified.create(a, a, candidate_program);
+            defer unit.destroy(a);
+            try std.testing.expectEqual(candidate_program.graph, unit.program().graph);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, VerificationProbe.run, .{program});
+    var verification_baseline = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    try VerificationProbe.run(verification_baseline.allocator(), program);
+    try std.testing.expectEqual(verification_baseline.allocated_bytes, verification_baseline.freed_bytes);
+    for (0..verification_baseline.resize_index) |index| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = index });
+        VerificationProbe.run(failing.allocator(), program) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        };
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
     const verified = try bytecode.Verified.create(allocator, std.testing.allocator, program);
     var output: std.Io.Writer = .failing;
     var adapter: @import("../execution/host_output.zig").Output = .{ .writer = &output, .error_writer = &output };
     const bindings = adapter.bindings();
-    // Frontend, lowering and verification happen once. Only invocation-owned
-    // metadata and retained runtime storage participate in the exhaustive sweep.
+    // Reuse the verified handle for the separate execution sweep. Only
+    // invocation metadata and retained runtime storage fail in this phase.
     const Probe = struct {
         fn run(a: std.mem.Allocator, unit: *const bytecode.Verified, entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId, hosts: []const @import("../execution/host.zig").Binding) !void {
             var context = vm_mod.Context.init(a, 1_000_000);
