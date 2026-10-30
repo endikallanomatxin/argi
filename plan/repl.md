@@ -6,15 +6,13 @@ parity or general compiler redesign is required.
 1. Finish the real-core allocation/resize sweep. The reproduced 4,000-byte leak
    at allocation 28,909 is fixed and passes independently; complete coverage is
    still running. Keep accepted-state rollback and retry checks passing.
-2. Pass native terminal acceptance: Windows execution cancellation/reset and both
-   exit paths; Darwin resizing after the ioctl fix. Unicode input/history already
-   pass on Windows; Linux narrow-terminal and resize probes pass.
-3. Finish reference-budget validation: rerun the existing 1,000-command workloads
+2. Finish reference-budget validation: rerun the existing 1,000-command workloads
    with 512 MiB and the longer rejection control. Measurements and budgets exist;
    the 1,000-owner cleanup OOM is fixed. Require clean checked teardown.
-4. Validate the final candidate together: internal/program suites and native/VM
+3. Validate the final candidate together: internal/program suites and native/VM
    cases, Linux/macOS/Windows CI and optional Python/package consumers. Resolve
-   demonstrated failures, then finalize usage/release notes and remove the REPL
+   demonstrated failures, including Darwin PTY resizing after its ioctl fix.
+   Then finalize usage/release notes and remove the REPL
    experimental label. Do not publish the release yet.
 
 Scope, guarantees, exclusions and evidence: [REPL acceptance](../docs/repl-acceptance.md).

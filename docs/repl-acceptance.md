@@ -31,8 +31,11 @@ Windows console input uses `ReadConsoleW` and decodes surrogate pairs across
 reads. UTF-8 output encoding lasts through evaluation and cleanup; editing modes
 are restored between input lines so execution can still receive Ctrl-C.
 Host-independent tests cover failed setup, split/malformed surrogates and short
-byte reads; the native transport also compiles for x86-64 Windows. Actual ConPTY
-Unicode results and clean teardown must still pass before acceptance is closed.
+byte reads; the native transport also compiles for x86-64 Windows.
+Windows workflow run `41022201658` passes the complete native ConPTY step:
+Unicode editing/history, continuation, Ctrl-C during execution with an inherited
+ignore attribute, recovery through reset, and both `:quit` and Ctrl-D teardown.
+The rest of that workflow and final-candidate platform validation remain separate.
 
 Long input uses a horizontal viewport rather than terminal wrapping. Linux PTY
 acceptance passes with a 24-column function definition, a 12-column Unicode edit
@@ -48,6 +51,11 @@ fixtures `02_floating_point_vm`, `14_integer_boundaries_vm`,
 Each passed its native assertions and VM assertions with matching stdout and
 the expected exit status. This used the existing installed compiler; repeat
 against the final candidate, including its rebuilt editor and bundled libraries.
+
+Linux validation on 2026-10-30 also completed the full program suite (30/30 build
+steps) and the full Debug internal suite (1,376 passed, one skipped, no failures).
+These runs cover the corresponding worktree builds; later changes still need
+their final candidate checks. Exhaustive allocation failure coverage is separate.
 
 ## Stability contract
 
