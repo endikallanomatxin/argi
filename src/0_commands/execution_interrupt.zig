@@ -33,6 +33,11 @@ pub const Guard = struct {
         cancellation.reset();
         if (builtin.os.tag == .windows) {
             if (Console.SetConsoleCtrlHandler(Console.interrupt, .TRUE) == .FALSE) return error.ExecutionInterruptUnavailable;
+            errdefer _ = Console.SetConsoleCtrlHandler(Console.interrupt, .FALSE);
+            // Shells may pass down the independent "ignore Ctrl-C" attribute.
+            // Installing a handler does not clear it. This CLI guard owns signal
+            // processing; embedders use cancellation tokens without this guard.
+            if (Console.SetConsoleCtrlHandler(null, .FALSE) == .FALSE) return error.ExecutionInterruptUnavailable;
             return .{ .saved = {} };
         }
         var saved: std.posix.Sigaction = undefined;

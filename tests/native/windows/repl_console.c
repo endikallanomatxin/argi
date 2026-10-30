@@ -103,6 +103,9 @@ int wmain(int argc, wchar_t **argv) {
     if (!command) goto cleanup;
     swprintf(command, capacity, L"\"%ls\" repl --vm-instructions 1000000000", argv[1]);
     startup.StartupInfo.cb = sizeof startup;
+    /* A shell may ignore Ctrl-C; the execution command must still opt in to
+       cancellation even when this process attribute is inherited. */
+    if (!SetConsoleCtrlHandler(NULL, TRUE)) goto cleanup;
     if (!start_client(argv[1], command, &startup, &process)) goto cleanup;
     /* ConPTY can encode the trailing blank as cursor movement. */
     if (!await_text(process.hProcess, ">>>")) goto cleanup;
