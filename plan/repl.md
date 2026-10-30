@@ -7,9 +7,6 @@ semantics, Safety and VM; full LLVM parity and JIT are not release requirements.
 
 Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
 
-- Fix resource-session teardown: `execution-benchmark 1000 prelude resources
-  1024` completes submissions but close returns `OutOfMemory`. Attribute cleanup
-  preparation/checking/execution before changing budgets.
 - Define supported everyday programs through executable cases: text, collections,
   imports, generic functions/contracts, partial initialization, persistent owners
   and references, `#run` and `#if`. Inventory lowerer/verifier restrictions and

@@ -86,8 +86,17 @@ pub const State = struct {
     reachable: bool = true,
 
     pub fn init(allocator: std.mem.Allocator) State {
+        return initWithAllocators(allocator, allocator);
+    }
+
+    /// Immutable facts and shared namespace entries outlive disposable branch
+    /// tables. Keeping their allocators separate lets cloned tables be freed
+    /// without invalidating facts borrowed by another state or publication.
+    pub fn initWithAllocators(fact_allocator: std.mem.Allocator, allocator: std.mem.Allocator) State {
+        var tracker = facts.Tracker.init(fact_allocator);
+        tracker.roots.allocator = allocator;
         return .{
-            .tracker = facts.Tracker.init(allocator),
+            .tracker = tracker,
             .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
             .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
             .symbolic_values = std.array_list.Managed(SymbolicStoredValue).init(allocator),
@@ -116,7 +125,11 @@ pub const State = struct {
     }
 
     pub fn clone(self: *const State, allocator: std.mem.Allocator) !State {
-        var out = State.init(allocator);
+        return self.cloneWithAllocators(allocator, allocator);
+    }
+
+    pub fn cloneWithAllocators(self: *const State, fact_allocator: std.mem.Allocator, allocator: std.mem.Allocator) !State {
+        var out = State.initWithAllocators(fact_allocator, allocator);
         errdefer out.deinit();
         out.tracker.namespace = self.tracker.namespace;
         try out.tracker.roots.appendSlice(self.tracker.roots.items);
@@ -429,7 +442,7 @@ pub const State = struct {
         } else @as(?*OpaqueStorage, null);
         if (existing == null) try self.opaque_storages.ensureUnusedCapacity(1);
         const previous: OpaqueStorage = if (existing) |entry| entry.* else .{ .storage = storage, .hidden_dependencies = &.{} };
-        const a = self.opaque_storages.allocator;
+        const a = self.tracker.allocator;
         const hidden = try unionRoots(a, previous.hidden_dependencies, dependencies);
         errdefer if (hidden.ptr != previous.hidden_dependencies.ptr) a.free(hidden);
         const combined = try unionRoots(a, previous.owner_roots, owners);
@@ -441,7 +454,7 @@ pub const State = struct {
         if (roots.len == 0) return;
         for (self.opaque_storages.items) |*entry| {
             if (!entry.storage.eql(storage)) continue;
-            entry.owner_roots = try unionRoots(self.opaque_storages.allocator, entry.owner_roots, roots);
+            entry.owner_roots = try unionRoots(self.tracker.allocator, entry.owner_roots, roots);
             return;
         }
     }
@@ -509,7 +522,7 @@ pub const State = struct {
             // Reserve every table and root before publishing this projection.
             const root_count: u32 = if (backing == null) 2 else 1;
             if (namespace.next_id > std.math.maxInt(u32) - root_count) return error.SafetyRootIdentityLimit;
-            try namespace.projected_storage.ensureUnusedCapacity(self.symbolic_pointees.allocator, 1);
+            try namespace.projected_storage.ensureUnusedCapacity(self.tracker.allocator, 1);
             try self.symbolic_pointees.ensureUnusedCapacity(1);
             try self.tracker.roots.ensureTotalCapacity(@as(usize, namespace.next_id) + root_count);
             if (backing == null) backing = try self.tracker.establish(.fresh);
@@ -603,7 +616,7 @@ pub const State = struct {
                 self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = root });
                 return root;
             };
-            try namespace.initial_storage.ensureUnusedCapacity(self.storage_generations.allocator, 1);
+            try namespace.initial_storage.ensureUnusedCapacity(self.tracker.allocator, 1);
             const root = try self.tracker.establish(.fresh);
             namespace.initial_storage.appendAssumeCapacity(.{ .storage = storage, .root = root });
             self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = root });
@@ -928,17 +941,21 @@ test "Safety opaque merges publish both root sets together and reuse unchanged f
             if (existing) try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{root0}, .owner_roots = &.{root2}, .outcome_guard = 9 });
             var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = failure_index });
             state.opaque_storages.allocator = failing.allocator();
+            state.tracker.allocator = failing.allocator();
             const merged = state.mergeOpaqueStorage(storage, &.{ root0, root1, root1 }, &.{ root2, root3, root3 });
             state.opaque_storages.allocator = a;
+            state.tracker.allocator = a;
             if (merged) |_| {
                 const domain = state.opaque_storages.items[0];
                 try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ root0, root1 }, domain.hidden_dependencies);
                 try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ root2, root3 }, domain.owner_roots);
                 var unavailable = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
                 state.opaque_storages.allocator = unavailable.allocator();
+                state.tracker.allocator = unavailable.allocator();
                 try state.mergeOpaqueStorage(storage, &.{ root1, root0 }, &.{ root3, root2 });
                 try state.mergeOpaqueOwnerRoots(storage, &.{root3});
                 state.opaque_storages.allocator = a;
+                state.tracker.allocator = a;
                 try std.testing.expectEqual(domain.hidden_dependencies.ptr, state.opaque_storages.items[0].hidden_dependencies.ptr);
                 try std.testing.expectEqual(domain.owner_roots.ptr, state.opaque_storages.items[0].owner_roots.ptr);
                 state.markOpaqueStorageEmpty(storage);
@@ -1057,6 +1074,35 @@ test "Safety storage observation publishes generations atomically" {
 
 test "Safety state clones own independent tables and release every failed allocation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneAllocationFailures, .{});
+}
+
+test "Safety branch tables release independently of shared proof facts" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn check(table_allocator: std.mem.Allocator) !void {
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const fact_allocator = arena.allocator();
+            var namespace: facts.Tracker.RootNamespace = .{};
+            defer namespace.deinit(fact_allocator);
+            const storage: facts.Place = .{ .root = @enumFromInt(0) };
+            var branch = original: {
+                var state = State.initWithAllocators(fact_allocator, table_allocator);
+                defer state.deinit();
+                state.tracker.namespace = &namespace;
+                const generation = try state.storageGeneration(storage);
+                try state.mergeOpaqueStorage(storage, &.{generation}, &.{generation});
+                break :original try state.cloneWithAllocators(fact_allocator, table_allocator);
+            };
+            defer branch.deinit();
+            const generation = try branch.storageGeneration(storage);
+            try std.testing.expect(branch.tracker.isAlive(generation));
+            try std.testing.expectEqual(generation, branch.opaque_storages.items[0].hidden_dependencies[0]);
+            const other = try branch.storageGeneration(.{ .root = @enumFromInt(1) });
+            try branch.mergeOpaqueOwnerRoots(storage, &.{other});
+            try std.testing.expectEqual(@as(usize, 2), branch.opaque_storages.items[0].owner_roots.len);
+            try std.testing.expectEqual(@as(usize, 2), namespace.initial_storage.items.len);
+        }
+    }.check, .{});
 }
 
 test "Safety acquisitions on sibling branches retain distinct identities through joins" {

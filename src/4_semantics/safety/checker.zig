@@ -107,7 +107,7 @@ pub const SafetyChecker = struct {
         const io = if (self.collect_stats) self.stats.timing_io else null;
         const start = profile.timestamp(io);
         defer if (self.collect_stats) profile.accumulate(io, start, &self.stats.state_copy_ns);
-        const result = try state.clone(self.allocator);
+        const result = try state.cloneWithAllocators(self.allocator, self.state_allocator);
         if (self.collect_stats) {
             self.stats.state_clones += 1;
             self.stats.state_elements_copied += @intCast(state.elementCount());
@@ -146,6 +146,9 @@ pub const SafetyChecker = struct {
 
     unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
     allocator: std.mem.Allocator,
+    // Branch tables are disposable; their backing must not accumulate in the
+    // arena retaining immutable facts and annotations for the checked unit.
+    state_allocator: std.mem.Allocator,
     // Graph pools retain their own allocator; facts and annotation slices may
     // live in a publication/proof arena with a different lifetime.
     graph_allocator: ?std.mem.Allocator = null,
@@ -176,6 +179,7 @@ pub const SafetyChecker = struct {
     ) SafetyChecker {
         return .{
             .allocator = allocator,
+            .state_allocator = allocator,
             .diagnostics = diags,
             .graph = graph,
             .call_stack = std.array_list.Managed(graph_mod.GlobalFunctionId).init(allocator),
@@ -313,7 +317,7 @@ pub const SafetyChecker = struct {
         };
         var namespace: facts.Tracker.RootNamespace = .{};
         defer namespace.deinit(self.allocator);
-        var state = FunctionState.init(self.allocator);
+        var state = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
         state.tracker.namespace = &namespace;
         defer state.deinit();
         const before = self.diagnostics.list.items.len;
@@ -6331,7 +6335,7 @@ pub const SafetyChecker = struct {
         if (!left.reachable) return self.copyState(destination, right);
         if (!right.reachable) return self.copyState(destination, left);
 
-        var joined = FunctionState.init(self.allocator);
+        var joined = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
         joined.tracker.namespace = left.tracker.namespace;
         std.debug.assert(left.tracker.namespace == right.tracker.namespace);
         errdefer joined.deinit();

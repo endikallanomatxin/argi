@@ -16,6 +16,43 @@ bytes per command). Reported session memory therefore remains comparable with
 earlier runs. Run measurements without concurrent tests; these percentiles are
 observations, not acceptance budgets or statistically established guarantees.
 
+## Checked resource-session teardown
+
+An isolated Linux x86-64 ReleaseSafe acceptance run on 2026-10-30 exposed a
+teardown failure: `execution-benchmark 1000 prelude resources 1024` completed all
+submissions with 250.403 MiB retained, then exceeded its 1 GiB tracking limit
+while Safety cloned the state for another selected destructor. Bytecode lowering,
+verification and execution had not started. The failing arena requested another
+410,305,566 bytes after retaining 1,051,364,009 bytes.
+
+Mutable branch tables now use reclaimable backing independently of immutable
+proof facts. Shared namespace entries and opaque root sets keep their proof
+lifetime; freeing a branch must not release facts retained by another branch.
+The same workload now closes successfully, peaks at 286.640 MiB including
+cleanup, and releases all tracked backing on destruction. Cleanup takes
+799.962 ms, including 37.817 ms lowering, 73.769 ms verification and 30.000 ms
+execution. The remaining time includes frontend preparation and Safety.
+
+The command workload itself takes 17,081 ms versus 16,776 ms in the failing
+baseline. This is a memory/lifetime correction, not a throughput claim.
+Isolated controls using the same build also complete checked cleanup:
+
+| Prelude workload | Commands | Final-window p50 / p95 ms | Peak MiB including cleanup | Cleanup ms |
+|---|---:|---:|---:|---:|
+| Reused calls | 1,000 | 6.532 / 7.066 | 161.611 | 13.544 |
+| Persistent resources | 1,000 | 18.400 / 23.219 | 286.640 | 799.962 |
+| New definitions | 1,000 | 4.168 / 4.560 | 156.243 | 13.401 |
+| Rejected submissions | 1,000 | 3.978 / 4.448 | 145.785 | 11.474 |
+
+Rejected submissions retain 144.593 MiB after setup's 144.587 MiB; semantic graph
+payload and live VM backing stay unchanged. These are single-run observations,
+not portable latency guarantees. Reports now include a separate `# cleanup`
+row on success or failure and an allocation-limit trace at the first denied
+allocation. Completed submissions alone do not constitute an acceptance pass.
+
+Logs: `.zig-cache/repl-resource-cleanup-{failure,fixed}.csv` and
+`.zig-cache/repl-release-fixed-{calls,definitions,rejections}.csv`.
+
 ## One sweep for reference types
 
 Address and dereference type materialization now share one node-ordered scan.

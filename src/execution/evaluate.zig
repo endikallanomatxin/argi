@@ -32,6 +32,7 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     defer transaction.deinit();
     var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(temporary, diagnostics, graph);
     checker.graph_allocator = allocator;
+    checker.state_allocator = allocator;
     defer checker.deinit();
     try checker.analyzeUnit(&.{entry});
     var lower = try Lower.init(temporary, graph, .{});

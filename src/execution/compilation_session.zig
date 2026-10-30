@@ -353,6 +353,7 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
         owned.state.rebindAllocator(proof_allocator);
     }
     var safety = Safety.init(proof_allocator, diagnostics, graph);
+    safety.state_allocator = allocator;
     safety.graph_allocator = allocator;
     safety.unit = unit;
     safety.body_cache = bodies_cache;

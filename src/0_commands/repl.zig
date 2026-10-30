@@ -731,8 +731,9 @@ test "REPL resource prelude releases failed source and backend allocations" {
     const bytecode = @import("../5_codegen/bytecode/bytecode.zig");
     const vm_mod = @import("../execution/vm.zig");
     const checkFailures = @import("../test_support.zig").checkAllocationAndResizeFailures;
+    const options = @import("internal_test_options");
     const source = prelude ++ "\nowned ::= unwrap_or_abort(.value = String(.length = 8))\n";
-    try checkFailures(std.testing.allocator, struct {
+    if (!options.extended_allocation_sweeps) try checkFailures(std.testing.allocator, struct {
         fn run(a: std.mem.Allocator, text: []const u8) !void {
             var sources = @import("../execution/submissions.zig").Sources.init(a);
             defer sources.deinit();
@@ -793,11 +794,14 @@ test "REPL resource prelude releases failed source and backend allocations" {
             try std.testing.expectEqualDeep(accepted, candidate.compiler.semantic.relocation.graph.checkpoint());
         }
     };
-    const options = @import("internal_test_options");
     if (options.extended_allocation_sweeps) {
         try @import("../test_support.zig").checkAllocationAndResizeFailureRange(strict.allocator(), Preparation.run, .{ diagnostics.source_files, prepared, source }, options.allocation_failure_start, options.allocation_failure_end);
     } else try checkFailures(strict.allocator(), Preparation.run, .{ diagnostics.source_files, prepared, source });
     try std.testing.expectEqualDeep(initial_graph, prepared.relocation.graph.checkpoint());
+    // The ordinary run covers source and backend failures. Range runs isolate
+    // semantic preparation rather than repeating those complete sweeps for
+    // every independent range.
+    if (options.extended_allocation_sweeps) return;
     var session: interactive.Interactive = undefined;
     try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
     defer session.deinit();

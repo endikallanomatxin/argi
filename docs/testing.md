@@ -129,7 +129,9 @@ zig build test-internal -Doptimize=ReleaseSafe -j16 -Dtest-jobs=16 \
 
 Ordinary internal runs retain the prepared-session, source, lowering, verifier
 and runtime sweeps, plus the selected accepted-state recovery probes. Release
-acceptance requires the extended sweep as well.
+acceptance requires the extended sweep as well. Extended mode isolates semantic
+preparation; it does not repeat the complete source/backend sweeps for each
+selected range.
 
 To diagnose or validate a bounded part of the extended semantic sweep, add
 `-Dtest-allocation-failure-start=12000 -Dtest-allocation-failure-end=13000`.
@@ -141,9 +143,10 @@ exhaustive coverage. A partial range is not a passing release gate.
 
 This sweep uses a DebugAllocator with stack capture disabled, retaining its
 memory safety checks and leak detection without repeatedly unwinding the same
-core-allocation stacks during thousands of rollbacks. Linux x86-64 Debug
-validation of `[12000, 13000)` completed in about two minutes with a baseline of
-29,367 allocations and 545 resizes; this is partial evidence, not a full result.
+core-allocation stacks during thousands of rollbacks. The Linux x86-64 Debug
+baseline after separating Safety branch tables is 32,722 allocations and 545
+resizes. Rerun the complete coverage when allocation strategy changes; ranges
+validated against a previous baseline do not certify the new implementation.
 
 ## Isolation
 

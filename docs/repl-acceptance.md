@@ -62,6 +62,26 @@ against the final candidate, including its rebuilt editor and bundled libraries.
 - Unsupported constructs must fail with a source diagnostic, rather than silently
   falling back to native execution or different language rules.
 
+## Reference resource budgets
+
+Use isolated Linux x86-64 ReleaseSafe runs as a reproducible reference, rather
+than a latency promise for every host. For 1,000-command prelude sessions covering
+calls, definitions, retained resources and rejected inputs:
+
+- Peak tracked backing, including checked close, must stay below 512 MiB.
+- Final-window submission p95 must stay below 100 ms; checked close below 5 s.
+- Rejections may retain at most 4 MiB of reusable capacity after setup, with no
+  growth in semantic graph payload or live VM backing.
+- Healthy close must succeed and destruction must release every tracked byte.
+
+The 2026-10-30 runs satisfy these measured thresholds (largest peak 286.640 MiB,
+p95 23.219 ms and close 799.962 ms), using a 1 GiB tracking ceiling. Repeat with
+the 512 MiB ceiling and the final candidate, and retain longer-session controls.
+See [measurements and the corrected teardown failure](compiler-performance.md#checked-resource-session-teardown).
+Tracked backing includes allocator slabs; it is not process RSS or user-owned
+payload alone. Execution instruction, call-depth and value-cell quotas remain
+separate limits with their documented trap/reset behavior.
+
 ## Exclusions to publish
 
 Current executable boundaries, checked against `bytecode/lower.zig` and

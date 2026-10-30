@@ -12,6 +12,7 @@ const Memory = struct {
     live: usize = 0,
     peak: usize = 0,
     limit: usize,
+    reported_limit: bool = false,
 
     fn allocator(self: *Memory) std.mem.Allocator {
         return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
@@ -25,7 +26,14 @@ const Memory = struct {
     }
     fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
         const self: *Memory = @ptrCast(@alignCast(ctx));
-        if (!self.canGrow(0, len)) return null;
+        if (!self.canGrow(0, len)) {
+            if (!self.reported_limit) {
+                self.reported_limit = true;
+                std.debug.print("# allocation-limit,live={d},request={d},limit={d}\n", .{ self.live, len, self.limit });
+                std.debug.dumpCurrentStackTrace(.{ .first_address = ret });
+            }
+            return null;
+        }
         const result = self.child.rawAlloc(len, alignment, ret) orelse return null;
         self.account(0, len);
         return result;
@@ -464,8 +472,21 @@ fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: 
             }
             if (graph_pools) reportGraphPools(&session, count);
         }
-        // Snapshot before cleanup; include neither reset nor teardown in timings.
-        try session.close();
+        // Report cleanup separately: a completed command workload is not an
+        // acceptance pass when releasing its live resources fails afterwards.
+        const cleanup_start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+        const before_cleanup = session.runtime.stats;
+        const cleanup = session.close();
+        std.debug.print("# cleanup,total_ms={d:.3},lowering_ms={d:.3},verification_ms={d:.3},execution_ms={d:.3},live_MiB={d:.3},peak_MiB={d:.3},status={s}\n", .{
+            ms(elapsed(io, cleanup_start)),
+            ms(session.runtime.stats.lowering_ns - before_cleanup.lowering_ns),
+            ms(session.runtime.stats.verification_ns - before_cleanup.verification_ns),
+            ms(session.runtime.stats.execution_ns - before_cleanup.execution_ns),
+            mib(memory.live),
+            mib(memory.peak),
+            if (cleanup) |_| "ok" else |err| @errorName(err),
+        });
+        try cleanup;
     }
     if (memory.live != 0) {
         std.debug.print("Benchmark teardown retained {d} requested bytes\n", .{memory.live});
