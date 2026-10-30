@@ -4,17 +4,21 @@ This is an evidence map, not a claim that stabilization is complete. The REPL
 remains experimental until the open gates in [the plan](../plan/repl.md) close.
 Use the existing internal and program suites; do not maintain a second runner.
 
-## Supported scope to validate
+## Supported scope and regression coverage
 
-| Guarantee | Existing checks | Remaining acceptance work |
-| --- | --- | --- |
-| Persistent values, definitions, types and contracts | `src/execution/interactive.zig`: controller, definitions, contract definitions, introspection and specialization tests | Run together against the release candidate |
-| Text and owning collections | Native/VM fixtures `text/29_string_view_split`, `collections/157_unified_hash_map`, `165_unified_hash_set`, `166_unified_priority_queue` | Audit unsupported operations used by everyday consumers |
-| Borrowing, partial initialization and cleanup across commands | Interactive presented references, expression owners, vacant records, owning arrays and incomplete choice payload tests | Retain aliasing and duplicate-cleanup rejection coverage |
-| Compile-time execution and imports | Interactive staged run, anonymous entries, computed imports and conditional selection tests | Verify source diagnostics and accepted-state preservation together |
-| Rejection is atomic; execution is not | Interactive rejected input, poisoned reset, cancellation and reset-allocation tests | Exhaustive resource-bearing semantic preparation and accepted-state retry |
-| Bounded resources and interactive latency | `src/execution_benchmark.zig` and `docs/compiler-performance.md` | Refresh growing-session measurements and set acceptance budgets |
-| Terminal and piped input | `repl_input.zig`, `repl.zig` and `tests/terminal_probe.zig` | Unicode display widths, cursor behavior and explicit platform coverage |
+| Guarantee | Regression coverage |
+| --- | --- |
+| Persistent values, definitions, types and contracts | `src/execution/interactive.zig`: controller, definitions, contract definitions, introspection and specialization tests |
+| Text and owning collections | Native/VM fixtures `text/29_string_view_split`, `collections/157_unified_hash_map`, `165_unified_hash_set`, `166_unified_priority_queue` |
+| Borrowing, partial initialization and cleanup across commands | Interactive presented references, expression owners, vacant records, owning arrays and incomplete choice payload tests; Safety aliasing and duplicate-cleanup rejections |
+| Compile-time execution and imports | Interactive staged run, anonymous entries, computed imports, source diagnostics and conditional selection tests |
+| Rejection is atomic; execution is not | Interactive rejected input, poisoned reset, cancellation, failed reset allocation and accepted-state retry tests |
+| Bounded resources and interactive latency | `src/execution_benchmark.zig`; measured budgets and longer rejection control below |
+| Terminal and piped input | `repl_input.zig`, `repl.zig`, POSIX terminal probes and native Windows ConPTY acceptance |
+
+The map example in [usage](usage.md#experimental-persistent-repl) also passes
+through piped CLI input, producing the documented `0`, `()` and `..some` results.
+Pending candidate validation is tracked only in [the plan](../plan/repl.md).
 
 Internal tests run on Unix and Windows. Windows program validation includes
 collections, text, I/O and system fixtures. Terminal probes use POSIX
@@ -59,6 +63,14 @@ Linux validation on 2026-10-30 also completed the full program suite (30/30 buil
 steps) and the full Debug internal suite (1,376 passed, one skipped, no failures).
 These runs cover the corresponding worktree builds; later changes still need
 their final candidate checks. Exhaustive allocation failure coverage is separate.
+
+The local 0.4.0 candidate distribution also passes checksum verification and the
+extracted-package smoke test outside the checkout. Generated project tooling and
+the cat, echo, word-count, tree and weighted-regression consumers pass in Debug
+and release. Package creation checks that the installed binary reports the
+manifest version; a stale 0.3.0 installation is rejected before packaging.
+Logs: `.zig-cache/release-candidate-{package,smoke}.log` and
+`.zig-cache/release-version-mismatch.log`.
 
 Focused ReleaseSafe sweeps of real-core resource preparation pass allocation
 indices `[0, 545)` and `[29779, 32653)`, and every resize index `[0, 545)`.

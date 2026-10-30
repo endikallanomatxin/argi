@@ -156,6 +156,11 @@ def main():
     args = parser.parse_args()
     version = re.search(r'\.version = "([0-9]+\.[0-9]+\.[0-9]+)"',
                         (ROOT / "build.zig.zon").read_text())[1]
+    reported_version = subprocess.check_output(
+        [str((args.prefix / "bin/argi").resolve()), "--version"],
+        text=True, stderr=subprocess.STDOUT).strip()
+    if reported_version != f"argi {version}":
+        raise RuntimeError(f"Package version {version} disagrees with {reported_version!r}")
     native = ("macos" if platform.system() == "Darwin" else "linux") + "-" + {
         "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64",
     }[platform.machine()]
