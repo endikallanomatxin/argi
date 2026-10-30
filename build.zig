@@ -117,6 +117,7 @@ pub fn build(b: *std.Build) void {
     program_options.addOption(u32, "workers", test_jobs);
     program_options.addOption(bool, "progress", test_progress);
     program_options.addOption(bool, "filtered", test_filters.len != 0);
+    program_options.addOption([]const u8, "compiler_version", @import("src/0_commands/version.zig").current);
     program_options.addOption([]const u8, "repository_root", b.pathFromRoot("."));
     tests_mod.addOptions("program_test_options", program_options);
     tests_mod.addImport("program_tests", tests_mod);

@@ -1128,7 +1128,7 @@ test "argi version reports current release" {
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    try expectEqualStrings("argi 0.3.0\n", result.stderr);
+    try expectEqualStrings("argi " ++ @import("program_test_options").compiler_version ++ "\n", result.stderr);
 }
 
 test "argi unknown command exits with help" {
