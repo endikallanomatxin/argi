@@ -39,6 +39,14 @@ pub const Terminal = struct {
         }
     };
     const Console = struct {
+        const Screen = extern struct {
+            size: [2]i16,
+            cursor: [2]i16,
+            attributes: u16,
+            window: [4]i16,
+            maximum: [2]i16,
+        };
+        extern "kernel32" fn GetConsoleScreenBufferInfo(std.os.windows.HANDLE, *Screen) callconv(.winapi) std.os.windows.BOOL;
         extern "kernel32" fn GetConsoleMode(std.os.windows.HANDLE, *u32) callconv(.winapi) std.os.windows.BOOL;
         extern "kernel32" fn SetConsoleMode(std.os.windows.HANDLE, u32) callconv(.winapi) std.os.windows.BOOL;
         extern "kernel32" fn GetConsoleCP() callconv(.winapi) u32;
@@ -46,6 +54,21 @@ pub const Terminal = struct {
         extern "kernel32" fn SetConsoleCP(u32) callconv(.winapi) std.os.windows.BOOL;
         extern "kernel32" fn SetConsoleOutputCP(u32) callconv(.winapi) std.os.windows.BOOL;
     };
+
+    pub fn columns() usize {
+        if (builtin.os.tag == .windows) {
+            var screen: Console.Screen = undefined;
+            if (Console.GetConsoleScreenBufferInfo(std.Io.File.stdout().handle, &screen) != .FALSE) {
+                const visible = @as(i32, screen.window[2]) - screen.window[0] + 1;
+                if (visible > 0) return @intCast(visible);
+            }
+        } else {
+            var size: std.posix.winsize = undefined;
+            if (std.c.ioctl(std.Io.File.stdout().handle, @as(c_int, @bitCast(@as(u32, std.posix.T.IOCGWINSZ))), &size) == 0 and size.col > 0)
+                return size.col;
+        }
+        return 80;
+    }
 
     pub fn enter() !Terminal {
         if (builtin.os.tag == .windows) {
@@ -134,6 +157,8 @@ pub const Editor = struct {
     cancelled: bool = false,
     draft: std.ArrayList(u8) = .empty,
     highlight: bool = false,
+    columns: ?usize = null,
+    measure_terminal: bool = false,
     context: @import("../1_base/lexical.zig").Completion = .{},
     const max_history = 256;
     const max_line = 64 * 1024;
@@ -168,9 +193,55 @@ pub const Editor = struct {
     }
 
     fn redraw(self: *Editor, output: *std.Io.Writer, prompt: []const u8, cursor: usize) !void {
-        try output.print("\r\x1b[2K{s}", .{prompt});
-        try @import("repl_highlight.zig").renderWithCursor(self.allocator, output, self.line.items, self.context.quote, cursor, self.highlight);
+        if (self.measure_terminal) self.columns = Terminal.columns();
+        const columns = self.columns orelse std.math.maxInt(usize);
+        const shown_prompt = if (columns < 8) "" else prompt;
+        try output.print("\r\x1b[2K{s}", .{shown_prompt});
+        if (columns < 4) return output.flush();
+        const highlight = @import("repl_highlight.zig");
+        if (cellBound(self.line.items) < columns -| shown_prompt.len) {
+            try highlight.renderWithCursor(self.allocator, output, self.line.items, self.context.quote, cursor, self.highlight);
+        } else {
+            const budget = columns -| shown_prompt.len -| 3;
+            var start = cursor;
+            var cells: usize = 0;
+            const left_budget = if (cursor == self.line.items.len) budget else budget * 3 / 4;
+            while (start > 0) {
+                const previous = previousBoundary(self.line.items, start);
+                const cost = scalarBound(self.line.items[previous]);
+                if (cells + cost > left_budget) break;
+                start = previous;
+                cells += cost;
+            }
+            var end = cursor;
+            while (end < self.line.items.len) {
+                const cost = scalarBound(self.line.items[end]);
+                if (cells + cost > budget) break;
+                cells += cost;
+                end = nextBoundary(self.line.items, end);
+            }
+            if (start != 0) try output.writeByte('<');
+            try highlight.renderWindowWithCursor(self.allocator, output, self.line.items, self.context.quote, cursor, self.highlight, start, end);
+        }
         try output.flush();
+    }
+
+    // A safe viewport budget, not a Unicode width table: reserve two cells per
+    // non-ASCII scalar. The terminal still places the actual cursor, including
+    // combining sequences. This can leave spare columns but avoids guessing
+    // grapheme widths or allowing long input to scroll the editing origin away.
+    fn scalarBound(first: u8) usize {
+        return if (first < 0x80) 1 else 2;
+    }
+
+    fn cellBound(line: []const u8) usize {
+        var cells: usize = 0;
+        var index: usize = 0;
+        while (index < line.len) {
+            cells += scalarBound(line[index]);
+            index = nextBoundary(line, index);
+        }
+        return cells;
     }
 
     fn indentation(self: *const Editor) usize {
@@ -358,6 +429,46 @@ test "REPL submission and cancellation finish after the displayed source" {
     try std.testing.expectEqualStrings("", (try editor.read(&input, &output.writer, ">>> ")).?);
     try std.testing.expect(editor.cancelled);
     try std.testing.expect(std.mem.endsWith(u8, output.written(), "\r\x1b[2K>>> ignored^C\n"));
+}
+
+test "REPL narrow terminal pans without wrapping or changing input" {
+    var editor: Editor = .{ .allocator = std.testing.allocator, .columns = 12 };
+    defer editor.deinit();
+    try editor.line.appendSlice(editor.allocator, "0123456789abcdefghij");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try editor.redraw(&output.writer, ">>> ", editor.line.items.len);
+    try std.testing.expectEqualStrings("\r\x1b[2K>>> <fghij", output.written());
+    output.clearRetainingCapacity();
+    try editor.redraw(&output.writer, ">>> ", 0);
+    try std.testing.expectEqualStrings("\r\x1b[2K>>> \x1b[s01234>\x1b[u", output.written());
+    output.clearRetainingCapacity();
+    try editor.redraw(&output.writer, ">>> ", 10);
+    try std.testing.expectEqualStrings("\r\x1b[2K>>> <789\x1b[sab>\x1b[u", output.written());
+    var input = std.Io.Reader.fixed("0123456789abcdefghij\x1b[H\x1b[3~\x1b[F\n");
+    try std.testing.expectEqualStrings("123456789abcdefghij", (try editor.read(&input, &output.writer, ">>> ")).?);
+}
+
+test "REPL viewport preserves Unicode boundaries at every cursor position" {
+    var editor: Editor = .{ .allocator = std.testing.allocator, .columns = 12 };
+    defer editor.deinit();
+    const text = "界a🙂e\u{301}界🙂end";
+    try editor.line.appendSlice(editor.allocator, text);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    var cursor: usize = 0;
+    while (true) {
+        output.clearRetainingCapacity();
+        try editor.redraw(&output.writer, ">>> ", cursor);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(output.written()));
+        if (cursor == text.len) break;
+        cursor = Editor.nextBoundary(text, cursor);
+    }
+    // Resize is applied on the next redraw, without retaining stale offsets.
+    editor.columns = 80;
+    output.clearRetainingCapacity();
+    try editor.redraw(&output.writer, ">>> ", text.len);
+    try std.testing.expectEqualStrings("\r\x1b[2K>>> " ++ text, output.written());
 }
 
 test "REPL truncated UTF-8 does not consume editing controls" {

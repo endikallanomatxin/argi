@@ -346,8 +346,12 @@ Left/Right move by UTF-8 character; Backspace and Delete remove the character
 before or under the cursor. Home/End move to the line boundaries.
 Redrawing saves the terminal cursor at that source position and restores it
 after writing the line, letting the terminal determine glyph widths instead of
-assuming one column per character. Navigation remains by Unicode scalar, not
-by grapheme cluster; terminal wrapping and scrolling need separate validation.
+assuming one column per character. Long lines pan horizontally around the
+cursor, with `<` and `>` marking hidden source. The editor checks terminal width
+on redraw and leaves the last column unused to avoid wrapping. Its conservative
+space budget reserves two cells per non-ASCII scalar, so some Unicode lines use
+less than the available width. Navigation remains by Unicode scalar, not by
+grapheme cluster; editing never changes the hidden source.
 Recalled lines can be edited before submission; Ctrl-C discards the current line
 and Ctrl-D on an empty line exits. History lasts for the current REPL process.
 

@@ -67,22 +67,29 @@ jobs:
           'LLVM_LIBS=LLVM-C.lib' >> $env:GITHUB_ENV
           "LLVM_RUNTIME_DLL=$root/bin/LLVM-C.dll" >> $env:GITHUB_ENV
 
-      - name: Build compiler and run unit tests
+      - name: Build compiler
         shell: msys2 {0}
         run: |
           zig build -j1 --summary all
           cp "$(cygpath -u "$LLVM_RUNTIME_DLL")" zig-out/bin/LLVM-C.dll
           # Put the DLL on PATH for test binaries outside the installation.
           export PATH="$PWD/zig-out/bin:$PATH"
-          zig build -j1 test-internal -Dtest-progress=true --summary all
 
       - name: Validate REPL Unicode editing in a Windows pseudoconsole
         shell: msys2 {0}
         run: |
           export PATH="$PWD/zig-out/bin:$PATH"
           gcc -Wall -Wextra -Werror -municode tests/native/windows/repl_console.c -o windows-repl.exe
+          argi.exe --help
+          printf ':quit\n' | argi.exe repl
           ./windows-repl.exe "$(cygpath -w "$PWD/zig-out/bin/argi.exe")"
           ./windows-repl.exe "$(cygpath -w "$PWD/zig-out/bin/argi.exe")" --eof
+
+      - name: Run compiler unit tests
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          zig build -j1 test-internal -Dtest-progress=true --summary all
 
       - name: Compile and execute a native program
         shell: msys2 {0}

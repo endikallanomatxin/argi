@@ -33,7 +33,12 @@ static int await_text(HANDLE process, const char *text) {
         int found = strstr(transcript, text) != NULL;
         ReleaseSRWLockShared(&lock);
         if (found) return 1;
-        if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT) break;
+        if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT) {
+            DWORD code = 0;
+            GetExitCodeProcess(process, &code);
+            fprintf(stderr, "REPL exited before the prompt/result (code 0x%08lx).\n", code);
+            break;
+        }
         Sleep(10);
     } while (GetTickCount64() < deadline);
     fprintf(stderr, "Missing console output: %s\n", text);
@@ -57,7 +62,7 @@ int wmain(int argc, wchar_t **argv) {
     if (argc != 2 && !(argc == 3 && wcscmp(argv[2], L"--eof") == 0)) return 2;
     if (!CreatePipe(&input_read, &input_write, NULL, 0) ||
         !CreatePipe(&output_read, &output_write, NULL, 0)) goto cleanup;
-    if (FAILED(CreatePseudoConsole((COORD){80, 24}, input_read, output_write,
+    if (FAILED(CreatePseudoConsole((COORD){24, 24}, input_read, output_write,
                                   0, &console))) goto cleanup;
     CloseHandle(input_read); input_read = NULL;
     CloseHandle(output_write); output_write = NULL;

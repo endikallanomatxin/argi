@@ -33,6 +33,13 @@ setup failure. Host-independent tests inject each setup failure; the real API
 path also compiles for x86-64 Windows. Native console Unicode acceptance remains
 open, including the actual byte-input behavior of supported Windows versions.
 
+Long input uses a horizontal viewport rather than terminal wrapping. Linux PTY
+acceptance passes with a 24-column function definition, a 12-column Unicode edit
+and a resize back to 80 columns. Scalar-boundary and lexical-context unit tests
+cover the same renderer. The viewport conservatively reserves two cells per
+non-ASCII scalar; actual cursor placement remains the terminal's responsibility.
+This is not a grapheme-width or identical-font-rendering guarantee.
+
 Local preflight on Linux x86-64 (2026-10-29) passed the five collection/text
 fixtures listed above, including `collections/149_owned_ordering`, plus execution
 fixtures `02_floating_point_vm`, `14_integer_boundaries_vm`,

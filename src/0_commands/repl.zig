@@ -181,6 +181,7 @@ fn showPrelude(session: *const interactive.Interactive, output: *std.Io.Writer) 
 fn readTerminal(editor: *repl_input.Editor, input: *std.Io.Reader, output: *std.Io.Writer, prompt: []const u8) !?[]const u8 {
     const terminal = try repl_input.Terminal.enter();
     defer terminal.restore();
+    editor.measure_terminal = true;
     return editor.read(input, output, prompt);
 }
 

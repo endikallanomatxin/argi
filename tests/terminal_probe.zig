@@ -226,6 +226,11 @@ const Child = struct {
         try self.send(":quit\n");
         try std.testing.expectEqual(@as(c_int, 0), try self.wait(false));
     }
+    fn resize(self: *Child, columns: u16) !void {
+        var size: std.posix.winsize = .{ .row = 24, .col = columns, .xpixel = 0, .ypixel = 0 };
+        if (std.c.ioctl(self.output, @as(c_int, @bitCast(@as(u32, std.posix.T.IOCSWINSZ))), &size) != 0)
+            return error.TerminalResizeFailed;
+    }
     fn line(self: *Child, text: []const u8, continuation: bool, spaces: usize) !void {
         try self.send(text);
         try self.send("\n");
@@ -255,12 +260,14 @@ pub fn checkEditor() !void {
     {
         var repl = try Child.start(&.{ argi, "repl" }, true, true, false, false);
         defer repl.deinit();
+        try repl.resize(24);
         try repl.until(">>> ");
         try repl.line("answer := () -> (.result: Int32 = 0) {", true, 4);
         try repl.line("if true {", true, 8);
         try repl.line("result = 42", true, 8);
         try repl.line("}", true, 4);
         try repl.line("}", false, 0);
+        try contains(&repl, "\x1b[2K>>> <");
         try contains(&repl, "\x1b[2K...     }");
         try contains(&repl, "\x1b[2K... }");
         try contains(&repl, "\x1b[35mif\x1b[0m");
@@ -275,6 +282,7 @@ pub fn checkEditor() !void {
         try repl.send("\x03");
         try repl.until("^C");
         try repl.until(">>> ");
+        try repl.resize(80);
         try repl.send("answer()\n");
         try repl.until("_2 = 42");
         try repl.until(">>> ");
@@ -288,6 +296,7 @@ pub fn checkEditor() !void {
         try repl.send("402\x1b[D\x1b[D\x1b[3~\n");
         try repl.until("_0 = 42");
         try repl.until(">>> ");
+        try repl.resize(12);
         try repl.send("\"界a🙂\"\x1b[H\x1b[C\x1b[3~\n");
         try repl.until("_1 = \"a🙂\"");
         try repl.until(">>> ");

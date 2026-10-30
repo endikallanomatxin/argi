@@ -7,6 +7,9 @@ semantics, Safety and VM; full LLVM parity and JIT are not release requirements.
 
 Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
 
+- Fix resource-session teardown: `execution-benchmark 1000 prelude resources
+  1024` completes submissions but close returns `OutOfMemory`. Attribute cleanup
+  preparation/checking/execution before changing budgets.
 - Define supported everyday programs through executable cases: text, collections,
   imports, generic functions/contracts, partial initialization, persistent owners
   and references, `#run` and `#if`. Inventory lowerer/verifier restrictions and
@@ -20,9 +23,10 @@ Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
 - Measure 10/100/1,000-command sessions and longer resource, definition and
   rejection workloads. Separate phase latency and retained memory; establish
   acceptance budgets and distinguish live results from reclaimable storage.
-- Validate terminal cursor save/restore for Unicode, wrapped lines and scrolling,
-  especially Windows consoles. Keep scalar navigation explicit. Verify multiline
-  indentation, history, Ctrl-C/EOF and piped input with terminal/transport tests.
+- Validate terminal cursor save/restore and horizontal panning for long Unicode
+  lines and resizing, especially Windows consoles. Keep scalar navigation
+  explicit. Verify multiline indentation, history, Ctrl-C/EOF and piped input
+  with terminal/transport tests.
 - Publish the supported subset, resource policy and failure/reset guarantees in
   usage documentation, and run acceptance cases in CI before removing the label.
 
