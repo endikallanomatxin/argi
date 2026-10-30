@@ -7,6 +7,7 @@ const argi_abi = @import("5_codegen/llvm/argi_abi.zig");
 const link = @import("5_codegen/llvm/link.zig");
 const lsp = @import("0_commands/lsp.zig");
 const lsp_service = @import("0_commands/lsp_service.zig");
+const repl_console = @import("0_commands/repl_console.zig");
 const tokenizer = @import("2_tokens/tokenizer.zig");
 const syntax_tree = @import("3_syntax/syntax_tree.zig");
 const syntaxer = @import("3_syntax/syntaxer.zig");
@@ -144,6 +145,7 @@ comptime {
     _ = link;
     _ = lsp;
     _ = lsp_service;
+    _ = repl_console;
     _ = @import("0_commands/frontend_cache_test.zig");
     _ = @import("0_commands/build_plan.zig");
     _ = @import("0_commands/test.zig");

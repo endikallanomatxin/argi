@@ -1,10 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
 const interactive = @import("../execution/interactive.zig");
 const vm = @import("../execution/vm.zig");
 const repl_input = @import("repl_input.zig");
+const repl_console = @import("repl_console.zig");
 const value = @import("../5_codegen/bytecode/value.zig");
 
 const prelude = @embedFile("repl_prelude.rg");
@@ -60,16 +62,27 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
     try session.initPrepared(backing_allocator, diagnostics.source_files, prepared, limits);
     defer session.deinit();
     try session.enableImports(io, ".");
+    const input_terminal = try std.Io.File.stdin().isTty(io);
+    const output_terminal = try std.Io.File.stdout().isTty(io);
+    const terminal = input_terminal and output_terminal;
+    const console_encoding: ?repl_console.OutputEncoding = if (builtin.os.tag == .windows and (output_terminal or try std.Io.File.stderr().isTty(io))) try repl_console.OutputEncoding.enter() else null;
+    defer if (console_encoding) |saved| saved.restore();
     var input_buffer: [64 * 1024]u8 = undefined;
     var input = std.Io.File.stdin().reader(io, &input_buffer);
+    var console_input: repl_console.Input = undefined;
+    const input_reader = if (builtin.os.tag == .windows) console: {
+        if (!input_terminal) break :console &input.interface;
+        console_input = .init(std.Io.File.stdin().handle, &input_buffer);
+        break :console &console_input.interface;
+    } else &input.interface;
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.stdout().writerStreaming(io, &output_buffer);
+    defer output.interface.flush() catch {};
     var error_output = std.Io.File.stderr().writerStreaming(io, &.{});
     defer error_output.interface.flush() catch {};
     var host_output = @import("../execution/host_output.zig").Output{ .writer = &output.interface, .error_writer = &error_output.interface };
     const host_bindings = host_output.bindings();
     session.runtime.context.host_bindings = &host_bindings;
-    const terminal = try std.Io.File.stdin().isTty(io) and try std.Io.File.stdout().isTty(io);
     session.initializePrelude(prelude) catch |err| {
         if (session.diagnostics.hasErrors()) try session.diagnostics.dump();
         return err;
@@ -78,7 +91,7 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
         !env.contains("NO_COLOR") and !std.mem.eql(u8, env.get("TERM") orelse "", "dumb")
     else
         true;
-    try interact(&session, &input.interface, &output.interface, terminal, colors, interrupts.token());
+    try interact(&session, input_reader, &output.interface, terminal, colors, interrupts.token());
 }
 
 /// Transport loop only. Parsing, resolution, safety, publication and execution

@@ -27,11 +27,12 @@ not merely the presence of workflow definitions.
 The cursor save/restore sequences used by the editor (`CSI s` / `CSI u`) are
 [documented by Windows Console](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#cursor-positioning).
 That protocol support does not replace an interactive Windows acceptance probe.
-Windows terminal setup now saves both console modes and code pages, selects
-UTF-8 for byte I/O, and restores the saved state after normal exit or partial
-setup failure. Host-independent tests inject each setup failure; the real API
-path also compiles for x86-64 Windows. Native console Unicode acceptance remains
-open, including the actual byte-input behavior of supported Windows versions.
+Windows console input uses `ReadConsoleW` and decodes surrogate pairs across
+reads. UTF-8 output encoding lasts through evaluation and cleanup; editing modes
+are restored between input lines so execution can still receive Ctrl-C.
+Host-independent tests cover failed setup, split/malformed surrogates and short
+byte reads; the native transport also compiles for x86-64 Windows. Actual ConPTY
+Unicode results and clean teardown must still pass before acceptance is closed.
 
 Long input uses a horizontal viewport rather than terminal wrapping. Linux PTY
 acceptance passes with a 24-column function definition, a 12-column Unicode edit

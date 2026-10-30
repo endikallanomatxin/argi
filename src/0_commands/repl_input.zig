@@ -8,24 +8,16 @@ pub const Terminal = struct {
     const WindowsMode = struct {
         input: u32,
         output: u32,
-        input_code_page: u32,
-        output_code_page: u32,
 
         fn enter(comptime Api: type, input: std.os.windows.HANDLE, output: std.os.windows.HANDLE) !WindowsMode {
             var saved: WindowsMode = .{
                 .input = undefined,
                 .output = undefined,
-                .input_code_page = Api.GetConsoleCP(),
-                .output_code_page = Api.GetConsoleOutputCP(),
             };
-            if (saved.input_code_page == 0 or saved.output_code_page == 0 or
-                Api.GetConsoleMode(input, &saved.input) == .FALSE or
+            if (Api.GetConsoleMode(input, &saved.input) == .FALSE or
                 Api.GetConsoleMode(output, &saved.output) == .FALSE) return error.TerminalModeUnavailable;
             errdefer saved.restore(Api, input, output);
-            // The editor transports UTF-8 bytes, independently of the user's
-            // console code pages. Every failed setup restores all saved state.
-            if (Api.SetConsoleCP(65001) == .FALSE or Api.SetConsoleOutputCP(65001) == .FALSE or
-                Api.SetConsoleMode(output, saved.output | 0x0004) == .FALSE or
+            if (Api.SetConsoleMode(output, saved.output | 0x0004) == .FALSE or
                 Api.SetConsoleMode(input, (saved.input & ~@as(u32, 0x0007)) | 0x0200) == .FALSE)
                 return error.TerminalModeUnavailable;
             return saved;
@@ -34,26 +26,9 @@ pub const Terminal = struct {
         fn restore(self: WindowsMode, comptime Api: type, input: std.os.windows.HANDLE, output: std.os.windows.HANDLE) void {
             _ = Api.SetConsoleMode(input, self.input);
             _ = Api.SetConsoleMode(output, self.output);
-            _ = Api.SetConsoleCP(self.input_code_page);
-            _ = Api.SetConsoleOutputCP(self.output_code_page);
         }
     };
-    const Console = struct {
-        const Screen = extern struct {
-            size: [2]i16,
-            cursor: [2]i16,
-            attributes: u16,
-            window: [4]i16,
-            maximum: [2]i16,
-        };
-        extern "kernel32" fn GetConsoleScreenBufferInfo(std.os.windows.HANDLE, *Screen) callconv(.winapi) std.os.windows.BOOL;
-        extern "kernel32" fn GetConsoleMode(std.os.windows.HANDLE, *u32) callconv(.winapi) std.os.windows.BOOL;
-        extern "kernel32" fn SetConsoleMode(std.os.windows.HANDLE, u32) callconv(.winapi) std.os.windows.BOOL;
-        extern "kernel32" fn GetConsoleCP() callconv(.winapi) u32;
-        extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) u32;
-        extern "kernel32" fn SetConsoleCP(u32) callconv(.winapi) std.os.windows.BOOL;
-        extern "kernel32" fn SetConsoleOutputCP(u32) callconv(.winapi) std.os.windows.BOOL;
-    };
+    const Console = @import("repl_console.zig").Api;
 
     pub fn columns() usize {
         if (builtin.os.tag == .windows) {
@@ -96,19 +71,13 @@ pub const Terminal = struct {
     }
 };
 
-test "Windows terminal setup restores code pages and modes after every failure" {
+test "Windows terminal setup restores editing modes after every failure" {
     const Handle = std.os.windows.HANDLE;
     const Bool = std.os.windows.BOOL;
     const Api = struct {
         var state: Terminal.WindowsMode = undefined;
         var calls: usize = 0;
         var fail_at: usize = 0;
-        fn GetConsoleCP() u32 {
-            return state.input_code_page;
-        }
-        fn GetConsoleOutputCP() u32 {
-            return state.output_code_page;
-        }
         fn GetConsoleMode(handle: Handle, mode: *u32) Bool {
             mode.* = if (@intFromPtr(handle) == 1) state.input else state.output;
             return .TRUE;
@@ -119,28 +88,20 @@ test "Windows terminal setup restores code pages and modes after every failure" 
             destination.* = mode;
             return .TRUE;
         }
-        fn SetConsoleCP(page: u32) Bool {
-            return set(&state.input_code_page, page);
-        }
-        fn SetConsoleOutputCP(page: u32) Bool {
-            return set(&state.output_code_page, page);
-        }
         fn SetConsoleMode(handle: Handle, mode: u32) Bool {
             return set(if (@intFromPtr(handle) == 1) &state.input else &state.output, mode);
         }
     };
-    const initial: Terminal.WindowsMode = .{ .input = 0x87, .output = 1, .input_code_page = 437, .output_code_page = 850 };
+    const initial: Terminal.WindowsMode = .{ .input = 0x87, .output = 1 };
     const input: Handle = @ptrFromInt(1);
     const output: Handle = @ptrFromInt(2);
-    for (0..5) |failure| {
+    for (0..3) |failure| {
         Api.state = initial;
         Api.calls = 0;
         Api.fail_at = failure;
         if (failure == 0) {
             const saved = try Terminal.WindowsMode.enter(Api, input, output);
             try std.testing.expectEqualDeep(initial, saved);
-            try std.testing.expectEqual(@as(u32, 65001), Api.state.input_code_page);
-            try std.testing.expectEqual(@as(u32, 65001), Api.state.output_code_page);
             try std.testing.expectEqual(initial.input & ~@as(u32, 7) | 0x0200, Api.state.input);
             try std.testing.expectEqual(initial.output | 0x0004, Api.state.output);
             saved.restore(Api, input, output);

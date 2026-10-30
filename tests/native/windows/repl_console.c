@@ -98,10 +98,10 @@ int wmain(int argc, wchar_t **argv) {
     if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0,
             PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, console, sizeof console,
             NULL, NULL)) goto cleanup;
-    size_t capacity = wcslen(argv[1]) + 16;
+    size_t capacity = wcslen(argv[1]) + 64;
     command = calloc(capacity, sizeof *command);
     if (!command) goto cleanup;
-    swprintf(command, capacity, L"\"%ls\" repl", argv[1]);
+    swprintf(command, capacity, L"\"%ls\" repl --vm-instructions 1000000000", argv[1]);
     startup.StartupInfo.cb = sizeof startup;
     if (!start_client(argv[1], command, &startup, &process)) goto cleanup;
     /* ConPTY can encode the trailing blank as cursor movement. */
@@ -119,6 +119,14 @@ int wmain(int argc, wchar_t **argv) {
     if (!send_text(input_write,
             "answer := () -> (.result: Int32) {\rresult = 43\r}\ranswer()\r") ||
         !await_text(process.hProcess, "_3 = 43")) goto cleanup;
+    if (FAILED(ResizePseudoConsole(console, (COORD){160, 24}))) goto cleanup;
+    if (!send_text(input_write,
+            "if true {\runwrap_or_abort(.value = print(\"RUNTIME_READY\\n\"))\rwhile true {}\r}\r") ||
+        !await_text(process.hProcess, "RUNTIME_READY\r\n")) goto cleanup;
+    if (!send_text(input_write, "\x03") ||
+        !await_text(process.hProcess, "ExecutionCancelled")) goto cleanup;
+    if (!send_text(input_write, ":reset\r44\r") ||
+        !await_text(process.hProcess, "_0 = 44")) goto cleanup;
     if (!send_text(input_write, argc == 3 ? "\x04" : ":quit\r") ||
         WaitForSingleObject(process.hProcess, 30000) != WAIT_OBJECT_0) goto cleanup;
     DWORD exit_code;
