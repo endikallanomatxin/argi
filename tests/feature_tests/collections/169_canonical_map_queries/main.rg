@@ -19,15 +19,15 @@ implement HashPolicy#(Policy, Key) (
     }
 )
 
-lookup := #(.Map: Type: MapLookup#(.Query: Int32, .Value: Int32)) (
-    .self: &Map, .key: Int32, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: ?&Int32) {
-    assume error_tracer
+lookup := #(.Map: Type: MapLookup#(.Query: Int32, .Value: Int32)) (.self: &Map, .key: Int32) -> (
+    .result : ?&Int32
+) {
+
     result = MapLookup#(Map).get_reference(self, .key = key)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     map ::= HashMap#(.key: Key, .value: Int32)(.policy = Policy())!!!

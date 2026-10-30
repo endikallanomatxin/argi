@@ -1,20 +1,16 @@
 RefusingAllocator: Type = ()
 
 implement Allocator#(RefusingAllocator) (
-    .allocate = (
-        .self         : $&RefusingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
 
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator := system.page_allocator
     #if target_os("windows") {
         path: StringView = "NUL"

@@ -167,6 +167,7 @@ pub const Context = struct {
             .modules = modules,
             .offsets = offsets,
             .core = &self.core,
+            .diagnostics = diagnostics,
         };
         self.dispatch = .{
             .core = &self.core,

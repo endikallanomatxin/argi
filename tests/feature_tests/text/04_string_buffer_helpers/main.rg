@@ -3,8 +3,7 @@ DummyWriter := (
 )
 
 DummyWriterInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
-    .allocator    : $&AllocatorProvider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .allocator : $&AllocatorProvider
 )
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(
@@ -13,7 +12,7 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(
     .Result : Type = DummyWriter
 
     .init = DummyWriterInitArgs#(AllocatorProvider) -> (.result: Result) {
-        assume error_tracer
+
         _init_allocator ::= ~allocator
 
         assume allocator := _init_allocator
@@ -31,12 +30,8 @@ implement Deinit#(DummyWriter) (
 )
 
 append_test_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : $&DummyWriter,
-    .byte         : UInt8,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&DummyWriter, .byte: UInt8, .allocator: $&AllocatorType
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
 
     assume allocator
 
@@ -49,7 +44,7 @@ append_test_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

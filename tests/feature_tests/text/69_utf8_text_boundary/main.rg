@@ -1,6 +1,6 @@
 check_utf8_boundary := (.system: System) -> !Void = ..ok Void() {
     assume allocator ::= system.page_allocator
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes: [4]UInt8 = (240, 159, 152, 128)
     source ::= view(&bytes)
     text ::= string_from_bytes(.bytes = source)!

@@ -1,5 +1,5 @@
-invalid := (.bytes: [4]UInt8, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+invalid := (.bytes: [4]UInt8, .count: UIntNative) -> () {
+
     text ::= unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = count))
     match validate_utf8_bytes(.bytes = text) { ..ok _ { abort } ..error _ {} }
     match utf8_decode_bytes(.bytes = text) { ..ok _ { abort } ..error _ {} }
@@ -9,7 +9,7 @@ invalid := (.bytes: [4]UInt8, .count: UIntNative, .error_tracer: $&Virtual#(Erro
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     invalid(.bytes = (128, 0, 0, 0), .count = 1)
     invalid(.bytes = (191, 0, 0, 0), .count = 1)

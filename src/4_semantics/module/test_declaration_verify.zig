@@ -55,31 +55,31 @@ fn validateOne(
     };
 
     if (output.fields.len != 1) {
-        try diagnostics.add(loc, .semantic, "tests must return exactly '-> !()' in v1", .{});
+        try diagnostics.add(loc, .semantic, "tests must return '-> !()' or '-> !!()'", .{});
         return false;
     }
     const result_field = file.structTypeField(output.fields[0]) orelse return false;
     if (!result_field.inferred_result and !std.mem.eql(u8, file.tokenText(db, result_field.name_token), "result")) {
-        try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
+        try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return '-> !()' or '-> !!()'", .{});
         return false;
     }
     const result_type_node = result_field.type_node orelse {
-        try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
+        try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return '-> !()' or '-> !!()'", .{});
         return false;
     };
     switch (file.syntaxType(result_type_node) orelse return false) {
-        .inferred_errable => |inner| switch (file.syntaxType(inner) orelse return false) {
+        .inferred_errable => |inner| switch (file.syntaxType(inner.child) orelse return false) {
             .struct_literal => |structure| if (structure.fields.len != 0) {
-                try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
+                try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return '-> !()' or '-> !!()'", .{});
                 return false;
             },
             else => {
-                try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
+                try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return '-> !()' or '-> !!()'", .{});
                 return false;
             },
         },
         else => {
-            try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
+            try diagnostics.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return '-> !()' or '-> !!()'", .{});
             return false;
         },
     }

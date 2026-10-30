@@ -7,7 +7,7 @@ write := (.p: $&Thing) -> () {
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     x :: Thing = (.value = 1)
     write(.p = $&x)
 

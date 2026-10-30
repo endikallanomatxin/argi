@@ -1,13 +1,9 @@
 MutatingAllocator := (.source: $&[3]UInt8, .backing: $&PageAllocator)
 
 implement Allocator#(MutatingAllocator) (
-    .allocate = (
-        .self         : $&MutatingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&MutatingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
 
         self&.source&[0] = 255
         result = Allocator#(
@@ -17,7 +13,7 @@ implement Allocator#(MutatingAllocator) (
 )
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes: [3]UInt8 = (65, 66, 0)
     allocator ::= MutatingAllocator(.source = $&bytes, .backing = system.page_allocator)
     match string_from_bytes(.bytes = view(&bytes), .allocator = $&allocator) {

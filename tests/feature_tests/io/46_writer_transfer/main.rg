@@ -7,12 +7,9 @@ Source := (
 )
 
 implement BlockReader#(Source) (
-    .read_block = (
-        .self         : $&Source,
-        .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
-        assume error_tracer
+    .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
+        .result : Errable#(UIntNative, (..stream_read_failed))
+    ) {
 
         size ::= length(&buffer).count
         if size > self&.largest_request { self&.largest_request = size }
@@ -39,8 +36,8 @@ implement BlockReader#(Source) (
 
 FailingSink := (.received: UIntNative = 0)
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 1) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 1) {
+
     assume writer ::= $&system.terminal&.stderr
     input: [5]UInt8 = (0, 255, 65, 66, 10)
     output ::= zeroed#([8]UInt8)()
@@ -137,19 +134,17 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
 }
 
 implement Writer#(FailingSink) (
-    .write_byte = (.self: $&FailingSink, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&FailingSink, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.received = self&.received + 1
         result = ..ok Void()
     }
 
-    .flush = (.self: $&FailingSink, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&FailingSink) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         result = ..error(.reason = ..stream_flush_failed)
     }

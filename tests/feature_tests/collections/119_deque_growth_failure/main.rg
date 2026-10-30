@@ -7,12 +7,10 @@ implement ErrorTracer#(CountingTracer) (
         self&.captures = self&.captures + 1
     }
     .reset_context = (.self: $&CountingTracer) -> () { self&.captures = 0 }
-    .report        = (
-        .self         : $&CountingTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+
         result = ..ok Void()
     }
 )
@@ -86,13 +84,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (
-        .self         : $&RecordingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)

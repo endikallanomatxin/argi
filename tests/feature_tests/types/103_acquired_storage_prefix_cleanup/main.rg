@@ -4,8 +4,8 @@ TrackingDeallocator := (
     .released_alignment : UIntNative
 )
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     tracker :: TrackingDeallocator = (
         .ffi                = system.ffi
         .released_size      = 0

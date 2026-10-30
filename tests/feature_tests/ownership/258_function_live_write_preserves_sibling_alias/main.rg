@@ -5,7 +5,7 @@ write := (.target: $&Value) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     source :: Value = (.number = 7)
     a ::= $&source
     b ::= $&source

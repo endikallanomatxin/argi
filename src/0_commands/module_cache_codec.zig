@@ -2,7 +2,7 @@ const std = @import("std");
 const graph_mod = @import("../4_semantics/module/graph.zig");
 const verifier = @import("../4_semantics/module/complete_verify.zig");
 
-pub const format_version: u32 = 134;
+pub const format_version: u32 = 135;
 pub const max_file_bytes = 32 * 1024 * 1024;
 const max_allocation_bytes = 64 * 1024 * 1024;
 const magic = "ARGIMSG1";
@@ -45,7 +45,7 @@ inline fn appendInt(allocator: std.mem.Allocator, output: *std.ArrayList(u8), va
     const bits = @typeInfo(T).int.bits;
     const U = std.meta.Int(.unsigned, bits);
     const Wire = std.meta.Int(.unsigned, @max(8, ((bits + 7) / 8) * 8));
-    var bytes: [@sizeOf(Wire)]u8 = undefined;
+    var bytes: [@divExact(@typeInfo(Wire).int.bits, 8)]u8 = undefined;
     std.mem.writeInt(Wire, &bytes, @as(U, @bitCast(value)), .little);
     try output.appendSlice(allocator, &bytes);
 }
@@ -108,8 +108,9 @@ const Reader = struct {
         const bits = @typeInfo(T).int.bits;
         const U = std.meta.Int(.unsigned, bits);
         const Wire = std.meta.Int(.unsigned, @max(8, ((bits + 7) / 8) * 8));
-        const bytes = try self.take(@sizeOf(Wire));
-        const value = std.mem.readInt(Wire, bytes[0..@sizeOf(Wire)], .little);
+        const byte_count = @divExact(@typeInfo(Wire).int.bits, 8);
+        const bytes = try self.take(byte_count);
+        const value = std.mem.readInt(Wire, bytes[0..byte_count], .little);
         if (value > std.math.maxInt(U)) return error.InvalidCache;
         return @bitCast(@as(U, @intCast(value)));
     }
@@ -195,4 +196,16 @@ test "module cache codec rejects invalid lengths and scalar encodings" {
         defer arena.deinit();
         try std.testing.expectError(error.InvalidCache, decode(arena.allocator(), data, fingerprint));
     }
+}
+
+test "cache integer encoding excludes native integer padding" {
+    const Sample = struct { small: u17, padded: u24, signed: i19 };
+    const sample: Sample = .{ .small = 0x1ffff, .padded = 0x123456, .signed = -7 };
+    var bytes: std.ArrayList(u8) = .empty;
+    defer bytes.deinit(std.testing.allocator);
+    try writeValue(std.testing.allocator, &bytes, sample);
+    try std.testing.expectEqual(@as(usize, 9), bytes.items.len);
+    var reader = Reader{ .allocator = std.testing.allocator, .bytes = bytes.items };
+    try std.testing.expectEqualDeep(sample, try reader.readValue(@TypeOf(sample)));
+    try std.testing.expectEqual(@as(usize, 0), reader.bytes.len);
 }

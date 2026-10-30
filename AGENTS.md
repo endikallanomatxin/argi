@@ -419,7 +419,7 @@ feature first.
 - Copy permission comes from contracts, never ordinary functions named `copy`.
   FalliblyCopyable selects Value and allocator Provider jointly. Its associated
   reasons feed the single recursive DynamicArray copy algorithm; ordinary `!`
-  propagation preserves the original tracer and lexical owners clean partial
+  propagation preserves any existing trace and lexical owners clean partial
   copies. Infallible elements use a non-allocating fallible-protocol adapter.
   Queries with an unknown provider can conservatively forbid implicit copying,
   but cannot establish conformance or select an operation.
@@ -472,9 +472,13 @@ feature first.
   source's storage dependencies. Arbitrary bytes use checked Utf8Decoder or
   utf8_decode_bytes; decoding neither certifies nor freezes their source.
   Checked decoding cursors advance only on success.
-  Test entry wrappers report bounded traces before cleanup, then replace their
-  trace handle with the program-lifetime noop tracer while preserving the reason
-  used by the C wrapper for failure/skip status.
+  Error stores only its reason; ErrorWithTrace additionally borrows its original
+  tracer. Both use Errable, with !T and !!T selecting their inferred outputs.
+  Plain ! forwards without acquiring or extending a tracer; !! context promotes
+  or extends explicitly on the error branch through ordinary checked calls.
+  Never implicitly add or discard trace references. Test entry wrappers report
+  errors before cleanup, then explicitly construct a reason-only result for the
+  C status adapter so no entry-local diagnostic loan escapes.
 
 - Local `Errable` handling (`handle error, value { ... }`) lowers to a match
   inside an explicit `value_sequence`. Its result storage is deferred in the
@@ -482,7 +486,7 @@ feature first.
   The `handle error { ... }` variant has no result slot and discards the success
   payload through ordinary branch cleanup. Both forms retain the containing
   function and loop control-flow context. `!!!` uses the same recovery lowering
-  with an ordinary report_trace call and a bare containing-function return.
+  with an ordinary report_error call and a bare containing-function return.
   Its optional block runs after reporting and before that return, only on error;
   keep the action's lexical cleanup in concrete and parameterized lowering.
   Control headers require grouping brackets around `!!! { ... }` so the block

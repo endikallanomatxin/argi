@@ -10,7 +10,7 @@ implement Deinit#(Resource) (
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= CAllocator(.ffi = ffi)
     memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = $&allocator, .count = 2))
     raw ::= raw_pointer#(.t: Choice)(.address = memory.data.address).raw

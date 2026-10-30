@@ -12,7 +12,7 @@ implement Subtract#(&Input, &Input) (
 implement Multiply#(&Input, &Input) (
     .Result   : Type = Int64
     .multiply = (.left: &Input, .right: &Input) -> (.result: Result) {
-        assume error_tracer ::= $&noop_error_tracer
+
         result = [[left&.number * right&.number] | convert#(.to: Int64)(_)]
     }
 )

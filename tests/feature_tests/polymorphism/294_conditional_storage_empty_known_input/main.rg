@@ -52,10 +52,8 @@ forward_drain := (.backend: &Virtual#(SlotProtocol), .storage: $&Allocation) -> 
     result = saved
 }
 
-make_storage := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .value : Allocation
-) {
-    assume error_tracer
+make_storage := (.allocator: $&GeneralPurposeAllocator) -> (.value: Allocation) {
+
     storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
     backend ::= Backend()
     protocol ::= to_virtual#(SlotProtocol)(&backend)
@@ -74,7 +72,7 @@ make_storage := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     storage ::= make_storage(allocator)
     deinit($&storage)

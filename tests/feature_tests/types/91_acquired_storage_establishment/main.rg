@@ -1,15 +1,15 @@
 forward := (.storage: AcquiredStorage) -> (.result: AcquiredStorage) { result = ~storage }
 
-establish := (
-    .storage: AcquiredStorage, .size: UIntNative, .deallocator: Virtual#(Deallocator)
-) -> (.result: Allocation) {
+establish := (.storage: AcquiredStorage, .size: UIntNative, .deallocator: Virtual#(Deallocator)) -> (
+    .result : Allocation
+) {
     result = establish_allocation(
         .storage = ~storage, .size = size, .alignment = 8, .deallocator = deallocator
     ).allocation
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
     deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(

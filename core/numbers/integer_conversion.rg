@@ -101,10 +101,9 @@ _integer_conversion_unchecked := #(.Source: Type, .Target: Type) (.value: Source
 
 -- Bounds are constants in the source representation. The comparison always
 -- precedes truncation or a signedness change; failure retains the active tracer.
-_checked_integer_conversion := #(.Source: Type, .Target: Type) (
-    .value: Source, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Target, (..out_of_range))) {
-    assume error_tracer
+_checked_integer_conversion := #(.Source: Type, .Target: Type) (.value: Source) -> (
+    .result : Errable#(Target, (..out_of_range))
+) {
 
     minimum ::= __integer_conversion_lower_bound#(.from: Source, .to: Target)()
     maximum ::= __integer_conversion_upper_bound#(.from: Source, .to: Target)()
@@ -117,7 +116,7 @@ _checked_integer_conversion := #(.Source: Type, .Target: Type) (
 
 implement#(.Value: Type) Convert#(Value, Value) (
     .Result  : Type = Value
-    .convert = (.value: Value, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Value) -> (.result: Result) {
         result = ~value
     }
 )
@@ -126,8 +125,7 @@ implement#(.Source: Type: _BuiltinInteger, .Target: Type: _BuiltinInteger) Conve
     Source, Target
 ) (
     .Result  : Type = Errable#(Target, (..out_of_range))
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
-        assume error_tracer
+    .convert = (.value: Source) -> (.result: Result) {
 
         result = ~_checked_integer_conversion#(.Target: Target)(.value = ~value)
     }
@@ -135,49 +133,49 @@ implement#(.Source: Type: _BuiltinInteger, .Target: Type: _BuiltinInteger) Conve
 
 implement#(.Source: Type: _IntegerFitsInt16) Convert#(Source, Int16) (
     .Result  : Type = Int16
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: Int16)(.value = value)
     }
 )
 
 implement#(.Source: Type: _IntegerFitsInt32) Convert#(Source, Int32) (
     .Result  : Type = Int32
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: Int32)(.value = value)
     }
 )
 
 implement#(.Source: Type: _IntegerFitsInt64) Convert#(Source, Int64) (
     .Result  : Type = Int64
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: Int64)(.value = value)
     }
 )
 
 implement#(.Source: Type: _IntegerFitsUInt16) Convert#(Source, UInt16) (
     .Result  : Type = UInt16
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: UInt16)(.value = value)
     }
 )
 
 implement#(.Source: Type: _IntegerFitsUInt32) Convert#(Source, UInt32) (
     .Result  : Type = UInt32
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: UInt32)(.value = value)
     }
 )
 
 implement#(.Source: Type: _IntegerFitsUInt64) Convert#(Source, UInt64) (
     .Result  : Type = UInt64
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: UInt64)(.value = value)
     }
 )
 
 implement#(.Source: Type: _IntegerFitsUIntNative) Convert#(Source, UIntNative) (
     .Result  : Type = UIntNative
-    .convert = (.value: Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Result) {
+    .convert = (.value: Source) -> (.result: Result) {
         result = _integer_conversion_unchecked#(.Target: UIntNative)(.value = value)
     }
 )

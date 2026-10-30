@@ -19,8 +19,6 @@ RingBuffer := #(.t: Type) (
 RingBufferInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
     .capacity  : UIntNative,
     .allocator : $&Provider
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(
@@ -29,7 +27,6 @@ implement#(.t: Type, .Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
 
     .init = RingBufferInitArgs#(t, Provider) -> (.result: Result) {
-        assume error_tracer
 
         _init_capacity ::= capacity
         _init_allocator ::= allocator
@@ -101,12 +98,8 @@ _ring_buffer_occupied_pointer := #(.t: Type) (.self: &RingBuffer#(.t: t), .index
 }
 
 _queue_push_ring_buffer := #(.t: Type, .Provider: Type: Allocator) (
-    .self         : $&RingBuffer#(.t: t),
-    .value        : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&RingBuffer#(.t: t), .value: t, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..full))) {
-    assume error_tracer
 
     assume allocator
     owned ::= ~value
@@ -127,10 +120,9 @@ _queue_push_ring_buffer := #(.t: Type, .Provider: Type: Allocator) (
     result = ..ok Void()
 }
 
-_queue_pop_ring_buffer := #(.t: Type) (
-    .self: $&RingBuffer#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(t, (..empty))) {
-    assume error_tracer
+_queue_pop_ring_buffer := #(.t: Type) (.self: $&RingBuffer#(.t: t)) -> (
+    .result : Errable#(t, (..empty))
+) {
 
     if self&._length == 0 {
         result = ..error(.reason = ..empty)
@@ -152,11 +144,7 @@ _queue_pop_ring_buffer := #(.t: Type) (
 
 implement#(.t: Type) Deinit#(RingBuffer#(.t: t)) (
     .deinit = (.self: $&RingBuffer#(.t: t)) -> () {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         while self&._length > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop(self))
         }
@@ -171,10 +159,9 @@ implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
 
     .length = (.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) { count = self&._length }
 
-    .get_reference = (
-        .self: &RingBuffer#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(&t, (..out_of_bounds))) {
-        assume error_tracer
+    .get_reference = (.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(&t, (..out_of_bounds))
+    ) {
 
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)

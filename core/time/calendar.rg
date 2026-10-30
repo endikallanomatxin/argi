@@ -42,10 +42,7 @@ valid_utc_date := (.date: UtcDateTime) -> (.ok: Bool) {
     ]
 }
 
-unix_timestamp := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(UnixTimestamp, (..out_of_range))
-) {
-    assume error_tracer
+unix_timestamp := (.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) {
 
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..out_of_range)
@@ -78,10 +75,7 @@ unix_timestamp := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -
     result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
-utc_date := (.timestamp: UnixTimestamp, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(UtcDateTime, (..out_of_range))
-) {
-    assume error_tracer
+utc_date := (.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of_range))) {
 
     seconds ::= unix_seconds(&timestamp).value
 
@@ -131,10 +125,7 @@ utc_date := (.timestamp: UnixTimestamp, .error_tracer: $&Virtual#(ErrorTracer)) 
 }
 
 -- Sunday is zero, matching conventional civil weekday numbering.
-weekday := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(UInt32, (..out_of_range))
-) {
-    assume error_tracer
+weekday := (.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) {
 
     timestamp ::= unix_timestamp(.date = date)!
     days ::= [unix_seconds(&timestamp).value + 62135596800] / 86400

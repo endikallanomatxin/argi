@@ -17,7 +17,7 @@ maybe_resource := (
     .fail         : Bool,
     .tracer       : $&Virtual#(ErrorTracer),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Resource, (..stop))) {
+) -> (.result: Errable#(Resource, (..stop), .error_type: ErrorWithTrace#((..stop)))) {
     assume error_tracer
 
     if fail {
@@ -32,7 +32,7 @@ build_owned := (
     .fail         : Bool,
     .tracer       : $&Virtual#(ErrorTracer),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Choice, (..stop))) {
+) -> (.result: Errable#(Choice, (..stop), .error_type: ErrorWithTrace#((..stop)))) {
     assume error_tracer
 
     value :: Choice = ..pair(
@@ -42,7 +42,8 @@ build_owned := (
     result = ..ok ~value
 }
 
-discard_result := (.value: Errable#(Choice, (..stop))) -> () { owner ::= ~value }
+discard_result := (.value: Errable#(Choice, (..stop), .error_type: ErrorWithTrace#((..stop)))) -> (
+) { owner ::= ~value }
 
 consume_pair := (.left: Resource, .right: Resource) -> (.result: Int32) {
     first ::= ~left
@@ -55,7 +56,7 @@ build_call := (
     .fail         : Bool,
     .tracer       : $&Virtual#(ErrorTracer),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) {
+) -> (.result: Errable#(Int32, (..stop), .error_type: ErrorWithTrace#((..stop)))) {
     assume error_tracer
 
     result = ..ok consume_pair(
@@ -69,7 +70,7 @@ build_array := (
     .fail         : Bool,
     .tracer       : $&Virtual#(ErrorTracer),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) {
+) -> (.result: Errable#(Int32, (..stop), .error_type: ErrorWithTrace#((..stop)))) {
     assume error_tracer
 
     values :: [2]Resource = (
@@ -99,7 +100,7 @@ build_virtual := (
     .fail         : Bool,
     .tracer       : $&Virtual#(ErrorTracer),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) {
+) -> (.result: Errable#(Int32, (..stop), .error_type: ErrorWithTrace#((..stop)))) {
     assume error_tracer
 
     result = ..ok Consumer#(

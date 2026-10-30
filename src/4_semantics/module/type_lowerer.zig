@@ -64,8 +64,8 @@ pub const Context = struct {
                 break :blk try self.internDerived(.{ .nullable = child });
             },
             .inferred_errable => |child_node| blk: {
-                const child = try self.lower(child_node);
-                break :blk try self.internDerived(.{ .inferred_errable = child });
+                const child = try self.lower(child_node.child);
+                break :blk try self.internDerived(.{ .inferred_errable = .{ .child = child, .traced = child_node.traced } });
             },
             .struct_literal => |literal| self.lowerStructural(node, literal),
             .choice_literal => |literal| self.lowerChoice(node, literal),
@@ -263,7 +263,7 @@ pub const Context = struct {
                 const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidGenericArgument;
                 if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, base_name), "t")) {
                     const child = try self.lower(field.type_node orelse return error.InvalidGenericArgument);
-                    return self.internDerived(.{ .inferred_errable = child });
+                    return self.internDerived(.{ .inferred_errable = .{ .child = child } });
                 }
             }
         }
@@ -326,7 +326,7 @@ pub const Context = struct {
                 .pointer => |value| candidate.resolved.pointer.child == value.child and candidate.resolved.pointer.mutability == value.mutability,
                 .array => |value| candidate.resolved.array.element == value.element and candidate.resolved.array.length == value.length,
                 .nullable => |value| candidate.resolved.nullable == value,
-                .inferred_errable => |value| candidate.resolved.inferred_errable == value,
+                .inferred_errable => |value| candidate.resolved.inferred_errable.child == value.child and candidate.resolved.inferred_errable.traced == value.traced,
                 .virtual => |value| candidate.resolved.virtual == value,
                 else => unreachable,
             };

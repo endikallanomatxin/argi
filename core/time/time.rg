@@ -20,10 +20,9 @@ implement Init#(UnixTimestamp, UnixTimestampInitArgs) (
     }
 )
 
-unix_timestamp_precise := (
-    .seconds: Int64, .nanoseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) {
-    assume error_tracer
+unix_timestamp_precise := (.seconds: Int64, .nanoseconds: UInt32) -> (
+    .result : Errable#(UnixTimestamp, (..out_of_range))
+) {
 
     if nanoseconds >= 1000000000 {
         result = ..error(.reason = ..out_of_range)
@@ -44,10 +43,9 @@ implement NanosecondCount#(UnixTimestamp) (
     .nanosecond_count = _nanoseconds_UnixTimestamp
 )
 
-elapsed := (
-    .start: MonotonicInstant, .end: MonotonicInstant, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Duration, (..out_of_range))) {
-    assume error_tracer
+elapsed := (.start: MonotonicInstant, .end: MonotonicInstant) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) {
 
     if end._nanoseconds < start._nanoseconds {
         result = ..error(.reason = ..out_of_range)
@@ -114,10 +112,9 @@ implement Init#(Clock, ClockInitArgs) (
     .init = _acquire_clock
 )
 
-monotonic_now := (.self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+monotonic_now := (.self: &Clock) -> (
     .result : Errable#(MonotonicInstant, (..clock_read_failed, ..out_of_range))
 ) {
-    assume error_tracer
 
     assume ffi ::= self&._ffi
     reading ::= _platform_monotonic()
@@ -138,10 +135,9 @@ monotonic_now := (.self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok(._nanoseconds = reading.seconds * 1000000000 + fraction)
 }
 
-wall_now := (.self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+wall_now := (.self: &Clock) -> (
     .result : Errable#(UnixTimestamp, (..clock_read_failed, ..out_of_range))
 ) {
-    assume error_tracer
 
     assume ffi ::= self&._ffi
     reading ::= _platform_wall()
@@ -159,10 +155,7 @@ wall_now := (.self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok(._seconds = reading.seconds, ._nanoseconds = reading.nanoseconds)
 }
 
-sleep := (.duration: Duration, .self: &Clock, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..sleep_failed))
-) {
-    assume error_tracer
+sleep := (.duration: Duration, .self: &Clock) -> (.result: Errable#(Void, (..sleep_failed))) {
 
     assume ffi ::= self&._ffi
 

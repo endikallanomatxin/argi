@@ -307,7 +307,7 @@ test "module callable interfaces preserve inferred errable types" {
 
     const interface = graph.functions.items[0];
     const output = graph.semantic.fields.items[interface.output.start];
-    const child = graph.semantic.types.items[@intFromEnum(output.ty)].resolved.inferred_errable;
+    const child = graph.semantic.types.items[@intFromEnum(output.ty)].resolved.inferred_errable.child;
     try std.testing.expectEqual(module_graph.BuiltinType.Int32, graph.semantic.types.items[@intFromEnum(child)].resolved.builtin);
 }
 

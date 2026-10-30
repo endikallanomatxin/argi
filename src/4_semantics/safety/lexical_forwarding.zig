@@ -53,7 +53,7 @@ fn independentExpression(graph: *const graph_mod.GlobalSemanticGraph, id: graph_
             break :blk if (graph.binding(binding).initialization) |value| independentExpression(graph, value, links, output, depth + 1) else true;
         },
         .assignment => |value| value.binding != output and !linksContains(links, value.binding) and independentExpression(graph, value.value, links, output, depth + 1),
-        .return_statement, .error_propagation, .error_context, .testing_expect_error => false,
+        .return_statement, .error_propagation => false,
         .code_block, .value_sequence, .replacement => |body| independentBlock(graph, body, links, output, depth + 1),
         .if_statement => |value| independentExpression(graph, value.condition, links, output, depth + 1) and
             independentBlock(graph, value.then_block, links, output, depth + 1) and

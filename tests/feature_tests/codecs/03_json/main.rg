@@ -1,7 +1,7 @@
 json ::= import ("codecs/serialization/json")
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     json.validate(
         .text = " {\"text\":\"café \\uD83D\\uDE42\", \"values\":[null,true,false,-1.2e+3]} "

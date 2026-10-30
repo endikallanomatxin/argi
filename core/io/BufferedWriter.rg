@@ -27,19 +27,14 @@ implement#(.base_type: Type: Writer#(base_type)) Init#(
 
 implement#(.base_type: Type: Writer#(base_type)) Deinit#(BufferedWriter#(.base_type: base_type)) (
     .deinit = (.self: $&BufferedWriter#(.base_type: base_type)) -> () {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         buffered_writer_flush(self)
     }
 )
 
 buffered_writer_flush := #(.base_type: Type: Writer#(base_type)) (
-    .self: $&BufferedWriter#(.base_type: base_type), .error_tracer: $&Virtual#(ErrorTracer)
+    .self : $&BufferedWriter#(.base_type: base_type)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
 
     i :: UIntNative = 0
 
@@ -75,12 +70,9 @@ buffered_writer_flush := #(.base_type: Type: Writer#(base_type)) (
 }
 
 implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_type: base_type)) (
-    .write_byte = (
-        .self         : $&BufferedWriter#(.base_type: base_type),
-        .byte         : UInt8,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .write_byte = (.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         if length(&self&.buffer) == 0 {
             result = Writer#().write_byte(self&.base, .byte = byte)
@@ -102,10 +94,9 @@ implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_t
         result = ..ok Void()
     }
 
-    .flush = (
-        .self: $&BufferedWriter#(.base_type: base_type), .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .flush = (.self: $&BufferedWriter#(.base_type: base_type)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         result = buffered_writer_flush(self)
     }

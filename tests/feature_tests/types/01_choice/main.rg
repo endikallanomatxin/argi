@@ -2,12 +2,12 @@ Direction: Type = (
     ..north,
     ..east,
     ..south,
-    ..west,
+    ..west
 )
 
 Result: Type = (
     ..ok(.value: Int32),
-    ..error(.code: Int32),
+    ..error(.code: Int32)
 )
 
 choice_equality := () -> (.passed: Bool) {
@@ -40,7 +40,7 @@ payload_match := (.result: Result) -> (.value: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     if choice_equality() == false {
         status_code = 1
         return

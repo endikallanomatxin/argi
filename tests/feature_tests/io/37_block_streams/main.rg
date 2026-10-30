@@ -1,10 +1,9 @@
 Source := (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .read_byte = (.self: $&Source) -> (
         .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
     ) {
-        assume error_tracer
 
         if self&.position == length(.self = &self&.bytes).count {
             result = ..ok ..end
@@ -19,12 +18,9 @@ implement Reader#(Source) (
 )
 
 implement BlockReader#(Source) (
-    .read_block = (
-        .self         : $&Source,
-        .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) {
-        assume error_tracer
+    .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+    ) {
 
         self&.calls = self&.calls + 1
         if length(.self = &buffer).count == 0 {
@@ -47,14 +43,11 @@ implement BlockReader#(Source) (
 Sink := (.bytes: MutableArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
 
 implement BlockWriter#(Sink) (
-    .write_block = (
-        .self: $&Sink, .buffer: ArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (
+    .write_block = (.self: $&Sink, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
         )
     ) {
-        assume error_tracer
 
         if self&.stalled or length(.self = &buffer).count == 0 {
             result = ..ok 0
@@ -71,7 +64,7 @@ implement BlockWriter#(Sink) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     input: [4]UInt8 = (65, 0, 66, 10)
     output :: [4]UInt8 = (9, 9, 9, 9)

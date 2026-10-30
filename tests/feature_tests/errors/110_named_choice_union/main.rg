@@ -4,10 +4,7 @@ Extra: Type = (..alpha, ..shared)
 
 Combined: Type = choice_union#(.a: Base, .b: Extra)
 
-source := (.shared: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, Base)
-) {
-    assume error_tracer
+source := (.shared: Bool) -> (.result: Errable#(Void, Base)) {
 
     if shared {
         result = ..error(.reason = ..shared)
@@ -16,16 +13,12 @@ source := (.shared: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     }
 }
 
-extra := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Void, Extra)) {
-    assume error_tracer
+extra := () -> (.result: Errable#(Void, Extra)) {
 
     result = ..error(.reason = ..alpha)
 }
 
-combined := (.which: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, Combined)
-) {
-    assume error_tracer
+combined := (.which: UInt8) -> (.result: Errable#(Void, Combined)) {
 
     if which == 0 {
         source(.shared = false)!
@@ -37,8 +30,8 @@ combined := (.which: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok Void()
 }
 
-check := (.which: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (.ok: Bool = false) {
-    assume error_tracer
+check := (.which: UInt8) -> (.ok: Bool = false) {
+
     match combined(.which = which) {
         ..ok _ {}
         ..error error {
@@ -52,7 +45,7 @@ check := (.which: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (.ok: Bool =
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     if check(.which = 0).ok == false { status_code = 1 }
     if check(.which = 1).ok == false { status_code = 2 }
     if check(.which = 2).ok == false { status_code = 3 }

@@ -3,10 +3,9 @@ DummyInput := (
 )
 
 implement Reader#(DummyInput) (
-    .read_byte = (.self: $&DummyInput, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .read_byte = (.self: $&DummyInput) -> (
         .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
     ) {
-        assume error_tracer
 
         if self&.index == 0 {
             self&.index = 1
@@ -25,7 +24,7 @@ implement Reader#(DummyInput) (
 )
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     stdin_storage :: DummyInput = DummyInput()
     assume reader ::= $&stdin_storage
     first_result ::= Reader#().read_byte(.self = $&stdin_storage)

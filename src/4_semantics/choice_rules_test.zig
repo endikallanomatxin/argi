@@ -115,7 +115,7 @@ test "errable match unknown variant" {
         \\    }
         \\}
         }},
-        .diagnostic = .{ .message = "choice type 'Errable#(.t: Int32, .reasons: (..test_error))' has no variant '..none'", .file = "main.rg", .marker = "none {", .exact = true },
+        .diagnostic = .{ .message = "choice type 'Errable#(.t: Int32, .reasons: (..test_error), .error_type: Error#(.reasons: (..test_error)))' has no variant '..none'", .file = "main.rg", .marker = "none {", .exact = true },
     });
 }
 

@@ -1,10 +1,8 @@
 count_text := (
-    .self         : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
-    .text         : StringView,
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self      : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+    .text      : StringView,
+    .allocator : $&PageAllocator
 ) -> !Void = ..ok Void() {
-    assume error_tracer
     assume allocator
 
     for token in split_whitespace(text) {
@@ -28,7 +26,7 @@ count_directory := (
     .file_system  : $&FileSystem,
     .allocator    : $&PageAllocator,
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> !Void = ..ok Void() {
+) -> !!Void = ..ok Void() {
     assume error_tracer
     assume allocator
     assume file_system
@@ -40,7 +38,7 @@ count_directory := (
             ..none { return }
             ..some ~entry {
                 name ::= view(&entry.value.name)
-                joined ::= join_views(&path, &name)!
+                joined ::= join_views(&path, &name)!! path
                 full_path ::= view(&joined)
                 info ::= metadata(file_system, full_path)!! full_path
 

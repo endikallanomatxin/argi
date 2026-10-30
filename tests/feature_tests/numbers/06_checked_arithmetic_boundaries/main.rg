@@ -257,8 +257,8 @@ expect_zero_UIntNative := (
     }
 }
 
-check_int16 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_int16 := () -> () {
+
     minimum :: Int16 = -32768
     maximum :: Int16 = 32767
     zero :: Int16 = 0
@@ -333,8 +333,8 @@ check_int16 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     )
 }
 
-check_int32 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_int32 := () -> () {
+
     minimum :: Int32 = -2147483648
     maximum :: Int32 = 2147483647
     zero :: Int32 = 0
@@ -409,8 +409,8 @@ check_int32 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     )
 }
 
-check_int64 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_int64 := () -> () {
+
     minimum :: Int64 = -9223372036854775808
     maximum :: Int64 = 9223372036854775807
     zero :: Int64 = 0
@@ -485,8 +485,8 @@ check_int64 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     )
 }
 
-check_uint16 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_uint16 := () -> () {
+
     minimum :: UInt16 = 0
     maximum :: UInt16 = 65535
     zero :: UInt16 = 0
@@ -521,8 +521,8 @@ check_uint16 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     )
 }
 
-check_uint32 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_uint32 := () -> () {
+
     minimum :: UInt32 = 0
     maximum :: UInt32 = 4294967295
     zero :: UInt32 = 0
@@ -557,8 +557,8 @@ check_uint32 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     )
 }
 
-check_uint64 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_uint64 := () -> () {
+
     minimum :: UInt64 = 0
     maximum :: UInt64 = 18446744073709551615
     zero :: UInt64 = 0
@@ -593,8 +593,8 @@ check_uint64 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     )
 }
 
-check_uintnative := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_uintnative := () -> () {
+
     minimum :: UIntNative = 0
     maximum :: UIntNative = 0
     bytes ::= size_of(.type = UIntNative)
@@ -636,7 +636,7 @@ check_uintnative := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     check_int16()
     check_int32()
     check_int64()

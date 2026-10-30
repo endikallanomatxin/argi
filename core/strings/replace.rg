@@ -1,11 +1,9 @@
 replace := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : StringView,
-    .pattern      : StringView,
-    .replacement  : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self        : StringView,
+    .pattern     : StringView,
+    .replacement : StringView,
+    .allocator   : $&AllocatorType
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))) {
-    assume error_tracer
 
     if pattern._length == 0 {
         result = ..error(.reason = ..empty_pattern)

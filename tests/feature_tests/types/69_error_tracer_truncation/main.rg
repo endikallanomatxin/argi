@@ -1,6 +1,6 @@
 ..truncated_test_failure
 
-fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
     assume error_tracer
     result = ..error(.reason = ..truncated_test_failure)
 }

@@ -1,28 +1,17 @@
 -- Path representation selects one operation identity; allocation is explicit.
 FileWriting#(.PathValue: Type): Contract = (
     .Result     : Type
-    .write_file : (
-        .self         : &FileSystem,
-        .path         : PathValue,
-        .text         : &String,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Result)
+    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String) -> (.result: Result)
 )
 
 AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result     : Type
-    .write_file : (
-        .self         : &FileSystem,
-        .path         : PathValue,
-        .text         : &String,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Result)
+    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: $&Provider) -> (
+        .result : Result
+    )
 )
 
-_path_write_file_c := (
-    .self: &FileSystem, .path: &CChar, .text: &String, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (
+_path_write_file_c := (.self: &FileSystem, .path: &CChar, .text: &String) -> (
     .result : Errable#(
         Void,
         (
@@ -33,7 +22,6 @@ _path_write_file_c := (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     open_result ::= open_file(.file_system = self, .path = path, .mode = ..write)
@@ -89,9 +77,7 @@ _path_write_file_c := (
     result = ..ok Void()
 }
 
-_path_write_file_string := (
-    .self: &FileSystem, .path: &String, .text: &String, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (
+_path_write_file_string := (.self: &FileSystem, .path: &String, .text: &String) -> (
     .result : Errable#(
         Void,
         (
@@ -102,7 +88,6 @@ _path_write_file_string := (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     c_path ::= as_c_string(path)
@@ -111,11 +96,7 @@ _path_write_file_string := (
 }
 
 _path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &FileSystem,
-    .path         : StringView,
-    .text         : &String,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Provider
 ) -> (
     .result : Errable#(
         Void,
@@ -128,7 +109,6 @@ _path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator
@@ -144,9 +124,7 @@ _path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
     }
 }
 
-_path_write_file_owned := (
-    .self: &FileSystem, .path: &Path, .text: &String, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (
+_path_write_file_owned := (.self: &FileSystem, .path: &Path, .text: &String) -> (
     .result : Errable#(
         Void,
         (
@@ -157,7 +135,6 @@ _path_write_file_owned := (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
 

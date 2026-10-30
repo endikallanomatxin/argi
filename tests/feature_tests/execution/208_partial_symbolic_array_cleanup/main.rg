@@ -26,7 +26,7 @@ replace := (.target: $&[2]Resource, .token: Token, .counter: $&Counter) -> () {
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     counter :: Counter = Counter()
     {
         values :: [2]Resource = (

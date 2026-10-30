@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     c_text ::= from_literal(.data = "hello")
     assume allocator ::= system.page_allocator

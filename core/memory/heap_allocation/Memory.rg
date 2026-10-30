@@ -32,13 +32,11 @@ implement Init#(Memory, MemoryInitArgs) (
 )
 
 _memory_map_aligned := (
-    .size         : UIntNative,
-    .alignment    : UIntNative,
-    .page_size    : UIntNative,
-    .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .size      : UIntNative,
+    .alignment : UIntNative,
+    .page_size : UIntNative,
+    .ffi       : $&ForeignFunctionInterface
 ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
-    assume error_tracer
 
     assume ffi
     _require_allocation_alignment(.alignment = alignment)
@@ -65,13 +63,9 @@ _memory_map_aligned := (
     result = ..ok(._address = address, ._size = mapped_size, ._alignment = alignment)
 }
 
-map_pages := (
-    .self         : $&Memory,
-    .size         : UIntNative,
-    .alignment    : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-    assume error_tracer
+map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
+    .result : Errable#(Allocation, (..out_of_memory))
+) {
 
     assume ffi := self&._ffi
     physical_size ::= page_allocator_round_up(

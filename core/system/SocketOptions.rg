@@ -1,27 +1,23 @@
 SocketAddress#(.Socket: Type): Contract = (
-    .local : (.self: &Socket, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(NetworkAddress, (..socket_option_failed))
-    )
+    .local : (.self: &Socket) -> (.result: Errable#(NetworkAddress, (..socket_option_failed)))
 )
 
 SocketTimeout#(.Socket: Type): Contract = (
-    .configure_timeout : (
-        .self: $&Socket, .milliseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..socket_option_failed)))
+    .configure_timeout : (.self: $&Socket, .milliseconds: UInt32) -> (
+        .result : Errable#(Void, (..socket_option_failed))
+    )
 )
 
-local_address := #(.Socket: Type: SocketAddress#(Socket)) (
-    .self: &Socket, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(NetworkAddress, (..socket_option_failed))) {
-    assume error_tracer
+local_address := #(.Socket: Type: SocketAddress#(Socket)) (.self: &Socket) -> (
+    .result : Errable#(NetworkAddress, (..socket_option_failed))
+) {
 
     result = SocketAddress#(Socket).local(.self = self)
 }
 
-set_timeout := #(.Socket: Type: SocketTimeout#(Socket)) (
-    .self: $&Socket, .milliseconds: UInt32, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..socket_option_failed))) {
-    assume error_tracer
+set_timeout := #(.Socket: Type: SocketTimeout#(Socket)) (.self: $&Socket, .milliseconds: UInt32) -> (
+    .result : Errable#(Void, (..socket_option_failed))
+) {
 
     result = SocketTimeout#(
         Socket

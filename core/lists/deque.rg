@@ -5,8 +5,6 @@ Deque := #(.t: Type) (._ring: RingBuffer#(.t: t))
 DequeInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
     .capacity  : UIntNative = 8,
     .allocator : $&Provider
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) Init#(
@@ -15,7 +13,6 @@ implement#(.t: Type, .Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(Deque#(.t: t), (..out_of_memory))
 
     .init = DequeInitArgs#(t, Provider) -> (.result: Result) {
-        assume error_tracer
 
         _init_capacity ::= capacity
         _init_allocator ::= allocator
@@ -39,12 +36,8 @@ implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
 )
 
 reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : $&Deque#(.t: t),
-    .capacity     : UIntNative,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     if capacity <= self&._ring._capacity {
         result = ..ok Void()
@@ -83,9 +76,8 @@ reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 _deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: $&Deque#(.t: t), .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     if self&._ring._length < self&._ring._capacity {
         result = ..ok Void()
@@ -105,12 +97,8 @@ _deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType
 }
 
 push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : $&Deque#(.t: t),
-    .value        : t,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     owned ::= ~value
@@ -131,12 +119,8 @@ push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : $&Deque#(.t: t),
-    .value        : t,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     owned ::= ~value
@@ -164,18 +148,12 @@ push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok Void()
 }
 
-pop_front := #(.t: Type) (.self: $&Deque#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(t, (..empty))
-) {
-    assume error_tracer
+pop_front := #(.t: Type) (.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) {
 
     result = pop($&self&._ring)
 }
 
-pop_back := #(.t: Type) (.self: $&Deque#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(t, (..empty))
-) {
-    assume error_tracer
+pop_back := #(.t: Type) (.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty))) {
 
     if self&._ring._length == 0 {
         result = ..error(.reason = ..empty)
@@ -196,10 +174,9 @@ pop_back := #(.t: Type) (.self: $&Deque#(.t: t), .error_tracer: $&Virtual#(Error
     result = ..ok ~moved
 }
 
-get := #(.t: Type: ImplicitlyCopyable) (
-    .self: &Deque#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(t, (..out_of_bounds))) {
-    assume error_tracer
+get := #(.t: Type: ImplicitlyCopyable) (.self: &Deque#(.t: t), .index: UIntNative) -> (
+    .result : Errable#(t, (..out_of_bounds))
+) {
 
     pointer ::= get_reference(self, .index = index)!
 
@@ -219,10 +196,9 @@ implement#(.t: Type) Indexable#(Deque#(.t: t)) (
         count = self&._ring._length
     }
 
-    .get_reference = (
-        .self: &Deque#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(&t, (..out_of_bounds))) {
-        assume error_tracer
+    .get_reference = (.self: &Deque#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(&t, (..out_of_bounds))
+    ) {
 
         result = get_reference(&self&._ring, .index = index)
     }
@@ -231,10 +207,9 @@ implement#(.t: Type) Indexable#(Deque#(.t: t)) (
 implement#(.t: Type) MutableIndexable#(Deque#(.t: t)) (
     .Item : Type = t
 
-    .get_mutable_reference = (
-        .self: $&Deque#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#($&t, (..out_of_bounds))) {
-        assume error_tracer
+    .get_mutable_reference = (.self: $&Deque#(.t: t), .index: UIntNative) -> (
+        .result : Errable#($&t, (..out_of_bounds))
+    ) {
 
         if index >= self&._ring._length {
             result = ..error(.reason = ..out_of_bounds)

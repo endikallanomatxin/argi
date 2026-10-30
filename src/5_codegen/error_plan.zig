@@ -4,21 +4,30 @@ const types = @import("../4_semantics/global/types.zig");
 
 /// Representation facts of an already-checked propagation. Backends emit their
 /// own control flow; neither chooses reasons nor reconstructs tracer evidence.
+/// Remapping preserves trace mode. Starting a trace is an explicit operation,
+/// never a consequence of widening the reason set.
 pub const Payload = struct {
     source_reason: types.FieldHit,
     target_reason: types.FieldHit,
-    source_tracer: types.FieldHit,
-    target_tracer: types.FieldHit,
+    source_tracer: ?types.FieldHit,
+    target_tracer: ?types.FieldHit,
 };
 
 pub fn payload(graph: *const g.GlobalSemanticGraph, source: g.GlobalTypeId, target: g.GlobalTypeId) !Payload {
     const result: Payload = .{
         .source_reason = types.findField(graph, source, "reason") orelse return error.InvalidErrorPlan,
         .target_reason = types.findField(graph, target, "reason") orelse return error.InvalidErrorPlan,
-        .source_tracer = types.findField(graph, source, "tracer") orelse return error.InvalidErrorPlan,
-        .target_tracer = types.findField(graph, target, "tracer") orelse return error.InvalidErrorPlan,
+        .source_tracer = types.findField(graph, source, "tracer"),
+        .target_tracer = types.findField(graph, target, "tracer"),
     };
-    if (!types.equal(graph, result.source_tracer.field.ty, result.target_tracer.field.ty)) return error.InvalidErrorPlan;
+    if (result.source_tracer) |source_trace| {
+        const target_trace = result.target_tracer orelse return error.InvalidErrorPlan;
+        if (!types.equal(graph, source_trace.field.ty, target_trace.field.ty)) return error.InvalidErrorPlan;
+    } else if (result.target_tracer != null) return error.InvalidErrorPlan;
+    const source_fields = types.fields(graph, source) orelse return error.InvalidErrorPlan;
+    const target_fields = types.fields(graph, target) orelse return error.InvalidErrorPlan;
+    const expected_fields: u32 = if (result.source_tracer != null) 2 else 1;
+    if (source_fields.len != expected_fields or target_fields.len != expected_fields) return error.InvalidErrorPlan;
     return result;
 }
 
@@ -74,7 +83,32 @@ test "error payload plans preserve tracer types and resolve field positions" {
     const plan = try payload(&graph, @enumFromInt(2), @enumFromInt(3));
     try std.testing.expectEqual(@as(u32, 0), plan.source_reason.index);
     try std.testing.expectEqual(@as(u32, 1), plan.target_reason.index);
-    try std.testing.expectEqual(@as(u32, 1), plan.source_tracer.index);
-    try std.testing.expectEqual(@as(u32, 0), plan.target_tracer.index);
+    try std.testing.expectEqual(@as(u32, 1), plan.source_tracer.?.index);
+    try std.testing.expectEqual(@as(u32, 0), plan.target_tracer.?.index);
     try std.testing.expectError(error.InvalidErrorPlan, payload(&graph, @enumFromInt(2), @enumFromInt(4)));
+    graph.types.items[3].structural.fields.len = 3;
+    try std.testing.expectError(error.InvalidErrorPlan, payload(&graph, @enumFromInt(2), @enumFromInt(3)));
+    try std.testing.expectError(error.InvalidErrorPlan, payload(&graph, @enumFromInt(3), @enumFromInt(2)));
+}
+
+test "reason-only payload plans neither acquire nor discard tracer references" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const reason = try graph.addString(a, "reason");
+    const tracer = try graph.addString(a, "tracer");
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .structural = .{ .fields = .{ .start = 1, .len = 1 } } },
+        .{ .structural = .{ .fields = .{ .start = 2, .len = 2 } } },
+    });
+    for ([_]@TypeOf(reason){ reason, reason, reason, tracer }) |name|
+        try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0) });
+    const plain = try payload(&graph, @enumFromInt(1), @enumFromInt(2));
+    try std.testing.expect(plain.source_tracer == null);
+    try std.testing.expect(plain.target_tracer == null);
+    try std.testing.expectError(error.InvalidErrorPlan, payload(&graph, @enumFromInt(1), @enumFromInt(3)));
+    try std.testing.expectError(error.InvalidErrorPlan, payload(&graph, @enumFromInt(3), @enumFromInt(1)));
 }

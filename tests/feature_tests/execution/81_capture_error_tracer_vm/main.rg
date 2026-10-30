@@ -9,12 +9,9 @@ implement ErrorTracer#(CountingTracer) (
         self&.location = location.value
     }
     .reset_context = (.self: $&CountingTracer) -> () {}
-    .report        = (
-        .self         : $&CountingTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         result = ..ok Void()
     }

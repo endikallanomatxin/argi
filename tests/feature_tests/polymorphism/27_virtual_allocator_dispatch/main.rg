@@ -11,11 +11,9 @@ implement Init#(NoopDeallocator, NoopDeallocatorInitArgs) (
 )
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     noop :: NoopDeallocator = NoopDeallocator()
-    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
-        .value = $&noop
-    )
+    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(.value = $&noop)
     byte :: UInt8 = 7
     Deallocator#(
     ).deallocate(

@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     file ::= File()
     path ::= from_literal(.data = "tests/feature_tests/io/13_file_open_error/build/missing.txt")

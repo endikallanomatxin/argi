@@ -11,15 +11,15 @@ implement math.MatrixShape#(Rows) (
     }
 )
 
-product := #(.A: Type, .B: Type) (.left: &A, .right: &B, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+product := #(.A: Type, .B: Type) (.left: &A, .right: &B) -> (
     .result : math.MatrixProduct#(A, B).Result
 ) {
-    assume error_tracer
+
     result = ~math.MatrixProduct#(A, B).multiply(.left = left, .right = right)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     left: math.Matrix#(.rows = 2, .cols = 3, .t: Int32) = (
         .values = (
             (1, 2, 3),

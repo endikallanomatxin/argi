@@ -65,7 +65,7 @@ _pcg_xor_window := (.left: UInt64, .right: UInt64) -> (.value: UInt64) {
 }
 
 next_uint32 := (.self: $&Pcg32) -> (.value: UInt32) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     previous ::= self&._state
     self&._state = _pcg_advance(.state = previous).next
     mixed ::= _pcg_xor_window(
@@ -85,7 +85,7 @@ next_uint32 := (.self: $&Pcg32) -> (.value: UInt32) {
 }
 
 next_uint64 := (.self: $&Pcg32) -> (.value: UInt64) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     high ::= next_uint32(self).value | convert#(.to: UInt64)(_)
     low ::= next_uint32(self).value | convert#(.to: UInt64)(_)
     value = high * 4294967296 + low
@@ -95,10 +95,9 @@ next_bool := (.self: $&Pcg32) -> (.value: Bool) {
     value = next_uint32(self).value >= 2147483648
 }
 
-uniform_uint32 := (.self: $&Pcg32, .upper_bound: UInt32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+uniform_uint32 := (.self: $&Pcg32, .upper_bound: UInt32) -> (
     .result : Errable#(UInt32, (..invalid_range))
 ) {
-    assume error_tracer
 
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
@@ -120,10 +119,9 @@ uniform_uint32 := (.self: $&Pcg32, .upper_bound: UInt32, .error_tracer: $&Virtua
     }
 }
 
-uniform_uint64 := (.self: $&Pcg32, .upper_bound: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+uniform_uint64 := (.self: $&Pcg32, .upper_bound: UInt64) -> (
     .result : Errable#(UInt64, (..invalid_range))
 ) {
-    assume error_tracer
 
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
@@ -161,14 +159,14 @@ _pcg_fraction := #(.t: Type: Float) (.sample: UInt64, .bits: UInt32) -> (.value:
 }
 
 next_float16 := (.self: $&Pcg32) -> (.value: Float16) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     value = _pcg_fraction#(.t: Float16)(
         .sample = [next_uint32(self).value | convert#(.to: UInt64)(_) / 2097152], .bits = 11
     ).value
 }
 
 next_float32 := (.self: $&Pcg32) -> (.value: Float32) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     value = _pcg_fraction#(.t: Float32)(
         .sample = [next_uint32(self).value | convert#(.to: UInt64)(_) / 256], .bits = 24
     ).value

@@ -49,9 +49,7 @@ initialization_error := (.ffi: $&ForeignFunctionInterface) -> (.exception: Excep
     exception = (._handle = _initialization_snapshot().handle, ._ffi = ffi)
 }
 
-_python_exception_clone := (.self: &Exception, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Exception
-) {
+_python_exception_clone := (.self: &Exception) -> (.result: Exception) {
     assume ffi := self&._ffi
     result = (._handle = _exception_clone(.handle = self&._handle).handle, ._ffi = self&._ffi)
 }
@@ -68,12 +66,8 @@ capture := #(.t: Type) (.self: &Python, .value: Errable#(t, (..python_error))) -
 }
 
 _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Exception,
-    .part         : Int32,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &Exception, .part: Int32, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     count ::= _exception_size(.handle = self&._handle, .part = part).length
@@ -94,25 +88,22 @@ _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 exception_type := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &Exception, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
 
 exception_message := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &Exception, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
 
 exception_traceback := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &Exception, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     result = _exception_text(.self = self, .part = 2, .allocator = allocator)
 }

@@ -3,13 +3,10 @@ FailingAllocator: Type = ()
 ProbeTracer := (.count: UIntNative = 0)
 
 implement Allocator#(FailingAllocator) (
-    .allocate = (
-        .self         : $&FailingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
+
         result = ..error(.reason = ..out_of_memory)
     }
 )
@@ -20,12 +17,10 @@ implement ErrorTracer#(ProbeTracer) (
         self&.count = self&.count + 1
     }
     .reset_context = (.self: $&ProbeTracer) -> () { self&.count = 0 }
-    .report        = (
-        .self         : $&ProbeTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report        = (.self: $&ProbeTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+
         result = ..ok Void()
     }
 )
@@ -40,9 +35,10 @@ main := () -> (.status_code: Int32) {
         ..ok ~payload { abort }
         ..error failure {
             if failure.reason != ..out_of_memory { abort }
-            if tracer.count != 1 { abort }
-            add_context(.context = "original allocation error", .error_tracer = failure.tracer)
-            if tracer.count != 2 { abort }
+            if tracer.count != 0 { abort }
+            trace_error(.error = failure, .context = "original allocation error") handle traced {
+                if traced.reason != ..out_of_memory or tracer.count != 1 { abort }
+            }
         }
     }
     status_code = 42

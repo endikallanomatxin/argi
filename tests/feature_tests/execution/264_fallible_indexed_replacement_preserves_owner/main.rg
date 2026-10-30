@@ -31,31 +31,21 @@ select_index := (.selection: $&UIntNative) -> (.result: UIntNative) {
     result = selection&
 }
 
-build_choice := (.selection: $&UIntNative, .fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Choice, (..stop))
-) {
-    assume error_tracer
+build_choice := (.selection: $&UIntNative, .fail: Bool) -> (.result: Errable#(Choice, (..stop))) {
 
     selection&= 1
     value :: Choice = ..pair(.left = Resource(.id = 7), .right = maybe_resource(.fail = fail)!)
     result = ..ok ~value
 }
 
-maybe_resource := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Resource, (..stop))
-) {
-    assume error_tracer
+maybe_resource := (.fail: Bool) -> (.result: Errable#(Resource, (..stop))) {
 
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.id = 14) }
 }
 
-replace := (
-    .values       : $&[2]Choice,
-    .selection    : $&UIntNative,
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) {
-    assume error_tracer
+replace := (.values: $&[2]Choice, .selection: $&UIntNative, .fail: Bool) -> (
+    .result : Errable#(Int32, (..stop))
+) {
 
     values&[select_index(.selection = selection)] = build_choice(
         .selection = selection, .fail = fail
@@ -64,7 +54,7 @@ replace := (
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     {
         values :: [2]Choice = (
             ..pair(.left = (.id = 1), .right = (.id = 2)),

@@ -18,7 +18,7 @@ Holder: Type = (..counter(.counter: Virtual#(Counting), .tag: UInt8), ..empty)
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     counter :: Counter = (.value = 7)
     allocator ::= CAllocator(.ffi = ffi)
     memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = $&allocator))

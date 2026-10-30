@@ -64,19 +64,18 @@ main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(ProbeWriter) (
-    .write_byte = (.self: $&ProbeWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&ProbeWriter, .byte: UInt8) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.bytes = self&.bytes + 1
         result = ..ok Void()
     }
 
-    .flush = (.self: $&ProbeWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&ProbeWriter) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
+
         result = ..ok Void()
     }
 )

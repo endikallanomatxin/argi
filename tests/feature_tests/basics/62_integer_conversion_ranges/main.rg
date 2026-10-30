@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     -- Int8 to Int8: infallible
     {
         source_0: Int8 = -128

@@ -5,7 +5,7 @@ binary_search := #(
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: Indexable#(.Item: t)
 ) (.self: &Collection, .value: t, .order: &policy) -> (.index: ?UIntNative) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     count ::= length(self).count
     start :: UIntNative = 0
     end ::= count

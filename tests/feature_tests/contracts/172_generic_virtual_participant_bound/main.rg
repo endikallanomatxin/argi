@@ -1,12 +1,12 @@
-read_count := #(.T: Type: BlockReader#(T)) (
-    .reader: $&T, .buffer: MutableArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.count: UIntNative) {
-    assume error_tracer
+read_count := #(.T: Type: BlockReader#(T)) (.reader: $&T, .buffer: MutableArrayView#(.t: UInt8)) -> (
+    .count : UIntNative
+) {
+
     count = unwrap_or_abort(.value = BlockReader#().read_block(reader, .buffer = buffer))
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes: [2]UInt8 = (42, 7)
     scratch :: [1]UInt8 = (0)
     reader ::= ByteReader(.bytes = view(&bytes))

@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     value :: Int32 = 42
     ptr: &Int32 = &value
 

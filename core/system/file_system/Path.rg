@@ -14,7 +14,7 @@ path_is_separator := (.byte: UInt8) -> (.ok: Bool) {
 }
 
 path_last_separator_index := (.view: &StringView) -> (.value: ?UIntNative) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     if view&._length == 0 {
         value = ..none
         return
@@ -54,9 +54,8 @@ implement Init#(Path, PathInitArgs) (
 )
 
 path_with_view := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .view: StringView, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .view: StringView, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -74,10 +73,9 @@ implement Deinit#(Path) (
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
     .reasons : Type = (..out_of_memory)
-    .copy    = (.self: &Path, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .copy    = (.self: &Path, .allocator: $&Provider) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) {
-        assume error_tracer
 
         assume allocator
 
@@ -168,7 +166,7 @@ parent := (.self: &Path) -> (.value: ?StringView) {
 }
 
 extension := (.self: &Path) -> (.value: ?StringView) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     name ::= file_name(self).value
 
     match name {
@@ -206,12 +204,8 @@ extension := (.self: &Path) -> (.value: ?StringView) {
 }
 
 join_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .left         : &StringView,
-    .right        : &StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .left: &StringView, .right: &StringView, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -282,12 +276,8 @@ join_views := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 join := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .left         : &Path,
-    .right        : &Path,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .left: &Path, .right: &Path, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 

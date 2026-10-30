@@ -28,7 +28,7 @@ register_keeping := (.value: $&Keeping) -> () {
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     keeping :: Keeping = (.value = 0)
     register_keeping(.value = $&keeping)
     value :: Closing = (.value = 0)

@@ -20,15 +20,13 @@ _impl_get_Holder := (.other: &Holder, .self: &Holder) -> (.value: &Int32) {
     value = &self&.cell.value
 }
 
-read_view := (
-    .other: &Holder, .handle: &Virtual#(View), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.value: &Int32) {
-    assume error_tracer
+read_view := (.other: &Holder, .handle: &Virtual#(View)) -> (.value: &Int32) {
+
     value = get(.other = other, .self = handle)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     other :: Holder = (.cell = (.value = 2))
     holder :: Holder = (.cell = (.value = 1))
     handle ::= to_virtual#(.contract: View)(.value = &holder)

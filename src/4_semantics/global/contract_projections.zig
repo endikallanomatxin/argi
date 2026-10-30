@@ -89,7 +89,8 @@ pub fn typeSelectionReady(self: *const Resolver, ty: global_sg.GlobalTypeId, dep
     return switch (self.graph.types.items[@intFromEnum(ty)]) {
         .pointer => |value| typeSelectionReady(self, value.child, depth + 1),
         .array => |value| typeSelectionReady(self, value.element, depth + 1),
-        .nullable, .inferred_errable, .virtual => |child| typeSelectionReady(self, child, depth + 1),
+        .nullable, .virtual => |child| typeSelectionReady(self, child, depth + 1),
+        .inferred_errable => |value| typeSelectionReady(self, value.child, depth + 1),
         .generic => |value| blk: {
             for (self.graph.generic_arguments.items[value.arguments.start..][0..value.arguments.len]) |argument| {
                 if (argument.value == .type and !typeSelectionReady(self, argument.value.type, depth + 1)) break :blk false;
@@ -107,6 +108,35 @@ pub fn typeSelectionReady(self: *const Resolver, ty: global_sg.GlobalTypeId, dep
             break :blk true;
         },
         else => true,
+    };
+}
+
+/// Reason choices grow as newly specialized bodies contribute errors. A
+/// failed lookup involving one is provisional until pending work settles.
+pub fn containsInferredReasons(self: *const Resolver, ty: global_sg.GlobalTypeId, depth: usize) bool {
+    if (depth > 128 or self.graph.isTypeUnresolved(ty)) return false;
+    return switch (self.graph.types.items[@intFromEnum(ty)]) {
+        .inferred_choice => |value| value.kind == .reasons,
+        .pointer => |value| containsInferredReasons(self, value.child, depth + 1),
+        .array => |value| containsInferredReasons(self, value.element, depth + 1),
+        .nullable, .virtual => |child| containsInferredReasons(self, child, depth + 1),
+        .inferred_errable => |value| containsInferredReasons(self, value.child, depth + 1),
+        .generic => |value| blk: {
+            for (self.graph.generic_arguments.items[value.arguments.start..][0..value.arguments.len]) |argument|
+                if (argument.value == .type and containsInferredReasons(self, argument.value.type, depth + 1)) break :blk true;
+            break :blk false;
+        },
+        .structural => |value| blk: {
+            for (self.graph.fields.items[value.fields.start..][0..value.fields.len]) |field|
+                if (containsInferredReasons(self, field.ty, depth + 1)) break :blk true;
+            break :blk false;
+        },
+        .structural_choice => |value| blk: {
+            for (self.graph.variants.items[value.variants.start..][0..value.variants.len]) |variant|
+                if (variant.payload_type) |child| if (containsInferredReasons(self, child, depth + 1)) break :blk true;
+            break :blk false;
+        },
+        else => false,
     };
 }
 

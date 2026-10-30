@@ -1,16 +1,14 @@
 replace := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .array        : $&DynamicArray#(.t: UIntNative),
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .array: $&DynamicArray#(.t: UIntNative), .allocator: $&AllocatorType
 ) -> () {
-    assume error_tracer
+
     replaced ::= replace#(.t: UIntNative)(
         .self = array, .index = 0, .value = 9, .allocator = allocator
     ).result
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     array ::= unwrap_or_abort(
         .value = DynamicArray#(.t: UIntNative)(
             .allocator = system.page_allocator, .capacity = 2

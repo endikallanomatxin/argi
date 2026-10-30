@@ -14,7 +14,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     defer {
         Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+            report_error(.err = &error, .writer = writer) handle ignored {}
         }
     }
 
@@ -31,30 +31,15 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     column ::= "duration_ms"
     if argc == 3 { column = unwrap_or_abort(.value = argument_view_at(system.args, 2)) }
 
-    file_reader ::= open_file(.file_system = system.file_system, .path = path, .mode = ..read) handle error, value {
-        add_context(.context = path, .error_tracer = error.tracer)
-        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+    text ::= read_csv_input(.path = path, .file_system = system.file_system)!!! {
         status_code = 1
-        return
-    }
-    text ::= read_all_limited($&file_reader, view($&zeroed#([8192]UInt8)()), 1048576) handle error, value {
-        add_context(.context = path, .error_tracer = error.tracer)
-        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
-        status_code = 1
-        return
-    }
-    close($&file_reader) handle error, value {
-        add_context(.context = path, .error_tracer = error.tracer)
-        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
-        status_code = 1
-        return
     }
 
     interpreter ::= p.Python(system.ffi)!!! { status_code = 1 }
     defer {
         print_python_error(&interpreter, $&system.terminal&.stderr, allocator) handle error {
             status_code = 1
-            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+            report_error(.err = &error, .writer = writer) handle ignored {}
         }
     }
 
@@ -63,7 +48,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     builtins ::= p.import_module(&interpreter, "builtins")!!! { status_code = 1 }
     statistics ::= p.import_module(&interpreter, "statistics")!!! { status_code = 1 }
 
-    decoded ::= string_from_bytes(.bytes = view(&text))!!! { status_code = 1 }
+    decoded ::= decode_csv_input(.bytes = view(&text))!!! { status_code = 1 }
     source ::= p.string(&interpreter, view(&decoded))!!! { status_code = 1 }
     stream ::= p.call_method(&io, "StringIO", .arguments = view(&(&source)))!!! {
         status_code = 1
@@ -81,7 +66,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
             ..some ~entry {
                 cell ::= p.get_item(&entry.value, &column_key)!!! { status_code = 1 }
                 cell_text ::= p.to_string(&cell)!!! { status_code = 1 }
-                duration ::= parse_float64(view(&cell_text))!!! { status_code = 1 }
+                duration ::= parse_duration(view(&cell_text))!!! { status_code = 1 }
                 sample ::= p.floating(&interpreter, duration)!!! { status_code = 1 }
                 if is_finite(.value = duration).ok == false or duration < 0.0 {
                     invalid_duration()!!! { status_code = 1 }
@@ -119,13 +104,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     print(view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
-print_python_error := (
-    .interpreter  : &p.Python,
-    .writer       : $&File,
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> !Void = ..ok Void() {
-    assume error_tracer
+print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
+) {
 
     assume allocator
     assume writer
@@ -136,7 +116,9 @@ print_python_error := (
 }
 
 invalid_arguments := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..invalid_arguments))
+    .result : Errable#(
+        Void, (..invalid_arguments), .error_type: ErrorWithTrace#((..invalid_arguments))
+    )
 ) {
     assume error_tracer
 
@@ -144,9 +126,42 @@ invalid_arguments := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 invalid_duration := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..invalid_duration))
+    .result : Errable#(
+        Void, (..invalid_duration), .error_type: ErrorWithTrace#((..invalid_duration))
+    )
 ) {
     assume error_tracer
 
     result = ..error(.reason = ..invalid_duration)
+}
+
+read_csv_input := (
+    .path         : StringView,
+    .file_system  : $&FileSystem,
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> !!DynamicArray#(UInt8) {
+    assume error_tracer
+    assume allocator
+    reader ::= open_file(.file_system = file_system, .path = path, .mode = ..read)!! path
+    text ::= read_all_limited($&reader, view($&zeroed#([8192]UInt8)()), 1048576)!! path
+    close($&reader)!! path
+    result = ..ok ~text
+}
+
+decode_csv_input := (
+    .bytes        : ArrayView#(UInt8),
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> !!String {
+    assume allocator
+    assume error_tracer
+    text ::= string_from_bytes(.bytes = bytes)!! "decoding CSV input"
+    result = ..ok ~text
+}
+
+parse_duration := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> !!Float64 {
+    assume error_tracer
+    value ::= parse_float64(text)!! "parsing duration"
+    result = ..ok value
 }

@@ -20,10 +20,7 @@ implement Init#(FileSystem, FileSystemInitArgs) (
 )
 
 _read_c_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &FileSystem,
-    .path         : &CChar,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &FileSystem, .path: &CChar, .allocator: $&Provider
 ) -> (
     .result : Errable#(
         String,
@@ -36,7 +33,6 @@ _read_c_file := #(.Provider: Type: Allocator#(Provider)) (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator
@@ -105,10 +101,7 @@ _read_c_file := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 _read_string_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &FileSystem,
-    .path         : &String,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &FileSystem, .path: &String, .allocator: $&Provider
 ) -> (
     .result : Errable#(
         String,
@@ -121,7 +114,6 @@ _read_string_file := #(.Provider: Type: Allocator#(Provider)) (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator
@@ -132,10 +124,7 @@ _read_string_file := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 _read_view_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &FileSystem,
-    .path         : StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &FileSystem, .path: StringView, .allocator: $&Provider
 ) -> (
     .result : Errable#(
         String,
@@ -148,7 +137,6 @@ _read_view_file := #(.Provider: Type: Allocator#(Provider)) (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator
@@ -164,10 +152,7 @@ _read_view_file := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 _read_path_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &FileSystem,
-    .path         : &Path,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &FileSystem, .path: &Path, .allocator: $&Provider
 ) -> (
     .result : Errable#(
         String,
@@ -180,7 +165,6 @@ _read_path_file := #(.Provider: Type: Allocator#(Provider)) (
         )
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator

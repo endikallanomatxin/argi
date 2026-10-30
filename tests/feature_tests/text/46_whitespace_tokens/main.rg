@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     iterator ::= split_whitespace(.self = "  one\t café\r\n🙂  ")
     if has_next(.self = &iterator).ok == false { abort }
     if has_next(.self = &iterator).ok == false { abort }

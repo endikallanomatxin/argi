@@ -53,7 +53,7 @@ trusted_establish_allocation := (
     .deallocator : Virtual#(Deallocator),
     .anchor      : &Any                   = erase_reference#(.t: UInt8)(
         .base = &allocation_static_anchor
-    ).reference,
+    ).reference
 ) -> (.allocation: Allocation) {
     _require_allocation_alignment(.alignment = alignment)
 
@@ -84,7 +84,7 @@ establish_allocation := (
     .deallocator : Virtual#(Deallocator),
     .anchor      : &Any                   = erase_reference#(.t: UInt8)(
         .base = &allocation_static_anchor
-    ).reference,
+    ).reference
 ) -> (.allocation: Allocation) {
     _require_allocation_alignment(.alignment = alignment)
 
@@ -116,17 +116,15 @@ implement Deinit#(Allocation) (
     }
 )
 
--- Shared across element types. Forward failures intact instead of capturing
--- another tracer context while attaching metadata to successful receipts.
+-- Shared across element types. Preserve ordinary allocation failures while
+-- attaching metadata only to successful receipts.
 _typed_allocation_result := (
     .allocated    : Errable#(Allocation, (..out_of_memory)),
     .element_size : UIntNative,
     .count        : UIntNative,
     .prefix       : UIntNative,
-    .payload_size : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .payload_size : UIntNative
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-    assume error_tracer
 
     match allocated {
         ..ok ~payload {

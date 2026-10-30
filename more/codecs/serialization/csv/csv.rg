@@ -4,11 +4,7 @@ CsvRecord := (.fields: DynamicArray#(.t: String))
 
 implement Deinit#(CsvRecord) (
     .deinit = (.self: $&CsvRecord) -> () {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         while length(&self&.fields).count > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
         }
@@ -32,7 +28,7 @@ CsvReader := (
 CsvReaderInitArgs: Type = (
     .text                : StringView,
     .maximum_field_bytes : UIntNative  = 1048576,
-    .maximum_fields      : UIntNative  = 1024,
+    .maximum_fields      : UIntNative  = 1024
 )
 
 implement Init#(CsvReader, CsvReaderInitArgs) (
@@ -55,9 +51,8 @@ implement Init#(CsvReader, CsvReaderInitArgs) (
 
 -- Errors are terminal, and no partially decoded record escapes.
 next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&CsvReader, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: $&CsvReader, .allocator: $&AllocatorType
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
-    assume error_tracer
 
     assume allocator
 
@@ -162,11 +157,8 @@ next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
 write_record := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer       : $&WriterType,
-    .fields       : ArrayView#(.t: StringView),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .writer: $&WriterType, .fields: ArrayView#(.t: StringView)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
-    assume error_tracer
 
     index :: UIntNative = 0
 

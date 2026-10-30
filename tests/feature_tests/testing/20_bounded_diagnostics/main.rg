@@ -1,4 +1,4 @@
-test bounded_message := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test bounded_message := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     testing.expect(

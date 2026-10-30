@@ -17,7 +17,7 @@ sum := #(.T: Type) (.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) 
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     box ::= Box#(Cell)(Buffer#(.n = 2)((20, 22)))
     if sum(Cell(), &box.buffer.values).value != 42 { abort }
 }

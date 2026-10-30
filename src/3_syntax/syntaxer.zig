@@ -281,6 +281,13 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
+        if (self.tokenIs(.bang) or self.tokenIs(.double_bang)) {
+            const marker: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            const child = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+            return try self.addNode(.inferred_errable_type, marker, .{ .node = child });
+        }
+
         if (self.tokenIs(.hash)) {
             const parameters = try self.parseGenericParamsStruct();
             const result = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
@@ -456,7 +463,8 @@ pub const Syntaxer = struct {
             },
             .pointer => |pointer| self.completeTypeSyntax(pointer.child, depth + 1),
             .array => |array| self.completeTypeSyntax(array.element, depth + 1),
-            .nullable, .inferred_errable => |child| self.completeTypeSyntax(child, depth + 1),
+            .nullable => |child| self.completeTypeSyntax(child, depth + 1),
+            .inferred_errable => |value| self.completeTypeSyntax(value.child, depth + 1),
             .name, .generic, .projection => true,
         };
     }
@@ -1016,7 +1024,7 @@ pub const Syntaxer = struct {
     }
 
     fn parseFunctionOutputType(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        if (self.tokenIs(.bang)) {
+        if (self.tokenIs(.bang) or self.tokenIs(.double_bang)) {
             const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const bang_loc = self.tokenLocation();
             self.advanceOne();

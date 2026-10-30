@@ -1,7 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     buffer ::= unwrap_or_abort(

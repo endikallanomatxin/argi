@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     element :: Int32 = 0
     borrowed_view ::= single_mutable_array_view(.data = $&element)
     set_result ::= set(.self = $&borrowed_view, .index = 1, .value = 42).result

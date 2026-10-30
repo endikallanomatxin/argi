@@ -1810,12 +1810,6 @@ pub const Infer = struct {
                 for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, &failed, exits);
                 try self.record_capability_exit(&failed, exits);
             },
-            .error_context => |id| {
-                const context = self.graph.error_contexts.items[@intFromEnum(id)];
-                try self.infer_capability_node(function, context.errable_value, flow, exits);
-                try self.infer_capability_node(function, context.context, flow, exits);
-                for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, flow, exits);
-            },
             .auto_deinit_binding => |id| {
                 if (self.cleanup) |active| if (!active.roots.contains(id)) return;
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
@@ -2472,19 +2466,9 @@ pub const Infer = struct {
                 try self.inferInputPostStatesExpression(function_id, unwrap.nullable_value, states, exits);
                 try self.inferConditionalInputPostStatesExpression(function_id, unwrap.fallback_value, states, exits);
             },
-            .testing_expect_error => |expect_id| {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.inferInputPostStatesExpression(function_id, expect.expected_reason, states, exits);
-                try self.inferInputPostStatesExpression(function_id, expect.actual_result, states, exits);
-                if (expect.test_fail_input) |input| try self.inferConditionalInputPostStatesExpression(function_id, input, states, exits);
-            },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.inferPropagationPostStates(function_id, propagation, null, states, exits);
-            },
-            .error_context => |context_id| {
-                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.inferPropagationPostStates(function_id, context, context.context, states, exits);
             },
             .function_call => |call| {
                 const forwarded = self.forwarded_outcome;
@@ -3617,12 +3601,6 @@ pub const Infer = struct {
                 try self.inferOpaqueEmptyExpression(function_id, unwrap.nullable_value, effects, state, exits);
                 try self.inferConditionalOpaqueEmptyExpression(function_id, unwrap.fallback_value, effects, state, exits);
             },
-            .testing_expect_error => |expect_id| {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.inferOpaqueEmptyExpression(function_id, expect.expected_reason, effects, state, exits);
-                try self.inferOpaqueEmptyExpression(function_id, expect.actual_result, effects, state, exits);
-                if (expect.test_fail_input) |input| try self.inferConditionalOpaqueEmptyExpression(function_id, input, effects, state, exits);
-            },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.inferOpaqueEmptyExpression(function_id, propagation.errable_value, effects, state, exits);
@@ -3631,17 +3609,6 @@ pub const Infer = struct {
                 error_state.outcome_variant = null;
                 error_state.outcome_parent_mismatch = false;
                 try self.inferOpaqueEmptyRange(function_id, propagation.cleanup_nodes, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, &error_state);
-            },
-            .error_context => |context_id| {
-                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.inferOpaqueEmptyExpression(function_id, context.errable_value, effects, state, exits);
-                var error_state = try state.clone(self.allocator);
-                defer error_state.deinit();
-                error_state.outcome_variant = null;
-                error_state.outcome_parent_mismatch = false;
-                try self.inferOpaqueEmptyExpression(function_id, context.context, effects, &error_state, exits);
-                try self.inferOpaqueEmptyRange(function_id, context.cleanup_nodes, effects, &error_state, exits);
                 if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, &error_state);
             },
             .function_call => |call| {
@@ -4157,22 +4124,10 @@ pub const Infer = struct {
                 try self.inferRequiredLiveInputsNode(function_id, unwrap.nullable_value, required);
                 try self.inferRequiredLiveInputsNode(function_id, unwrap.fallback_value, required);
             },
-            .testing_expect_error => |expect_id| {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.inferRequiredLiveInputsNode(function_id, expect.expected_reason, required);
-                try self.inferRequiredLiveInputsNode(function_id, expect.actual_result, required);
-                if (expect.test_fail_input) |input| try self.inferRequiredLiveInputsNode(function_id, input, required);
-            },
             .error_propagation => |propagation_id| {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
                 try self.inferRequiredLiveInputsNode(function_id, propagation.errable_value, required);
                 try self.inferRequiredLiveInputsRange(function_id, propagation.cleanup_nodes, required);
-            },
-            .error_context => |context_id| {
-                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.inferRequiredLiveInputsNode(function_id, context.errable_value, required);
-                try self.inferRequiredLiveInputsNode(function_id, context.context, required);
-                try self.inferRequiredLiveInputsRange(function_id, context.cleanup_nodes, required);
             },
             .if_statement => |statement| {
                 try self.inferRequiredLiveInputsNode(function_id, statement.condition, required);
@@ -4603,11 +4558,6 @@ pub const Infer = struct {
             else
                 .{},
 
-            .testing_expect_error => |id| blk: {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
-                const input = expect.test_fail_input orelse break :blk .{};
-                break :blk try self.inferCall(function_id, node_id, expect.test_fail_function, input);
-            },
             .function_call => |call| blk: {
                 if (call.callee_value) |value| _ = try self.inferExpression(function_id, value);
                 break :blk try self.inferCall(function_id, node_id, call.callee, call.input);
@@ -4617,10 +4567,6 @@ pub const Infer = struct {
             .error_propagation => |id| blk: {
                 const propagation = self.graph.error_propagations.items[@intFromEnum(id)];
                 break :blk try self.error_success_effect(function_id, propagation.errable_value, propagation.ok_variant, propagation.ok_value_field_index);
-            },
-            .error_context => |id| blk: {
-                const context = self.graph.error_contexts.items[@intFromEnum(id)];
-                break :blk try self.error_success_effect(function_id, context.errable_value, context.ok_variant, context.ok_value_field_index);
             },
             .nullable_unwrap_or => |unwrap_id| blk: {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
@@ -5985,7 +5931,7 @@ pub const Infer = struct {
             .pointer, .virtual => true,
             .array => |array| self.typeContainsPointer(array.element),
             .nullable => |child| self.typeContainsPointer(child),
-            .inferred_errable => |child| self.typeContainsPointer(child),
+            .inferred_errable => |value| self.typeContainsPointer(value.child),
             .structural, .nominal, .generic => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk false;
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|

@@ -1,13 +1,9 @@
 RefusingAllocator := (.attempts: UIntNative)
 
 implement Allocator#(RefusingAllocator) (
-    .allocate = (
-        .self         : $&RefusingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)

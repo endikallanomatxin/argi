@@ -1,6 +1,6 @@
 Point := (
     .x : Int32,
-    .y : Int32,
+    .y : Int32
 )
 
 PointInitArgs: Type = (.x: Int32, .y: Int32)

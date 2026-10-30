@@ -9,16 +9,13 @@ implement Deinit#(Resource) (
     }
 )
 
-make := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Resource, .reasons: (..missing))
-) {
-    assume error_tracer
+make := () -> (.result: Errable#(.t: Resource, .reasons: (..missing))) {
 
     result = ..error(.reason = ..missing)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     {
         outer :: Resource = Resource(.id = 1)
         inner :: Resource = Resource(.id = 2)

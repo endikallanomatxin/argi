@@ -5,12 +5,9 @@ implement ErrorTracer#(Counter) (
         self&.count = self&.count + 1
     }
     .reset_context = (.self: $&Counter) -> () { self&.count = 0 }
-    .report        = (
-        .self         : $&Counter,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report        = (.self: $&Counter, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         result = ..ok Void()
     }
@@ -66,9 +63,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     }
     match copied {
         ..ok ~value { abort }
-        ..error error { ErrorTracer#().reset_context(.self = error.tracer) }
+        ..error error { if error.reason != ..out_of_memory { abort } }
     }
-    if tracer.count != 0 {
+    if tracer.count != 7 {
         status_code = 4
         return
     }
@@ -82,13 +79,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Allocator#(FailFourthAllocator) (
-    .allocate = (
-        .self         : $&FailFourthAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&FailFourthAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         self&.allocation_attempts = self&.allocation_attempts + 1
         if self&.allocation_attempts == 4 {

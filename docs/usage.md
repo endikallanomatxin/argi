@@ -12,15 +12,12 @@ argi run
 
 `argi init` without a name initializes the current directory; `argi init --lib`
 creates a library. Existing files are preserved. The generated entrypoint
-sets up allocator, error tracing, and I/O capabilities:
+sets up allocator and I/O capabilities:
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi ::= system.ffi
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    assume error_tracer ::= FixedSizeErrorTracer(
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    ) | to_virtual#(ErrorTracer)($&_) | $&_
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,
         .buffer = view($&zeroed#(.t: [4096]UInt8)()),
@@ -29,9 +26,12 @@ main := (.system: System) -> (.status_code: Int32 = 0)  {
 }
 ```
 
-Fallible APIs require an `error_tracer` argument. Declare it in intermediate
-functions and use `assume error_tracer` to forward it. To explicitly disable
-tracing in a scope, use `assume error_tracer ::= $&noop_error_tracer`.
+Fallible operations return ordinary errors without requiring a tracer. `!`
+propagates them without adding context. To create or extend a diagnostic trace,
+use `!! "context"` in a function returning `!!T` and supply an ordinary
+`error_tracer` input, explicitly or through lexical `assume`. Existing traces
+survive `!` unchanged; they cannot implicitly become ordinary errors.
+`NoopErrorTracer` remains available when intentionally disabling tracing.
 
 ## Commands
 
@@ -110,7 +110,7 @@ result. Boolean operators short-circuit. A program entry has no inputs and eithe
 result or `status_code: Int32`; its status follows native process truncation.
 Selected integer `Convert` operations retain core range checks and execute
 sign extension, zero extension or truncation with the declared widths. These
-conversions also work inside `#run`; range failures preserve the original tracer.
+conversions also work inside `#run`; range failures return ordinary errors.
 
 String literals use immutable UTF-8 backing owned by the execution context,
 shared across repeated literals and valid after calls return. `StringView` values
@@ -191,8 +191,9 @@ executor as compile-time constants.
 Retained REPL IDs keep their original submitted text across later commands; reset
 clears them. These IDs cannot be exported as compile-time constants.
 `source_location()` resolves those IDs to immutable path, line text and coordinates.
-Unknown IDs stop execution. Error propagation (`!`) preserves the original tracer,
-converts reason sets and runs checked early-return cleanup. Context propagation
+Unknown IDs stop execution. Error propagation (`!`) forwards an existing trace
+unchanged, remaps reason sets and runs checked early-return cleanup; plain
+errors need no tracer. Context propagation
 (`!!`) with a `StringView` evaluates its context only on error and calls the
 ordinary core trace helper. `FixedSizeErrorTracer` can record and reset contexts
 using its caller-provided byte buffer; complete reporting still needs writer support.

@@ -1,7 +1,7 @@
 ByteCursor#(.Cursor: Type): Contract = (
     .cursor_position  : (.self: &Cursor) -> (.count: UIntNative)
     .cursor_remaining : (.self: &Cursor) -> (.count: UIntNative)
-    .cursor_skip      : (.self: $&Cursor, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .cursor_skip      : (.self: $&Cursor, .count: UIntNative) -> (
         .result : Errable#(Void, (..out_of_bounds))
     )
 )
@@ -14,10 +14,9 @@ remaining := #(.Cursor: Type: ByteCursor#(Cursor)) (.self: &Cursor) -> (.count: 
     count = ByteCursor#(Cursor).cursor_remaining(.self = self)
 }
 
-skip := #(.Cursor: Type: ByteCursor#(Cursor)) (
-    .self: $&Cursor, .count: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    assume error_tracer
+skip := #(.Cursor: Type: ByteCursor#(Cursor)) (.self: $&Cursor, .count: UIntNative) -> (
+    .result : Errable#(Void, (..out_of_bounds))
+) {
 
     result = ByteCursor#(Cursor).cursor_skip(.self = self, .count = count)
 }

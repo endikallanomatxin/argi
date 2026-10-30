@@ -7,9 +7,9 @@ implement Deinit#(Borrowing) (
 )
 
 exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .counter: $&Int32, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .counter: $&Int32, .allocator: $&AllocatorType
 ) -> () {
-    assume error_tracer
+
     assume allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Borrowing)(.capacity = 1))
     element ::= Borrowing(.counter = counter)
@@ -18,14 +18,14 @@ exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 forward := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .counter: $&Int32, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .counter: $&Int32, .allocator: $&AllocatorType
 ) -> () {
-    assume error_tracer
+
     exercise(.counter = counter, .allocator = allocator)
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     counter :: Int32 = 0
     {
         assume allocator ::= system.page_allocator

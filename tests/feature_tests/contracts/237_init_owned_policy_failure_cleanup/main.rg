@@ -21,20 +21,16 @@ implement HashPolicy#(Policy, Int32) (
 FailAllocator: Type = ()
 
 implement Allocator#(FailAllocator) (
-    .allocate = (
-        .self         : $&FailAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&FailAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
 
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-failed := (.allocator: $&FailAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+failed := (.allocator: $&FailAllocator) -> () {
+
     policy ::= Policy(1)
     outcome ::= HashMap#(.key: Int32, .value: Int32, .policy: Policy)(
         .policy = ~policy, .allocator = allocator
@@ -43,8 +39,8 @@ failed := (.allocator: $&FailAllocator, .error_tracer: $&Virtual#(ErrorTracer)) 
     if drops != 1 { abort }
 }
 
-successful := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+successful := (.allocator: $&PageAllocator) -> () {
+
     policy ::= Policy(2)
     map ::= unwrap_or_abort(
         HashMap#(.key: Int32, .value: Int32, .policy: Policy)(
@@ -57,7 +53,7 @@ successful := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTrace
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     failing ::= FailAllocator()
     failed($&failing)
     if drops != 1 { abort }

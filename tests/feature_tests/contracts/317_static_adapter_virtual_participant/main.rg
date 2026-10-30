@@ -1,10 +1,7 @@
 Input := (.position: UIntNative = 0)
 
 implement Reader#(Input) (
-    .read_byte = (.self: $&Input, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
-        assume error_tracer
+    .read_byte = (.self: $&Input) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
 
         if self&.position == 0 {
             self&.position = 1
@@ -16,16 +13,14 @@ implement Reader#(Input) (
 )
 
 read_erased := #(.Stream: Type: Reader#(Stream)) (
-    .self         : $&Stream,
-    .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)
 ) -> (.result: BufferReading#(Stream).Result) {
-    assume error_tracer
+
     result = read(.self = self, .buffer = buffer)
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     input ::= Input()
     erased ::= to_virtual#(.contract: Reader)(.value = $&input)
     bytes: [2]UInt8 = (0, 0)

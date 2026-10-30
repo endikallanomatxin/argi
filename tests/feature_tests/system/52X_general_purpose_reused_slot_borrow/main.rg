@@ -1,7 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     blocker_result ::= allocate_bytes(.self = $&allocator, .size = 8, .alignment = 8)
     match blocker_result {

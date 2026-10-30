@@ -13,10 +13,9 @@ Outer := (
     .pair : Pair
 )
 
-make_pair := (.allocator: $&CountingAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+make_pair := (.allocator: $&CountingAllocator) -> (
     .result : Errable#(.t: Pair, .reasons: (..out_of_memory))
 ) {
-    assume error_tracer
 
     assume allocator
 
@@ -39,10 +38,9 @@ make_pair := (.allocator: $&CountingAllocator, .error_tracer: $&Virtual#(ErrorTr
     }
 }
 
-run_branch := (
-    .allocator: $&CountingAllocator, .condition: Bool, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
-    assume error_tracer
+run_branch := (.allocator: $&CountingAllocator, .condition: Bool) -> (
+    .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+) {
 
     assume allocator
 
@@ -68,7 +66,7 @@ run_branch := (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage :: CountingAllocator = CountingAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
 
@@ -140,13 +138,9 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Allocator#(CountingAllocator) (
-    .allocate = (
-        .self         : $&CountingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)

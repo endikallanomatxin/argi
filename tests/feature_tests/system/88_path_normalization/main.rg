@@ -4,13 +4,16 @@ check := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     .allocator    : $&AllocatorType,
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
-    .result : Errable#(.t: Void, .reasons: (..invalid_path, ..out_of_memory, ..test_failed)) = ..ok Void(
-    )
+    .result : Errable#(
+        .t          : Void,
+        .reasons    : (..invalid_path, ..out_of_memory, ..test_failed),
+        .error_type : ErrorWithTrace#((..invalid_path, ..out_of_memory, ..test_failed))
+    ) = ..ok Void()
 ) {
     assume error_tracer
 
     assume allocator
-    path ::= normalize_path(.view = input, .allocator = allocator)!
+    path ::= normalize_path(.view = input, .allocator = allocator)!! "normalizing path"
     expect(.condition = view(.self = &path) == expected)!
 }
 

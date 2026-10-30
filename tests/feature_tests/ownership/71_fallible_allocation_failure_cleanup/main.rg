@@ -3,8 +3,8 @@ FailingAllocator := (
     .deallocations : Int32
 )
 
-main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32) {
-    assume error_tracer
+main := () -> (.status_code: Int32) {
+
     allocator_storage :: FailingAllocator = (
         .allocations   = 0
         .deallocations = 0
@@ -19,13 +19,9 @@ main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32) {
 }
 
 implement Allocator#(FailingAllocator) (
-    .allocate = (
-        .self         : $&FailingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         self&.allocations = self&.allocations + 1
         result = ..error(.reason = ..out_of_memory)

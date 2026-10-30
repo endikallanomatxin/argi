@@ -22,7 +22,7 @@ RefusingAllocator: Type = ()
 
 main := () -> (.status_code: Int32 = 1) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     storage ::= CAllocator(.ffi = ffi)
     assume allocator ::= $&storage
     order ::= PairOrder()
@@ -134,13 +134,9 @@ main := () -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RefusingAllocator) (
-    .allocate = (
-        .self         : $&RefusingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         result = ..error(.reason = ..out_of_memory)
     }

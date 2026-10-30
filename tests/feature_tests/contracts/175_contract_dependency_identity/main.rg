@@ -18,7 +18,7 @@ implement Writable#(Cell) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     cell ::= Cell(.value = 1)
     write($&cell, .value = 42)
     if read(&cell).value != 42 { abort }

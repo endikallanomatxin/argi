@@ -121,12 +121,9 @@ _general_purpose_bit := (.index: UIntNative) -> (.bit: UIntNative) {
     }
 }
 
-_general_purpose_small_address := (
-    .self         : $&GeneralPurposeAllocator,
-    .slot_size    : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) {
-    assume error_tracer
+_general_purpose_small_address := (.self: $&GeneralPurposeAllocator, .slot_size: UIntNative) -> (
+    .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
+) {
 
     bucket_address :: UIntNative = self&._bucket_head
 
@@ -209,12 +206,8 @@ _general_purpose_small_address := (
 }
 
 _general_purpose_large_address := (
-    .self         : $&GeneralPurposeAllocator,
-    .size         : UIntNative,
-    .alignment    : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&GeneralPurposeAllocator, .size: UIntNative, .alignment: UIntNative
 ) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) {
-    assume error_tracer
 
     allocated ::= allocate_bytes(
         $&self&._backing_allocator, .size = size, .alignment = alignment
@@ -265,13 +258,9 @@ has_live_allocations := (.self: &GeneralPurposeAllocator) -> (.has_live: Bool) {
 }
 
 implement Allocator#(GeneralPurposeAllocator) (
-    .allocate = (
-        .self         : $&GeneralPurposeAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&GeneralPurposeAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
 
         _require_allocation_alignment(.alignment = alignment)
         slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
@@ -307,7 +296,7 @@ implement Deallocator#(GeneralPurposeAllocator) (
         .self      : $&GeneralPurposeAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,
-        .alignment : UIntNative,
+        .alignment : UIntNative
     ) -> () {
         slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
 

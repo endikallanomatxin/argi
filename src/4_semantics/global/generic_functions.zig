@@ -1851,6 +1851,10 @@ pub const Resolver = struct {
             else => .no_match,
         };
         const fields = global_types.fields(self.graph, ty) orelse return if (self.unresolvedSignature(ty) == .deferred) .deferred else .no_match;
+        for (0..fields.len) |offset| {
+            const field_type = self.graph.fields.items[fields.start + offset].ty;
+            _ = try self.generics.ensureGenericInstance(field_type);
+        }
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return .no_match,
@@ -1929,7 +1933,7 @@ pub const Resolver = struct {
                         .inferred_errable => |value| value,
                         else => return false,
                     };
-                    return self.inferInputType(module_index, child, value, bindings);
+                    return child.traced == value.traced and try self.inferInputType(module_index, child.child, value.child, bindings);
                 },
                 .pointer => |pointer| {
                     const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
@@ -1969,6 +1973,10 @@ pub const Resolver = struct {
                     const body = owner.semantic.parameterized_storage.ir.types.items[@intFromEnum(located.parameterized.body)];
                     if (body != .definition)
                         return self.inferFamilyApplication(module_index, generic, .{ .value_type = actual }, bindings, 0, null);
+                    // Defaults are part of a family's complete identity. Input
+                    // inference must see them even when this use materializes
+                    // before the general type-resolution pass.
+                    _ = try self.generics.ensureGenericInstance(actual);
                     const value = switch (self.graph.types.items[@intFromEnum(actual)]) {
                         .generic => |value| value,
                         else => return false,
@@ -2486,6 +2494,23 @@ pub const Resolver = struct {
         });
 
         context.function = function_id;
+        // Propagation can precede any contextual choice literal in a generic
+        // body. Complete its inferred output protocol before visiting the body,
+        // rather than relying on a later literal or global resolution round.
+        var output_control = control_mod.Resolver{
+            .allocator = self.allocator,
+            .graph = self.graph,
+            .modules = self.modules,
+            .offsets = self.offsets,
+            .core = self.core,
+            .generic_functions = self,
+        };
+        defer output_control.deinit();
+        for (0..output_fields.len) |offset| {
+            const ty = self.graph.fields.items[output_fields.start + offset].ty;
+            if (self.graph.semanticType(ty) == .inferred_errable)
+                try output_control.materializeInferredErrable(ty, self.graph.semanticType(ty).inferred_errable);
+        }
         // Scalar representations are proved from their exact trusted bodies
         // during operator selection, including module constant initializers.
         // They are selected specializations, not eagerly registered families.
@@ -3197,18 +3222,20 @@ pub const Resolver = struct {
             }
             const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
+            const assumed = try self.instantiateLiteralAssumptions(node.content.struct_value_literal);
             try self.resolver.graph.setNode(self.resolver.allocator, global, .{
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = expected,
                 .content = .{ .struct_value_literal = .{
                     .fields = .{ .start = start, .len = local_fields.len },
                     .dispatch_prefix_positional_count = node.content.struct_value_literal.dispatch_prefix_positional_count,
+                    .assumed_fields = assumed,
                 } },
             });
             // Use ordinary default completion before publishing a value with
             // the complete contextual record type. A type annotation alone
             // cannot manufacture omitted runtime fields.
-            const context = try self.operatorContext(null);
+            const context = (try self.operatorContext(null)).withAssumedFields(assumed);
             if (!try self.resolver.core.completeRecordValue(expected, global, context))
                 return error.MissingParameterizedStructField;
             try self.resolver.graph.setNodeType(self.resolver.allocator, global, expected);
@@ -3313,6 +3340,20 @@ pub const Resolver = struct {
             }
             // Value literals have no independent type identity. Calls and
             // annotated storage supply the expected nominal record later.
+            const assumed = try self.instantiateLiteralAssumptions(literal);
+            const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
+            try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
+            return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = null, .content = .{
+                .struct_value_literal = .{
+                    .fields = .{ .start = start, .len = @intCast(values.items.len) },
+                    .dispatch_prefix_positional_count = literal.dispatch_prefix_positional_count,
+                    .assumed_fields = assumed,
+                },
+            } };
+        }
+
+        fn instantiateLiteralAssumptions(self: *InstanceContext, literal: anytype) !primitives.Range(global_sg.GlobalValueFieldId) {
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var assumed: std.ArrayList(global_sg.ValueField) = .empty;
             defer assumed.deinit(self.resolver.allocator);
             if (self.callsite_context) |context| {
@@ -3331,15 +3372,7 @@ pub const Resolver = struct {
             }
             const assumed_start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
             try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, assumed.items);
-            const start: u32 = @intCast(self.resolver.graph.value_fields.items.len);
-            try self.resolver.graph.value_fields.appendSlice(self.resolver.allocator, values.items);
-            return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = null, .content = .{
-                .struct_value_literal = .{
-                    .fields = .{ .start = start, .len = @intCast(values.items.len) },
-                    .dispatch_prefix_positional_count = literal.dispatch_prefix_positional_count,
-                    .assumed_fields = .{ .start = assumed_start, .len = @intCast(assumed.items.len) },
-                },
-            } };
+            return .{ .start = assumed_start, .len = @intCast(assumed.items.len) };
         }
 
         fn isBareChoiceTag(self: *InstanceContext, id: ir.ParameterizedNodeId) bool {
@@ -3579,7 +3612,7 @@ pub const Resolver = struct {
                 .dereference => self.resolveDereference(operands.items, value.source),
                 .pointer_store => self.resolvePointerStore(operands.items, value.source),
                 .move_value => self.resolveMove(operands.items, value.source),
-                .error_propagation, .error_context => self.resolveErrorPropagation(operands.items, value.source),
+                .error_propagation => self.resolveErrorPropagation(operands.items, value.source),
                 .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidParameterizedPipe,
                 .struct_value,
                 .choice_literal,
@@ -3594,7 +3627,7 @@ pub const Resolver = struct {
         }
 
         fn resolveErrorPropagation(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
-            if (operands.len != 1 and operands.len != 2) return error.InvalidParameterizedErrorPropagation;
+            if (operands.len != 1) return error.InvalidParameterizedErrorPropagation;
             const errable = operands[0];
             const errable_ty = self.resolver.graph.node(errable).ty orelse return error.UntypedParameterizedErrorPropagation;
             const ok = global_types.findVariant(self.resolver.graph, errable_ty, "ok") orelse return error.InvalidParameterizedErrorPropagation;
@@ -3619,28 +3652,7 @@ pub const Resolver = struct {
                 ok_payload;
             const id: global_sg.GlobalErrorPropagationId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.error_propagations.items.len)));
             const empty = try self.resolver.graph.addString(self.resolver.allocator, "");
-            if (operands.len == 2) {
-                const context_ty = self.resolver.graph.node(operands[1]).ty orelse return error.InvalidErrorContextType;
-                if (!errors.validContextType(context_ty)) return error.InvalidErrorContextType;
-                const context_id: global_sg.GlobalErrorContextId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.error_contexts.items.len)));
-                try self.resolver.graph.error_contexts.append(self.resolver.allocator, .{
-                    .errable_value = errable,
-                    .context = operands[1],
-                    .cleanup_nodes = .{ .start = @intCast(self.resolver.graph.node_refs.items.len), .len = 0 },
-                    .ok_variant = ok.id,
-                    .ok_value_field_index = if (ok_fields) |fields| if (fields.len == 1) 0 else null else null,
-                    .error_variant = err.id,
-                    .propagated_errable_type = propagated_ty,
-                    .propagated_error_variant = propagated_error.id,
-                    .ok_payload_type = ok_payload,
-                    .error_payload_type = error_payload,
-                    .propagated_error_payload_type = propagated_error_payload,
-                    .diagnostic_line = 0,
-                    .diagnostic_column = 0,
-                    .diagnostic_source_line = empty,
-                });
-                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = result_ty, .content = .{ .error_context = context_id } };
-            }
+
             try self.resolver.graph.error_propagations.append(self.resolver.allocator, .{
                 .errable_value = errable,
                 .cleanup_nodes = .{ .start = @intCast(self.resolver.graph.node_refs.items.len), .len = 0 },
@@ -3729,10 +3741,22 @@ pub const Resolver = struct {
                     .graph = self.resolver.graph,
                     .modules = self.resolver.modules,
                     .offsets = self.resolver.offsets,
+                    .core = self.resolver.core,
+                    .generic_functions = self.resolver,
                 };
                 defer control.deinit();
                 try control.materializeInferredErrable(expected, child);
             }
+            var choice_context = control_mod.Resolver{
+                .allocator = self.resolver.allocator,
+                .graph = self.resolver.graph,
+                .modules = self.resolver.modules,
+                .offsets = self.resolver.offsets,
+                .core = self.resolver.core,
+                .generic_functions = self.resolver,
+            };
+            defer choice_context.deinit();
+            try choice_context.ensureInferredReasonVariant(expected, name, self.resolver.sourceFor(self.module_index, value.source));
             const variant = global_types.findVariant(self.resolver.graph, expected, name) orelse return error.UnknownParameterizedChoiceVariant;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const payload = if (value.operands.len == 0)
@@ -3851,7 +3875,7 @@ pub const Resolver = struct {
             input: global_sg.GlobalNodeId,
             source: primitives.SourceRef,
             expected: ?global_sg.GlobalTypeId,
-        ) !global_sg.Node {
+        ) anyerror!global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
             if (module_path == null) if (standard_contracts.scalarComparisonPrimitive(name)) |operator| {
@@ -4007,8 +4031,14 @@ pub const Resolver = struct {
                 input,
                 nested_reach,
             )) return error.IncompleteParameterizedCallInput;
+            // Source-location defaults observe their evaluation site, just as
+            // other defaults observe the caller's lexical capabilities.
+            const call_source = if (self.resolver.graph.function(function).flags.is_source_location_id)
+                if (self.callsite_context) |context| context.source orelse self.resolver.sourceFor(self.module_index, source) else self.resolver.sourceFor(self.module_index, source)
+            else
+                self.resolver.sourceFor(self.module_index, source);
             return .{
-                .source = self.resolver.sourceFor(self.module_index, source),
+                .source = call_source,
                 .ty = try self.resolver.core.functionOutputType(function),
                 .content = .{ .function_call = .{ .callee = function, .input = input } },
             };
@@ -4158,8 +4188,8 @@ pub const Resolver = struct {
 
         fn operatorContext(self: *InstanceContext, assumed: ?ir.ParameterizedNodeId) !CallContext {
             if (self.callsite_context) |inherited| {
-                var result = CallContext.fromGlobal(&.{}, inherited.ownerFunction());
-                result.assumed_fields = inherited.assumedFields();
+                var result = inherited;
+                result.visible_bindings = &.{};
                 return result;
             }
             var context = CallContext.fromGlobal(&.{}, self.function);

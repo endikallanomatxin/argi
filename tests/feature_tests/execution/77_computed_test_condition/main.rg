@@ -1,4 +1,4 @@
-test selected := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test selected := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     #if 1 < 2 {

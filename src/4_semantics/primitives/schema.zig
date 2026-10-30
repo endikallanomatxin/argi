@@ -185,19 +185,13 @@ pub const FunctionFlags = packed struct(u32) {
     is_c_function_pointer: bool = false,
     is_comptime_entry: bool = false,
     is_comptime_host_entry: bool = false,
-    reserved: u15 = 0,
+    reserved: u17 = 0,
     // Trusted metadata identities retain ordinary function-body safety.
     is_source_location_id: bool = false,
     is_source_location_resolver: bool = false,
-    is_error_context_view: bool = false,
-    is_error_context_text: bool = false,
 
     pub fn isTraceSupport(self: FunctionFlags) bool {
-        return self.is_source_location_resolver or self.is_error_context_view or self.is_error_context_text;
-    }
-
-    pub fn matchesErrorContext(self: FunctionFlags, view: bool) bool {
-        return if (view) self.is_error_context_view else self.is_error_context_text;
+        return self.is_source_location_resolver;
     }
 };
 
@@ -352,7 +346,7 @@ pub fn SemanticType(comptime Ids: type) type {
         pointer: struct { child: Ids.TypeId, mutability: PointerMutability },
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
-        inferred_errable: Ids.TypeId,
+        inferred_errable: struct { child: Ids.TypeId, traced: bool = false },
         /// Identity-bearing inferred choices are distinct from ordinary
         /// structural choices even when their current variant sets match.
         inferred_choice: struct {
@@ -623,46 +617,9 @@ pub fn NullableUnwrap(comptime Ids: type) type {
     };
 }
 
-pub fn TestingExpectError(comptime Ids: type) type {
-    return struct {
-        expected_reason: Ids.NodeId,
-        actual_result: Ids.NodeId,
-        actual_error_variant: Ids.VariantId,
-        actual_error_payload_type: Ids.TypeId,
-        actual_reason_field_index: u32,
-        result_type: Ids.TypeId,
-        result_ok_variant: Ids.VariantId,
-        test_fail_function: Ids.FunctionId,
-        test_fail_input: ?Ids.NodeId = null,
-        expected_reason_name: ?StringRange,
-        diagnostic_line: u32,
-        diagnostic_column: u32,
-        diagnostic_source_line: StringRange,
-    };
-}
-
 pub fn ErrorPropagation(comptime Ids: type) type {
     return struct {
         errable_value: Ids.NodeId,
-        cleanup_nodes: Range(Ids.NodeId),
-        ok_variant: Ids.VariantId,
-        ok_value_field_index: ?u32,
-        error_variant: Ids.VariantId,
-        propagated_errable_type: Ids.TypeId,
-        propagated_error_variant: Ids.VariantId,
-        ok_payload_type: Ids.TypeId,
-        error_payload_type: Ids.TypeId,
-        propagated_error_payload_type: Ids.TypeId,
-        diagnostic_line: u32,
-        diagnostic_column: u32,
-        diagnostic_source_line: StringRange,
-    };
-}
-
-pub fn ErrorContext(comptime Ids: type) type {
-    return struct {
-        errable_value: Ids.NodeId,
-        context: Ids.NodeId,
         cleanup_nodes: Range(Ids.NodeId),
         ok_variant: Ids.VariantId,
         ok_value_field_index: ?u32,
@@ -754,9 +711,7 @@ pub fn Node(comptime Ids: type) type {
                 payload_type: Ids.TypeId,
             },
             nullable_unwrap_or: Ids.NullableUnwrapId,
-            testing_expect_error: Ids.TestingExpectErrorId,
             error_propagation: Ids.ErrorPropagationId,
-            error_context: Ids.ErrorContextId,
             array_literal: struct {
                 elements: Range(Ids.NodeId),
                 element_type: Ids.TypeId,
@@ -840,9 +795,7 @@ test "semantic primitives instantiate with isolated id namespaces" {
         pub const VirtualizeId = enum(u32) { _ };
         pub const VirtualCallId = enum(u32) { _ };
         pub const NullableUnwrapId = enum(u32) { _ };
-        pub const TestingExpectErrorId = enum(u32) { _ };
         pub const ErrorPropagationId = enum(u32) { _ };
-        pub const ErrorContextId = enum(u32) { _ };
     };
 
     const Ty = SemanticType(Ids);

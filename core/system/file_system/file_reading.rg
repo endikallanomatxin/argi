@@ -1,11 +1,6 @@
 -- Whole-file reading selects the path representation and allocation provider.
 FileReading#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
-    .read_file : (
-        .self         : &FileSystem,
-        .path         : PathValue,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (
+    .read_file : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (
         .result : Errable#(
             String,
             (

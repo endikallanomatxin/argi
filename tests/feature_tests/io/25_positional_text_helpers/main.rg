@@ -8,10 +8,9 @@ DummyInput := (
 )
 
 implement Reader#(DummyInput) (
-    .read_byte = (.self: $&DummyInput, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .read_byte = (.self: $&DummyInput) -> (
         .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
     ) {
-        assume error_tracer
 
         if self&.index == 0 {
             self&.index = 1
@@ -36,7 +35,7 @@ implement Reader#(DummyInput) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -149,20 +148,18 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(DummyOutput) (
-    .write_byte = (.self: $&DummyOutput, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&DummyOutput, .byte: UInt8) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         _ ::= byte
         self&.write_count = self&.write_count + 1
         result = ..ok(.value = Void())
     }
 
-    .flush = (.self: $&DummyOutput, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&DummyOutput) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())

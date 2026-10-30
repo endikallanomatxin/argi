@@ -3,7 +3,7 @@
 _string_view_matches_at := (.self: StringView, .pattern: StringView, .start: UIntNative) -> (
     .ok : Bool
 ) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     if start > self._length {
         ok = false
         return

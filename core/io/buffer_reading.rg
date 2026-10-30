@@ -1,10 +1,6 @@
 BufferReading#(.Stream: Type): Contract = (
     .Result : Type
-    .read   : (
-        .self         : $&Stream,
-        .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Result)
+    .read   : (.self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)) -> (.result: Result)
 )
 
 implement#(.Stream: Type: Reader#(Stream)) BufferReading#(Stream) (
@@ -13,11 +9,8 @@ implement#(.Stream: Type: Reader#(Stream)) BufferReading#(Stream) (
 )
 
 _reader_read := #(.Stream: Type: Reader#(Stream)) (
-    .self         : $&Stream,
-    .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)
 ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
-    assume error_tracer
 
     copied :: UIntNative = 0
 

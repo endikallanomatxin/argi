@@ -1495,10 +1495,10 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return false,
         };
-        const lexical_context = if (literal.assumed_fields.len != 0)
+        const lexical_context = (if (literal.assumed_fields.len != 0)
             context.withAssumedFields(literal.assumed_fields)
         else
-            context;
+            context).withSource(self.graph.node(input_node).source);
         if (!self.recordFieldNamesMatch(expected_fields, literal)) return false;
         var transaction = self.graph.beginTransaction(self.allocator);
         defer transaction.deinit();

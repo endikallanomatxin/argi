@@ -1,5 +1,4 @@
-roundtrip := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -> !Void = ..ok Void() {
-    assume error_tracer
+roundtrip := (.date: UtcDateTime) -> !Void = ..ok Void() {
 
     stamp ::= unix_timestamp(.date = date)!
     actual ::= utc_date(.timestamp = stamp)!
@@ -15,7 +14,7 @@ roundtrip := (.date: UtcDateTime, .error_tracer: $&Virtual#(ErrorTracer)) -> !Vo
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     roundtrip(.date = UtcDateTime(.year = 1, .month = 1, .day = 1))!!!
     roundtrip(

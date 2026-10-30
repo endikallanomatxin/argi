@@ -7,7 +7,7 @@ _float_replace_bits := #(.Value: Type: _FloatRepresentation#(Value)) (
 -- Clear fractional mantissa bits without integer conversion of the value.
 -- Integral large values and nonfinite values retain their exact encoding.
 truncate_float := #(.t: Type: Float) (.value: t) -> (.result: t) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     encoding ::= _float_encoding(.value = value).encoding
     sign_unit ::= encoding.fraction_unit * encoding.exponent_limit
     sign ::= encoding.bits / sign_unit * sign_unit

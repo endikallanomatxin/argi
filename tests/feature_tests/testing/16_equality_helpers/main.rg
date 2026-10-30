@@ -1,4 +1,4 @@
-test equality_helpers := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test equality_helpers := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     testing.expect(.condition = true, .message = "successful checks stay silent")!
@@ -24,6 +24,6 @@ test equality_helpers := (.system: System, .error_tracer: $&Virtual#(ErrorTracer
     empty ::= empty_array_view#(.t: UInt8)()
     testing.expect_equal_bytes(.expected = empty, .actual = empty)!
     assume allocator := system.page_allocator
-    owner ::= format(.value = "abc", .allocator = allocator)!
+    owner ::= format(.value = "abc", .allocator = allocator)!! "preparing equality test text"
     testing.expect_equal_strings(.expected = &owner, .actual = &owner)!
 }

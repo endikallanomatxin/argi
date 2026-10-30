@@ -38,10 +38,9 @@ implement#(.t: Type: ArgumentSource#(t)) Init#(CliParser#(.t: t), CliParserInitA
     }
 )
 
-next := #(.t: Type: ArgumentSource#(t)) (
-    .self: $&CliParser#(.t: t), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?CliArgument, (..invalid_option, ..invalid_utf8, ..out_of_bounds))) {
-    assume error_tracer
+next := #(.t: Type: ArgumentSource#(t)) (.self: $&CliParser#(.t: t)) -> (
+    .result : Errable#(?CliArgument, (..invalid_option, ..invalid_utf8, ..out_of_bounds))
+) {
 
     while self&._index < length(self&._source).count {
         text ::= get(self&._source, .index = self&._index)!
@@ -115,10 +114,9 @@ next := #(.t: Type: ArgumentSource#(t)) (
     result = ..ok ..none
 }
 
-take_value := #(.t: Type: ArgumentSource#(t)) (
-    .self: $&CliParser#(.t: t), .option: CliOption, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(StringView, (..missing_option_value, ..invalid_utf8, ..out_of_bounds))) {
-    assume error_tracer
+take_value := #(.t: Type: ArgumentSource#(t)) (.self: $&CliParser#(.t: t), .option: CliOption) -> (
+    .result : Errable#(StringView, (..missing_option_value, ..invalid_utf8, ..out_of_bounds))
+) {
 
     match option.value { ..some entry {
             result = ..ok entry.value

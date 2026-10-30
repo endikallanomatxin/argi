@@ -1681,6 +1681,9 @@ pub const Resolver = struct {
             if (!contract_projections.typeSelectionReady(self, participant.*, 0)) return null;
         }
         const selected = try self.selectConformance(use.declaration, participants, &bindings, 0, null) orelse {
+            for (participants) |participant| {
+                if (contract_projections.containsInferredReasons(self, participant, 0)) return null;
+            }
             failure.reason = "no conformance for the qualified operation's participants";
             self.participant_conformance_failure = failure;
             return null;

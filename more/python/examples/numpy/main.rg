@@ -1,7 +1,7 @@
 python := import ("python")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     interpreter ::= unwrap_or_abort(.value = python.Python(.ffi = system.ffi)).result
     input: [4]Float64 = (1.0, 2.0, 3.0, 4.0)
     array ::= unwrap_or_abort(

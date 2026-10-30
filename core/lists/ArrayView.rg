@@ -100,12 +100,8 @@ _trusted_mutable_array_view := #(.t: Type) (.data: $&t, .length: UIntNative) -> 
 }
 
 set := #(.t: Type: ImplicitlyCopyable) (
-    .self         : $&MutableArrayView#(.t: t),
-    .index        : UIntNative,
-    .value        : t,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&MutableArrayView#(.t: t), .index: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    assume error_tracer
 
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -137,12 +133,9 @@ implement#(.t: Type) Indexable#(MutableArrayView#(.t: t)) (
         count = self&._length
     }
 
-    .get_reference = (
-        .self         : &MutableArrayView#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(&t, (..out_of_bounds))) {
-        assume error_tracer
+    .get_reference = (.self: &MutableArrayView#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(&t, (..out_of_bounds))
+    ) {
 
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
@@ -162,10 +155,9 @@ implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
         count = self&._length
     }
 
-    .get_reference = (
-        .self: &ArrayView#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(&t, (..out_of_bounds))) {
-        assume error_tracer
+    .get_reference = (.self: &ArrayView#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(&t, (..out_of_bounds))
+    ) {
 
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
@@ -181,12 +173,9 @@ implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
 implement#(.t: Type) MutableIndexable#(MutableArrayView#(.t: t)) (
     .Item : Type = t
 
-    .get_mutable_reference = (
-        .self         : $&MutableArrayView#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#($&t, (..out_of_bounds))) {
-        assume error_tracer
+    .get_mutable_reference = (.self: $&MutableArrayView#(.t: t), .index: UIntNative) -> (
+        .result : Errable#($&t, (..out_of_bounds))
+    ) {
 
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
@@ -202,12 +191,9 @@ implement#(.t: Type) MutableIndexable#(MutableArrayView#(.t: t)) (
 implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(MutableArrayView#(.t: t)) (
     .Item : Type = t
 
-    .get = (
-        .self         : &MutableArrayView#(.t: t),
-        .index        : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(t, (..out_of_bounds))) {
-        assume error_tracer
+    .get = (.self: &MutableArrayView#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(t, (..out_of_bounds))
+    ) {
 
         if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
@@ -225,10 +211,9 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(MutableArrayView#(.t: t
 implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(ArrayView#(.t: t)) (
     .Item : Type = t
 
-    .get = (
-        .self: &ArrayView#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(t, (..out_of_bounds))) {
-        assume error_tracer
+    .get = (.self: &ArrayView#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(t, (..out_of_bounds))
+    ) {
 
         match get_reference(self, .index = index).result {
             ..error _ { result = ..error(.reason = ..out_of_bounds) }

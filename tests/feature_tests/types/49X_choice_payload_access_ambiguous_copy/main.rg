@@ -1,5 +1,5 @@
 Payload := (
-    .value : Int32,
+    .value : Int32
 )
 
 PayloadInitArgs: Type = (.value: Int32)
@@ -28,7 +28,7 @@ _ordinary_copy_1 := (.self: &Payload, .flag: Bool = true) -> (.value: Payload) {
 
 Result: Type = (
     ..ok Payload,
-    ..error,
+    ..error
 )
 
 main := () -> (.status_code: Int32) {

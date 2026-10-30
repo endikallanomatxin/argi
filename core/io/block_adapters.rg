@@ -1,15 +1,13 @@
-_reader_block := #(.t: Type: Reader#(t)) (
-    .self: $&t, .buffer: MutableArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
-    assume error_tracer
+_reader_block := #(.t: Type: Reader#(t)) (.self: $&t, .buffer: MutableArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_read_failed))
+) {
 
     result = read(self, .buffer = buffer)
 }
 
-_writer_block := #(.t: Type: Writer#(t)) (
-    .self: $&t, .buffer: ArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
+_writer_block := #(.t: Type: Writer#(t)) (.self: $&t, .buffer: ArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+) {
 
     index :: UIntNative = 0
 

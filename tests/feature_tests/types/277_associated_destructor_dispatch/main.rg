@@ -20,10 +20,9 @@ implement Deinit#(Other) (
     }
 )
 
-exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
-) -> () {
-    assume error_tracer
+exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
+) {
+
     assume allocator
     first ::= Box#(.t: Int32)(.value = 4)
     second ::= Box#(.t: UnicodeScalar)(.value = 'a')
@@ -39,7 +38,7 @@ exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     exercise(.allocator = system.page_allocator)
     if drops != 53 {
         status_code = 1

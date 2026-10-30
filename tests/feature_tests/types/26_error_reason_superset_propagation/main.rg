@@ -1,25 +1,21 @@
 ..file_not_found
 ..permission_denied
 
-read_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..file_not_found))
-) {
-    assume error_tracer
+read_file := () -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) {
 
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+load_file := () -> (
     .result : Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))
 ) {
-    assume error_tracer
 
     value := read_file()!
     result = ..ok value
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     result := load_file()
     if is(.value = result, .variant = ..error) {
         err ::= &result ..error

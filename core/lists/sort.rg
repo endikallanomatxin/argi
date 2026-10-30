@@ -4,7 +4,7 @@ _sift_down := #(
     .policy     : Type: OrderPolicy#(policy, t),
     .Collection : Type: MutableIndexable#(.Item: t)
 ) (.self: $&Collection, .order: &policy, .start: UIntNative, .count: UIntNative) -> () {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     root ::= start
     -- This guard proves that 2 * root + 1 is an existing child and that
     -- child arithmetic cannot overflow, even at the maximum native length.

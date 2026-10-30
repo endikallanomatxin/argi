@@ -6,7 +6,7 @@ Tests are declared explicitly at top level with the same named-function syntax
 used by `main`, prefixed with `test`. The assignment precedes the signature:
 
 ```rg
-test my_test := (.error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test my_test := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
     testing.expect(true)!
 }
@@ -18,17 +18,12 @@ The test entry contract requires:
 - optional `.system: System` input supplied by the checked entry wrapper
 - ordinary auxiliary inputs, including the required `error_tracer` used by
   testing helpers, resolved from the wrapper's lexical assumptions
-- return: `-> !()`
+- return: `-> !()` for plain errors, or `-> !!()` for traced assertion failures
 
 As with `main` and `#run`, requesting `System` is optional. Input types are
 checked through the ordinary generated call, rather than requiring the literal
 spelling `System`. Test failure reporting owns its terminal and trace resources
 even when the test requests no system input.
-
-As with ordinary named functions, the legacy spelling
-`test my_test(.system: System) -> !() := { ... }` remains accepted.
-Both spellings produce the same test declaration, discovery behavior and entry
-contract. New code and examples use `test name := (...) -> !() { ... }`.
 
 These are not supported:
 
@@ -77,14 +72,14 @@ They compose with Argi’s existing `Errable` and `!` flow.
 Examples:
 
 ```rg
-test simple_pass := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test simple_pass := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
     testing.expect(true)!
 }
 ```
 
 ```rg
-test equality := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test equality := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
     testing.expect_equal(.expected = 1, .actual = 1)!
 }
@@ -93,12 +88,11 @@ test equality := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !(
 ```rg
 ..some_reason
 
-some_fallible_call := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Int32, (..some_reason)))  {
-    assume error_tracer
+some_fallible_call := () -> (.result: Errable#(Int32, (..some_reason))) {
     result = ..error(.reason = ..some_reason)
 }
 
-test expected_error := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test expected_error := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
     call_result := some_fallible_call()
     testing.expect_error(.expected_reason = ..some_reason, .actual_result = call_result)!
@@ -116,14 +110,16 @@ Testing-framework layer:
 
 Program-under-test layer:
 
-- if test code directly propagates a real error with `!`, that original reason is preserved
+- ordinary errors can propagate through `!` in a plain test; a traced test
+  explicitly promotes them with `!! "context"`, preserving their reason
 
 So:
 
 - `testing.expect(false)!` fails the test with `..test_failed`
 - `testing.skip("not implemented yet")!` skips the test with `..test_skipped`
 - `testing.expect_error(...)` fails with `..test_failed` when the actual result succeeds unexpectedly or fails with a different reason
-- a direct `some_fallible_call()!` inside a test preserves the original reason from `some_fallible_call`
+- `some_fallible_call()!! "preparing test input"` adds diagnostic context while
+  preserving the original program error reason
 
 `testing.expect_error(...)` checks the actual error reason, not merely that an error happened.
 
@@ -135,7 +131,8 @@ That means:
 
 - helper-originated failures produce normal traced errors
 - `expect_error` mismatch messages appear as normal test failure context
-- directly propagated program errors keep their original trace and reasons
+- `!` preserves an existing trace without adding entries
+- `!! "context"` explicitly creates or extends diagnostic context
 
 ### `once`
 

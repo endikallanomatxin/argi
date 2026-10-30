@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     c_allocator ::= CAllocator(.ffi = system.ffi)
     storage ::= malloc(.size = 1, .ffi = system.ffi)
     moved ::= ~storage

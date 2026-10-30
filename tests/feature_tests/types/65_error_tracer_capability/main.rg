@@ -3,7 +3,11 @@
 CountingTracer := (.count: UIntNative = 0)
 
 fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..tracer_test_failure))
+    .result : Errable#(
+        .t          : Int32,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    )
 ) {
     assume error_tracer
 
@@ -11,7 +15,11 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..tracer_test_failure))
+    .result : Errable#(
+        .t          : Int32,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    )
 ) {
     assume error_tracer
 
@@ -19,7 +27,7 @@ propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-ok := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
+ok := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
     assume error_tracer
     result = ..ok 7
 }
@@ -29,7 +37,7 @@ context_text := (.counter: $&UIntNative) -> (.view: StringView) {
     view = "lazy context"
 }
 
-success := (.counter: $&UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
+success := (.counter: $&UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
     assume error_tracer
 
     value := ok()!! context_text(.counter = counter)
@@ -37,9 +45,19 @@ success := (.counter: $&UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> !
 }
 
 forward := #(.t: Type) (
-    .value        : Errable#(.t: t, .reasons: (..tracer_test_failure)),
+    .value : Errable#(
+        .t          : t,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    ),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(.t: t, .reasons: (..tracer_test_failure))) {
+) -> (
+    .result : Errable#(
+        .t          : t,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    )
+) {
     assume error_tracer
 
     unwrapped := value!! "original tracer"
@@ -113,12 +131,9 @@ implement ErrorTracer#(CountingTracer) (
 
     .reset_context = (.self: $&CountingTracer) -> () { self&.count = 0 }
 
-    .report = (
-        .self         : $&CountingTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report = (.self: $&CountingTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         result = ..ok Void()
     }

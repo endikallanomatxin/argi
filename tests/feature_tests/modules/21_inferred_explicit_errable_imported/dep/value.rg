@@ -1,15 +1,11 @@
 ..import_error
 
-fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..import_error))
-) {
-    assume error_tracer
+fail := () -> (.result: Errable#(.t: Int32, .reasons: (..import_error))) {
 
     result = ..error(.reason = ..import_error)
 }
 
-load := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(.t: Int32)) {
-    assume error_tracer
+load := () -> (.result: Errable#(.t: Int32)) {
 
     value := fail()!
     result = ..ok value

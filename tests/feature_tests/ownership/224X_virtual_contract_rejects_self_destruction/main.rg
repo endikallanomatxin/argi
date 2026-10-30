@@ -45,7 +45,7 @@ verify := (.status: $&Int32) -> () {
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     status_code = 9
     defer verify(.status = $&status_code)
     second :: Second = (.value = 0)

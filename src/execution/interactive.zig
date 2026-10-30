@@ -860,11 +860,11 @@ test "interactive source IDs retain original metadata across commands" {
     try session.submit("located := (.location: SourceLocationId = error_location_id()) -> (.value: UInt32) { value = location.value }");
     _ = try session.submitInput("located()");
     const defaulted = session.runtime.context.trace_locations.items[2];
-    try std.testing.expect(std.mem.startsWith(u8, defaulted.source_line, "located :="));
+    try std.testing.expectEqualStrings("located()", defaulted.source_line);
     _ = try session.submitInput("core_located()");
     const core_default = session.runtime.context.trace_locations.items[3];
     try std.testing.expectEqualStrings("core_located()", core_default.source_line);
-    try std.testing.expectEqual(@as(u32, 1), core_default.column);
+    try std.testing.expectEqual(@as(u32, 13), core_default.column);
     const recovered = (try session.submitInput("source_location(_0)")).?.value.runtime.record;
     try std.testing.expectEqual(@as(i128, 1), recovered[2].integer);
     try std.testing.expectEqual(@as(i128, 1), recovered[3].integer);

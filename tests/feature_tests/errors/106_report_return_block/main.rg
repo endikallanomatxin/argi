@@ -10,19 +10,16 @@ implement Deinit#(Owner) (
     }
 )
 
-attempt := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int32, (..missing))
-) {
-    assume error_tracer
+attempt := (.fail: Bool) -> (.result: Errable#(Int32, (..missing))) {
 
     calls = calls + 1
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-finish := #(.WriterType: Type: Writer#(WriterType)) (
-    .fail: Bool, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Int32 = 0) {
-    assume error_tracer
+finish := #(.WriterType: Type: Writer#(WriterType)) (.fail: Bool, .writer: $&WriterType) -> (
+    .result : Int32 = 0
+) {
+
     assume writer
     owner ::= Owner(1)
     value ::= attempt(fail)!!! {
@@ -33,11 +30,9 @@ finish := #(.WriterType: Type: Writer#(WriterType)) (
 }
 
 unwrap := #(.t: Type, .WriterType: Type: Writer#(WriterType)) (
-    .input        : Errable#(t, (..missing)),
-    .writer       : $&WriterType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .input: Errable#(t, (..missing)), .writer: $&WriterType
 ) -> (.result: Int32 = 0) {
-    assume error_tracer
+
     assume writer
     owner ::= Owner(3)
     value ::= ~input!!! {
@@ -47,18 +42,15 @@ unwrap := #(.t: Type, .WriterType: Type: Writer#(WriterType)) (
     result = 7
 }
 
-condition := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Bool, (..missing))
-) {
-    assume error_tracer
+condition := (.fail: Bool) -> (.result: Errable#(Bool, (..missing))) {
 
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok true }
 }
 
 check_conditions := #(.WriterType: Type: Writer#(WriterType)) (
-    .fail: Bool, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
+    .fail: Bool, .writer: $&WriterType
 ) -> (.result: Int32 = 0) {
-    assume error_tracer
+
     assume writer
     if condition(false)!!! { result = 1 }
     if [condition(fail)!!! { result = 13 }] { result = 2 }
@@ -66,10 +58,8 @@ check_conditions := #(.WriterType: Type: Writer#(WriterType)) (
 
 identity := (.input: Int32) -> (.value: Int32) { value = input }
 
-finish_argument := (.fail: Bool, .writer: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Int32 = 0
-) {
-    assume error_tracer
+finish_argument := (.fail: Bool, .writer: $&File) -> (.result: Int32 = 0) {
+
     assume writer
     if identity(attempt(fail)!!! { result = 17 }) == 7 { result = 7 }
 }
@@ -77,7 +67,7 @@ finish_argument := (.fail: Bool, .writer: $&File, .error_tracer: $&Virtual#(Erro
 BrokenWriter: Type = ()
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     if finish(false) != 7 or calls != 1 or drops != 1 { abort }
     if finish(true) != 9 or calls != 2 or drops != 3 { abort }
@@ -90,18 +80,16 @@ main := (.system: System) -> () {
 }
 
 implement Writer#(BrokenWriter) (
-    .write_byte = (.self: $&BrokenWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&BrokenWriter, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         result = ..error(.reason = ..stream_write_failed)
     }
 
-    .flush = (.self: $&BrokenWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&BrokenWriter) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         result = ..error(.reason = ..stream_flush_failed)
     }

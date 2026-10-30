@@ -408,7 +408,7 @@ Ownership recognizes declared copy capabilities independently of global function
 names, so an explicit owning copy operation never grants implicit duplication.
 FalliblyCopyable now selects the value and allocator provider jointly. String,
 Path and DynamicArray provide scoped operations; array copying has one generic
-implementation and preserves the element's associated reasons and tracer.
+implementation and preserves the element's associated reasons and any existing trace.
 Ownership queries these conformances rather than functions named copy.
 
 The standard Init contract now owns canonical construction for migrated types.

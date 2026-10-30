@@ -7,15 +7,13 @@ implement Deinit#(Widget) (
 )
 
 WidgetInitArgs: Type = (
-    .cleanups     : $&Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .cleanups : $&Int32
 )
 
 implement Init#(Widget, WidgetInitArgs) (
     .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
 
     .init = WidgetInitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_cleanups ::= ~cleanups
 
@@ -25,7 +23,7 @@ implement Init#(Widget, WidgetInitArgs) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     cleanups :: Int32 = 0
     outcome ::= Widget(.cleanups = $&cleanups)
     match outcome {

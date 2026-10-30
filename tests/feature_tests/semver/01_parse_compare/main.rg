@@ -1,7 +1,7 @@
 semver := import ("semver")
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     first ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha.2+001")).result
     second ::= unwrap_or_abort(
         .value = semver.VersionView(.text = "1.2.3-alpha.11+other")
@@ -77,24 +77,22 @@ main := () -> (.status_code: Int32 = 0) {
     check_order(.a = "1.2.3-a.1", .b = "1.2.3-a.1.0", .order = -1)
 }
 
-check_valid := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_valid := (.text: StringView) -> () {
+
     parsed ::= unwrap_or_abort(.value = semver.parse(.text = text)).result
     if view(.self = &parsed).view != text { abort }
 }
 
-check_invalid := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_invalid := (.text: StringView) -> () {
+
     match semver.parse(.text = text) {
         ..error error { if error.reason != ..invalid_input { abort } }
         ..ok _ { abort }
     }
 }
 
-check_order := (
-    .a: StringView, .b: StringView, .order: Int32, .error_tracer: $&Virtual#(ErrorTracer)
-) -> () {
-    assume error_tracer
+check_order := (.a: StringView, .b: StringView, .order: Int32) -> () {
+
     left ::= unwrap_or_abort(.value = semver.parse(.text = a)).result
     right ::= unwrap_or_abort(.value = semver.parse(.text = b)).result
     if semver.compare(.left = &left, .right = &right).order != order { abort }

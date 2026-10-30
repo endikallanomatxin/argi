@@ -11,7 +11,7 @@ replace_on_exit := (.holder: $&Holder, .new_reference: $&UInt8) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     old_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     new_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)

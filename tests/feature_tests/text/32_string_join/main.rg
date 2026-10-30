@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     parts: [3]StringView = ("a", "", "b")
     joined ::= unwrap_or_abort(
         .value = join(

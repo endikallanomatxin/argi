@@ -9,7 +9,7 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
     defer {
         Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+            report_error(.err = &error, .writer = writer) handle ignored {}
         }
     }
 

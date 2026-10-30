@@ -38,7 +38,7 @@ implement HashPolicy#(Policy, Int32) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     map ::= HashMap#(.key: Int32, .value: Tracked, .policy: StandardHashPolicy)(
@@ -102,13 +102,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (
-        .self         : $&RecordingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         self&.attempts = self&.attempts + 1
         if self&.attempts == self&.fail_at {

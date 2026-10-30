@@ -21,7 +21,7 @@ _forward_pair := (.left: &Row, .right: &Column) -> (.value: Array#(2, Int32)) {
     value = (left&.value, right&.value)
 }
 
-_reverse_pair := (.left: &Column, .right: &Row) -> (.value: Array#(1, Int64)) { value = (42,) }
+_reverse_pair := (.left: &Column, .right: &Row) -> (.value: Array#(1, Int64)) { value = (42) }
 
 main := () -> () {
     row ::= Row(6)

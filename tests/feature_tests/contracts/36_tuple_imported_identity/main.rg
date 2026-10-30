@@ -16,7 +16,7 @@ _impl_local_product_373 := (.left: dep.Row, .right: dep.Column) -> (.value: Int6
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     if dep.multiply(dep.Row(), dep.Column()).value != 42 { abort }
     if local_product(dep.Row(), dep.Column()).value != 7 { abort }
 }

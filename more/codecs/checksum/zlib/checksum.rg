@@ -12,7 +12,7 @@ _crc32_z(.previous: CULong, .bytes: RawPointer#(.t: UInt8), .count: CSize) -> (
 update_crc32 := (
     .previous: CULong, .source: &ArrayView#(.t: UInt8), .ffi: $&ForeignFunctionInterface
 ) -> (.checksum: CULong) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     assume ffi
     count := length(source)
 

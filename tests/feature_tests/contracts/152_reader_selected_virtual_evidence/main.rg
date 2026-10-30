@@ -1,7 +1,5 @@
-consume := #(.Stream: Type: Reader#(Stream)) (
-    .stream: $&Stream, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.byte: UInt8) {
-    assume error_tracer
+consume := #(.Stream: Type: Reader#(Stream)) (.stream: $&Stream) -> (.byte: UInt8) {
+
     match unwrap_or_abort(.value = Reader#().read_byte(stream)) {
         ..end { abort }
         ..ok value { byte = value }
@@ -9,7 +7,7 @@ consume := #(.Stream: Type: Reader#(Stream)) (
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes: [4]UInt8 = (42, 7, 8, 9)
     reader ::= ByteReader(.bytes = view(&bytes))
     if consume($&reader).byte != 42 { abort }

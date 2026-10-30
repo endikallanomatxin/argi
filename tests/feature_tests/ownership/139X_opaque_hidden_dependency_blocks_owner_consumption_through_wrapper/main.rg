@@ -11,7 +11,7 @@ consume_into_storage := (.storage: $&Allocation, .slot: $&Allocation, .owner: Al
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     deallocator ::= to_virtual#(.contract: Deallocator)(.value = $&allocator_storage)
 

@@ -44,12 +44,8 @@ _impl_take_pair_Slots := (
     value = Pair(~first_value, ~second_value)
 }
 
-escape := (
-    .allocator    : $&GeneralPurposeAllocator,
-    .drops        : $&Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Pair) {
-    assume error_tracer
+escape := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result: Pair) {
+
     local_drops :: Int32 = 0
     first ::= unwrap_or_abort(allocate#(Tracked)(allocator))
     second ::= unwrap_or_abort(allocate#(Tracked)(allocator))
@@ -70,7 +66,7 @@ escape := (
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
     pair ::= escape(allocator, $&drops)

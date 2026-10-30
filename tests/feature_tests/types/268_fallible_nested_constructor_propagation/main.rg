@@ -3,15 +3,13 @@ Widget := (.value: Int32)
 Wrapper := (.widget: Widget)
 
 WidgetInitArgs: Type = (
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .fail : Bool
 )
 
 implement Init#(Widget, WidgetInitArgs) (
     .Result : Type = Errable#(.t: Widget, .reasons: (..rejected))
 
     .init = WidgetInitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_fail ::= ~fail
 
@@ -27,15 +25,13 @@ implement Init#(Widget, WidgetInitArgs) (
 )
 
 WrapperInitArgs2: Type = (
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .fail : Bool
 )
 
 implement Init#(Wrapper, WrapperInitArgs2) (
     .Result : Type = Errable#(.t: Wrapper, .reasons: (..rejected))
 
     .init = WrapperInitArgs2 -> (.result: Result) {
-        assume error_tracer
 
         _init_fail ::= ~fail
 
@@ -47,7 +43,7 @@ implement Init#(Wrapper, WrapperInitArgs2) (
 )
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     failed ::= Wrapper(.fail = true)
     match failed {
         ..error _ {}

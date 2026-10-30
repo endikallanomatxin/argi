@@ -39,20 +39,15 @@ _impl_transfer_Manager := (
 }
 
 forward := (
-    .mover        : &Virtual#(Mover),
-    .source       : $&Resource,
-    .destination  : $&Resource,
-    .move         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool
 ) -> (.result: Errable#(?Large, (..failed))) {
-    assume error_tracer
 
     returned ::= transfer(mover, source, destination, move)
     result = ..ok returned.result
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

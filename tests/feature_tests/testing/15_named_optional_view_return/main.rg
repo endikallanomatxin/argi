@@ -1,4 +1,4 @@
-test named_optional_view_return := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test named_optional_view_return := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

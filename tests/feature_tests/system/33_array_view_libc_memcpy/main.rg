@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     src_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
     dst_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
     src ::= view(.self = $&src_bytes)

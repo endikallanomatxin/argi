@@ -15,12 +15,9 @@ return_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator
 
 ..iteration_failed
 
-fail_early := (
-    .array        : DynamicArray#(.t: Tracked),
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()) {
-    assume error_tracer
+fail_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> (
+    .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
+) {
 
     assume allocator
     for ~item in array {
@@ -29,10 +26,7 @@ fail_early := (
     }
 }
 
-make_array := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> !DynamicArray#(
-    .t : Int32
-) {
-    assume error_tracer
+make_array := (.allocator: $&PageAllocator) -> !DynamicArray#(.t: Int32) {
 
     assume allocator
     array ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 1)!
@@ -40,20 +34,14 @@ make_array := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTrace
     result = ..ok ~array
 }
 
-iteration_error := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Void, .reasons: (..iteration_failed))
-) {
-    assume error_tracer
+iteration_error := () -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed))) {
 
     result = ..error(.reason = ..iteration_failed)
 }
 
-propagate_early := (
-    .array        : DynamicArray#(.t: Tracked),
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()) {
-    assume error_tracer
+propagate_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> (
+    .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
+) {
 
     assume allocator
     for ~item in array { iteration_error()! }
@@ -61,8 +49,8 @@ propagate_early := (
 
 Pair := (.first: Tracked, .second: Tracked)
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 1) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 1) {
+
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     array ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 3)!!!

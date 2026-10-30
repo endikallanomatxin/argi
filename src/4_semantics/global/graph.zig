@@ -24,9 +24,7 @@ pub const GlobalVirtualRegistryId = enum(u32) { _ };
 pub const GlobalVirtualizeId = enum(u32) { _ };
 pub const GlobalVirtualCallId = enum(u32) { _ };
 pub const GlobalNullableUnwrapId = enum(u32) { _ };
-pub const GlobalTestingExpectErrorId = enum(u32) { _ };
 pub const GlobalErrorPropagationId = enum(u32) { _ };
-pub const GlobalErrorContextId = enum(u32) { _ };
 pub const GlobalFileId = enum(u32) { _ };
 pub const GlobalModuleId = enum(u32) { _ };
 
@@ -51,9 +49,7 @@ pub const Ids = struct {
     pub const VirtualizeId = GlobalVirtualizeId;
     pub const VirtualCallId = GlobalVirtualCallId;
     pub const NullableUnwrapId = GlobalNullableUnwrapId;
-    pub const TestingExpectErrorId = GlobalTestingExpectErrorId;
     pub const ErrorPropagationId = GlobalErrorPropagationId;
-    pub const ErrorContextId = GlobalErrorContextId;
 };
 
 pub const StringRange = primitives.StringRange;
@@ -123,9 +119,7 @@ pub const ContractConformance = struct {
     source: primitives.SourceRef,
 };
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
-pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
-pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const Node = primitives.Node(Ids);
 
 pub const File = struct {
@@ -209,7 +203,6 @@ pub const GlobalSemanticGraph = struct {
         virtual_completions_len: usize,
         node_rewrites_len: usize,
         block_rewrites_len: usize,
-        error_context_rewrites_len: usize,
         conformance_rewrites_len: usize,
         operation_completions_len: usize,
         variant_rewrites_len: usize,
@@ -226,7 +219,6 @@ pub const GlobalSemanticGraph = struct {
         nodes: usize,
         blocks: usize,
         error_propagations: usize,
-        error_contexts: usize,
         contract_conformances: usize,
         contract_operation_bindings: usize,
         variants: usize,
@@ -275,7 +267,6 @@ pub const GlobalSemanticGraph = struct {
             .nodes = self.nodes.items.len,
             .blocks = self.blocks.items.len,
             .error_propagations = self.error_propagations.items.len,
-            .error_contexts = self.error_contexts.items.len,
             .contract_conformances = self.contract_conformances.items.len,
             .contract_operation_bindings = self.contract_operation_bindings.items.len,
             .variants = self.variants.items.len,
@@ -302,7 +293,6 @@ pub const GlobalSemanticGraph = struct {
         variant_rewrites: std.ArrayList(struct { id: GlobalVariantId, previous: ChoiceVariant }) = .empty,
         operation_completions: std.ArrayList(struct { id: ContractOperationBindingId, previous: ?GlobalFunctionId }) = .empty,
         conformance_rewrites: std.ArrayList(struct { index: u32, previous: ContractConformance }) = .empty,
-        error_context_rewrites: std.ArrayList(struct { id: GlobalErrorContextId, previous: ErrorContext }) = .empty,
         block_rewrites: std.ArrayList(struct { id: GlobalBlockId, previous: Block }) = .empty,
         node_rewrites: std.ArrayList(struct { id: GlobalNodeId, previous: Node }) = .empty,
         virtual_completions: std.ArrayList(struct { id: GlobalVirtualRegistryId, previous: VirtualMethodRegistry }) = .empty,
@@ -324,7 +314,6 @@ pub const GlobalSemanticGraph = struct {
             self.virtual_completions.deinit(allocator);
             self.node_rewrites.deinit(allocator);
             self.block_rewrites.deinit(allocator);
-            self.error_context_rewrites.deinit(allocator);
             self.conformance_rewrites.deinit(allocator);
             self.operation_completions.deinit(allocator);
             self.definition_rewrites.deinit(allocator);
@@ -409,9 +398,7 @@ pub const GlobalSemanticGraph = struct {
     contract_operation_bindings: std.ArrayList(ContractOperationBinding) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
     nullable_unwraps: std.ArrayList(NullableUnwrap) = .empty,
-    testing_expect_errors: std.ArrayList(TestingExpectError) = .empty,
     error_propagations: std.ArrayList(ErrorPropagation) = .empty,
-    error_contexts: std.ArrayList(ErrorContext) = .empty,
 
     node_refs: std.ArrayList(GlobalNodeId) = .empty,
     type_refs: std.ArrayList(GlobalTypeId) = .empty,
@@ -536,7 +523,6 @@ pub const GlobalSemanticGraph = struct {
             .virtual_completions_len = self.construction.virtual_completions.items.len,
             .node_rewrites_len = self.construction.node_rewrites.items.len,
             .block_rewrites_len = self.construction.block_rewrites.items.len,
-            .error_context_rewrites_len = self.construction.error_context_rewrites.items.len,
             .conformance_rewrites_len = self.construction.conformance_rewrites.items.len,
             .operation_completions_len = self.construction.operation_completions.items.len,
             .variant_rewrites_len = self.construction.variant_rewrites.items.len,
@@ -599,10 +585,7 @@ pub const GlobalSemanticGraph = struct {
             const rewrite = self.construction.conformance_rewrites.pop().?;
             self.contract_conformances.items[rewrite.index] = rewrite.previous;
         }
-        while (self.construction.error_context_rewrites.items.len > saved.error_context_rewrites_len) {
-            const rewrite = self.construction.error_context_rewrites.pop().?;
-            self.error_contexts.items[@intFromEnum(rewrite.id)] = rewrite.previous;
-        }
+
         while (self.construction.block_rewrites.items.len > saved.block_rewrites_len) {
             const rewrite = self.construction.block_rewrites.pop().?;
             self.blocks.items[@intFromEnum(rewrite.id)] = rewrite.previous;
@@ -650,18 +633,17 @@ pub const GlobalSemanticGraph = struct {
         }
         self.safety_batches.deinit(allocator);
         inline for (.{
-            &self.modules,                     &self.module_aliases,       &self.files,                        &self.declarations,
-            &self.symbols,                     &self.symbol_declarations,  &self.types,                        &self.type_definitions,
-            &self.family_definitions,          &self.generic_instances,    &self.functions,                    &self.generic_function_instances,
-            &self.generic_instance_by_type,    &self.bindings,             &self.nodes,                        &self.blocks,
-            &self.fields,                      &self.variants,             &self.generic_arguments,            &self.value_fields,
-            &self.switch_cases,                &self.switches,             &self.auto_deinit_fields,           &self.auto_deinits,
-            &self.virtual_registries,          &self.virtualizes,          &self.virtual_calls,                &self.nullable_unwraps,
-            &self.testing_expect_errors,       &self.error_propagations,   &self.error_contexts,               &self.node_refs,
-            &self.type_refs,                   &self.binding_refs,         &self.function_refs,                &self.virtual_registry_refs,
-            &self.strings,                     &self.roots,                &self.contract_safety_conformances, &self.contract_conformances,
-            &self.contract_operation_bindings, &self.captured_expressions, &self.argument_default_temporaries, &self.captured_expression_bindings,
-            &self.comptime_requests,           &self.block_assumptions,
+            &self.modules,                      &self.module_aliases,               &self.files,                       &self.declarations,
+            &self.symbols,                      &self.symbol_declarations,          &self.types,                       &self.type_definitions,
+            &self.family_definitions,           &self.generic_instances,            &self.functions,                   &self.generic_function_instances,
+            &self.generic_instance_by_type,     &self.bindings,                     &self.nodes,                       &self.blocks,
+            &self.fields,                       &self.variants,                     &self.generic_arguments,           &self.value_fields,
+            &self.switch_cases,                 &self.switches,                     &self.auto_deinit_fields,          &self.auto_deinits,
+            &self.virtual_registries,           &self.virtualizes,                  &self.virtual_calls,               &self.nullable_unwraps,
+            &self.error_propagations,           &self.node_refs,                    &self.type_refs,                   &self.binding_refs,
+            &self.function_refs,                &self.virtual_registry_refs,        &self.strings,                     &self.roots,
+            &self.contract_safety_conformances, &self.contract_conformances,        &self.contract_operation_bindings, &self.captured_expressions,
+            &self.argument_default_temporaries, &self.captured_expression_bindings, &self.comptime_requests,           &self.block_assumptions,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -988,8 +970,6 @@ pub const GlobalSemanticGraph = struct {
         self.construction.node_rewrites = .empty;
         self.construction.block_rewrites.deinit(allocator);
         self.construction.block_rewrites = .empty;
-        self.construction.error_context_rewrites.deinit(allocator);
-        self.construction.error_context_rewrites = .empty;
         self.construction.conformance_rewrites.deinit(allocator);
         self.construction.conformance_rewrites = .empty;
         self.construction.operation_completions.deinit(allocator);
@@ -1057,13 +1037,6 @@ pub const GlobalSemanticGraph = struct {
         if (self.mutation_frontier == null or raw < self.mutation_frontier.?.error_propagations)
             try self.construction.error_propagation_rewrites.append(allocator, .{ .id = id, .previous = self.error_propagations.items[raw] });
         self.error_propagations.items[raw] = value;
-    }
-
-    pub fn setErrorContext(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalErrorContextId, value: ErrorContext) !void {
-        const raw = @intFromEnum(id);
-        if (self.mutation_frontier == null or raw < self.mutation_frontier.?.error_contexts)
-            try self.construction.error_context_rewrites.append(allocator, .{ .id = id, .previous = self.error_contexts.items[raw] });
-        self.error_contexts.items[raw] = value;
     }
 
     pub fn completeOperationBinding(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: ContractOperationBindingId, function_id: GlobalFunctionId) !void {
@@ -1315,9 +1288,7 @@ pub const GlobalSemanticGraph = struct {
             self.contract_operation_bindings.items.len * @sizeOf(ContractOperationBinding) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
             self.nullable_unwraps.items.len * @sizeOf(NullableUnwrap) +
-            self.testing_expect_errors.items.len * @sizeOf(TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(ErrorPropagation) +
-            self.error_contexts.items.len * @sizeOf(ErrorContext) +
             self.node_refs.items.len * @sizeOf(GlobalNodeId) +
             self.type_refs.items.len * @sizeOf(GlobalTypeId) +
             self.binding_refs.items.len * @sizeOf(GlobalBindingId) +
@@ -2190,12 +2161,10 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             defer graph.deinit(a);
             const original: Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } };
             const propagation = std.mem.zeroes(ErrorPropagation);
-            const context = std.mem.zeroes(ErrorContext);
             const conformance = std.mem.zeroes(ContractConformance);
             const variant = std.mem.zeroes(ChoiceVariant);
             try graph.functions.append(a, original);
             try graph.error_propagations.append(a, propagation);
-            try graph.error_contexts.append(a, context);
             try graph.contract_conformances.append(a, conformance);
             const operation = std.mem.zeroes(ContractOperationBinding);
             try graph.contract_operation_bindings.append(a, operation);
@@ -2209,7 +2178,6 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
                 outer.rollback();
                 std.debug.assert(std.meta.eql(original, graph.function(@enumFromInt(0))));
                 std.debug.assert(std.meta.eql(propagation, graph.error_propagations.items[0]));
-                std.debug.assert(std.meta.eql(context, graph.error_contexts.items[0]));
                 std.debug.assert(std.meta.eql(conformance, graph.contract_conformances.items[0]));
                 std.debug.assert(std.meta.eql(operation, graph.contract_operation_bindings.items[0]));
                 std.debug.assert(std.meta.eql(variant, graph.variants.items[0]));
@@ -2226,9 +2194,6 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             var updated_propagation = propagation;
             updated_propagation.ok_value_field_index = 1;
             try graph.setErrorPropagation(a, @enumFromInt(0), updated_propagation);
-            var updated_context = context;
-            updated_context.ok_value_field_index = 2;
-            try graph.setErrorContext(a, @enumFromInt(0), updated_context);
             var validated = conformance;
             try graph.completeOperationBinding(a, @enumFromInt(0), @enumFromInt(0));
             validated.operation_bindings = .{ .start = 0, .len = 1 };
@@ -2245,7 +2210,6 @@ test "function signatures bodies and propagated cleanup restore one enclosing de
             outer.rollback();
             try std.testing.expectEqualDeep(original, graph.function(@enumFromInt(0)));
             try std.testing.expectEqualDeep(propagation, graph.error_propagations.items[0]);
-            try std.testing.expectEqualDeep(context, graph.error_contexts.items[0]);
             try std.testing.expectEqualDeep(conformance, graph.contract_conformances.items[0]);
             try std.testing.expectEqualDeep(operation, graph.contract_operation_bindings.items[0]);
             try std.testing.expectEqualDeep(variant, graph.variants.items[0]);

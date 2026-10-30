@@ -13,56 +13,36 @@ decimal_digit_byte_i32 := (.digit: Int32) -> (.byte: UInt8) {
 }
 
 format_unsigned_decimal_into_u64 := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .out          : $&String,
-    .value        : UInt64,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .out: $&String, .value: UInt64, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 format_unsigned_decimal_into_u32 := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .out          : $&String,
-    .value        : UInt32,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .out: $&String, .value: UInt32, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 format_signed_decimal_into_i64 := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .out          : $&String,
-    .value        : Int64,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .out: $&String, .value: Int64, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 format_signed_decimal_into_i32 := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .out          : $&String,
-    .value        : Int32,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .out: $&String, .value: Int32, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 _format_text_into := #(.Provider: Type: Allocator) (
-    .out          : $&String,
-    .value        : StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .out: $&String, .value: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -70,9 +50,8 @@ _format_text_into := #(.Provider: Type: Allocator) (
 }
 
 _format_bool_into := #(.Provider: Type: Allocator) (
-    .out: $&String, .value: Bool, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .out: $&String, .value: Bool, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -83,10 +62,9 @@ _format_bool_into := #(.Provider: Type: Allocator) (
     }
 }
 
-_format_text_owned := #(.Provider: Type: Allocator) (
-    .value: StringView, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
+_format_text_owned := #(.Provider: Type: Allocator) (.value: StringView, .allocator: $&Provider) -> (
+    .result : Errable#(String, (..out_of_memory))
+) {
 
     assume allocator
 
@@ -96,10 +74,9 @@ _format_text_owned := #(.Provider: Type: Allocator) (
     result = ..ok ~out
 }
 
-_format_bool_owned := #(.Provider: Type: Allocator) (
-    .value: Bool, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
+_format_bool_owned := #(.Provider: Type: Allocator) (.value: Bool, .allocator: $&Provider) -> (
+    .result : Errable#(String, (..out_of_memory))
+) {
 
     assume allocator
 
@@ -110,9 +87,8 @@ _format_bool_owned := #(.Provider: Type: Allocator) (
 }
 
 _format_integer_into := #(.t: Type: Int, .Provider: Type: Allocator) (
-    .out: $&String, .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .out: $&String, .value: t, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     encoded ::= _decimal_encode#(.t: t)(.value = value)
 
@@ -120,9 +96,8 @@ _format_integer_into := #(.t: Type: Int, .Provider: Type: Allocator) (
 }
 
 _format_integer_owned := #(.t: Type: Int, .Provider: Type: Allocator) (
-    .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .value: t, .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     encoded ::= _decimal_encode#(.t: t)(.value = value)
@@ -132,9 +107,8 @@ _format_integer_owned := #(.t: Type: Int, .Provider: Type: Allocator) (
 }
 
 _format_float_into := #(.t: Type: Float, .Provider: Type: Allocator) (
-    .out: $&String, .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .out: $&String, .value: t, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     encoded ::= _float_encode(.value = value)
 
@@ -142,9 +116,8 @@ _format_float_into := #(.t: Type: Float, .Provider: Type: Allocator) (
 }
 
 _format_float_owned := #(.t: Type: Float, .Provider: Type: Allocator) (
-    .value: t, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .value: t, .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     encoded ::= _float_encode(.value = value)

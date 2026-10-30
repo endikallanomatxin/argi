@@ -2,7 +2,7 @@ python := import ("python")
 numpy := import ("python/numpy")
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     interpreter ::= python.Python(.ffi = system.ffi)!!!
     input: [4]Float64 = (1.0, 2.0, 3.0, 4.0)

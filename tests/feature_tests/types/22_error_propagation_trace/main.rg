@@ -1,7 +1,9 @@
 ..test_error
 
 fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..test_error))
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
 ) {
     assume error_tracer
 
@@ -9,7 +11,9 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..test_error))
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
 ) {
     assume error_tracer
 
@@ -22,15 +26,15 @@ main := () -> (.status_code: Int32) {
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
-    if tracer.count != 2 {
+    if tracer.count != 1 {
         status_code = 1
         return
     }
-    if tracer.line != 16 {
+    if tracer.line != 10 {
         status_code = 2
         return
     }
-    if tracer.column != 20 {
+    if tracer.column != 21 {
         status_code = 3
         return
     }
@@ -63,12 +67,10 @@ implement ErrorTracer#(ProbeTracer) (
 
     .reset_context = (.self: $&ProbeTracer) -> () { self&.count = 0 }
 
-    .report = (
-        .self         : $&ProbeTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report = (.self: $&ProbeTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
+
         result = ..ok Void()
     }
 )

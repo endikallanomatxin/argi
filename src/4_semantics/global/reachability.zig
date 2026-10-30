@@ -318,23 +318,9 @@ const State = struct {
                 try self.walkNode(value.nullable_value);
                 try self.walkNode(value.fallback_value);
             },
-            .testing_expect_error => |id| {
-                const value = self.graph.testing_expect_errors.items[@intFromEnum(id)];
-                try self.walkNode(value.expected_reason);
-                try self.walkNode(value.actual_result);
-                if (value.test_fail_input) |input| try self.walkNode(input);
-                try self.includeFunction(value.test_fail_function);
-            },
             .error_propagation => |id| {
                 const value = self.graph.error_propagations.items[@intFromEnum(id)];
                 try self.walkNode(value.errable_value);
-                for (self.graph.node_refs.items[value.cleanup_nodes.start..][0..value.cleanup_nodes.len]) |cleanup|
-                    try self.walkNode(cleanup);
-            },
-            .error_context => |id| {
-                const value = self.graph.error_contexts.items[@intFromEnum(id)];
-                try self.walkNode(value.errable_value);
-                try self.walkNode(value.context);
                 for (self.graph.node_refs.items[value.cleanup_nodes.start..][0..value.cleanup_nodes.len]) |cleanup|
                     try self.walkNode(cleanup);
             },
@@ -529,15 +515,16 @@ test "runtime support follows metadata independently of declaration spelling" {
     // Metadata-only synthetic functions suffice to exercise that boundary.
     try graph.functions.appendSlice(a, &.{
         .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } },
-        .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_error_context_view = true } },
-        .{ .declaration = @enumFromInt(2), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_error_context_text = true } },
+        .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } },
+        .{ .declaration = @enumFromInt(2), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } },
         .{ .declaration = @enumFromInt(3), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_source_location_resolver = true } },
     });
     var retained = FunctionSet.init(a);
     defer retained.deinit();
     try includeRuntimeSupport(&graph, &retained);
     try std.testing.expect(!retained.contains(@enumFromInt(0)));
-    for (1..4) |index| try std.testing.expect(retained.contains(@enumFromInt(index)));
+    for (0..3) |index| try std.testing.expect(!retained.contains(@enumFromInt(index)));
+    try std.testing.expect(retained.contains(@enumFromInt(3)));
 }
 
 test "reachability revisits completed bodies after pool growth and releases failed traversals" {

@@ -36,13 +36,9 @@ page_allocator_round_up := (.size: UIntNative, .alignment: UIntNative) -> (.roun
 }
 
 implement Allocator#(PageAllocator) (
-    .allocate = (
-        .self         : $&PageAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&PageAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
 
         mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
 

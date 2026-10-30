@@ -17,7 +17,7 @@ implement OrderPolicy#(Descending, Int32) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     integers ::= Int32OrderPolicy()
     check_order(.order = &integers, .left = -2147483648, .right = 2147483647)
     native ::= UIntNativeOrderPolicy()

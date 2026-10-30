@@ -856,8 +856,8 @@ fn operandEnd(tag: Tag) bool {
 
 fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .comment) return true;
-    if (left == .arrow and right == .bang) return true;
-    if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
+    if (left == .arrow and (right == .bang or right == .double_bang)) return true;
+    if ((left == .bang or left == .double_bang) and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
     if (right == .semicolon) return false;
     if (left == .semicolon) return true;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
@@ -1556,4 +1556,8 @@ test "formatter retains once with a named input signature across whitespace" {
         "Args := (.value:Int32)\nacquire := once\n\nArgs -> (.result:Int32){result=value}\n",
         "Args := (.value: Int32)\n\nacquire := once Args -> (.result: Int32) { result = value }\n",
     );
+}
+
+test "formatter keeps traced output markers distinct from context operators" {
+    try expectFormat("f:=()->!!Int32{result=..ok 1}\n", "f := () -> !!Int32 { result = ..ok 1 }\n");
 }

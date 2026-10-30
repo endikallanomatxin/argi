@@ -8,7 +8,7 @@ implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () { drops = drops
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= CAllocator(.ffi = ffi)
     {
         memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = $&allocator))

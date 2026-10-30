@@ -1,28 +1,22 @@
 owned := import ("../../_support/owned_foreign_handle")
 ..operation_failed
 
-_return_early := (.ffi: $&ForeignFunctionInterface, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .value : CInt
-) {
-    assume error_tracer
+_return_early := (.ffi: $&ForeignFunctionInterface) -> (.value: CInt) {
+
     assume ffi
     handle ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 17))
     value = owned.read(.self = &handle)
     return
 }
 
-_fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Void, .reasons: (..operation_failed))
-) {
-    assume error_tracer
+_fail := () -> (.result: Errable#(.t: Void, .reasons: (..operation_failed))) {
 
     result = ..error(.reason = ..operation_failed)
 }
 
-_propagate_failure := (.ffi: $&ForeignFunctionInterface, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+_propagate_failure := (.ffi: $&ForeignFunctionInterface) -> (
     .result : Errable#(.t: Void, .reasons: (..operation_failed))
 ) {
-    assume error_tracer
 
     assume ffi
     handle ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 23))
@@ -31,7 +25,7 @@ _propagate_failure := (.ffi: $&ForeignFunctionInterface, .error_tracer: $&Virtua
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     {
         first ::= unwrap_or_abort(.value = owned.OwnedHandle(.value = 42))

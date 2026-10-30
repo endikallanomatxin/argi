@@ -12,9 +12,7 @@ implement OpenState#(Retryable) (
 
 implement Closeable#(Latch) (
     .Result         : Type = Void
-    .close_resource = (.self: $&Latch, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Void
-    ) {
+    .close_resource = (.self: $&Latch) -> (.result: Void) {
         self&.open = false
         result = Void()
     }
@@ -22,10 +20,7 @@ implement Closeable#(Latch) (
 
 implement Closeable#(Retryable) (
     .Result         : Type = Errable#(Void, (..busy))
-    .close_resource = (.self: $&Retryable, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Result
-    ) {
-        assume error_tracer
+    .close_resource = (.self: $&Retryable) -> (.result: Result) {
 
         if self&.busy {
             result = ..error(.reason = ..busy)
@@ -36,10 +31,9 @@ implement Closeable#(Retryable) (
     }
 )
 
-finish := #(.Resource: Type: Closeable#(Resource)) (
-    .self: $&Resource, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Closeable#(Resource).Result) {
-    assume error_tracer
+finish := #(.Resource: Type: Closeable#(Resource)) (.self: $&Resource) -> (
+    .result : Closeable#(Resource).Result
+) {
 
     result = ~close(.self = self)
 }
@@ -49,7 +43,7 @@ resource_open := #(.Resource: Type: OpenState#(Resource)) (.self: &Resource) -> 
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     latch ::= Latch(.open = true)
     retryable ::= Retryable(.open = true, .busy = true)
     finish(.self = $&latch)

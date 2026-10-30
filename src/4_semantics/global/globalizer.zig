@@ -31,9 +31,7 @@ pub const Offsets = struct {
     virtualize_base: u32,
     virtual_call_base: u32,
     nullable_unwrap_base: u32,
-    testing_expect_error_base: u32,
     error_propagation_base: u32,
-    error_context_base: u32,
     node_ref_base: u32,
     type_ref_base: u32,
     binding_ref_base: u32,
@@ -159,9 +157,7 @@ fn appendModule(
         .virtualize_base = try baseFor(result.virtualizes.items.len, module.semantic.virtualizes.items.len),
         .virtual_call_base = try baseFor(result.virtual_calls.items.len, module.semantic.virtual_calls.items.len),
         .nullable_unwrap_base = try baseFor(result.nullable_unwraps.items.len, module.semantic.nullable_unwraps.items.len),
-        .testing_expect_error_base = try baseFor(result.testing_expect_errors.items.len, module.semantic.testing_expect_errors.items.len),
         .error_propagation_base = try baseFor(result.error_propagations.items.len, module.semantic.error_propagations.items.len),
-        .error_context_base = try baseFor(result.error_contexts.items.len, module.semantic.error_contexts.items.len),
         .node_ref_base = try baseFor(result.node_refs.items.len, module.semantic.node_refs.items.len),
         .type_ref_base = try baseFor(result.type_refs.items.len, module.semantic.type_refs.items.len),
         .binding_ref_base = try baseFor(result.binding_refs.items.len, module.semantic.binding_refs.items.len),
@@ -321,7 +317,7 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
         .pointer => |item| .{ .pointer = .{ .child = globalType(o, item.child), .mutability = item.mutability } },
         .array => |item| .{ .array = .{ .length = item.length, .element = globalType(o, item.element) } },
         .nullable => |id| .{ .nullable = globalType(o, id) },
-        .inferred_errable => |id| .{ .inferred_errable = globalType(o, id) },
+        .inferred_errable => |id| .{ .inferred_errable = .{ .child = globalType(o, id.child), .traced = id.traced } },
         .inferred_choice => |item| .{ .inferred_choice = .{
             .identity = item.identity,
             .kind = item.kind,
@@ -482,39 +478,9 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .some_value_field_index = value.some_value_field_index,
         .result_type = globalType(o, value.result_type),
     });
-    for (storage.testing_expect_errors.items) |value| try result.testing_expect_errors.append(allocator, .{
-        .expected_reason = globalNode(o, value.expected_reason),
-        .actual_result = globalNode(o, value.actual_result),
-        .actual_error_variant = globalVariant(o, value.actual_error_variant),
-        .actual_error_payload_type = globalType(o, value.actual_error_payload_type),
-        .actual_reason_field_index = value.actual_reason_field_index,
-        .result_type = globalType(o, value.result_type),
-        .result_ok_variant = globalVariant(o, value.result_ok_variant),
-        .test_fail_function = globalFunction(o, value.test_fail_function),
-        .test_fail_input = if (value.test_fail_input) |input| globalNode(o, input) else null,
-        .expected_reason_name = if (value.expected_reason_name) |name| try relocateString(module, name, o.string_base) else null,
-        .diagnostic_line = value.diagnostic_line,
-        .diagnostic_column = value.diagnostic_column,
-        .diagnostic_source_line = try relocateString(module, value.diagnostic_source_line, o.string_base),
-    });
+
     for (storage.error_propagations.items) |value| try result.error_propagations.append(allocator, .{
         .errable_value = globalNode(o, value.errable_value),
-        .cleanup_nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.cleanup_nodes),
-        .ok_variant = globalVariant(o, value.ok_variant),
-        .ok_value_field_index = value.ok_value_field_index,
-        .error_variant = globalVariant(o, value.error_variant),
-        .propagated_errable_type = globalType(o, value.propagated_errable_type),
-        .propagated_error_variant = globalVariant(o, value.propagated_error_variant),
-        .ok_payload_type = globalType(o, value.ok_payload_type),
-        .error_payload_type = globalType(o, value.error_payload_type),
-        .propagated_error_payload_type = globalType(o, value.propagated_error_payload_type),
-        .diagnostic_line = value.diagnostic_line,
-        .diagnostic_column = value.diagnostic_column,
-        .diagnostic_source_line = try relocateString(module, value.diagnostic_source_line, o.string_base),
-    });
-    for (storage.error_contexts.items) |value| try result.error_contexts.append(allocator, .{
-        .errable_value = globalNode(o, value.errable_value),
-        .context = globalNode(o, value.context),
         .cleanup_nodes = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.cleanup_nodes),
         .ok_variant = globalVariant(o, value.ok_variant),
         .ok_value_field_index = value.ok_value_field_index,
@@ -606,9 +572,7 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
                 .payload_type = globalType(o, value.payload_type),
             } },
             .nullable_unwrap_or => |id| .{ .nullable_unwrap_or = globalNullableUnwrap(o, id) },
-            .testing_expect_error => |id| .{ .testing_expect_error = globalTestingExpectError(o, id) },
             .error_propagation => |id| .{ .error_propagation = globalErrorPropagation(o, id) },
-            .error_context => |id| .{ .error_context = globalErrorContext(o, id) },
             .array_literal => |value| .{ .array_literal = .{
                 .elements = relocatePoolRange(global_sg.GlobalNodeId, o.node_ref_base, value.elements),
                 .element_type = globalType(o, value.element_type),
@@ -746,14 +710,8 @@ fn globalVirtualCall(o: Offsets, id: module_entities.ModuleVirtualCallId) global
 fn globalNullableUnwrap(o: Offsets, id: module_entities.ModuleNullableUnwrapId) global_sg.GlobalNullableUnwrapId {
     return @enumFromInt(o.nullable_unwrap_base + @intFromEnum(id));
 }
-fn globalTestingExpectError(o: Offsets, id: module_entities.ModuleTestingExpectErrorId) global_sg.GlobalTestingExpectErrorId {
-    return @enumFromInt(o.testing_expect_error_base + @intFromEnum(id));
-}
 fn globalErrorPropagation(o: Offsets, id: module_entities.ModuleErrorPropagationId) global_sg.GlobalErrorPropagationId {
     return @enumFromInt(o.error_propagation_base + @intFromEnum(id));
-}
-fn globalErrorContext(o: Offsets, id: module_entities.ModuleErrorContextId) global_sg.GlobalErrorContextId {
-    return @enumFromInt(o.error_context_base + @intFromEnum(id));
 }
 
 fn baseFor(existing: usize, additional: usize) !u32 {

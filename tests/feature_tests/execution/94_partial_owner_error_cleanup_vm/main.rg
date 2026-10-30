@@ -17,7 +17,11 @@ implement Deinit#(Parent) (
 )
 
 fail := (.tracer: $&Virtual#(ErrorTracer), .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int32, (..partial_construction_failed))
+    .result : Errable#(
+        Int32,
+        (..partial_construction_failed),
+        .error_type : ErrorWithTrace#((..partial_construction_failed))
+    )
 ) {
     assume error_tracer
 
@@ -28,7 +32,13 @@ build_partial := (
     .counter      : $&Counter,
     .tracer       : $&Virtual#(ErrorTracer),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..partial_construction_failed))) {
+) -> (
+    .result : Errable#(
+        Int32,
+        (..partial_construction_failed),
+        .error_type : ErrorWithTrace#((..partial_construction_failed))
+    )
+) {
     assume error_tracer
 
     parent :: Parent

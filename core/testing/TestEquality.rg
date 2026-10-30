@@ -5,7 +5,7 @@ TestEquality#(.Value: Type): Contract = (
         .actual       : Value,
         .message      : StringView,
         .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..test_failed)))
+    ) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed))))
 )
 
 implement#(.Value: Type) TestEquality#(Value) (.check_equal = _assert_equal_generic)
@@ -15,7 +15,7 @@ expect_equal := #(.Value: Type: TestEquality#(Value)) (
     .actual       : Value,
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     result = TestEquality#(
@@ -98,7 +98,7 @@ expect_equal_strings := #(.Value: Type: _TestTextEquality#(Value)) (
     .actual       : Value,
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     result = expect_equal(.expected = expected, .actual = actual, .message = message)

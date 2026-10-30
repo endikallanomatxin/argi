@@ -1,9 +1,6 @@
 ..missing
 
-attempt := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..missing))
-) {
-    assume error_tracer
+attempt := (.fail: Bool) -> (.result: Errable#(.t: Int32, .reasons: (..missing))) {
 
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
@@ -31,7 +28,7 @@ try_greater := #(.t: Type) (.input: Errable#(.t: t, .reasons: (..missing)), .tha
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     first ::= attempt(.fail = false) handle error, value {
         match error.reason { ..missing { value = 9 } }
     }

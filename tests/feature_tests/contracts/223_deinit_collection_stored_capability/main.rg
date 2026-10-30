@@ -12,10 +12,8 @@ observe := (.self: $&Owner) -> () {
 
 implement Deinit#(Owner) (.deinit = observe)
 
-create := (
-    .counter: $&Counter, .allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)
-) -> () {
-    assume error_tracer
+create := (.counter: $&Counter, .allocator: $&PageAllocator) -> () {
+
     assume counter
     assume allocator
     values ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 1))
@@ -24,7 +22,7 @@ create := (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     counter ::= Counter(0)
     create($&counter, system.page_allocator)
     if counter.value != 3 { abort }

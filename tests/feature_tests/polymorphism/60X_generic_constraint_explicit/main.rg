@@ -11,7 +11,7 @@ accept := #(.t: Type: ImplicitlyCopyable) (.value: &t, .flag: Bool = true) -> (.
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     value :: Owned = (.value = 7)
     accept#(.t: Owned)(.value = &value)
 }

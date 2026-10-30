@@ -1,7 +1,5 @@
-sum_iterable := #(.T: Type: Iterable#(T)) (.items: &T, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .sum : Int32
-) {
-    assume error_tracer
+sum_iterable := #(.T: Type: Iterable#(T)) (.items: &T) -> (.sum: Int32) {
+
     iterator ::= to_iterator(.value = items)
     sum = 0
 
@@ -12,7 +10,7 @@ sum_iterable := #(.T: Type: Iterable#(T)) (.items: &T, .error_tracer: $&Virtual#
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     values: Array#(.n = 3, .t: Int32) = (3, 4, 5)

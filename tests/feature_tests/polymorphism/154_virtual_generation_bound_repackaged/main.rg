@@ -20,13 +20,9 @@ _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?
     result = ..none
 }
 
-apply_edit := (
-    .editor       : &Virtual#(SimpleEditor),
-    .target       : $&Int32,
-    .mode         : Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
+apply_edit := (.editor: &Virtual#(SimpleEditor), .target: $&Int32, .mode: Int32) -> (
+    .result : Errable#(?Int32, (..failed))
+) {
 
     pending ::= edit(editor, target, mode)
 
@@ -34,7 +30,7 @@ apply_edit := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target

@@ -8,8 +8,8 @@ implement OrderPolicy#(Descending, Int32) (
 
 check_sorted := #(
     .policy: Type: OrderPolicy#(policy, Int32), .Collection: Type: Indexable#(.Item: Int32)
-) (.self: &Collection, .order: &policy, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+) (.self: &Collection, .order: &policy) -> () {
+
     count ::= length(.self = self).count
     index :: UIntNative = 1
     while index < count {
@@ -25,7 +25,7 @@ check_sorted := #(
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= system.page_allocator
     order ::= Int32OrderPolicy()
     descending ::= Descending()

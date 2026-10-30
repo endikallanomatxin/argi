@@ -1,8 +1,7 @@
 -- Native copies write initialized binary storage; only text results are decoded.
 _native_byte_buffer := #(.Provider: Type: Allocator) (
-    .count: UIntNative, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .count: UIntNative, .allocator: $&Provider
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     bytes ::= DynamicArray#(UInt8)(.capacity = count)!
@@ -15,7 +14,7 @@ _native_byte_buffer := #(.Provider: Type: Allocator) (
 }
 
 _native_buffer_address := (.bytes: MutableArrayView#(UInt8)) -> (.address: RawPointer#(UInt8)) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     value :: UIntNative = 0
     if length(&bytes).count != 0 {
         value = data(&bytes).pointer | convert#(.to: UIntNative)(_)
@@ -26,9 +25,8 @@ _native_buffer_address := (.bytes: MutableArrayView#(UInt8)) -> (.address: RawPo
 -- The native text-copy protocol promises strict UTF-8; invalid output is a
 -- violated native invariant, while allocation failure remains recoverable.
 _native_text := #(.Provider: Type: Allocator) (
-    .bytes: ArrayView#(UInt8), .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .bytes: ArrayView#(UInt8), .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     match string_from_bytes(.bytes = bytes) {

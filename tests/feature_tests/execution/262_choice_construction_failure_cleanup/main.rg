@@ -24,18 +24,12 @@ implement Deinit#(Choice) (
     }
 )
 
-fail_resource := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Resource, (..stop))
-) {
-    assume error_tracer
+fail_resource := (.fail: Bool) -> (.result: Errable#(Resource, (..stop))) {
 
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok Resource(.id = 14) }
 }
 
-build_choice := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Choice, (..stop))
-) {
-    assume error_tracer
+build_choice := (.fail: Bool) -> (.result: Errable#(Choice, (..stop))) {
 
     value :: Choice = ..pair(
         .left  = Resource(.id = 7)
@@ -50,18 +44,12 @@ consume := (.left: Resource, .right: Resource) -> (.result: Int32) {
     result = 42
 }
 
-build_call := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int32, (..stop))
-) {
-    assume error_tracer
+build_call := (.fail: Bool) -> (.result: Errable#(Int32, (..stop))) {
 
     result = ..ok consume(.left = Resource(.id = 7), .right = fail_resource(.fail = fail)!)
 }
 
-build_array := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int32, (..stop))
-) {
-    assume error_tracer
+build_array := (.fail: Bool) -> (.result: Errable#(Int32, (..stop))) {
 
     values :: [2]Resource = (Resource(.id = 7), fail_resource(.fail = fail)!)
     result = ..ok 42
@@ -83,19 +71,14 @@ implement Consumer#(State) (
     }
 )
 
-select_handle := (.handle: $&Virtual#(Consumer)) -> (
-    .result : $&Virtual#(Consumer)
-) {
+select_handle := (.handle: $&Virtual#(Consumer)) -> (.result: $&Virtual#(Consumer)) {
     handles = handles + 1
     result = handle
 }
 
-build_virtual := (
-    .handle       : $&Virtual#(Consumer),
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) {
-    assume error_tracer
+build_virtual := (.handle: $&Virtual#(Consumer), .fail: Bool) -> (
+    .result : Errable#(Int32, (..stop))
+) {
 
     result = ..ok Consumer#(
     ).consume(
@@ -106,7 +89,7 @@ build_virtual := (
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     build_choice(.fail = true) handle error {
         match error.reason { ..stop {} }
     }

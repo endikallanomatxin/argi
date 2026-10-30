@@ -448,6 +448,14 @@ test "REPL standard prelude supplies output and persistent allocation across res
     };
     try session.submitStatements("print(\"hola\")");
     try std.testing.expectEqualStrings("hola\n", output.written());
+    try session.submit("plain_error := () -> !Int32 { result = ..error (.reason = ..invalid_input) }");
+    try session.submit("trace_boundary := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 { assume error_tracer; value ::= plain_error()!! \"interactive boundary\"; result = ..ok value }");
+    try session.submitStatements("failure ::= trace_boundary()");
+    try session.submitStatements("match failure { ..ok _ { abort } ..error error { if error.reason != ..invalid_input { abort } } }");
+    // A rejected continuation must retain both the earlier code and its tracer.
+    try session.submit("plain_output := () -> !Int32 { value ::= trace_boundary(.error_tracer = $&noop_error_tracer)!; result = ..ok value }");
+    try std.testing.expectError(error.Reported, session.submitStatements("plain_output()"));
+    try session.submitStatements("match trace_boundary() { ..ok _ { abort } ..error error { if error.reason != ..invalid_input { abort } } }");
     session.submitStatements("text ::= unwrap_or_abort(.value = String(.length = 3))") catch |err| {
         try session.diagnostics.dump();
         return err;

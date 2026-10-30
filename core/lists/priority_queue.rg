@@ -11,8 +11,6 @@ PriorityQueueInitArgs: Type = #(
     .order     : &order,
     .allocator : $&Provider,
     .capacity  : UIntNative  = 8
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
@@ -21,7 +19,6 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allo
     .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
 
     .init = PriorityQueueInitArgs#(t, order, Provider) -> (.result: Result) {
-        assume error_tracer
 
         _init_order ::= order
         _init_allocator ::= allocator
@@ -54,13 +51,9 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) CollectionLength#(
 
 _queue_push_priority_queue := #(
     .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
-) (
-    .self         : $&PriorityQueue#(.t: t, .order: order),
-    .value        : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..out_of_memory)) = ..ok Void()) {
-    assume error_tracer
+) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Provider) -> (
+    .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
+) {
 
     assume allocator
     owned ::= ~value
@@ -102,9 +95,9 @@ peek_reference := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
 }
 
 _queue_pop_priority_queue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
-    .self: $&PriorityQueue#(.t: t, .order: order), .error_tracer: $&Virtual#(ErrorTracer)
+    .self : $&PriorityQueue#(.t: t, .order: order)
 ) -> (.result: ?t = ..none) {
-    assume error_tracer
+
     count ::= length(&self&._items).count
 
     if count == 0 { return }
@@ -153,7 +146,7 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allo
 peek := #(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)) (
     .self : &PriorityQueue#(.t: t, .order: order)
 ) -> (.value: ?t = ..none) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     if length(&self&._items).count == 0 { return }
     value = ..some(
         .value = unwrap_or_abort(.value = get_reference(&self&._items, .index = 0))&

@@ -9,7 +9,7 @@ outer := #(.t: Type) (.slot: $&t, .value: t) -> () {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     source_result ::= allocate_bytes(.self = system.page_allocator, .size = 1)
     slot_result ::= allocate_bytes(
         .self = system.page_allocator, .size = size_of(.type = Allocation)

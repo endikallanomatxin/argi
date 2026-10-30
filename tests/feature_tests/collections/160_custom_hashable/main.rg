@@ -35,10 +35,8 @@ implement HashPolicy#(CollisionPolicy, Key) (
     }
 )
 
-check_custom := #(.Provider: Type: Allocator) (
-    .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
-) -> () {
-    assume error_tracer
+check_custom := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> () {
+
     assume allocator
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Key, .value: Int32)(.policy = CollisionPolicy())
@@ -52,7 +50,7 @@ check_custom := #(.Provider: Type: Allocator) (
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator := system.page_allocator
     check_custom(.allocator = allocator)
     key: Key = (.id = 7)

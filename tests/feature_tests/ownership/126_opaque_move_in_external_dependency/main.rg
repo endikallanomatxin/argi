@@ -5,7 +5,7 @@ Borrowing := (
 )
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     external :: Int32 = 7
     value :: Borrowing = (.reference = &external)

@@ -15,7 +15,7 @@ replace := (.target: $&Borrow, .resource: &Resource) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter)

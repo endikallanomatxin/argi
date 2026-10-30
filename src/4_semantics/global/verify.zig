@@ -151,9 +151,7 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         try require(graph.virtual_registries.items[@intFromEnum(value.safety_methods)].receiver_input_index == value.self_input_index);
     }
     for (graph.nullable_unwraps.items) |value| try payload.nullableUnwrap(graph_mod.Ids, value, bounds);
-    for (graph.testing_expect_errors.items) |value| try payload.testingExpectError(graph_mod.Ids, value, bounds);
     for (graph.error_propagations.items) |value| try payload.errorPropagation(graph_mod.Ids, value, bounds);
-    for (graph.error_contexts.items) |value| try payload.errorContext(graph_mod.Ids, value, bounds);
     for (graph.nodes.items) |value| try payload.node(graph_mod.Ids, value, bounds);
 
     for (graph.node_refs.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
@@ -397,9 +395,7 @@ fn makeBounds(graph: *const graph_mod.GlobalSemanticGraph) payload.Bounds {
         .virtualizes = graph.virtualizes.items.len,
         .virtual_calls = graph.virtual_calls.items.len,
         .nullable_unwraps = graph.nullable_unwraps.items.len,
-        .testing_expect_errors = graph.testing_expect_errors.items.len,
         .error_propagations = graph.error_propagations.items.len,
-        .error_contexts = graph.error_contexts.items.len,
         .node_refs = graph.node_refs.items.len,
         .type_refs = graph.type_refs.items.len,
         .binding_refs = graph.binding_refs.items.len,
@@ -433,7 +429,7 @@ test "global verifier rejects unmaterialized compact sugar types" {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
     try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .inferred_errable = .{ .child = @enumFromInt(0) } });
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGlobal(&graph));
 }
 

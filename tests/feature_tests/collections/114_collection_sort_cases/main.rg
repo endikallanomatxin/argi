@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     values: [7]Int32 = (-99, -99, -99, -99, -99, -99, -99)
     borrowed_view ::= view(.self = $&values)
     order ::= Int32OrderPolicy()

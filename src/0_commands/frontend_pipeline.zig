@@ -370,20 +370,18 @@ pub const FrontendPipeline = struct {
         else
             "assume error_tracer ::= $&noop_error_tracer";
         const call_args = if (takes_system) ".system = system" else "";
-        // Test diagnostics must finish while the entry's tracer and terminal
-        // are alive. Replace the reported trace with a program-lifetime noop
-        // trace before returning the unchanged reason to the C status wrapper.
+        // Report while the entry's resources are alive, then explicitly return
+        // only the reason to the host status adapter. No trace loan escapes.
         const call = if (is_test)
             try std.fmt.allocPrint(self.allocator, "test_result := {s}({s})\n" ++
+                "    result = ..ok ()\n" ++
                 "    match test_result {{\n" ++
                 "        ..ok _ {{}}\n" ++
                 "        ..error $&error {{\n" ++
-                "            assume error_tracer ::= $&noop_error_tracer\n" ++
-                "            report_trace(.tracer = error&.tracer, .writer = $&terminal&.stderr)\n" ++
-                "            error&.tracer = $&noop_error_tracer\n" ++
+                "            report_error(.err = &error&, .writer = $&terminal&.stderr)\n" ++
+                "            error_result(.reason = error&.reason)!\n" ++
                 "        }}\n" ++
-                "    }}\n" ++
-                "    result = ~test_result", .{ target, call_args })
+                "    }}", .{ target, call_args })
         else if (returns_status)
             try std.fmt.allocPrint(self.allocator, "{s} = {s}({s})", .{ result, target, call_args })
         else

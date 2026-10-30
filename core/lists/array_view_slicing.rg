@@ -1,12 +1,8 @@
 -- A subrange is justified by an existing view, not by an arbitrary pointer
 -- and claimed length. Subtraction after checking start avoids range-sum wrap.
 _mutable_array_view_slice := #(.t: Type) (
-    .self         : &MutableArrayView#(.t: t),
-    .start        : UIntNative,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &MutableArrayView#(.t: t), .start: UIntNative, .count: UIntNative
 ) -> (.result: Errable#(MutableArrayView#(.t: t), (..out_of_bounds))) {
-    assume error_tracer
 
     if start > self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -31,12 +27,8 @@ _mutable_array_view_slice := #(.t: Type) (
 }
 
 _array_view_slice := #(.t: Type) (
-    .self         : &ArrayView#(.t: t),
-    .start        : UIntNative,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &ArrayView#(.t: t), .start: UIntNative, .count: UIntNative
 ) -> (.result: Errable#(ArrayView#(.t: t), (..out_of_bounds))) {
-    assume error_tracer
 
     if start > self&._length {
         result = ..error(.reason = ..out_of_bounds)

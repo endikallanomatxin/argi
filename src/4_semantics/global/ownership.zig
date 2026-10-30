@@ -411,21 +411,10 @@ pub const Resolver = struct {
             },
             .switch_statement => |index| try self.collectDefaultTemporaries(self.graph.switches.items[@intFromEnum(index)].expression, output),
             .error_propagation => |index| try self.collectDefaultTemporaries(self.graph.error_propagations.items[@intFromEnum(index)].errable_value, output),
-            .error_context => |index| {
-                const value = self.graph.error_contexts.items[@intFromEnum(index)];
-                try self.collectDefaultTemporaries(value.errable_value, output);
-                try self.collectDefaultTemporaries(value.context, output);
-            },
             .nullable_unwrap_or => |index| {
                 const value = self.graph.nullable_unwraps.items[@intFromEnum(index)];
                 try self.collectDefaultTemporaries(value.nullable_value, output);
                 try self.collectDefaultTemporaries(value.fallback_value, output);
-            },
-            .testing_expect_error => |index| {
-                const value = self.graph.testing_expect_errors.items[@intFromEnum(index)];
-                try self.collectDefaultTemporaries(value.expected_reason, output);
-                try self.collectDefaultTemporaries(value.actual_result, output);
-                if (value.test_fail_input) |input| try self.collectDefaultTemporaries(input, output);
             },
             .virtualize => |index| try self.collectDefaultTemporaries(self.graph.virtualizes.items[@intFromEnum(index)].value, output),
             .virtual_call => |index| {
@@ -457,7 +446,7 @@ pub const Resolver = struct {
     fn mayExitExpression(self: *const Resolver, id: global_sg.GlobalNodeId, depth: usize) bool {
         if (depth > 128) return true;
         return switch (self.graph.node(id).content) {
-            .error_propagation, .error_context, .return_statement, .break_statement, .continue_statement, .testing_expect_error => true,
+            .error_propagation, .return_statement, .break_statement, .continue_statement => true,
             .struct_value_literal => |literal| blk: {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
                     if (self.mayExitExpression(field.value, depth + 1)) break :blk true;
@@ -651,15 +640,6 @@ pub const Resolver = struct {
                 updated.cleanup_nodes = cleanup;
                 try self.graph.setErrorPropagation(self.allocator, propagation_id, updated);
             },
-            .error_context => |context_id| {
-                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
-                try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
-                const cleanup = try self.appendCleanup(active, defers);
-                var updated = context;
-                updated.cleanup_nodes = cleanup;
-                try self.graph.setErrorContext(self.allocator, context_id, updated);
-            },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
             .assignment => |assignment| {
                 const value = try self.bindingReplacement(replacements.contains(node_id), assignment.binding, assignment.value, visible, owner_function, module_index);
@@ -813,12 +793,6 @@ pub const Resolver = struct {
             },
             .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index, loop_cleanup, replacements),
 
-            .testing_expect_error => |expect_id| {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
-                try self.finalizeExpressionCleanup(expect.actual_result, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
-                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers, visible, owner_function, module_index, loop_cleanup, replacements);
-            },
             else => {},
         }
     }
@@ -1453,7 +1427,8 @@ pub const Resolver = struct {
                 const variants = global_types.variants(self.graph, ty) orelse break :blk false;
                 break :blk self.variantsTriviallyCopyable(variants);
             },
-            .nullable, .inferred_errable => |child| self.triviallyCopyable(child),
+            .nullable => |child| self.triviallyCopyable(child),
+            .inferred_errable => |value| self.triviallyCopyable(value.child),
         };
     }
 

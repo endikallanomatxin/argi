@@ -1,7 +1,7 @@
 identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     compiled ::= #run () -> (.result: UInt32) {
         result = scalar_value('🙂')
     }

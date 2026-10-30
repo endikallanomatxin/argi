@@ -100,9 +100,6 @@ const moduleMainParameterized =
     \\main := (.system: System) -> (.status_code: Int32 = 0) {
     \\    assume ffi ::= system.ffi
     \\    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    \\    assume error_tracer ::= FixedSizeErrorTracer(
-    \\        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    \\    ) | to_virtual#(ErrorTracer)($&_) | $&_
     \\    assume writer ::= $&BufferedWriter#(.base_type: File)(
     \\        .base = $&system.terminal&.stdout,
     \\        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
@@ -301,7 +298,7 @@ test "init executable scaffolds basic layout" {
     try expectFileContains(std.testing.io, manifest, "default = \"sample_app\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
     try expectFileContains(std.testing.io, entry_main, "assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n");
-    try expectFileContains(std.testing.io, entry_main, "assume error_tracer ::= FixedSizeErrorTracer(");
+    try expectFileOmits(std.testing.io, entry_main, "error_tracer");
     try expectFileContains(std.testing.io, entry_main, "assume reader ::= $&system.terminal&.stdin");
     try expectFileContains(std.testing.io, entry_main, "assume writer ::= $&BufferedWriter#(.base_type: File)(");
     try expectFileContains(std.testing.io, entry_main, "view($&zeroed#(.t: [4096]UInt8)())");

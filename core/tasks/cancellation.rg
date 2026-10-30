@@ -5,15 +5,13 @@
 CancellationSource := (._state: AtomicUInt32)
 
 CancellationSourceInitArgs: Type = (
-    .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .ffi : $&ForeignFunctionInterface
 )
 
 implement Init#(CancellationSource, CancellationSourceInitArgs) (
     .Result : Type = Errable#(CancellationSource, (..out_of_memory))
 
     .init = CancellationSourceInitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_ffi ::= ffi
 
@@ -52,10 +50,9 @@ implement ImplicitlyCopyable#(CancellationContext) ()
 
 -- The caller supplies a monotonic reading to make checkpoints deterministic
 -- and avoid unnecessary system calls. Cancellation wins when both apply.
-check_cancelled := (
-    .self: CancellationContext, .now: MonotonicInstant, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()) {
-    assume error_tracer
+check_cancelled := (.self: CancellationContext, .now: MonotonicInstant) -> (
+    .result : Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()
+) {
 
     match self.token {
         ..none {}

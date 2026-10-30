@@ -1,13 +1,12 @@
-first := (.source: &Virtual#(ArgumentSource), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+first := (.source: &Virtual#(ArgumentSource)) -> (
     .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
 ) {
-    assume error_tracer
 
     result = get(source, 0)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     args: [2]StringView = ("alpha", "beta")
     source ::= CliArgumentViews(view(&args))
     erased ::= to_virtual#(ArgumentSource)(&source)

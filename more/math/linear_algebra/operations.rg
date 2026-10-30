@@ -1,9 +1,7 @@
 -- Each operation belongs to a capability; allocation is an explicit input.
 DotProduct#(.Left: Type, .Right: Type): Contract = (
     .Result : Type
-    .dot    : (.left: &Left, .right: &Right, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Result
-    )
+    .dot    : (.left: &Left, .right: &Right) -> (.result: Result)
 )
 
 VectorScaling#(.Value: Type): Contract = (
@@ -15,12 +13,7 @@ VectorScaling#(.Value: Type): Contract = (
 AllocatingVectorScaling#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Element : Type
     .Result  : Type
-    .scale   : (
-        .self         : &Value,
-        .factor       : Element,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Result)
+    .scale   : (.self: &Value, .factor: Element, .allocator: $&Provider) -> (.result: Result)
 )
 
 MatrixTransposition#(.Value: Type): Contract = (
@@ -30,39 +23,25 @@ MatrixTransposition#(.Value: Type): Contract = (
 
 AllocatingMatrixTransposition#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result    : Type
-    .transpose : (.self: &Value, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Result
-    )
+    .transpose : (.self: &Value, .allocator: $&Provider) -> (.result: Result)
 )
 
 MatrixAccess#(.Value: Type): Contract = (
     .Element : Type
-    .get     : (
-        .self         : &Value,
-        .row          : UIntNative,
-        .col          : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Element, (..out_of_bounds)))
-    .set : (
-        .self         : $&Value,
-        .row          : UIntNative,
-        .col          : UIntNative,
-        .value        : Element,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..out_of_bounds)))
+    .get     : (.self: &Value, .row: UIntNative, .col: UIntNative) -> (
+        .result : Errable#(Element, (..out_of_bounds))
+    )
+    .set : (.self: $&Value, .row: UIntNative, .col: UIntNative, .value: Element) -> (
+        .result : Errable#(Void, (..out_of_bounds))
+    )
 )
 
 VectorAccess#(.Value: Type): Contract = (
     .Element : Type
-    .get     : (.self: &Value, .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(Element, (..out_of_bounds))
+    .get     : (.self: &Value, .index: UIntNative) -> (.result: Errable#(Element, (..out_of_bounds)))
+    .set     : (.self: $&Value, .index: UIntNative, .value: Element) -> (
+        .result : Errable#(Void, (..out_of_bounds))
     )
-    .set : (
-        .self         : $&Value,
-        .index        : UIntNative,
-        .value        : Element,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..out_of_bounds)))
 )
 
 implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) MatrixTransposition#(

@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     source :: [4]UInt8 = (2, 3, 5, 7)
     target :: [4]UInt8 = zeroed#(.t: [4]UInt8)()
     target_view ::= view($&target)

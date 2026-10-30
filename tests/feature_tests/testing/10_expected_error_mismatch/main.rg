@@ -2,14 +2,18 @@
 ..other_reason
 
 some_fallible_call := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..some_reason, ..other_reason))
+    .result : Errable#(
+        .t          : Int32,
+        .reasons    : (..some_reason, ..other_reason),
+        .error_type : ErrorWithTrace#((..some_reason, ..other_reason))
+    )
 ) {
     assume error_tracer
 
     result = ..error(.reason = ..other_reason)
 }
 
-test expected_error_mismatch := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test expected_error_mismatch := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     call_result := some_fallible_call()

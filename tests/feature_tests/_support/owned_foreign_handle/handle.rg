@@ -34,15 +34,12 @@ OwnedHandleInitArgs: Type = (
     .value : CInt,
     .fail  : Bool                       = false,
     .ffi   : $&ForeignFunctionInterface
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(OwnedHandle, OwnedHandleInitArgs) (
     .Result : Type = Errable#(.t: OwnedHandle, .reasons: (..handle_creation_failed))
 
     .init = OwnedHandleInitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_value ::= ~value
         _init_fail ::= ~fail
@@ -79,15 +76,12 @@ GenericHandle := #(.t: Type) (
 GenericHandleInitArgs2: Type = #(.t: Type) (
     .tag : t,
     .ffi : $&ForeignFunctionInterface
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type) Init#(GenericHandle#(.t: t), GenericHandleInitArgs2#(t)) (
     .Result : Type = Errable#(.t: GenericHandle#(.t: t), .reasons: (..handle_creation_failed))
 
     .init = GenericHandleInitArgs2#(t) -> (.result: Result) {
-        assume error_tracer
 
         _init_tag ::= ~tag
         assume ffi := ~ffi

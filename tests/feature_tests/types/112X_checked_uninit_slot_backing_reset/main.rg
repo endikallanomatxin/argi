@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     arena :: ArenaAllocator
     initialized ::= ArenaAllocator(.allocator = system.page_allocator, .block_size = 64)

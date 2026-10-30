@@ -1,24 +1,16 @@
 ..test_failed
 ..test_skipped
 
-test_fail_impl := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..test_failed))
-) {
-    assume error_tracer
-
+test_fail_impl := () -> (.result: Errable#(Void, (..test_failed))) {
     result = ..error(.reason = ..test_failed)
 }
 
-test_skip_impl := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..test_skipped))
-) {
-    assume error_tracer
-
+test_skip_impl := () -> (.result: Errable#(Void, (..test_skipped))) {
     result = ..error(.reason = ..test_skipped)
 }
 
 fail_c_string := (.message: &CChar, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..test_failed))
+    .result : Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))
 ) {
     assume error_tracer
 
@@ -28,7 +20,7 @@ fail_c_string := (.message: &CChar, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 skip := (.message: &CChar, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..test_skipped))
+    .result : Errable#(Void, (..test_skipped), ErrorWithTrace#((..test_skipped)))
 ) {
     assume error_tracer
 
@@ -38,7 +30,7 @@ skip := (.message: &CChar, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 expect := (.condition: Bool, .message: StringView = "", .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..test_failed))
+    .result : Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))
 ) {
     assume error_tracer
 
@@ -54,7 +46,7 @@ expect := (.condition: Bool, .message: StringView = "", .error_tracer: $&Virtual
 
 _assert_equal_generic := #(.t: Type) (
     .expected: t, .actual: t, .message: StringView = "", .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     if expected == actual {
@@ -67,12 +59,22 @@ _assert_equal_generic := #(.t: Type) (
     )
 }
 
-expect_error := #(.t: Type, .reasons: Type) (
+expect_error := #(.t: Type, .reasons: Type, .error_type: Type) (
     .expected_reason : reasons,
-    .actual_result   : Errable#(t, reasons),
+    .actual_result   : Errable#(t, reasons, error_type),
     .error_tracer    : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
-    fail(.message = "testing.expect_error must be lowered by the compiler")!
+    match actual_result {
+        ..ok ~value {
+            fail(.message = "expect_error failed: expected an error but got success")!
+        }
+        ..error error {
+            if error.reason != expected_reason {
+                fail(.message = "expect_error failed: error reason mismatch")!
+            }
+        }
+    }
+    result = ..ok Void()
 }

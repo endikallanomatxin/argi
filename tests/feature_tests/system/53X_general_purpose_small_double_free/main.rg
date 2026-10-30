@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     first ::= allocate_bytes(.self = $&allocator, .size = 8, .alignment = 8)
     match first {

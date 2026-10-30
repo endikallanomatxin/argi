@@ -12,7 +12,7 @@ _impl_get_Cell := (.self: &Cell, .other: &Int32) -> (.value: &Int32) {
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     cell ::= Cell(42)
     other :: Int32 = 7
     value ::= get(&cell, &other)

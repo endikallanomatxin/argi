@@ -1,10 +1,7 @@
 Source := (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_once: Bool = false)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
-        assume error_tracer
+    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
 
         self&.calls = self&.calls + 1
         if self&.fail_once and self&.position == 1 {
@@ -24,10 +21,9 @@ implement Reader#(Source) (
     }
 )
 
-expect_byte := #(.Stream: Type: Reader#(Stream)) (
-    .reader: $&Stream, .expected: UInt8 = 65, .error_tracer: $&Virtual#(ErrorTracer)
-) -> () {
-    assume error_tracer
+expect_byte := #(.Stream: Type: Reader#(Stream)) (.reader: $&Stream, .expected: UInt8 = 65) -> (
+) {
+
     match unwrap_or_abort(.value = Reader#().read_byte(reader)) {
         ..end { abort }
         ..ok byte { if byte != expected { abort } }
@@ -35,7 +31,7 @@ expect_byte := #(.Stream: Type: Reader#(Stream)) (
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     -- Empty storage is a deliberate unbuffered adapter, without lookahead.
     source :: Source = (.position = 0, .fail_once = false)
     empty: [0]UInt8 = ()

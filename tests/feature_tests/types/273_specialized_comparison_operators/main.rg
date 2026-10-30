@@ -15,7 +15,7 @@ different := #(.t: Type) (.left: t, .right: t) -> (.ok: Bool) { ok = left != rig
 below_three := #(.t: Type) (.value: t) -> (.ok: Bool) { ok = value < 3 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes: [3]UInt8 = (97, 98, 99)
     independent_storage ::= unwrap_or_abort(
         .value = string_from_bytes(

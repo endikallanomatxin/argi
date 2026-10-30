@@ -43,7 +43,7 @@ def main():
         run("build", str(Path(directory) / "hello"), "--release")
         project = Path(directory) / "hello"
         tests = source.with_name("smoke_test.rg")
-        tests.write_text("test installed_test := (.error_tracer: $&Virtual#(ErrorTracer)) -> !() {\n"
+        tests.write_text("test installed_test := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!() {\n"
                          "    assume error_tracer\n"
                          "    testing.expect(.condition = true)!\n}\n", encoding="utf-8")
         run("format", project)

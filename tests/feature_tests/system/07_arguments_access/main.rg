@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     argc ::= length(.self = system.args).count
     if argc < 1 {

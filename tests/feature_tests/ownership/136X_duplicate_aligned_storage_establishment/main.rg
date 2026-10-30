@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     storage ::= aligned_alloc(.alignment = 8, .size = 8, .ffi = system.ffi)
     alias ::= storage

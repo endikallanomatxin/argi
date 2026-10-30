@@ -1,5 +1,5 @@
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator := system.page_allocator
     j :: UIntNative = 0
     while j < 2 {

@@ -17,9 +17,8 @@ implement Deinit#(Tracked) (
 )
 
 make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .id: Int32, .error_tracer: $&Virtual#(ErrorTracer)
+    .allocator: $&AllocatorType, .id: Int32
 ) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -34,7 +33,7 @@ make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

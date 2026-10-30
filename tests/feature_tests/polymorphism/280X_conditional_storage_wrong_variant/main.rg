@@ -60,7 +60,7 @@ static_take := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType, .
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
 

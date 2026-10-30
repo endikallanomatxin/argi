@@ -1,17 +1,13 @@
 join := #(.Provider: Type: Allocator) (
-    .left         : &StringView,
-    .right        : &StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .left: &StringView, .right: &StringView, .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
     result = ~[left + right]
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&storage
     left ::= "hello"

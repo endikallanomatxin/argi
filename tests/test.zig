@@ -238,7 +238,7 @@ test "installed argi test resolves core from its installation prefix outside rep
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\test installed_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+        \\test installed_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
         \\    assume error_tracer
         \\    testing.expect(.condition = true)!
         \\}
@@ -310,9 +310,6 @@ test "argi init creates executable package" {
         "main := (.system: System) -> (.status_code: Int32 = 0) {\n" ++
             "    assume ffi ::= system.ffi\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
-            "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++
-            "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
-            "    ) | to_virtual#(ErrorTracer)($&_) | $&_\n" ++
             "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
@@ -2161,12 +2158,12 @@ test "usecase_tests/05_python_csv_report" {
     for ([_]struct { data: []const u8, diagnostic: []const u8 }{
         .{ .data = "duration_ms\n", .diagnostic = "StatisticsError" },
         .{ .data = "other\n10\n", .diagnostic = "KeyError" },
-        .{ .data = "duration_ms\n10\ninvalid\n", .diagnostic = "invalid_input" },
+        .{ .data = "duration_ms\n10\ninvalid\n", .diagnostic = "parsing duration" },
         .{ .data = "endpoint,duration_ms\n/health\n", .diagnostic = "TypeError" },
         .{ .data = "duration_ms\n-1\n", .diagnostic = "invalid_duration" },
-        .{ .data = "duration_ms\nnan\n", .diagnostic = "invalid_input" },
-        .{ .data = "duration_ms\ninf\n", .diagnostic = "invalid_input" },
-        .{ .data = "duration_ms\n\xff\n", .diagnostic = "invalid_utf8" },
+        .{ .data = "duration_ms\nnan\n", .diagnostic = "parsing duration" },
+        .{ .data = "duration_ms\ninf\n", .diagnostic = "parsing duration" },
+        .{ .data = "duration_ms\n\xff\n", .diagnostic = "decoding CSV input" },
     }) |case| {
         try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "invalid.csv", .data = case.data });
         const result = try runChildInCwd(&.{ executable, "invalid.csv" }, root);
@@ -2252,7 +2249,8 @@ test "usecase_tests/03_word_count" {
         else => return error.UnexpectedProcessTermination,
     }
     try expectEqualStrings("", failure.stdout);
-    try expect(std.mem.indexOf(u8, failure.stderr, "size_limit_exceeded") != null);
+    try expect(std.mem.indexOf(u8, failure.stderr, "read_all_limited") != null);
+    try expect(std.mem.indexOf(u8, failure.stderr, "first.txt") != null);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2301,7 +2299,7 @@ test "usecase_tests/03_word_count" {
     defer std.testing.allocator.free(invalid_utf8.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, invalid_utf8.term);
     try expectEqualStrings("", invalid_utf8.stdout);
-    try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "invalid_utf8") != null);
+    try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "string_from_bytes") != null);
     try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "bad.txt") != null);
 
     try tmp.dir.createDirPath(std.testing.io, "empty-directory");
@@ -2769,7 +2767,7 @@ test "argi test runs configured modules and explicit target overrides suite" {
         try tmp.dir.createDir(std.testing.io, module, .default_dir);
         const source = try std.fs.path.join(std.testing.allocator, &.{ module, "main.rg" });
         defer std.testing.allocator.free(source);
-        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() { assume error_tracer; testing.expect(.condition = true)! }\n" });
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() { assume error_tracer; testing.expect(.condition = true)! }\n" });
     }
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = "[test]\nmodules = [\n  'first',\n  'second',\n]\n" });
     const suite = try runChildInCwd(&.{ argi, "test", "--filter", "same_name" }, root);

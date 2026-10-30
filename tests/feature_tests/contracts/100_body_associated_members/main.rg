@@ -20,8 +20,8 @@ _impl_multiply_286 := (.left: &Row, .right: &Column) -> (.value: Product#(Row, C
 
 Buffer := #(.n: Int) (.values: Array#(.n = n, .t: Int32))
 
-main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
-    assume error_tracer
+main := () -> (.status_code: Int32 = 0) {
+
     row ::= Row(6)
     column ::= Column(7)
     if multiply(&row, &column).value != 42 { abort }

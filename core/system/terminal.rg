@@ -26,11 +26,7 @@ implement Init#(Terminal, TerminalInitArgs) (
 
 implement Deinit#(Terminal) (
     .deinit = (.self: $&Terminal) -> () {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         close($&self&.stdin)
         close($&self&.stdout)
         close($&self&.stderr)
@@ -39,13 +35,9 @@ implement Deinit#(Terminal) (
 
 read_line_into_buffer := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-) (
-    .buffer       : $&String,
-    .allocator    : $&AllocatorType,
-    .reader       : $&ReaderType,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..stream_read_failed, ..invalid_utf8))) {
-    assume error_tracer
+) (.buffer: $&String, .allocator: $&AllocatorType, .reader: $&ReaderType) -> (
+    .result : Errable#(Void, (..stream_read_failed, ..invalid_utf8))
+) {
 
     assume allocator
     assume reader
@@ -112,10 +104,9 @@ read_line_into_buffer := #(
 
 read_line := #(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
-) (.allocator: $&AllocatorType, .reader: $&ReaderType, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+) (.allocator: $&AllocatorType, .reader: $&ReaderType) -> (
     .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))
 ) {
-    assume error_tracer
 
     assume allocator
     assume reader
@@ -144,10 +135,9 @@ read_line := #(
     result = ..ok ..ok ~line
 }
 
-flush := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
+flush := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
+    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+) {
 
     assume writer
 
@@ -155,9 +145,8 @@ flush := #(.WriterType: Type: Writer#(WriterType)) (
 }
 
 print_error := #(.WriterType: Type: Writer#(WriterType)) (
-    .value: StringView, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
+    .value: StringView, .writer: $&WriterType
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
 
     assume writer
 
@@ -186,10 +175,9 @@ print_error := #(.WriterType: Type: Writer#(WriterType)) (
     result = ..ok Void()
 }
 
-flush_error := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
+flush_error := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
+    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+) {
 
     assume writer
 
@@ -198,12 +186,8 @@ flush_error := #(.WriterType: Type: Writer#(WriterType)) (
 
 -- Rendering is selected by WriteValue, not an ordinary print overload family.
 print := #(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) (
-    .value        : Value,
-    .writer       : $&Stream,
-    .terminator   : StringView              = "\n",
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .value: Value, .writer: $&Stream, .terminator: StringView = "\n"
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
 
     write(.self = writer, .value = ~value)!
     result = write(.self = writer, .value = terminator)

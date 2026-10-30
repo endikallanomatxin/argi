@@ -1,17 +1,14 @@
 ..failed
 
 Editor#(.Participant: Type): Contract = (
-    .edit : (
-        .self         : &Participant,
-        .target       : $&Int32,
-        .mode         : Int32,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(?Int32, (..failed))) where {
+    .edit : (.self: &Participant, .target: $&Int32, .mode: Int32) -> (
+        .result : Errable#(?Int32, (..failed))
+    ) where {
         on result ..ok {
             on result ..some { invalidates(target) }
             on result ..none {}
         }
-        on result ..error { depends_on(result, error_tracer) }
+
     }
 )
 
@@ -19,10 +16,9 @@ Cell := (.unused: Int32)
 
 implement Editor#(Cell) (.edit = _impl_edit_Cell)
 
-_impl_edit_Cell := (
-    .self: &Cell, .target: $&Int32, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
+_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (
+    .result : Errable#(?Int32, (..failed))
+) {
 
     if mode == 2 {
         result = ..error(.reason = ..failed)
@@ -39,13 +35,9 @@ _impl_edit_Cell := (
 
 overwrite := (.slot: $&Errable#(?Int32, (..failed))) -> () { slot&= ..ok ..none }
 
-apply_edit := (
-    .editor       : &Virtual#(Editor),
-    .target       : $&Int32,
-    .mode         : Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
+apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32, .mode: Int32) -> (
+    .result : Errable#(?Int32, (..failed))
+) {
 
     pending ::= edit(editor, target, mode)
     overwrite($&pending)
@@ -54,7 +46,7 @@ apply_edit := (
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target

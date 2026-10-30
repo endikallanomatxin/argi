@@ -7,6 +7,7 @@ const Fields = @import("../primitives/schema.zig").Range(global_sg.GlobalValueFi
 /// search these bindings to acquire dependencies or extend a caller's signature.
 pub const Context = struct {
     owner_function: ?global_sg.GlobalFunctionId,
+    source: ?@import("../primitives/schema.zig").SourceRef = null,
     assumed_fields: Fields = .{ .start = 0, .len = 0 },
     // Session cleanup needs shadowing information when inheriting assumptions
     // from earlier commands. Ordinary calls need only their supplied fields.
@@ -27,6 +28,12 @@ pub const Context = struct {
     pub fn withAssumedFields(self: Context, fields: Fields) Context {
         var result = self;
         result.assumed_fields = fields;
+        return result;
+    }
+
+    pub fn withSource(self: Context, source: @import("../primitives/schema.zig").SourceRef) Context {
+        var result = self;
+        if (result.source == null) result.source = source;
         return result;
     }
 

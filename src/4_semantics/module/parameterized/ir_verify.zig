@@ -129,9 +129,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.virtualizes.items) |value| try payload.virtualize(ir.Ids, value, bounds);
     for (storage.virtual_calls.items) |value| try payload.virtualCall(ir.Ids, value, bounds);
     for (storage.nullable_unwraps.items) |value| try payload.nullableUnwrap(ir.Ids, value, bounds);
-    for (storage.testing_expect_errors.items) |value| try payload.testingExpectError(ir.Ids, value, bounds);
     for (storage.error_propagations.items) |value| try payload.errorPropagation(ir.Ids, value, bounds);
-    for (storage.error_contexts.items) |value| try payload.errorContext(ir.Ids, value, bounds);
 
     for (storage.pending.items) |pending| try verifyPending(graph, pending);
     for (storage.match_cases.items) |case| {
@@ -247,9 +245,7 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtualizes = storage.virtualizes.items.len,
         .virtual_calls = storage.virtual_calls.items.len,
         .nullable_unwraps = storage.nullable_unwraps.items.len,
-        .testing_expect_errors = storage.testing_expect_errors.items.len,
         .error_propagations = storage.error_propagations.items.len,
-        .error_contexts = storage.error_contexts.items.len,
         .node_refs = storage.node_refs.items.len,
         .type_refs = storage.type_refs.items.len,
         .binding_refs = storage.binding_refs.items.len,

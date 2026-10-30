@@ -8,8 +8,8 @@ Wrapper := (
     .text : String
 )
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage :: CountingAllocator = (
         .ffi           = system.ffi
         .alloc_count   = 0
@@ -33,13 +33,9 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
 }
 
 implement Allocator#(CountingAllocator) (
-    .allocate = (
-        .self         : $&CountingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)

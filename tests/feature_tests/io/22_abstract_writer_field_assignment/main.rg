@@ -21,7 +21,7 @@ implement#(.WriterType: Type: Writer#(WriterType)) Init#(
 )
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     writer :: DummyWriter = (
         .flush_count = 0
     )
@@ -39,19 +39,17 @@ main := () -> (.status_code: Int32) {
 }
 
 implement Writer#(DummyWriter) (
-    .write_byte = (.self: $&DummyWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&DummyWriter, .byte: UInt8) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         _ ::= byte
         result = ..ok(.value = Void())
     }
 
-    .flush = (.self: $&DummyWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&DummyWriter) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())

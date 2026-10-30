@@ -914,8 +914,8 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             try writeType(writer, graph, child);
         },
         .inferred_errable => |child| {
-            try writer.writeAll("!");
-            try writeType(writer, graph, child);
+            try writer.writeAll(if (child.traced) "!!" else "!");
+            try writeType(writer, graph, child.child);
         },
         .inferred_choice => |choice| {
             try writeVariants(writer, graph, choice.variants);

@@ -1,5 +1,4 @@
-run := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
-    assume error_tracer
+run := () -> !Int32 {
 
     dep := import ("./dep")
     value := dep.load()!
@@ -7,7 +6,7 @@ run := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     outcome := run()
 
     match outcome {

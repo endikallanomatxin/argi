@@ -1,17 +1,17 @@
 ..default_failed
 
-default_failure := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void = ..error(
+default_failure := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void = ..error(
     .reason = ..default_failed
     .tracer = $&noop_error_tracer
 ) {
     assume error_tracer
 }
 
-value := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 = ..ok 42 {
+value := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 = ..ok 42 {
     assume error_tracer
 }
 
-noop := #(.t: Type) (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void = ..ok Void() {
+noop := #(.t: Type) (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void = ..ok Void() {
     assume error_tracer
 }
 

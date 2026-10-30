@@ -20,7 +20,7 @@ _process_spawn(
     .handle  : $&UIntNative,
     .stdin   : $&UIntNative,
     .stdout  : $&UIntNative,
-    .stderr  : $&UIntNative,
+    .stderr  : $&UIntNative
 ) -> (.status: Int32): CFunction(.symbol = "_argi_process_spawn")
 
 _process_wait(.handle: UIntNative, .code: $&UInt32, .signal: $&UInt32) -> (.status: Int32): CFunction(
@@ -110,19 +110,17 @@ _process_no_arguments := () -> (.value: ArrayView#(.t: StringView)) {
 _process_inherit := () -> (.value: ProcessStreamMode) { value = ..inherit }
 
 spawn := (
-    .executable   : StringView,
-    .arguments    : ArrayView#(.t: StringView) = _process_no_arguments(),
-    .stdin        : ProcessStreamMode          = _process_inherit(),
-    .stdout       : ProcessStreamMode          = _process_inherit(),
-    .stderr       : ProcessStreamMode          = _process_inherit(),
-    .self         : &ProcessManager,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .executable : StringView,
+    .arguments  : ArrayView#(.t: StringView) = _process_no_arguments(),
+    .stdin      : ProcessStreamMode          = _process_inherit(),
+    .stdout     : ProcessStreamMode          = _process_inherit(),
+    .stderr     : ProcessStreamMode          = _process_inherit(),
+    .self       : &ProcessManager
 ) -> (
     .result : Errable#(
         Process, (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
     )
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     builder ::= _process_builder().address
@@ -189,10 +187,7 @@ spawn := (
     )
 }
 
-wait := (.self: $&Process, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(ProcessExitStatus, (..process_wait_failed))
-) {
-    assume error_tracer
+wait := (.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_wait_failed))) {
 
     assume ffi := self&._ffi
 
@@ -217,10 +212,7 @@ wait := (.self: $&Process, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok ..exited(.code = code)
 }
 
-terminate := (.self: $&Process, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..process_terminate_failed))
-) {
-    assume error_tracer
+terminate := (.self: $&Process) -> (.result: Errable#(Void, (..process_terminate_failed))) {
 
     assume ffi := self&._ffi
 
@@ -239,10 +231,9 @@ terminate := (.self: $&Process, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 
 _is_open_ProcessStream := (.self: &ProcessStream) -> (.ok: Bool) { ok = self&._handle != 0 }
 
-_close_ProcessStream := (.self: $&ProcessStream, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+_close_ProcessStream := (.self: $&ProcessStream) -> (
     .result : Errable#(Void, (..stream_close_failed))
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     handle ::= self&._handle
@@ -257,10 +248,9 @@ _close_ProcessStream := (.self: $&ProcessStream, .error_tracer: $&Virtual#(Error
 }
 
 implement Reader#(ProcessStream) (
-    .read_byte = (.self: $&ProcessStream, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .read_byte = (.self: $&ProcessStream) -> (
         .result : Errable#(ReadByte, (..stream_read_failed))
     ) {
-        assume error_tracer
 
         assume ffi := self&._ffi
 
@@ -306,10 +296,9 @@ implement Deinit#(Process) (
 )
 
 implement Writer#(ProcessStream) (
-    .write_byte = (.self: $&ProcessStream, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&ProcessStream, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         assume ffi := self&._ffi
 
@@ -326,10 +315,9 @@ implement Writer#(ProcessStream) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&ProcessStream, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&ProcessStream) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         if self&._handle == 0 or self&._writable == false {
             result = ..error(.reason = ..stream_flush_failed)

@@ -4,10 +4,9 @@ FallibleValue := (
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider) (
     .reasons : Type = (..copy_failed)
-    .copy    = (
-        .self: &FallibleValue, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: FallibleValue, .reasons: (..copy_failed))) {
-        assume error_tracer
+    .copy    = (.self: &FallibleValue, .allocator: $&Provider) -> (
+        .result : Errable#(.t: FallibleValue, .reasons: (..copy_failed))
+    ) {
 
         assume allocator
 
@@ -17,7 +16,7 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider
 )
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     first :: FallibleValue = (.value = 21)

@@ -1,5 +1,5 @@
 Token := (
-    .value : Int32,
+    .value : Int32
 )
 
 implement Deinit#(Token) (
@@ -10,7 +10,7 @@ implement Deinit#(Token) (
 
 Result: Type = (
     ..ok(.token: Token),
-    ..error,
+    ..error
 )
 
 main := () -> (.status_code: Int32) {

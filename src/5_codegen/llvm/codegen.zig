@@ -1227,9 +1227,7 @@ pub const CodeGenerator = struct {
             .choice_literal => |literal| try self.choiceLiteral(literal),
             .choice_payload_access => |access| try self.choicePayload(node_id, access),
             .nullable_unwrap_or => |unwrap| try self.nullableUnwrap(unwrap),
-            .testing_expect_error => |id| try self.genTestingExpectError(self.graph.testing_expect_errors.items[@intFromEnum(id)], node.source),
-            .error_propagation => |id| try self.genErrorPropagation(self.graph.error_propagations.items[@intFromEnum(id)], null, node.source),
-            .error_context => |id| try self.genErrorPropagation(self.graph.error_contexts.items[@intFromEnum(id)], self.graph.error_contexts.items[@intFromEnum(id)].context, node.source),
+            .error_propagation => |id| try self.genErrorPropagation(self.graph.error_propagations.items[@intFromEnum(id)]),
             .array_literal => |literal| try self.arrayLiteral(literal),
             .array_index => |access| try self.arrayIndex(access),
             .array_store => |store| blk: {
@@ -2363,10 +2361,9 @@ pub const CodeGenerator = struct {
 
     // Propagation is a control-flow operation: evaluate the errable once,
     // return its error variant through the current function after cleanup, and
-    // continue with the unwrapped success payload. Trace enrichment is kept in
-    // a separate helper so the indexed graph semantics do not depend on a
-    // particular error payload layout.
-    fn genErrorPropagation(self: *CodeGenerator, propagation: anytype, context: ?graph_mod.GlobalNodeId, source: primitives.SourceRef) !TypedValue {
+    // continue with the unwrapped success payload. Context enrichment uses
+    // ordinary checked calls before this operation; transport never traces.
+    fn genErrorPropagation(self: *CodeGenerator, propagation: anytype) !TypedValue {
         const value = (try self.visitNode(propagation.errable_value)) orelse return CodegenError.ValueNotFound;
         const source_errable_type = self.graph.node(propagation.errable_value).ty orelse return CodegenError.InvalidType;
         const tag = c.LLVMBuildExtractValue(self.builder, value.value_ref, 0, "error.tag");
@@ -2383,8 +2380,7 @@ pub const CodeGenerator = struct {
         const source_error_index = try self.variantIndex(source_errable_type, propagation.error_variant);
         const propagated_error_index = try self.variantIndex(propagation.propagated_errable_type, propagation.propagated_error_variant);
         const payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, source_error_index + 1, "error.payload");
-        const traced_payload = try self.appendErrorContext(payload, propagation.error_payload_type, source, context, null);
-        const converted_payload = try self.coerceErrorPayload(traced_payload, propagation.error_payload_type, propagation.propagated_error_payload_type);
+        const converted_payload = try self.coerceErrorPayload(payload, propagation.error_payload_type, propagation.propagated_error_payload_type);
         propagated = c.LLVMBuildInsertValue(self.builder, propagated, propagated_error_tag, 0, "error.return.tag");
         propagated = c.LLVMBuildInsertValue(self.builder, propagated, converted_payload, propagated_error_index + 1, "error.return.payload");
         for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup|
@@ -2406,40 +2402,6 @@ pub const CodeGenerator = struct {
         else
             ok_payload;
         return .{ .value_ref = result, .type_ref = try self.toLLVMType(result_ty), .ty = result_ty };
-    }
-
-    fn appendErrorContext(
-        self: *CodeGenerator,
-        error_value: llvm.c.LLVMValueRef,
-        error_ty: graph_mod.GlobalTypeId,
-        source: primitives.SourceRef,
-        context_node: ?graph_mod.GlobalNodeId,
-        context_pointer: ?llvm.c.LLVMValueRef,
-    ) !llvm.c.LLVMValueRef {
-        const trace = types.findField(self.graph, error_ty, "tracer") orelse return CodegenError.InvalidType;
-        const trace_value = c.LLVMBuildExtractValue(self.builder, error_value, trace.index, "error.tracer");
-        const context_value = if (context_node) |node| try self.visitNode(node) else null;
-        const is_view = if (context_value) |value| if (value.ty) |ty| self.isStringView(ty) else false else false;
-        const function_id = try self.errorContextFunction(is_view);
-        const helper = self.functions.get(function_id) orelse return CodegenError.SymbolNotFound;
-        const function = self.graph.function(function_id);
-        const location_ty = self.graph.fields.items[function.input.start + 1].ty;
-        var location_value = c.LLVMGetUndef(try self.toLLVMType(location_ty));
-        location_value = c.LLVMBuildInsertValue(self.builder, location_value, c.LLVMConstInt(c.LLVMInt32Type(), try self.sourceLocationId(source), 0), 0, "trace.location_value.id");
-        const context = if (context_value) |value| value.value_ref else if (context_pointer) |pointer| pointer else try self.stringPointer("", "trace.empty.context");
-        var input = c.LLVMGetUndef(try self.fieldsLLVMType(function.input));
-        input = c.LLVMBuildInsertValue(self.builder, input, trace_value, 0, "trace.input.receiver");
-        input = c.LLVMBuildInsertValue(self.builder, input, location_value, 1, "trace.input.location_value");
-        input = c.LLVMBuildInsertValue(self.builder, input, context, 2, "trace.input.context");
-        _ = try self.callArgi(helper, input, "");
-        return error_value;
-    }
-
-    fn errorContextFunction(self: *CodeGenerator, view: bool) !graph_mod.GlobalFunctionId {
-        for (self.graph.functions.items, 0..) |function, raw| {
-            if (function.flags.matchesErrorContext(view)) return @enumFromInt(@as(u32, @intCast(raw)));
-        }
-        return CodegenError.SymbolNotFound;
     }
 
     fn sourceLocationId(self: *CodeGenerator, source: primitives.SourceRef) !u32 {
@@ -2504,110 +2466,10 @@ pub const CodeGenerator = struct {
         };
     }
 
-    fn genTestingExpectError(self: *CodeGenerator, expect: graph_mod.TestingExpectError, source: primitives.SourceRef) !TypedValue {
-        const actual = (try self.visitNode(expect.actual_result)) orelse return CodegenError.ValueNotFound;
-        const actual_ty = self.graph.node(expect.actual_result).ty orelse return CodegenError.InvalidType;
-        const actual_tag = c.LLVMBuildExtractValue(self.builder, actual.value_ref, 0, "expect_error.actual.tag");
-        const error_tag = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(actual_ty, expect.actual_error_variant)), 0);
-        const current = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
-        const function = c.LLVMGetBasicBlockParent(current);
-        const unexpected_ok_block = c.LLVMAppendBasicBlock(function, "expect_error.unexpected_ok");
-        const actual_error_block = c.LLVMAppendBasicBlock(function, "expect_error.actual_error");
-        const mismatch_block = c.LLVMAppendBasicBlock(function, "expect_error.mismatch");
-        const success_block = c.LLVMAppendBasicBlock(function, "expect_error.success");
-        const merge_block = c.LLVMAppendBasicBlock(function, "expect_error.merge");
-        const is_error = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, actual_tag, error_tag, "expect_error.is_error");
-        _ = c.LLVMBuildCondBr(self.builder, is_error, actual_error_block, unexpected_ok_block);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, unexpected_ok_block);
-        const unexpected_ok_context = try self.stringPointer("expect_error failed: expression succeeded unexpectedly", "expect_error.unexpected_ok.context");
-        const unexpected_ok = try self.buildTestingFailure(expect, source, unexpected_ok_context);
-        _ = c.LLVMBuildBr(self.builder, merge_block);
-        const unexpected_ok_end = c.LLVMGetInsertBlock(self.builder);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, actual_error_block);
-        const error_index = try self.variantIndex(actual_ty, expect.actual_error_variant);
-        const error_payload = c.LLVMBuildExtractValue(self.builder, actual.value_ref, error_index + 1, "expect_error.payload");
-        const actual_reason = c.LLVMBuildExtractValue(self.builder, error_payload, expect.actual_reason_field_index, "expect_error.actual.reason");
-        const expected_reason = (try self.visitNode(expect.expected_reason)) orelse return CodegenError.ValueNotFound;
-        const actual_reason_tag = c.LLVMBuildExtractValue(self.builder, actual_reason, 0, "expect_error.actual.reason.tag");
-        const expected_reason_tag = c.LLVMBuildExtractValue(self.builder, expected_reason.value_ref, 0, "expect_error.expected.reason.tag");
-        const reason_matches = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, actual_reason_tag, expected_reason_tag, "expect_error.reason_matches");
-        _ = c.LLVMBuildCondBr(self.builder, reason_matches, success_block, mismatch_block);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, mismatch_block);
-        const mismatch_context = try self.testingMismatchContext(expect, actual_reason_tag);
-        const mismatch = try self.buildTestingFailure(expect, source, mismatch_context);
-        _ = c.LLVMBuildBr(self.builder, merge_block);
-        const mismatch_end = c.LLVMGetInsertBlock(self.builder);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, success_block);
-        const success = try self.buildErrableOk(expect.result_type, expect.result_ok_variant);
-        _ = c.LLVMBuildBr(self.builder, merge_block);
-        const success_end = c.LLVMGetInsertBlock(self.builder);
-
-        c.LLVMPositionBuilderAtEnd(self.builder, merge_block);
-        const result_type = try self.toLLVMType(expect.result_type);
-        const phi = c.LLVMBuildPhi(self.builder, result_type, "expect_error.result");
-        var values = [_]llvm.c.LLVMValueRef{ unexpected_ok, mismatch, success };
-        var blocks = [_]llvm.c.LLVMBasicBlockRef{ unexpected_ok_end, mismatch_end, success_end };
-        c.LLVMAddIncoming(phi, &values, &blocks, values.len);
-        return .{ .value_ref = phi, .type_ref = result_type, .ty = expect.result_type };
-    }
-
-    fn callTestingFailure(self: *CodeGenerator, function_id: graph_mod.GlobalFunctionId, result_ty: graph_mod.GlobalTypeId, input_node: ?graph_mod.GlobalNodeId) !llvm.c.LLVMValueRef {
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-        if (function.output.len != 1) return CodegenError.InvalidType;
-        const symbol = self.functions.get(function_id) orelse return CodegenError.SymbolNotFound;
-        const input = if (input_node) |node| ((try self.visitNode(node)) orelse return CodegenError.ValueNotFound).value_ref else c.LLVMConstNull(try self.fieldsLLVMType(function.input));
-        const output = try self.callArgi(symbol, input, "expect_error.failure");
-        const field = self.graph.fields.items[function.output.start];
-        if (!types.equal(self.graph, field.ty, result_ty)) return CodegenError.InvalidType;
-        return c.LLVMBuildExtractValue(self.builder, output, 0, "expect_error.failure.result");
-    }
-
-    fn buildTestingFailure(self: *CodeGenerator, expect: graph_mod.TestingExpectError, source: primitives.SourceRef, context: llvm.c.LLVMValueRef) !llvm.c.LLVMValueRef {
-        var result = try self.callTestingFailure(expect.test_fail_function, expect.result_type, expect.test_fail_input);
-        const error_variant = types.findVariant(self.graph, expect.result_type, "error") orelse return CodegenError.InvalidType;
-        const payload_ty = error_variant.variant.payload_type orelse return CodegenError.InvalidType;
-        const payload = c.LLVMBuildExtractValue(self.builder, result, error_variant.index + 1, "expect_error.failure.payload");
-        const traced = try self.appendErrorContext(payload, payload_ty, source, null, context);
-        result = c.LLVMBuildInsertValue(self.builder, result, traced, error_variant.index + 1, "expect_error.failure.trace");
-        return result;
-    }
-
-    fn testingMismatchContext(self: *CodeGenerator, expect: graph_mod.TestingExpectError, actual_tag: llvm.c.LLVMValueRef) !llvm.c.LLVMValueRef {
-        const expected_name = if (expect.expected_reason_name) |name| self.graph.text(name) else return self.stringPointer("expect_error failed: error reason mismatch", "expect_error.mismatch.context");
-        const reason_field = types.findField(self.graph, expect.actual_error_payload_type, "reason") orelse return CodegenError.InvalidType;
-        const variants = types.variants(self.graph, reason_field.field.ty) orelse return CodegenError.InvalidType;
-        var selected = try self.stringPointer("expect_error failed: error reason mismatch", "expect_error.mismatch.default");
-        for (0..variants.len) |offset| {
-            const variant_id: graph_mod.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(offset)));
-            const variant = self.graph.variants.items[@intFromEnum(variant_id)];
-            const message = try std.fmt.allocPrint(self.allocator, "expect_error failed: expected ..{s} but got ..{s}", .{ expected_name, self.graph.text(variant.name) });
-            defer self.allocator.free(message);
-            const pointer = try self.stringPointer(message, "expect_error.mismatch.reason");
-            const matches = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, actual_tag, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(reason_field.field.ty, variant_id)), 0), "expect_error.mismatch.tag");
-            selected = c.LLVMBuildSelect(self.builder, matches, pointer, selected, "expect_error.mismatch.select");
-        }
-        return selected;
-    }
-
     fn stringPointer(self: *CodeGenerator, value: []const u8, name: [*:0]const u8) !llvm.c.LLVMValueRef {
         const bytes = try self.dupZ(value);
         defer self.allocator.free(bytes);
         return c.LLVMBuildGlobalStringPtr(self.builder, bytes.ptr, name);
-    }
-
-    fn buildErrableOk(self: *CodeGenerator, result_ty: graph_mod.GlobalTypeId, ok_variant: graph_mod.GlobalVariantId) !llvm.c.LLVMValueRef {
-        const result_type = try self.toLLVMType(result_ty);
-        const variant = self.graph.variants.items[@intFromEnum(ok_variant)];
-        const payload_ty = variant.payload_type orelse return CodegenError.InvalidType;
-        const index = try self.variantIndex(result_ty, ok_variant);
-        var result = c.LLVMGetUndef(result_type);
-        result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(result_ty, ok_variant)), 0), 0, "expect_error.ok.tag");
-        result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstNull(try self.toLLVMType(payload_ty)), index + 1, "expect_error.ok.payload");
-        return result;
     }
 
     fn coerceErrorPayload(self: *CodeGenerator, value: llvm.c.LLVMValueRef, source_ty: graph_mod.GlobalTypeId, target_ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
@@ -2618,11 +2480,14 @@ pub const CodeGenerator = struct {
         const target_reason = plan.target_reason;
         const target_trace = plan.target_tracer;
         const reason = c.LLVMBuildExtractValue(self.builder, value, source_reason.index, "error.reason");
-        const trace = c.LLVMBuildExtractValue(self.builder, value, source_trace.index, "error.tracer");
+
         const converted_reason = try self.coerceReasonChoice(reason, source_reason.field.ty, target_reason.field.ty);
         var result = c.LLVMGetUndef(try self.toLLVMType(target_ty));
         result = c.LLVMBuildInsertValue(self.builder, result, converted_reason, target_reason.index, "error.reason.converted");
-        result = c.LLVMBuildInsertValue(self.builder, result, trace, target_trace.index, "error.tracer.converted");
+        if (source_trace) |trace_field| {
+            const trace = c.LLVMBuildExtractValue(self.builder, value, trace_field.index, "error.tracer");
+            result = c.LLVMBuildInsertValue(self.builder, result, trace, target_trace.?.index, "error.tracer.converted");
+        }
         return result;
     }
 

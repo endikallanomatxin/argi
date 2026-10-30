@@ -22,9 +22,7 @@ pub const ParameterizedVirtualRegistryId = enum(u32) { _ };
 pub const ParameterizedVirtualizeId = enum(u32) { _ };
 pub const ParameterizedVirtualCallId = enum(u32) { _ };
 pub const ParameterizedNullableUnwrapId = enum(u32) { _ };
-pub const ParameterizedTestingExpectErrorId = enum(u32) { _ };
 pub const ParameterizedErrorPropagationId = enum(u32) { _ };
-pub const ParameterizedErrorContextId = enum(u32) { _ };
 pub const ParameterizedPendingId = enum(u32) { _ };
 pub const ParameterizedMatchCaseId = enum(u32) { _ };
 
@@ -49,9 +47,7 @@ pub const Ids = struct {
     pub const VirtualizeId = ParameterizedVirtualizeId;
     pub const VirtualCallId = ParameterizedVirtualCallId;
     pub const NullableUnwrapId = ParameterizedNullableUnwrapId;
-    pub const TestingExpectErrorId = ParameterizedTestingExpectErrorId;
     pub const ErrorPropagationId = ParameterizedErrorPropagationId;
-    pub const ErrorContextId = ParameterizedErrorContextId;
 };
 
 pub const DeclarationRef = union(enum) {
@@ -150,9 +146,7 @@ pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
-pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
-pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
 pub const PendingExpressionKind = enum(u8) {
@@ -171,7 +165,6 @@ pub const PendingExpressionKind = enum(u8) {
     field_access,
     choice_payload,
     error_propagation,
-    error_context,
     index,
     index_store,
     binary,
@@ -292,9 +285,7 @@ pub const Storage = struct {
     virtualizes: std.ArrayList(Virtualize) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
     nullable_unwraps: std.ArrayList(NullableUnwrap) = .empty,
-    testing_expect_errors: std.ArrayList(TestingExpectError) = .empty,
     error_propagations: std.ArrayList(ErrorPropagation) = .empty,
-    error_contexts: std.ArrayList(ErrorContext) = .empty,
     pending: std.ArrayList(Pending) = .empty,
     match_cases: std.ArrayList(MatchCase) = .empty,
 
@@ -311,14 +302,13 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.int_expressions,          &self.types,                 &self.declarations,       &self.functions,
-            &self.variants,                 &self.fields,                &self.generic_arguments,  &self.bindings,
-            &self.unresolved_binding_types, &self.nodes,                 &self.blocks,             &self.value_fields,
-            &self.switch_cases,             &self.switches,              &self.auto_deinit_fields, &self.auto_deinits,
-            &self.virtual_registries,       &self.virtualizes,           &self.virtual_calls,      &self.nullable_unwraps,
-            &self.testing_expect_errors,    &self.error_propagations,    &self.error_contexts,     &self.pending,
-            &self.match_cases,              &self.node_refs,             &self.type_refs,          &self.binding_refs,
-            &self.function_refs,            &self.virtual_registry_refs,
+            &self.int_expressions,          &self.types,        &self.declarations,       &self.functions,
+            &self.variants,                 &self.fields,       &self.generic_arguments,  &self.bindings,
+            &self.unresolved_binding_types, &self.nodes,        &self.blocks,             &self.value_fields,
+            &self.switch_cases,             &self.switches,     &self.auto_deinit_fields, &self.auto_deinits,
+            &self.virtual_registries,       &self.virtualizes,  &self.virtual_calls,      &self.nullable_unwraps,
+            &self.error_propagations,       &self.pending,      &self.match_cases,        &self.node_refs,
+            &self.type_refs,                &self.binding_refs, &self.function_refs,      &self.virtual_registry_refs,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -344,9 +334,7 @@ pub const Storage = struct {
             self.virtualizes.items.len * @sizeOf(Virtualize) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
             self.nullable_unwraps.items.len * @sizeOf(NullableUnwrap) +
-            self.testing_expect_errors.items.len * @sizeOf(TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(ErrorPropagation) +
-            self.error_contexts.items.len * @sizeOf(ErrorContext) +
             self.pending.items.len * @sizeOf(Pending) +
             self.match_cases.items.len * @sizeOf(MatchCase) +
             self.node_refs.items.len * @sizeOf(ParameterizedNodeId) +

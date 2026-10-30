@@ -40,15 +40,12 @@ run := (.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_mem
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer := (.marker: UInt8)
 
-FailTracerInitArgs: Type = (
-    .error_tracer : $&Virtual#(ErrorTracer)
-)
+FailTracerInitArgs: Type = ()
 
 implement Init#(FailTracer, FailTracerInitArgs) (
     .Result : Type = Errable#(.t: FailTracer, .reasons: (..out_of_memory))
 
     .init = FailTracerInitArgs -> (.result: Result) {
-        assume error_tracer
 
         constructed :: FailTracer
 
@@ -56,19 +53,12 @@ implement Init#(FailTracer, FailTracerInitArgs) (
     }
 )
 
-failed_init := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Void, .reasons: (..out_of_memory))
-) {
-    assume error_tracer: $&Virtual#(ErrorTracer) = [
-        FailTracer(.error_tracer = error_tracer)!
-        | to_virtual($&_)
-        | $&_
-    ]
+failed_init := () -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
+    assume error_tracer: $&Virtual#(ErrorTracer) = [FailTracer()! | to_virtual($&_) | $&_]
     result = ..ok Void()
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
     positional_count :: UIntNative = 0
     record#(Int32)(.value = 7, .counter = $&positional_count)
     if positional_count != 1 {
@@ -134,12 +124,9 @@ implement ErrorTracer#(FailTracer) (
 
     .reset_context = (.self: $&FailTracer) -> () {}
 
-    .report = (
-        .self         : $&FailTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report = (.self: $&FailTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         result = ..ok Void()
     }

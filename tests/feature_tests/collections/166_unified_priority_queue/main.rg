@@ -1,6 +1,6 @@
 main := () -> (.status_code: Int32 = 1) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= CAllocator(.ffi = ffi)
     assume allocator ::= $&allocator_storage
     order ::= Int32OrderPolicy()

@@ -7,7 +7,7 @@ expect_range_error := (.value: Errable#(.t: Duration, .reasons: (..out_of_range)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     zero ::= Duration(.nanoseconds = 0)
     maximum ::= Duration(.nanoseconds = 18446744073709551615)
     one ::= Duration(.nanoseconds = 1)

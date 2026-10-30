@@ -1,10 +1,9 @@
 ..invalid_multiple
 
 -- Multiples may be any positive integer, including non-powers of two.
-round_down := #(.t: Type: UInt) (
-    .value: t, .multiple: t, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(t, (..invalid_multiple))) {
-    assume error_tracer
+round_down := #(.t: Type: UInt) (.value: t, .multiple: t) -> (
+    .result : Errable#(t, (..invalid_multiple))
+) {
 
     if multiple == 0 {
         result = ..error(.reason = ..invalid_multiple)
@@ -14,10 +13,9 @@ round_down := #(.t: Type: UInt) (
     result = ..ok value - value % multiple
 }
 
-round_up := #(.t: Type: UInt) (.value: t, .multiple: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+round_up := #(.t: Type: UInt) (.value: t, .multiple: t) -> (
     .result : Errable#(t, (..invalid_multiple, ..out_of_range))
 ) {
-    assume error_tracer
 
     if multiple == 0 {
         result = ..error(.reason = ..invalid_multiple)

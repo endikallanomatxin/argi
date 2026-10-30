@@ -2,7 +2,7 @@
 _swap_indexed_values := #(
     .t: Type: ImplicitlyCopyable, .Collection: Type: MutableIndexable#(.Item: t)
 ) (.self: $&Collection, .left: UIntNative, .right: UIntNative) -> () {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     if left == right { return }
     left_ref ::= unwrap_or_abort(.value = get_mutable_reference(self, .index = left))
     right_ref ::= unwrap_or_abort(.value = get_mutable_reference(self, .index = right))

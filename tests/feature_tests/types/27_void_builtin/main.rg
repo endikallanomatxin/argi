@@ -1,13 +1,10 @@
-produce := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Void, .reasons: (..test_error))
-) {
-    assume error_tracer
+produce := () -> (.result: Errable#(.t: Void, .reasons: (..test_error))) {
 
     result = ..ok Void()
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     result ::= produce()
     if is(.value = result, .variant = ..ok) {
     } else {

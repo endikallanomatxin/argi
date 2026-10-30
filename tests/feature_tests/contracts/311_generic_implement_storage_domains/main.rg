@@ -12,7 +12,7 @@ _get_cell := #(.Tag: Type) (.self: &Cell#(Tag)) -> (.value: &Int32) {
 implement#(.Tag: Type) Source#(Cell#(Tag)) (.get = _get_cell) where { storage(self.storage) }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     number :: Int32 = 42
     cell ::= Cell#(Int32)(.storage = &number, .marker = 1)
     if get(.self = &cell).value&!= 42 { status_code = 1 }

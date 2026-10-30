@@ -1,13 +1,13 @@
-fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void = ..ok Void() {
-    assume error_tracer
+fail := () -> !Void = ..ok Void() {
+
 }
 
-finish := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+finish := #(.t: Type) (.value: t) -> () {
+
     defer fail()!
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     finish#(.t: Int32)(1)
 }

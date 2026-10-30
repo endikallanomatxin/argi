@@ -14,7 +14,7 @@ _impl_add_Box := (.amount: Int32, .target: $&Box) -> (.value: Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     box :: Box = (.value = 7)
     handle ::= to_virtual#(.contract: A)(.value = $&box)
     value ::= add(.amount = 3, .target = $&handle)

@@ -36,12 +36,8 @@ acquired_storage_alignment := (.storage: &AcquiredStorage) -> (.alignment: UIntN
 }
 
 acquire_heap_storage := (
-    .size         : UIntNative,
-    .alignment    : UIntNative,
-    .ffi          : $&ForeignFunctionInterface,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .size: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
 ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
-    assume error_tracer
 
     _require_allocation_alignment(.alignment = alignment)
     physical_alignment ::= alignment
@@ -76,13 +72,9 @@ acquire_heap_storage := (
     result = ..ok(._address = address, ._size = size, ._alignment = alignment)
 }
 
-acquire_page_storage := (
-    .memory       : $&Memory,
-    .size         : UIntNative,
-    .alignment    : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
-    assume error_tracer
+acquire_page_storage := (.memory: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
+    .result : Errable#(AcquiredStorage, (..out_of_memory))
+) {
 
     assume ffi := memory&._ffi
     acquired ::= _memory_map_aligned(

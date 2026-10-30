@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume ffi := system.ffi
     #if target_os("windows") {
         path ::= from_literal(.data = "NUL")

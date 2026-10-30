@@ -1,17 +1,14 @@
 ..failed
 
 Editor#(.Participant: Type): Contract = (
-    .edit : (
-        .self         : &Participant,
-        .target       : $&Int32,
-        .mode         : Int32,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(?Int32, (..failed))) where {
+    .edit : (.self: &Participant, .target: $&Int32, .mode: Int32) -> (
+        .result : Errable#(?Int32, (..failed))
+    ) where {
         on result ..ok {
             on result ..some { invalidates(target) }
             on result ..none {}
         }
-        on result ..error { depends_on(result, error_tracer) }
+
     }
 )
 
@@ -27,10 +24,9 @@ implement Resetter#(Cell) (.reset = _impl_reset_Cell)
 
 _impl_reset_Cell := (.self: &Cell, .target: $&Int32) -> () { target&= 42 }
 
-_impl_edit_Cell := (
-    .self: &Cell, .target: $&Int32, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
+_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (
+    .result : Errable#(?Int32, (..failed))
+) {
 
     if mode == 2 {
         result = ..error(.reason = ..failed)
@@ -47,19 +43,15 @@ _impl_edit_Cell := (
     result = ..ok ..none
 }
 
-apply_edit := (
-    .editor       : &Virtual#(Editor),
-    .target       : $&Int32,
-    .mode         : Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
+apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32, .mode: Int32) -> (
+    .result : Errable#(?Int32, (..failed))
+) {
 
     result = edit(editor, target, mode)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target

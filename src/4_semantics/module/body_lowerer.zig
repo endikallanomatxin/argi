@@ -470,7 +470,7 @@ const Context = struct {
             .choice_literal, .choice_some_literal => self.lowerChoiceLiteral(node, expected),
             .struct_field_access => self.lowerField(node, expected),
             .choice_payload_access => self.lowerChoicePayload(node, expected),
-            .error_propagation => self.lowerErrorPropagation(node, expected, null),
+            .error_propagation => self.lowerErrorPropagation(node, expected),
             .error_context => self.lowerErrorContext(node, expected),
             .nullable_test => self.lowerNullableTest(node),
             .index_access => self.lowerIndex(node, expected, null),
@@ -756,12 +756,16 @@ const Context = struct {
     // enclosing function's output and cleanup rules.
     fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: entities.ModuleBindingId) !entities.ModuleBlockId {
         const error_use = try self.resolved(node, null, .{ .binding_use = failure });
-        const trace = try self.pending(node, .{ .resolve_field = .{ .node = self.nextNodeId(), .value = error_use.node, .field_name = try self.writer.addString("tracer"), .source = self.sourceRef(node) } }, null);
+        const borrowed = try self.pending(node, .{ .resolve_address = .{
+            .node = self.nextNodeId(),
+            .value = error_use.node,
+            .mutability = .read_only,
+        } }, null);
         const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
-        try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace.node });
+        try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("err"), .value = borrowed.node });
         const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
         try self.captureAssumedFields(node, input.node);
-        const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("report_trace"), .source = self.sourceRef(node) });
+        const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("report_error"), .source = self.sourceRef(node) });
         const report = try self.pending(node, .{ .resolve_call = .{ .node = self.nextNodeId(), .callee = callee, .callee_value = null, .input = input.node, .expected_type = null, .visible_bindings = try self.captureVisibleBindings(), .owner_function = self.current_function } }, null);
         const ret = try self.resolved(node, try self.builtin(.Void), .{ .return_statement = .{ .expression = null, .cleanup = .{ .start = 0, .len = 0 } } });
         if (self.tree.tag(node) == .error_report_return_block) {
@@ -1201,6 +1205,7 @@ const Context = struct {
             .fields = .{ .start = start, .len = @intCast(literal.fields.len) },
             .dispatch_prefix_positional_count = literal.positional_prefix_count,
         } });
+        try self.captureAssumedFields(node, result.node);
         try self.trackAggregateLiteral(node, result.node, expected);
         return result;
     }
@@ -1239,29 +1244,6 @@ const Context = struct {
         const literal = self.tree.choiceLiteral(node).?;
         const payload = if (literal.payload) |payload_node| (try self.lowerNode(payload_node, null)).node else null;
         const option_text = self.tree.tokenTextFromSource(self.source, literal.name_token);
-        if (std.mem.eql(u8, option_text, "error")) if (payload) |payload_id| {
-            const payload_node = self.graph.semantic.nodes.items[@intFromEnum(payload_id)];
-            if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
-                const fields = payload_node.resolved.content.struct_value_literal.fields;
-                var has_reason = false;
-                var has_tracer = false;
-                for (self.graph.semantic.value_fields.items[fields.start..][0..fields.len]) |field| {
-                    has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
-                    has_tracer = has_tracer or std.mem.eql(u8, self.graph.text(field.name), "tracer");
-                }
-                if (has_reason and !has_tracer) {
-                    // Capturing the tracer is an ordinary call, so its
-                    // receiver dependency participates in safety summaries.
-                    const location = try self.syntheticErrorCall(node, "error_location_id", null);
-                    const trace = try self.syntheticErrorCall(node, "capture_error_tracer", location);
-                    const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
-                    try self.graph.semantic.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
-                    self.graph.semantic.value_fields.appendSliceAssumeCapacity(self.graph.semantic.value_fields.items[fields.start..][0..fields.len]);
-                    try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
-                    self.graph.semantic.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
-                }
-            }
-        };
         const name = try self.writer.addString(option_text);
         const option = try self.writer.addExternalRef(.{
             .kind = .choice_option,
@@ -1275,22 +1257,6 @@ const Context = struct {
             .payload = payload,
             .expected_type = expected,
         } }, expected);
-    }
-
-    fn syntheticErrorCall(self: *Context, node: syn.NodeIndex, name: []const u8, location: ?entities.ModuleNodeId) !entities.ModuleNodeId {
-        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
-        if (location) |value| try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("location"), .value = value });
-        const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = if (location != null) 1 else 0 } } });
-        try self.captureAssumedFields(node, input.node);
-        const external = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
-        const call = try self.pending(node, .{ .resolve_call = .{
-            .node = self.nextNodeId(),
-            .callee = external,
-            .input = input.node,
-            .visible_bindings = try self.captureVisibleBindings(),
-            .owner_function = self.current_function,
-        } }, null);
-        return call.node;
     }
 
     fn lowerField(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -1336,13 +1302,12 @@ const Context = struct {
         } }, expected);
     }
 
-    fn lowerErrorPropagation(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, context: ?entities.ModuleNodeId) !Lowered {
+    fn lowerErrorPropagation(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const child = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         return self.pending(node, .{ .resolve_error_propagation = .{
             .node = self.nextNodeId(),
             .errable_value = child.node,
             .source = self.sourceRef(node),
-            .context = context,
             .owner_function = self.current_function,
         } }, expected);
     }
@@ -1350,14 +1315,53 @@ const Context = struct {
     fn lowerErrorContext(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const op = self.tree.binaryOperation(node).?;
         const value = try self.lowerNode(op.lhs, null);
-        const context = try self.lowerNode(op.rhs, null);
-        return self.pending(node, .{ .resolve_error_propagation = .{
+        const payload = try self.pending(node, .{ .resolve_choice_payload = .{
+            .requires_errable = true,
             .node = self.nextNodeId(),
-            .errable_value = value.node,
+            .value = value.node,
+            .option_name = try self.writer.addString("ok"),
             .source = self.sourceRef(node),
-            .context = context.node,
-            .owner_function = self.current_function,
         } }, expected);
+        const result = try self.writer.addUnresolvedBinding(try self.writer.addString("#context_value"), self.sourceRef(node), payload.node, .variable);
+        self.graph.semantic.bindings.items[@intFromEnum(result)].deferred_initialization = true;
+        try self.captureBindingCleanup(node, result);
+        const declaration = try self.resolved(node, expected, .{ .binding_declaration = result });
+        try (self.temporary_declarations orelse return error.ErrorContextOutsideFunction).append(declaration.node);
+        const success = try self.writer.addUnresolvedBinding(try self.writer.addString("#context_success"), self.sourceRef(node), null, .constant);
+        const failure = try self.writer.addUnresolvedBinding(try self.writer.addString("#context_error"), self.sourceRef(node), null, .constant);
+        const success_use = try self.resolved(node, expected, .{ .binding_use = success });
+        const moved = try self.resolved(node, expected, .{ .move_value = success_use.node });
+        const assignment = try self.resolved(node, expected, .{ .assignment = .{ .binding = result, .value = moved.node } });
+        const success_body = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{assignment.node}), .ret_val = null });
+        const failure_use = try self.resolved(node, null, .{ .binding_use = failure });
+        const context = try self.lowerNode(op.rhs, null);
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.appendSlice(self.allocator, &.{
+            .{ .name = try self.writer.addString("error"), .value = failure_use.node },
+            .{ .name = try self.writer.addString("context"), .value = context.node },
+        });
+        const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 2 } } });
+        try self.captureAssumedFields(node, input.node);
+        const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("trace_error"), .source = self.sourceRef(node) });
+        const call = try self.pending(node, .{ .resolve_call = .{ .node = self.nextNodeId(), .callee = callee, .callee_value = null, .input = input.node, .expected_type = null, .visible_bindings = try self.captureVisibleBindings(), .owner_function = self.current_function } }, null);
+        const propagation = try self.pending(node, .{ .resolve_error_propagation = .{
+            .node = self.nextNodeId(),
+            .errable_value = call.node,
+            .source = self.sourceRef(node),
+            .owner_function = self.current_function,
+        } }, null);
+        const unreachable_node = try self.resolved(node, try self.builtin(.Void), .abort_statement);
+        const failure_body = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ propagation.node, unreachable_node.node }), .ret_val = null });
+        var cases: [2]entities.ModuleNodeId = undefined;
+        for ([_][]const u8{ "ok", "error" }, [_]entities.ModuleBindingId{ success, failure }, [_]entities.ModuleBlockId{ success_body, failure_body }, 0..) |name, binding, body, i| {
+            const option = try self.writer.addExternalRef(.{ .kind = .choice_option, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
+            cases[i] = (try self.pending(node, .{ .resolve_match_case = .{ .node = self.nextNodeId(), .option = option, .payload_binding = binding, .body = body, .mode = .move } }, null)).node;
+        }
+        const dispatch = try self.pending(node, .{ .resolve_match = .{ .node = self.nextNodeId(), .value = value.node, .cases = try self.writer.appendNodeRefs(&cases) } }, try self.builtin(.Void));
+        const use = try self.resolved(node, expected, .{ .binding_use = result });
+        const result_move = try self.resolved(node, expected, .{ .move_value = use.node });
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ dispatch.node, result_move.node }), .ret_val = result_move.node });
+        return self.resolved(node, expected, .{ .value_sequence = block });
     }
 
     fn lowerNullableTest(self: *Context, node: syn.NodeIndex) !Lowered {

@@ -2,7 +2,7 @@ Pair := (.value: Int32, .fraction: Float32)
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= CAllocator(.ffi = ffi)
     allocated ::= allocate#(.t: Int32)(.self = $&allocator, .count = 2)
     match allocated {

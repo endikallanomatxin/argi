@@ -2,13 +2,9 @@
 
 -- UTC RFC 3339 profile: YYYY-MM-DDTHH:MM:SS[.1..9 digits]Z. Numeric
 -- timezone offsets and leap seconds require a separate timezone policy.
-_date_digits := (
-    .text         : StringView,
-    .start        : UIntNative,
-    .count        : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UInt32, (..invalid_datetime))) {
-    assume error_tracer
+_date_digits := (.text: StringView, .start: UIntNative, .count: UIntNative) -> (
+    .result : Errable#(UInt32, (..invalid_datetime))
+) {
 
     value :: UInt32 = 0
     index :: UIntNative = 0
@@ -26,10 +22,7 @@ _date_digits := (
     result = ..ok value
 }
 
-parse_utc := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(UtcDateTime, (..invalid_datetime))
-) {
-    assume error_tracer
+parse_utc := (.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) {
 
     if text._length < 20 or text._length > 30 {
         result = ..error(.reason = ..invalid_datetime)
@@ -95,7 +88,7 @@ _write_date_digits := (
     .count  : UIntNative,
     .value  : UInt32
 ) -> () {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     index ::= count
     remaining ::= value
 
@@ -111,12 +104,9 @@ _write_date_digits := (
 
 -- Validate date and complete capacity before writing. Nonzero fractions use
 -- nine digits, preserving every nanosecond without allocation or truncation.
-format_utc_into := (
-    .date         : UtcDateTime,
-    .buffer       : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))) {
-    assume error_tracer
+format_utc_into := (.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))
+) {
 
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..invalid_datetime)

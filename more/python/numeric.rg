@@ -18,10 +18,9 @@ _buffer_copy(
     .copied      : $&UIntNative
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_buffer_copy")
 
-_array_storage := #(.t: Type, .view_type: Type) (
-    .self: &Python, .values: view_type, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+_array_storage := #(.t: Type, .view_type: Type) (.self: &Python, .values: view_type) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     assume ffi := self&._ffi
     count ::= length(&values).count
@@ -41,12 +40,8 @@ _array_storage := #(.t: Type, .view_type: Type) (
 }
 
 _copy_numeric := #(.t: Type) (
-    .self         : &Object,
-    .destination  : MutableArrayView#(.t: t),
-    .kind         : Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &Object, .destination: MutableArrayView#(.t: t), .kind: Int32
 ) -> (.result: Errable#(UIntNative, (..python_error))) {
-    assume error_tracer
 
     assume ffi := self&._python&._ffi
     capacity ::= length(&destination).count
@@ -76,13 +71,9 @@ _copy_numeric := #(.t: Type) (
     result = ..ok copied
 }
 
-_numpy_array := (
-    .self         : &Python,
-    .storage      : &Object,
-    .dtype        : StringView,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+_numpy_array := (.self: &Python, .storage: &Object, .dtype: StringView) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     numpy ::= import_module(.self = self, .name = "numpy")!
     dtype_object ::= string(.self = self, .value = dtype)!
@@ -120,20 +111,18 @@ implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t
     .Element : Type = t
 )
 
-numeric_buffer := #(.View: Type: _PythonNumericView#(View)) (
-    .self: &Python, .values: View, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+numeric_buffer := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .values: View) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     result = ~_array_storage#(.t: _PythonNumericView#(View).Element)(
         .self = self, .values = values
     )
 }
 
-numeric_array := #(.View: Type: _PythonNumericView#(View)) (
-    .self: &Python, .values: View, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+numeric_array := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .values: View) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     storage ::= numeric_buffer(.self = self, .values = values)!
     result = ~_numpy_array(
@@ -144,11 +133,8 @@ numeric_array := #(.View: Type: _PythonNumericView#(View)) (
 }
 
 copy_numeric := #(.t: Type: _PythonNumericScalar#(t)) (
-    .self         : &Object,
-    .destination  : MutableArrayView#(.t: t),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &Object, .destination: MutableArrayView#(.t: t)
 ) -> (.result: Errable#(UIntNative, (..python_error))) {
-    assume error_tracer
 
     result = _copy_numeric(
         .self = self, .destination = destination, .kind = _PythonNumericScalar#(t).native_kind()

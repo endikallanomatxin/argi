@@ -3,7 +3,7 @@ choose := () -> (.ok: Bool) { ok = true }
 main := () -> () { missing_in_main() }
 
 #if choose() {
-    test selected := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+    test selected := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
         assume error_tracer
 
         testing.expect(.condition = true)!

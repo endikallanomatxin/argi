@@ -6,8 +6,8 @@ RecordingWriter := (
     .flush_failure : Bool       = false
 )
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     base ::= RecordingWriter(.expected = "a\nb<>c\r\nd\nd=.!x")
     assume writer ::= $&base
@@ -58,10 +58,9 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
 }
 
 implement Writer#(RecordingWriter) (
-    .write_byte = (
-        .self: $&RecordingWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -82,10 +81,9 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&RecordingWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&RecordingWriter) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()

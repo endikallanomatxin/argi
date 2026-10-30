@@ -1,7 +1,6 @@
 make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .condition: Bool, .error_tracer: $&Virtual#(ErrorTracer)
+    .allocator: $&AllocatorType, .condition: Bool
 ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -13,7 +12,7 @@ make := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     failed ::= make(.allocator = $&allocator_storage, .condition = true)
     match failed {

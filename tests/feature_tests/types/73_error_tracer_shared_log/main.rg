@@ -6,7 +6,7 @@ Failures: Type = (..first_failure, ..second_failure)
 Probe := (.count: UIntNative = 0, .sum: UIntNative = 0)
 
 fail := (.second: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Void, .reasons: Failures)
+    .result : Errable#(.t: Void, .reasons: Failures, .error_type: ErrorWithTrace#(Failures))
 ) {
     assume error_tracer
 
@@ -18,8 +18,11 @@ fail := (.second: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 forward := (
-    .value: Errable#(.t: Void, .reasons: Failures), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(.t: Void, .reasons: Failures)) {
+    .value : Errable#(
+        .t: Void, .reasons: Failures, .error_type: ErrorWithTrace#(Failures)
+    ),
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> (.result: Errable#(.t: Void, .reasons: Failures, .error_type: ErrorWithTrace#(Failures))) {
     assume error_tracer
 
     value!! "after reset"
@@ -27,7 +30,9 @@ forward := (
 }
 
 report_value := (
-    .value        : &Errable#(.t: Void, .reasons: Failures),
+    .value : &Errable#(
+        .t: Void, .reasons: Failures, .error_type: ErrorWithTrace#(Failures)
+    ),
     .writer       : $&Probe,
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> () {
@@ -110,10 +115,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(Probe) (
-    .write_byte = (.self: $&Probe, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&Probe, .byte: UInt8) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.count = self&.count + 1
         remaining :: UInt8 = byte
@@ -124,10 +128,10 @@ implement Writer#(Probe) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&Probe, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&Probe) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
+
         result = ..ok Void()
     }
 )

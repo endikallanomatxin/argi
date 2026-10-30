@@ -5,7 +5,7 @@ StringWhitespaceIterator := (._text: StringView, ._start: UIntNative)
 -- Iteration copies the remaining cursor state and preserves source lifetimes.
 
 _whitespace_token_start := (.text: StringView, .start: UIntNative) -> (.position: UIntNative) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     position = start
 
     while position < text._length {
@@ -45,11 +45,7 @@ implement Iterator#(StringWhitespaceIterator) (
     }
 
     .next = (.self: $&StringWhitespaceIterator) -> (.value: StringView) {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         start ::= _whitespace_token_start(.text = self&._text, .start = self&._start).position
 
         if start == self&._text._length { abort }

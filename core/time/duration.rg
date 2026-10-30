@@ -15,10 +15,9 @@ implement Init#(Duration, DurationInitArgs) (
     }
 )
 
-_duration_checked := (
-    .value: Errable#(UInt64, (..out_of_range)), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Duration, (..out_of_range))) {
-    assume error_tracer
+_duration_checked := (.value: Errable#(UInt64, (..out_of_range))) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) {
 
     match value {
         ..ok nanoseconds { result = ..ok Duration(.nanoseconds = nanoseconds) }
@@ -26,34 +25,28 @@ _duration_checked := (
     }
 }
 
-_duration_scaled := (.value: UInt64, .scale: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+_duration_scaled := (.value: UInt64, .scale: UInt64) -> (
     .result : Errable#(Duration, (..out_of_range))
 ) {
-    assume error_tracer
 
     result = _duration_checked(.value = checked_multiply(.left = value, .right = scale)).result
 }
 
-duration_from_microseconds := (.microseconds: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+duration_from_microseconds := (.microseconds: UInt64) -> (
     .result : Errable#(Duration, (..out_of_range))
 ) {
-    assume error_tracer
 
     result = _duration_scaled(.value = microseconds, .scale = 1000).result
 }
 
-duration_from_milliseconds := (.milliseconds: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+duration_from_milliseconds := (.milliseconds: UInt64) -> (
     .result : Errable#(Duration, (..out_of_range))
 ) {
-    assume error_tracer
 
     result = _duration_scaled(.value = milliseconds, .scale = 1000000).result
 }
 
-duration_from_seconds := (.seconds: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Duration, (..out_of_range))
-) {
-    assume error_tracer
+duration_from_seconds := (.seconds: UInt64) -> (.result: Errable#(Duration, (..out_of_range))) {
 
     result = _duration_scaled(.value = seconds, .scale = 1000000000).result
 }
@@ -71,20 +64,16 @@ milliseconds := (.self: &Duration) -> (.value: UInt64) { value = self&._nanoseco
 
 seconds := (.self: &Duration) -> (.value: UInt64) { value = self&._nanoseconds / 1000000000 }
 
-add := (.left: Duration, .right: Duration, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Duration, (..out_of_range))
-) {
-    assume error_tracer
+add := (.left: Duration, .right: Duration) -> (.result: Errable#(Duration, (..out_of_range))) {
 
     result = _duration_checked(
         .value = checked_add(.left = left._nanoseconds, .right = right._nanoseconds)
     ).result
 }
 
-subtract := (.left: Duration, .right: Duration, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+subtract := (.left: Duration, .right: Duration) -> (
     .result : Errable#(Duration, (..out_of_range))
 ) {
-    assume error_tracer
 
     result = _duration_checked(
         .value = checked_subtract(.left = left._nanoseconds, .right = right._nanoseconds)

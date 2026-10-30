@@ -3,7 +3,7 @@ forward := (.text: StringView) -> (.view: StringView) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     if trim(.self = "").view != "" { abort }
     if trim(.self = " \t\r\n ").view != "" { abort }
     if trim(.self = "hello").view != "hello" { abort }

@@ -1,6 +1,6 @@
 main := () -> (.status_code: Int32 = 0) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= CAllocator(.ffi = ffi)
     assume allocator ::= $&allocator_storage
     map ::= unwrap_or_abort(

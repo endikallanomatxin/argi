@@ -17,14 +17,9 @@ select_holder := (.holder: $&Holder, .counter: $&Counter) -> (.result: $&Holder)
     result = holder
 }
 
-maybe_retarget := (
-    .holder       : $&Holder,
-    .other        : $&Resource,
-    .counter      : $&Counter,
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Resource, (..stop))) {
-    assume error_tracer
+maybe_retarget := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
+    .result : Errable#(Resource, (..stop))
+) {
 
     holder&.reference = other
     if fail {
@@ -34,14 +29,9 @@ maybe_retarget := (
     }
 }
 
-replace := (
-    .holder       : $&Holder,
-    .other        : $&Resource,
-    .counter      : $&Counter,
-    .fail         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Int32, (..stop))) {
-    assume error_tracer
+replace := (.holder: $&Holder, .other: $&Resource, .counter: $&Counter, .fail: Bool) -> (
+    .result : Errable#(Int32, (..stop))
+) {
 
     [select_holder(.holder = holder, .counter = counter)&.reference]&= maybe_retarget(
         .holder = holder, .other = other, .counter = counter, .fail = fail
@@ -50,7 +40,7 @@ replace := (
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     counter :: Counter = Counter()
     {
         owner :: Resource = Resource(.counter = $&counter, .value = 1)

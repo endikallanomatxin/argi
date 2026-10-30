@@ -1,6 +1,6 @@
 AccessMode: CEnum = (
     ..missing,
-    ..exists(.code: Int32),
+    ..exists(.code: Int32)
 )
 
 main := () -> (.status_code: Int32) {

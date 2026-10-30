@@ -8,7 +8,7 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
     defer {
         Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+            report_error(.err = &error, .writer = writer) handle ignored {}
         }
     }
 
@@ -36,27 +36,26 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
             if path == "-" {
                 transfer_stream(stdin, output)!!! { status_code = 1 }
             } else {
-                file_reader ::= open_file(
-                    .file_system = system.file_system, .path = path, .mode = ..read
-                ) handle error, value {
-                    add_context(.context = path, .error_tracer = error.tracer)
-                    report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+                copy_input_file(
+                    .path = path, .output = output, .file_system = system.file_system
+                )!!! {
                     status_code = 1
-                    return
-                }
-                transfer_stream($&file_reader, output) handle error, value {
-                    add_context(.context = path, .error_tracer = error.tracer)
-                    report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
-                    status_code = 1
-                    return
-                }
-                close($&file_reader) handle error, value {
-                    add_context(.context = path, .error_tracer = error.tracer)
-                    report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
-                    status_code = 1
-                    return
                 }
             }
         }
     }
+}
+
+copy_input_file := #(.Output: Type: Writer#(Output)) (
+    .path         : StringView,
+    .output       : $&Output,
+    .file_system  : $&FileSystem,
+    .allocator    : $&PageAllocator,
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> !!Void = ..ok Void() {
+    assume error_tracer
+    assume allocator
+    file_reader ::= open_file(.file_system = file_system, .path = path)!! path
+    transfer_stream($&file_reader, output)!! path
+    close($&file_reader)!! path
 }

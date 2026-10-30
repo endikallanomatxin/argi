@@ -60,10 +60,8 @@ static_take := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType, .
     value = take(slot, present)
 }
 
-extract := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .value : Tracked
-) {
-    assume error_tracer
+extract := (.allocator: $&GeneralPurposeAllocator) -> (.value: Tracked) {
+
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)
     drops :: Int32 = 0
@@ -77,7 +75,7 @@ extract := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual#(Err
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     _ ::= extract(allocator)
 }

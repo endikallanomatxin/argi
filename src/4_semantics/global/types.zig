@@ -351,7 +351,7 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
             else => false,
         },
         .inferred_errable => |x| switch (right) {
-            .inferred_errable => |y| equal(graph, x, y),
+            .inferred_errable => |y| x.traced == y.traced and equal(graph, x.child, y.child),
             else => false,
         },
         .generic => |x| switch (right) {

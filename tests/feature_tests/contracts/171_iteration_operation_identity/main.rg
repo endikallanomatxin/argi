@@ -10,7 +10,7 @@ sum := #(.T: Type: Iterable#(T)) (.values: &T) -> (.total: Int32 = 0) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     values: [3]Int32 = (1, 2, 3)
     if sum(&values).total != 6 { status_code = 1 }
     iterator ::= Iterable#().to_iterator(&values).iterator

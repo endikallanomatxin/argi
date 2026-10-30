@@ -9,7 +9,7 @@ implement Storage#(Cell) (
 )
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     first: Int32 = 1
     second: Int32 = 2
     cell ::= Cell(.reference = &first)

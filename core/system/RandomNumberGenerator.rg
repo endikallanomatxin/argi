@@ -35,11 +35,8 @@ implement Init#(RandomNumberGenerator, RandomNumberGeneratorInitArgs) (
 -- Fill only initialized storage. A failing source may have changed a prefix;
 -- callers must discard all bytes after an error. Empty requests need no FFI.
 fill_random_bytes := (
-    .self         : $&RandomNumberGenerator,
-    .destination  : MutableArrayView#(.t: UInt8),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&RandomNumberGenerator, .destination: MutableArrayView#(.t: UInt8)
 ) -> (.result: Errable#(Void, (..entropy_unavailable))) {
-    assume error_tracer
 
     extent ::= length(&destination).count
 

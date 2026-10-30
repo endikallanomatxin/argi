@@ -10,7 +10,7 @@ implement TestEquality#(Token) (
         .actual       : Token,
         .message      : StringView,
         .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..test_failed))) {
+    ) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
         assume error_tracer
 
         calls = calls + 1
@@ -24,7 +24,7 @@ implement TestEquality#(Token) (
 
 assert_same := #(.T: Type: TestEquality#(T)) (
     .expected: T, .actual: T, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     result = expect_equal(.expected = expected, .actual = actual)

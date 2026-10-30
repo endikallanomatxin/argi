@@ -3,37 +3,30 @@ Source := (.byte: UInt8)
 Sink := (.byte: UInt8 = 0)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
-        assume error_tracer
+    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
 
         result = ..ok ..ok self&.byte
     }
 )
 
 implement Writer#(Sink) (
-    .write_byte = (.self: $&Sink, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&Sink, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.byte = byte
         result = ..ok Void()
     }
-    .flush = (.self: $&Sink, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&Sink) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         result = ..ok Void()
     }
 )
 
-read_default := #(.Stream: Type: Reader#(Stream)) (
-    .source: $&Stream, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: UInt8) {
-    assume error_tracer
+read_default := #(.Stream: Type: Reader#(Stream)) (.source: $&Stream) -> (.result: UInt8) {
+
     reader ::= BufferedReader(.base = source)
     match unwrap_or_abort(.value = Reader#().read_byte($&reader)) {
         ..end { abort }
@@ -42,7 +35,7 @@ read_default := #(.Stream: Type: Reader#(Stream)) (
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     first_source :: Source = (.byte = 65)
     second_source :: Source = (.byte = 66)
     first ::= BufferedReader(.base = $&first_source)

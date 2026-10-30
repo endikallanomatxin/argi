@@ -1,11 +1,10 @@
 verify_Int8 := (
-    .actual       : Errable#(.t: Int8, .reasons: (..out_of_range)),
-    .expected     : Int32,
-    .minimum      : Int32,
-    .maximum      : Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .actual   : Errable#(.t: Int8, .reasons: (..out_of_range)),
+    .expected : Int32,
+    .minimum  : Int32,
+    .maximum  : Int32
 ) -> () {
-    assume error_tracer
+
     match actual {
         ..ok value {
             if expected < minimum or expected > maximum { abort }
@@ -19,13 +18,12 @@ verify_Int8 := (
 }
 
 verify_UInt8 := (
-    .actual       : Errable#(.t: UInt8, .reasons: (..out_of_range)),
-    .expected     : Int32,
-    .minimum      : Int32,
-    .maximum      : Int32,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .actual   : Errable#(.t: UInt8, .reasons: (..out_of_range)),
+    .expected : Int32,
+    .minimum  : Int32,
+    .maximum  : Int32
 ) -> () {
-    assume error_tracer
+
     match actual {
         ..ok value {
             if expected < minimum or expected > maximum { abort }
@@ -38,8 +36,8 @@ verify_UInt8 := (
     }
 }
 
-check_int8 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_int8 := () -> () {
+
     left :: Int32 = -128
     while left <= 127 {
         right :: Int32 = -128
@@ -86,8 +84,8 @@ check_int8 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
     }
 }
 
-check_uint8 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+check_uint8 := () -> () {
+
     left :: Int32 = 0
     while left <= 255 {
         right :: Int32 = 0
@@ -135,7 +133,7 @@ check_uint8 := (.error_tracer: $&Virtual#(ErrorTracer)) -> () {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     check_int8()
     check_uint8()
 }

@@ -4,8 +4,8 @@ TrackingAllocator := (
     .deallocations : UIntNative
 )
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     tracker :: TrackingAllocator = (
         .backing       = system.page_allocator
         .allocations   = 0
@@ -126,13 +126,9 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
 }
 
 implement Allocator#(TrackingAllocator) (
-    .allocate = (
-        .self         : $&TrackingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&TrackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         allocated ::= allocate_bytes(
             .self = self&.backing, .size = size, .alignment = alignment

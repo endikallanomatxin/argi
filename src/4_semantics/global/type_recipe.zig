@@ -238,7 +238,7 @@ pub const Recipe = struct {
                 .pointer => |value| value.mutability == actual.pointer.mutability and try self.typeId(value.child, actual.pointer.child),
                 .array => |value| value.length == actual.array.length and try self.typeId(value.element, actual.array.element),
                 .nullable => |value| try self.typeId(value, actual.nullable),
-                .inferred_errable => |value| try self.typeId(value, actual.inferred_errable),
+                .inferred_errable => |value| value.traced == actual.inferred_errable.traced and try self.typeId(value.child, actual.inferred_errable.child),
                 .inferred_choice => unreachable,
                 .virtual => |value| try self.typeId(value, actual.virtual),
                 .structural => |value| blk: {
@@ -338,7 +338,7 @@ pub const Recipe = struct {
                     .nullable => |v| .{ .nullable = try self.typeId(v, depth + 1) },
                     // This wrapper has no independent inferred identity. Keep
                     // its pending state and reconstruct its value type normally.
-                    .inferred_errable => |v| .{ .inferred_errable = try self.typeId(v, depth + 1) },
+                    .inferred_errable => |v| .{ .inferred_errable = .{ .child = try self.typeId(v.child, depth + 1), .traced = v.traced } },
                     .virtual => |v| .{ .virtual = try self.typeId(v, depth + 1) },
                     .structural => |v| .{ .structural = .{ .fields = try self.captureFields(v.fields, depth + 1), .layout = v.layout } },
                     .structural_choice => |v| .{ .structural_choice = .{ .variants = try self.captureVariants(v.variants, depth + 1), .layout = v.layout } },
@@ -478,7 +478,7 @@ pub const Recipe = struct {
                 .pointer => |v| .{ .pointer = .{ .child = try self.typeId(v.child), .mutability = v.mutability } },
                 .array => |v| .{ .array = .{ .element = try self.typeId(v.element), .length = v.length } },
                 .nullable => |v| .{ .nullable = try self.typeId(v) },
-                .inferred_errable => |v| .{ .inferred_errable = try self.typeId(v) },
+                .inferred_errable => |v| .{ .inferred_errable = .{ .child = try self.typeId(v.child), .traced = v.traced } },
                 .inferred_choice => unreachable,
                 .virtual => |v| .{ .virtual = try self.typeId(v) },
                 .structural => |v| .{ .structural = .{ .fields = try self.publishFields(v.fields), .layout = v.layout } },
@@ -628,7 +628,7 @@ fn captureAndCloneFailures(a: std.mem.Allocator) !void {
     try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
     try graph.fields.append(a, .{ .name = try graph.addString(a, "item"), .ty = @enumFromInt(1), .source = .{ .file_index = 0, .offset = 0 } });
     try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
-    try graph.types.append(a, .{ .inferred_errable = @enumFromInt(2) });
+    try graph.types.append(a, .{ .inferred_errable = .{ .child = @enumFromInt(2) } });
     const roots = [_]?g.GlobalTypeId{@enumFromInt(3)};
     var recipe = try Recipe.capture(a, &graph, .{ .types = 1, .declarations = 0, .nodes = 0 }, &roots);
     defer recipe.deinit(a);
@@ -946,7 +946,7 @@ test "type recipes preserve pending errable wrappers without retaining speculati
     try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
     const checkpoint = graph.checkpoint();
     try graph.types.append(a, .{ .array = .{ .element = @enumFromInt(0), .length = 3 } });
-    try graph.types.append(a, .{ .inferred_errable = @enumFromInt(2) });
+    try graph.types.append(a, .{ .inferred_errable = .{ .child = @enumFromInt(2) } });
     const roots = [_]?g.GlobalTypeId{@enumFromInt(3)};
     var recipe = try Recipe.capture(a, &graph, .{ .types = 2, .declarations = 0, .nodes = 0 }, &roots);
     defer recipe.deinit(a);
@@ -955,7 +955,7 @@ test "type recipes preserve pending errable wrappers without retaining speculati
     try std.testing.expect(try cloned.matches(a, &graph, &roots));
     graph.rollback(a, checkpoint);
     try graph.types.append(a, .{ .array = .{ .element = @enumFromInt(1), .length = 3 } });
-    try graph.types.append(a, .{ .inferred_errable = @enumFromInt(2) });
+    try graph.types.append(a, .{ .inferred_errable = .{ .child = @enumFromInt(2) } });
     try std.testing.expect(!try cloned.matches(a, &graph, &roots));
     var core = @import("core.zig").Resolver{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
     var generics = Generics{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
@@ -966,7 +966,7 @@ test "type recipes preserve pending errable wrappers without retaining speculati
     try std.testing.expect(published[0].? != roots[0].?);
     const wrapper = graph.types.items[@intFromEnum(published[0].?)];
     try std.testing.expect(wrapper == .inferred_errable);
-    const child = graph.types.items[@intFromEnum(wrapper.inferred_errable)];
+    const child = graph.types.items[@intFromEnum(wrapper.inferred_errable.child)];
     try std.testing.expect(child == .array);
     try std.testing.expectEqual(@as(u64, 3), child.array.length);
     try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(0)), child.array.element);

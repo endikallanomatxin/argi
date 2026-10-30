@@ -13,12 +13,9 @@ FaultReader := (
 )
 
 implement BlockReader#(FaultReader) (
-    .read_block = (
-        .self         : $&FaultReader,
-        .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) {
-        assume error_tracer
+    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+    ) {
 
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
@@ -37,7 +34,7 @@ implement BlockReader#(FaultReader) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     allocator :: RecordingAllocator = (.ffi = system.ffi, .fail_at = 1)
     source :: FaultReader = FaultReader()
@@ -136,13 +133,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (
-        .self         : $&RecordingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         self&.attempts = self&.attempts + 1
         if self&.attempts == self&.fail_at {

@@ -40,9 +40,7 @@ pub const Storage = struct {
     virtualizes: std.ArrayList(entities.Virtualize) = .empty,
     virtual_calls: std.ArrayList(entities.VirtualCall) = .empty,
     nullable_unwraps: std.ArrayList(entities.NullableUnwrap) = .empty,
-    testing_expect_errors: std.ArrayList(entities.TestingExpectError) = .empty,
     error_propagations: std.ArrayList(entities.ErrorPropagation) = .empty,
-    error_contexts: std.ArrayList(entities.ErrorContext) = .empty,
 
     parameterized_storage: parameterized_storage.Storage = .{},
 
@@ -85,9 +83,7 @@ pub const Storage = struct {
         self.virtualizes.deinit(allocator);
         self.virtual_calls.deinit(allocator);
         self.nullable_unwraps.deinit(allocator);
-        self.testing_expect_errors.deinit(allocator);
         self.error_propagations.deinit(allocator);
-        self.error_contexts.deinit(allocator);
         self.parameterized_storage.deinit(allocator);
         self.scopes.deinit(allocator);
         self.external_refs.deinit(allocator);
@@ -128,9 +124,7 @@ pub const Storage = struct {
             self.virtualizes.items.len * @sizeOf(entities.Virtualize) +
             self.virtual_calls.items.len * @sizeOf(entities.VirtualCall) +
             self.nullable_unwraps.items.len * @sizeOf(entities.NullableUnwrap) +
-            self.testing_expect_errors.items.len * @sizeOf(entities.TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(entities.ErrorPropagation) +
-            self.error_contexts.items.len * @sizeOf(entities.ErrorContext) +
             self.parameterized_storage.storageBytes() +
             self.scopes.items.len * @sizeOf(entities.Scope) +
             self.external_refs.items.len * @sizeOf(entities.ExternalRef) +

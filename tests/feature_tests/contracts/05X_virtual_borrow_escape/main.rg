@@ -22,15 +22,15 @@ register_right := (.value: $&Right) -> () {
     unused ::= to_virtual#(.contract: View)(.value = value)
 }
 
-escape := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.value: &Int32) {
-    assume error_tracer
+escape := () -> (.value: &Int32) {
+
     left :: Left = (.value = 1)
     virtual ::= to_virtual#(.contract: View)(.value = $&left)
     value = get(.self = &virtual)
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     right :: Right = (.value = 2)
     register_right(.value = $&right)
     escaped ::= escape()

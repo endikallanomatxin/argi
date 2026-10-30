@@ -30,7 +30,7 @@ replace := (.holder: $&Holder, .other: $&Resource, .token: Token) -> () {
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     {
         owner :: Resource = Resource(.value = 1)
         other :: Resource = Resource(.value = 2)

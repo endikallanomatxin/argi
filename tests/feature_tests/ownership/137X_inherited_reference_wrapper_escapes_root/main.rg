@@ -4,8 +4,8 @@ inherit := (.raw: RawPointer#(.t: Int32), .root: &Any) -> (.reference: $&Int32) 
     ).reference
 }
 
-escape := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.reference: $&Int32) {
-    assume error_tracer
+escape := () -> (.reference: $&Int32) {
+
     value :: Int32 = 7
     raw ::= raw_pointer#(.t: Int32)(.address = $&value | convert#(.to: UIntNative)(_)).raw
     reference = inherit(
@@ -14,7 +14,7 @@ escape := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.reference: $&Int32) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     escaped ::= escape()
     status_code = escaped&
 }

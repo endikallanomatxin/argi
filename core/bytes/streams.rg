@@ -1,10 +1,7 @@
 -- Memory cursors implement the stream protocols without acquiring capabilities
 -- or storage. They retain the same backing-view lifetime as binary operations.
 implement Reader#(ByteReader) (
-    .read_byte = (.self: $&ByteReader, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
-        assume error_tracer
+    .read_byte = (.self: $&ByteReader) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
 
         if remaining(self).count == 0 {
             result = ..ok ..end
@@ -21,12 +18,9 @@ implement Reader#(ByteReader) (
 )
 
 implement BlockReader#(ByteReader) (
-    .read_block = (
-        .self         : $&ByteReader,
-        .buffer       : MutableArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
-        assume error_tracer
+    .read_block = (.self: $&ByteReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
+        .result : Errable#(UIntNative, (..stream_read_failed))
+    ) {
 
         count ::= remaining(self).count
         size ::= length(&buffer).count
@@ -50,12 +44,9 @@ implement BlockReader#(ByteReader) (
 )
 
 implement BlockWriter#(ByteWriter) (
-    .write_block = (
-        .self         : $&ByteWriter,
-        .buffer       : ArrayView#(.t: UInt8),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .write_block = (.self: $&ByteWriter, .buffer: ArrayView#(.t: UInt8)) -> (
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         count ::= remaining(self).count
         size ::= length(&buffer).count
@@ -86,10 +77,9 @@ implement BlockWriter#(ByteWriter) (
 )
 
 implement Writer#(ByteWriter) (
-    .write_byte = (.self: $&ByteWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&ByteWriter, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) {
-        assume error_tracer
 
         if remaining(self).count == 0 {
             result = ..error(.reason = ..stream_write_failed)
@@ -103,9 +93,9 @@ implement Writer#(ByteWriter) (
         self&._position = self&._position + 1
     }
 
-    .flush = (.self: $&ByteWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&ByteWriter) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) {
-        assume error_tracer
+
     }
 )

@@ -1,9 +1,6 @@
 logging := import ("logging")
 
-check := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, logging.LogReasons) = ..ok Void()
-) {
-    assume error_tracer
+check := (.system: System) -> (.result: Errable#(Void, logging.LogReasons) = ..ok Void()) {
 
     output_bytes ::= zeroed#([64]UInt8)()
     error_bytes ::= zeroed#([64]UInt8)()
@@ -40,7 +37,7 @@ check := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     check(.system = system)!!!
     status_code = 0

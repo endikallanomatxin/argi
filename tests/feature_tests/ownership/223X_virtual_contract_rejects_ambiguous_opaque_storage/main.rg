@@ -4,7 +4,7 @@ OpaqueStorer#(.Participant: Type): Contract = (
         .first_storage  : $&Container,
         .second_storage : $&Container,
         .slot           : $&Int32,
-        .source         : $&Int32,
+        .source         : $&Int32
     ) -> () where {}
 )
 
@@ -23,9 +23,9 @@ _impl_store_First := (
     .first_storage  : $&Container,
     .second_storage : $&Container,
     .slot           : $&Int32,
-    .source         : $&Int32,
+    .source         : $&Int32
 ) -> () {
-    trusted_opaque_move_in#(.t: Int32, .storage_type: Container) (
+    trusted_opaque_move_in#(.t: Int32, .storage_type: Container)(
         .storage = first_storage, .destination = slot, .source = ~source&
     )
 }
@@ -35,9 +35,9 @@ _impl_store_Second := (
     .first_storage  : $&Container,
     .second_storage : $&Container,
     .slot           : $&Int32,
-    .source         : $&Int32,
+    .source         : $&Int32
 ) -> () {
-    trusted_opaque_move_in#(.t: Int32, .storage_type: Container) (
+    trusted_opaque_move_in#(.t: Int32, .storage_type: Container)(
         .storage = second_storage, .destination = slot, .source = ~source&
     )
 }

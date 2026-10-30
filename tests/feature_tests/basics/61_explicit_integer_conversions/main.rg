@@ -1,5 +1,5 @@
-widen := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Int64) {
-    assume error_tracer
+widen := #(.t: Type) (.value: t) -> (.result: Int64) {
+
     result = value | convert#(.to: Int64)(_)
 }
 
@@ -10,24 +10,18 @@ next_value := () -> (.value: Int64) {
     value = 127
 }
 
-checked := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int8, .reasons: (..out_of_range))
-) {
-    assume error_tracer
+checked := #(.t: Type) (.value: t) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
 
     result = value | convert#(.to: Int8)(_)
 }
 
-narrow := (.value: Int64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int8, .reasons: (..out_of_range))
-) {
-    assume error_tracer
+narrow := (.value: Int64) -> (.result: Errable#(.t: Int8, .reasons: (..out_of_range))) {
 
     result = value | convert#(.to: Int8)(_)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     small: Int8 = -128
     wide: Int64 = small | convert#(.to: Int64)(_)
     if wide != -128 or widen(.value = small) != -128 { status_code = 1 }

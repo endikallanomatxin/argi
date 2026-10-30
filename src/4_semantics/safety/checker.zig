@@ -1193,17 +1193,6 @@ pub const SafetyChecker = struct {
                     _ = try self.evaluate(function, cleanup, &error_state);
                 break :blk try self.error_success_facts(prop.errable_value, prop.ok_variant, prop.ok_value_field_index, value, state);
             },
-            .error_context => |ctx_id| blk: {
-                const ctx = self.graph.error_contexts.items[@intFromEnum(ctx_id)];
-                const value = try self.evaluate(function, ctx.errable_value, state);
-                var error_state = try self.cloneState(state);
-                defer error_state.deinit();
-                try self.rejectPropagatedLocalError(function, node.source, ctx.errable_value, ctx.error_variant, value, &error_state);
-                _ = try self.evaluate(function, ctx.context, &error_state);
-                for (self.graph.node_refs.items[ctx.cleanup_nodes.start..][0..ctx.cleanup_nodes.len]) |cleanup|
-                    _ = try self.evaluate(function, cleanup, &error_state);
-                break :blk try self.error_success_facts(ctx.errable_value, ctx.ok_variant, ctx.ok_value_field_index, value, state);
-            },
             .auto_deinit_binding => |auto_id| blk: {
                 try self.applyAutoDeinit(function, auto_id, state);
                 break :blk .{};
@@ -1269,13 +1258,6 @@ pub const SafetyChecker = struct {
             .int_literal => |value| blk: {
                 try self.validateIntegerLiteral(node.source, node.ty, value);
                 break :blk .{};
-            },
-            .testing_expect_error => |id| blk: {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
-                _ = try self.evaluate(function, expect.expected_reason, state);
-                _ = try self.evaluate(function, expect.actual_result, state);
-                const input = expect.test_fail_input orelse break :blk .{};
-                break :blk try self.evaluateCall(function, node_id, .{ .callee = expect.test_fail_function, .input = input }, state);
             },
 
             .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .break_statement, .continue_statement, .abort_statement => .{},
@@ -4575,7 +4557,8 @@ pub const SafetyChecker = struct {
         return switch (semantic) {
             .pointer, .virtual => true,
             .array => |array| self.typeContainsPointer(array.element),
-            .nullable, .inferred_errable => |child| self.typeContainsPointer(child),
+            .nullable => |child| self.typeContainsPointer(child),
+            .inferred_errable => |value| self.typeContainsPointer(value.child),
             .builtin, .definition => false,
             .nominal, .structural => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk self.choiceTypeContainsPointer(ty);

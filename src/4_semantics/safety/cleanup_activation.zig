@@ -485,21 +485,6 @@ const Scanner = struct {
                 try self.visitRange(propagation.cleanup_nodes, &failed);
                 try self.recordOutputExit(&failed);
             },
-            .error_context => |value| {
-                const context = self.graph.error_contexts.items[@intFromEnum(value)];
-                try self.node(context.errable_value, flow);
-                try self.node(context.context, flow);
-                var failed = try flow.clone(self.allocator);
-                defer failed.deinit();
-                try self.visitRange(context.cleanup_nodes, &failed);
-                try self.recordOutputExit(&failed);
-            },
-            .testing_expect_error => |value| {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(value)];
-                try self.node(expect.expected_reason, flow);
-                try self.node(expect.actual_result, flow);
-                if (expect.test_fail_input) |input| try self.conditional(input, flow);
-            },
             else => {},
         }
     }

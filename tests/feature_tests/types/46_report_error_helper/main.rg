@@ -1,7 +1,9 @@
 ..test_error
 
 fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..test_error))
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
 ) {
     assume error_tracer
 
@@ -9,7 +11,9 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 middle := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..test_error))
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
 ) {
     assume error_tracer
 
@@ -18,7 +22,9 @@ middle := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 top := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Int32, .reasons: (..test_error))
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
 ) {
     assume error_tracer
 

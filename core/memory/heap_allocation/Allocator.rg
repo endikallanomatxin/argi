@@ -1,28 +1,22 @@
 ..out_of_memory
 
 Allocator#(.Provider: Type): Contract = (
-    .allocate : (
-        .self         : $&Provider,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) where {
+    .allocate : (.self: $&Provider, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) where {
         on result ..ok {
             owns(result)
             depends_on(result, self, size, alignment)
         }
-        on result ..error { depends_on(result, error_tracer) }
+        on result ..error {}
+
     }
 )
 
 -- Byte requests and typed element requests share selected allocator evidence.
 allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
-    .self         : $&SelfType,
-    .size         : UIntNative,
-    .alignment    : UIntNative              = 1,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&SelfType, .size: UIntNative, .alignment: UIntNative = 1
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-    assume error_tracer
 
     result = Allocator#().allocate(self, .size = size, .alignment = alignment)
 }
@@ -30,9 +24,8 @@ allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
 -- Validate the complete typed reservation before calling the provider, including
 -- element bytes and companion metadata. Containers need only check their shape.
 allocate := #(.t: Type, .SelfType: Type: Allocator#(SelfType)) (
-    .self: $&SelfType, .count: UIntNative = 1, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: $&SelfType, .count: UIntNative = 1
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-    assume error_tracer
 
     element_size ::= size_of(.type = t)
     bytes ::= element_size * count

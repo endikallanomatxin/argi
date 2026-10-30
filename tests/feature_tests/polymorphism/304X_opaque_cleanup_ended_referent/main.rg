@@ -39,7 +39,7 @@ implement Deinit#(Slot) (
 )
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
 

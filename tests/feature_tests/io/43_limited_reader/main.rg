@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes :: [3]UInt8 = (10, 20, 30)
     reader ::= ByteReader(.bytes = view(.self = &bytes))
     {

@@ -5,8 +5,8 @@ RecordingAllocator := (
     .last_size     : UIntNative                 = 0
 )
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     output ::= unwrap_or_abort(
         .value = replace(
@@ -28,13 +28,9 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (
-        .self         : $&RecordingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         self&.allocations = self&.allocations + 1
         self&.last_size = size

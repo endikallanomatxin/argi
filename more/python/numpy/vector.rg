@@ -11,16 +11,14 @@ _NumpyReasons := (python ..python_error, ..numpy_shape_mismatch)
 Vector64 := (._object: python.Object, ._length: UIntNative)
 
 Vector64InitArgs: Type = (
-    .interpreter  : &python.Python,
-    .values       : ArrayView#(.t: Float64),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .interpreter : &python.Python,
+    .values      : ArrayView#(.t: Float64)
 )
 
 implement Init#(Vector64, Vector64InitArgs) (
     .Result : Type = Errable#(Vector64, _PythonReasons)
 
     .init = Vector64InitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_interpreter ::= interpreter
         _init_values ::= values
@@ -39,10 +37,7 @@ implement Deinit#(Vector64) (
 
 length := (.self: &Vector64) -> (.count: UIntNative) { count = self&._length }
 
-add := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Vector64, _NumpyReasons)
-) {
-    assume error_tracer
+add := (.left: &Vector64, .right: &Vector64) -> (.result: Errable#(Vector64, _NumpyReasons)) {
 
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
@@ -57,10 +52,9 @@ add := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTrac
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
-multiply := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+multiply := (.left: &Vector64, .right: &Vector64) -> (
     .result : Errable#(Vector64, _NumpyReasons)
 ) {
-    assume error_tracer
 
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
@@ -75,10 +69,7 @@ multiply := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(Erro
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
-dot := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Float64, _NumpyReasons)
-) {
-    assume error_tracer
+dot := (.left: &Vector64, .right: &Vector64) -> (.result: Errable#(Float64, _NumpyReasons)) {
 
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
@@ -94,10 +85,7 @@ dot := (.left: &Vector64, .right: &Vector64, .error_tracer: $&Virtual#(ErrorTrac
     result = ..ok value
 }
 
-sum := (.self: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Float64, _NumpyReasons)
-) {
-    assume error_tracer
+sum := (.self: &Vector64) -> (.result: Errable#(Float64, _NumpyReasons)) {
 
     object ::= python.call_method(.self = &self&._object, .name = "sum")!
     value ::= python.to_float64(.self = &object)!
@@ -105,12 +93,9 @@ sum := (.self: &Vector64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-copy_values := (
-    .self         : &Vector64,
-    .destination  : MutableArrayView#(.t: Float64),
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, _NumpyReasons)) {
-    assume error_tracer
+copy_values := (.self: &Vector64, .destination: MutableArrayView#(.t: Float64)) -> (
+    .result : Errable#(UIntNative, _NumpyReasons)
+) {
 
     if length(&destination).count < self&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)

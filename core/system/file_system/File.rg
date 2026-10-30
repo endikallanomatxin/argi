@@ -76,14 +76,9 @@ file_stream_pointer := (.self: &File) -> (.stream: &Any) {
     stream = read_reference#(.t: Any)(.base = mutable_stream)
 }
 
-open := (
-    .p            : $&File,
-    .ffi          : $&ForeignFunctionInterface,
-    .path         : &CChar,
-    .mode         : FileOpenMode,
-    .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Bool, (..file_open_failed))) {
-    assume error_tracer
+open := (.p: $&File, .ffi: $&ForeignFunctionInterface, .path: &CChar, .mode: FileOpenMode) -> (
+    .result : Errable#(Bool, (..file_open_failed))
+) {
 
     mode_text ::= file_open_mode_c_string(.mode = mode)
     opened: &Any = fopen(.path = path, .mode = mode_text, .ffi = ffi)
@@ -146,10 +141,7 @@ init_stderr := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
     )
 }
 
-_close_File := (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..stream_close_failed))
-) {
-    assume error_tracer
+_close_File := (.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) {
 
     assume ffi := self&._ffi
 
@@ -180,10 +172,7 @@ _close_File := (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 implement Reader#(File) (
-    .read_byte = (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
-        assume error_tracer
+    .read_byte = (.self: $&File) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
 
         assume ffi := self&._ffi
 
@@ -218,10 +207,9 @@ implement Reader#(File) (
     }
 )
 
-_read_file := (
-    .self: $&File, .buffer: MutableArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, (..stream_read_failed))) {
-    assume error_tracer
+_read_file := (.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_read_failed))
+) {
 
     assume ffi := self&._ffi
 
@@ -243,10 +231,9 @@ _read_file := (
     result = ..ok read_count
 }
 
-_file_write_block := (
-    .self: $&File, .buffer: ArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
+_file_write_block := (.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+) {
 
     assume ffi := self&._ffi
 
@@ -268,10 +255,9 @@ _file_write_block := (
     result = ..ok wrote
 }
 
-_file_write := (
-    .self: $&File, .value: MutableArrayView#(.t: UInt8), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))) {
-    assume error_tracer
+_file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+) {
 
     result = _file_write_block(self, .buffer = as_readonly(&value).view)
 }
@@ -286,10 +272,9 @@ implement BlockWriter#(File) (
 )
 
 implement Writer#(File) (
-    .flush = (.self: $&File, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&File) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         assume ffi := self&._ffi
 
@@ -306,10 +291,9 @@ implement Writer#(File) (
         result = ..ok Void()
     }
 
-    .write_byte = (.self: $&File, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&File, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         assume ffi := self&._ffi
 

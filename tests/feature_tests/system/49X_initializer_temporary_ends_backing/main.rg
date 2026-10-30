@@ -28,7 +28,7 @@ implement Init#(EndBacking, EndBackingInitArgs) (
 consume := (.value: EndBacking) -> () {}
 
 main := (.system: System) -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     backing ::= BackingAllocator(.page = system.page_allocator)
     allocator ::= GeneralPurposeAllocator(.allocator = $&backing)
     consume(.value = EndBacking(.backing = $&backing))
@@ -37,13 +37,9 @@ main := (.system: System) -> (.status_code: Int32) {
 }
 
 implement Allocator#(BackingAllocator) (
-    .allocate = (
-        .self         : $&BackingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
 
         result = allocate_bytes(.self = self&.page, .size = size, .alignment = alignment)
     }

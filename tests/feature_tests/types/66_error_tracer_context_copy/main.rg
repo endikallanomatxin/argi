@@ -1,12 +1,16 @@
 ..copy_test_failure
 
-fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !Void {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
     assume error_tracer
     result = ..error(.reason = ..copy_test_failure)
 }
 
 context_failure := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(.t: Void, .reasons: (..copy_test_failure))
+    .result : Errable#(
+        .t          : Void,
+        .reasons    : (..copy_test_failure),
+        .error_type : ErrorWithTrace#((..copy_test_failure))
+    )
 ) {
     assume error_tracer
 

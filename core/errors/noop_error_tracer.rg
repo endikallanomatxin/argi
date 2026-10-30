@@ -13,12 +13,9 @@ implement ErrorTracer#(NoopErrorTracer) (
 
     .reset_context = (.self: $&NoopErrorTracer) -> () {}
 
-    .report = (
-        .self         : $&NoopErrorTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report = (.self: $&NoopErrorTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         result = ..ok Void()
     }

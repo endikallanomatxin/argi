@@ -2,7 +2,7 @@
 
 Vector2 := (
     .x : Int32,
-    .y : Int16,
+    .y : Int16
 )
 
 main := () -> (.status_code: Int32) {

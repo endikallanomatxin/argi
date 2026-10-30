@@ -23,20 +23,17 @@ implement HashPolicy#(Policy, Key) (
 Refusal: Type = ()
 
 implement Allocator#(Refusal) (
-    .allocate = (
-        .self         : $&Refusal,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&Refusal, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
+
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
 main := () -> (.status_code: Int32 = 1) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= CAllocator(.ffi = ffi)
     assume allocator ::= $&allocator_storage
     simple ::= unwrap_or_abort(.value = HashSet#(.key: Int32)())

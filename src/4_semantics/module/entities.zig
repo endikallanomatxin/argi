@@ -21,9 +21,7 @@ pub const ModuleVirtualRegistryId = enum(u32) { _ };
 pub const ModuleVirtualizeId = enum(u32) { _ };
 pub const ModuleVirtualCallId = enum(u32) { _ };
 pub const ModuleNullableUnwrapId = enum(u32) { _ };
-pub const ModuleTestingExpectErrorId = enum(u32) { _ };
 pub const ModuleErrorPropagationId = enum(u32) { _ };
-pub const ModuleErrorContextId = enum(u32) { _ };
 pub const ModuleScopeId = enum(u32) { none = std.math.maxInt(u32), _ };
 pub const ModuleFileId = enum(u32) { _ };
 pub const ExternalRefId = enum(u32) { _ };
@@ -54,9 +52,7 @@ pub const Ids = struct {
     pub const VirtualizeId = ModuleVirtualizeId;
     pub const VirtualCallId = ModuleVirtualCallId;
     pub const NullableUnwrapId = ModuleNullableUnwrapId;
-    pub const TestingExpectErrorId = ModuleTestingExpectErrorId;
     pub const ErrorPropagationId = ModuleErrorPropagationId;
-    pub const ErrorContextId = ModuleErrorContextId;
 };
 
 pub const DeclRange = primitives.Range(ModuleDeclId);
@@ -87,9 +83,7 @@ pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
-pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
-pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
 pub const ModuleType = union(enum) {
@@ -241,7 +235,6 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         errable_value: ModuleNodeId,
         source: primitives.SourceRef,
-        context: ?ModuleNodeId = null,
         // Lexical owner breaks the dependency cycle when propagation appears
         // inside an unresolved enclosing expression (for example a call arg).
         owner_function: ?ModuleFunctionId = null,

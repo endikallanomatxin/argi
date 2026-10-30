@@ -20,9 +20,8 @@ as_c_string := (.self: &String) -> (.text: &CChar) {
 }
 
 copy_c_string := #(.Provider: Type: Allocator#(Provider)) (
-    .self: StringView, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(OwnedCString, (..out_of_memory))) {
-    assume error_tracer
 
     assume allocator
 
@@ -80,10 +79,9 @@ _c_string_bytes := (.text: &CChar) -> (.bytes: ArrayView#(UInt8)) {
     ).array
 }
 
-string_from_c_string := #(.Provider: Type: Allocator) (
-    .text: &CChar, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
-    assume error_tracer
+string_from_c_string := #(.Provider: Type: Allocator) (.text: &CChar, .allocator: $&Provider) -> (
+    .result : Errable#(String, (..invalid_utf8, ..out_of_memory))
+) {
 
     assume allocator
     result = string_from_bytes(.bytes = _c_string_bytes(.text = text), .allocator = allocator)

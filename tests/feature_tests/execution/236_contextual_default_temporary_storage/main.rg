@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     first :: (
         .marker : Int32
         .bytes  : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [2]UInt8)())

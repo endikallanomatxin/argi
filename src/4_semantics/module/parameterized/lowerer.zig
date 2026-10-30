@@ -923,7 +923,7 @@ pub const Context = struct {
                 break :blk try self.addType(.{ .resolved = .{ .pointer = .{ .child = child, .mutability = graph_mod.pointerMutabilityFromSyntax(value.mutability) } } });
             },
             .nullable => |child| try self.addType(.{ .resolved = .{ .nullable = try self.lowerType(child, allow_self) } }),
-            .inferred_errable => |child| try self.addType(.{ .resolved = .{ .inferred_errable = try self.lowerType(child, allow_self) } }),
+            .inferred_errable => |child| try self.addType(.{ .resolved = .{ .inferred_errable = .{ .child = try self.lowerType(child.child, allow_self), .traced = child.traced } } }),
             .array => |value| blk: {
                 const length = try self.lowerIntExpressionFromToken(node, value.length_token);
                 const element = try self.lowerType(value.element, allow_self);
@@ -1028,7 +1028,7 @@ pub const Context = struct {
                 const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidGenericParameterizedArgument;
                 if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, "Errable"), "t")) {
                     const child = try self.lowerType(field.type_node orelse return error.InvalidGenericParameterizedArgument, allow_self);
-                    return self.addType(.{ .resolved = .{ .inferred_errable = child } });
+                    return self.addType(.{ .resolved = .{ .inferred_errable = .{ .child = child } } });
                 }
             }
         }
@@ -1644,6 +1644,7 @@ pub const Context = struct {
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
         if (self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block) return self.lowerHandle(node);
+        if (self.tree.tag(node) == .error_context) return self.lowerErrorContext(node);
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
         // Standalone blocks, including deferred handlers, already have a
@@ -1787,36 +1788,16 @@ pub const Context = struct {
             }
             const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.value_fields.items.len);
             try self.graph.semantic.parameterized_storage.ir.value_fields.appendSlice(self.allocator, fields.items);
-            return self.addResolvedNode(node, null, .{ .struct_value_literal = .{
+            const result = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{
                 .fields = .{ .start = start, .len = @intCast(fields.items.len) },
                 .dispatch_prefix_positional_count = literal.positional_prefix_count,
             } });
+            try self.captureAssumedFields(node, result);
+            return result;
         }
         if (self.tree.choiceLiteral(node)) |literal| {
             const name = self.tree.tokenTextFromSource(self.source, literal.name_token);
             const payload = if (literal.payload) |child| try self.lowerBodyNode(child) else null;
-            if (std.mem.eql(u8, name, "error")) if (payload) |payload_id| {
-                const storage = &self.graph.semantic.parameterized_storage.ir;
-                const payload_node = storage.nodes.items[@intFromEnum(payload_id)];
-                if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
-                    const fields = payload_node.resolved.content.struct_value_literal.fields;
-                    var has_reason = false;
-                    var has_tracer = false;
-                    for (storage.value_fields.items[fields.start..][0..fields.len]) |field| {
-                        has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
-                        has_tracer = has_tracer or std.mem.eql(u8, self.graph.text(field.name), "tracer");
-                    }
-                    if (has_reason and !has_tracer) {
-                        const location = try self.syntheticErrorCall(node, "error_location_id", null);
-                        const trace = try self.syntheticErrorCall(node, "capture_error_tracer", location);
-                        const start: u32 = @intCast(storage.value_fields.items.len);
-                        try storage.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
-                        storage.value_fields.appendSliceAssumeCapacity(storage.value_fields.items[fields.start..][0..fields.len]);
-                        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
-                        storage.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
-                    }
-                }
-            };
             return self.addPending(node, .choice_literal, if (payload) |id| &.{id} else &.{}, try self.writer.addString(name), null, .none);
         }
         // Keep the few parameter-independent leaves compact and represent every
@@ -1996,6 +1977,46 @@ pub const Context = struct {
         return id;
     }
 
+    fn lowerErrorContext(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
+        const op = self.tree.binaryOperation(node).?;
+        const value = try self.lowerBodyNode(op.lhs);
+        const payload = try self.addPending(node, .choice_payload, &.{value}, try self.writer.addString("ok"), null, .none);
+        const payload_pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(payload)].pending;
+        self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(payload_pending)].resolve_expression.requires_errable = true;
+        const result = try self.handleBinding(node, "#context_value", payload);
+        try (self.temporary_declarations orelse return error.ErrorContextOutsideFunction).append(self.allocator, try self.addResolvedNode(node, null, .{ .binding_declaration = result }));
+        const success = try self.handleBinding(node, "#context_success", null);
+        const failure = try self.handleBinding(node, "#context_error", null);
+        const success_use = try self.addResolvedNode(node, null, .{ .binding_use = success });
+        const moved = try self.addResolvedNode(node, null, .{ .move_value = success_use });
+        const assignment = try self.addResolvedNode(node, null, .{ .assignment = .{ .binding = result, .value = moved } });
+        const success_body = try self.handleBlock(&.{assignment}, null);
+        const failure_use = try self.addResolvedNode(node, null, .{ .binding_use = failure });
+        const context = try self.lowerBodyNode(op.rhs);
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const fields: u32 = @intCast(storage.value_fields.items.len);
+        try storage.value_fields.appendSlice(self.allocator, &.{
+            .{ .name = try self.writer.addString("error"), .value = failure_use },
+            .{ .name = try self.writer.addString("context"), .value = context },
+        });
+        const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = fields, .len = 2 } } });
+        try self.captureAssumedFields(node, input);
+        const call = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString("trace_error"), null, .none);
+        const propagation = try self.addPending(node, .error_propagation, &.{call}, null, null, .none);
+        const unreachable_node = try self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .abort_statement);
+        const failure_body = try self.handleBlock(&.{ propagation, unreachable_node }, null);
+        const start: u32 = @intCast(storage.match_cases.items.len);
+        for ([_][]const u8{ "ok", "error" }, [_]ir.ParameterizedBindingId{ success, failure }, [_]ir.ParameterizedBlockId{ success_body, failure_body }) |name, binding, body| {
+            try storage.match_cases.append(self.allocator, .{ .name = try self.writer.addString(name), .payload_binding = binding, .body = body, .mode = .move, .source = self.sourceRef(node) });
+        }
+        const dispatch = try self.addPending(node, .match, &.{value}, null, null, .none);
+        const pending = storage.nodes.items[@intFromEnum(dispatch)].pending;
+        storage.pending.items[@intFromEnum(pending)].resolve_expression.match_cases = .{ .start = start, .len = 2 };
+        const use = try self.addResolvedNode(node, null, .{ .binding_use = result });
+        const result_move = try self.addResolvedNode(node, null, .{ .move_value = use });
+        return self.addResolvedNode(node, null, .{ .value_sequence = try self.handleBlock(&.{ dispatch, result_move }, result_move) });
+    }
+
     fn lowerHandle(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
         const reporting = self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block;
         const handle = if (reporting) syn.HandleExtra{ .value = self.tree.unaryOperand(node).?, .result_name = .none, .error_name = self.tree.mainToken(node), .body = node } else self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
@@ -2040,13 +2061,13 @@ pub const Context = struct {
     // Specialization retains the ordinary report call and containing return.
     fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: ir.ParameterizedBindingId) !ir.ParameterizedBlockId {
         const use = try self.addResolvedNode(node, null, .{ .binding_use = failure });
-        const trace = try self.addPending(node, .field_access, &.{use}, try self.writer.addString("tracer"), null, .none);
+        const borrowed = try self.addPending(node, .address_of, &.{use}, null, null, .{ .pointer_mutability = .read_only });
         const storage = &self.graph.semantic.parameterized_storage.ir;
         const start: u32 = @intCast(storage.value_fields.items.len);
-        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
+        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("err"), .value = borrowed });
         const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
         try self.captureAssumedFields(node, input);
-        const report = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString("report_trace"), null, .none);
+        const report = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString("report_error"), null, .none);
         const ret = try self.addPending(node, .return_statement, &.{}, null, null, .none);
         if (self.tree.tag(node) == .error_report_return_block) {
             const action = try self.blockAsNode(self.tree.data(node).node_and_node.second);
@@ -2148,15 +2169,6 @@ pub const Context = struct {
         try temporaries.append(self.allocator, try self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .binding_declaration = binding }));
         try evaluations.append(self.allocator, try self.addResolvedNode(node, ty, .{ .assignment = .{ .binding = binding, .value = value } }));
         return self.addResolvedNode(node, ty, .{ .binding_use = binding });
-    }
-
-    fn syntheticErrorCall(self: *Context, node: syn.NodeIndex, name: []const u8, location: ?ir.ParameterizedNodeId) !ir.ParameterizedNodeId {
-        const storage = &self.graph.semantic.parameterized_storage.ir;
-        const start: u32 = @intCast(storage.value_fields.items.len);
-        if (location) |value| try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("location"), .value = value });
-        const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = if (location != null) 1 else 0 } } });
-        try self.captureAssumedFields(node, input);
-        return self.addPending(node, .generic_call, &.{input}, try self.writer.addString(name), null, .none);
     }
 
     fn syntaxIsAddressable(self: *const Context, node: syn.NodeIndex) bool {
@@ -2425,7 +2437,6 @@ fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
         .struct_field_access => .field_access,
         .choice_payload_access => .choice_payload,
         .error_propagation => .error_propagation,
-        .error_context => .error_context,
         .index_access => .index,
         .index_assignment => .index_store,
         .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => .binary,

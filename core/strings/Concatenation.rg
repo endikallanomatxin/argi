@@ -1,16 +1,12 @@
 Concatenation#(.Left: Type, .Right: Type, .Provider: Type): Contract = (
-    .join : (
-        .left         : Left,
-        .right        : Right,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(String, (..out_of_memory)))
+    .join : (.left: Left, .right: Right, .allocator: $&Provider) -> (
+        .result : Errable#(String, (..out_of_memory))
+    )
 )
 
 concat := #(.Left: Type, .Right: Type, .Provider: Type: Allocator) (
-    .left: Left, .right: Right, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
+    .left: Left, .right: Right, .allocator: $&Provider
 ) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
 
     result = ~Concatenation#(
         Left, Right, Provider

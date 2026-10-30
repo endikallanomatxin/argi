@@ -15,7 +15,7 @@ replace := (.target: $&Envelope, .counter: $&Counter) -> () {
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     counter :: Counter = Counter()
     {
         owner :: Envelope = Envelope(.resource = Resource(.counter = $&counter))

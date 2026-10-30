@@ -9,16 +9,13 @@ implement Deinit#(Owner) (
     }
 )
 
-attempt := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Owner, (..missing))
-) {
-    assume error_tracer
+attempt := (.fail: Bool) -> (.result: Errable#(Owner, (..missing))) {
 
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok Owner(7) }
 }
 
-work := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+work := (.system: System) -> () {
+
     assume writer ::= $&system.terminal&.stderr
     owner ::= attempt(false)!!!
     if owner.value != 7 { abort }
@@ -27,7 +24,7 @@ work := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     work(system)
     if drops != 1 { abort }
 }

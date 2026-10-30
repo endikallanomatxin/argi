@@ -4,10 +4,9 @@ Sink := (
     .fail_write  : Bool       = false
 )
 
-finish := (.sink: $&Sink, .early: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+finish := (.sink: $&Sink, .early: Bool) -> (
     .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
 ) {
-    assume error_tracer
 
     assume writer := sink
     defer {
@@ -26,7 +25,7 @@ finish := (.sink: $&Sink, .early: Bool, .error_tracer: $&Virtual#(ErrorTracer)) 
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     normal ::= Sink()
     finish($&normal, false)!!!
@@ -60,10 +59,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Writer#(Sink) (
-    .write_byte = (.self: $&Sink, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&Sink, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         if self&.fail_write {
             result = ..error(.reason = ..stream_write_failed)
@@ -72,10 +70,9 @@ implement Writer#(Sink) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&Sink, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&Sink) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_calls = self&.flush_calls + 1
         if self&.fail_flush {

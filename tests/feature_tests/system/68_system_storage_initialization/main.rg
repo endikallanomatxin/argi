@@ -12,10 +12,8 @@ EntryStorage := (
     .rand_gen       : RandomNumberGenerator
 )
 
-initialize_system := (.storage: $&EntryStorage, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .system : System
-) {
-    assume error_tracer
+initialize_system := (.storage: $&EntryStorage) -> (.system: System) {
+
     storage&.ffi = ForeignFunctionInterface()
     assume ffi ::= $&storage&.ffi
     storage&.memory = Memory()
@@ -44,7 +42,7 @@ initialize_system := (.storage: $&EntryStorage, .error_tracer: $&Virtual#(ErrorT
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     storage :: EntryStorage
     system ::= initialize_system(.storage = $&storage)
     if system.page_allocator&.page_size == 0 { abort }

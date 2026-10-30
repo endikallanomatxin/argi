@@ -8,10 +8,7 @@ implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () { drops = drops + self&.id }
 )
 
-fail_when := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int32, (..stop))
-) {
-    assume error_tracer
+fail_when := (.fail: Bool) -> (.result: Errable#(Int32, (..stop))) {
 
     if fail { result = ..error(.reason = ..stop) } else { result = ..ok 42 }
 }
@@ -19,7 +16,7 @@ fail_when := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 build_partial := (.fail: Bool, .ffi: $&ForeignFunctionInterface) -> (
     .result : Errable#(Int32, (..stop))
 ) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= CAllocator(.ffi = ffi)
     memory ::= unwrap_or_abort(.value = allocate#(.t: [3]Resource)(.self = $&allocator))
     raw ::= raw_pointer#(.t: [3]Resource)(.address = memory.data.address).raw

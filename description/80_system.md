@@ -73,7 +73,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 ```
 
-Reporting uses the ordinary writer and the tracer stored in the error.
+Reporting uses the ordinary writer and includes the trace when the error carries one.
 The checked entry provides a stderr writer and a bounded 4096-byte tracer;
 functions using reporting need a declared writer input, supplied explicitly or
 through a lexical assumption.
@@ -135,8 +135,8 @@ Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
 
-A fallible helper can return an error borrowing a tracer supplied by its caller
-or the program entry scope. A tracer created inside the helper cannot escape
-in an `Error` or `ErrorTrace`. Create a custom tracer in the caller, keep its
+A helper returning `!!T` can borrow a tracer supplied by its caller or the
+program entry scope. A tracer created inside the helper cannot escape in an
+`ErrorWithTrace`. Ordinary `!T` errors have no diagnostic dependency. Create a custom tracer in the caller, keep its
 buffer and virtual wrapper alive, and pass that capability explicitly or through lexical `assume` while the
 caller handles or reports the error.

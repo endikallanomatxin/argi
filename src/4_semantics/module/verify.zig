@@ -81,9 +81,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.virtualizes.items) |value| try payload.virtualize(entities.Ids, value, bounds);
     for (semantic.virtual_calls.items) |value| try payload.virtualCall(entities.Ids, value, bounds);
     for (semantic.nullable_unwraps.items) |value| try payload.nullableUnwrap(entities.Ids, value, bounds);
-    for (semantic.testing_expect_errors.items) |value| try payload.testingExpectError(entities.Ids, value, bounds);
     for (semantic.error_propagations.items) |value| try payload.errorPropagation(entities.Ids, value, bounds);
-    for (semantic.error_contexts.items) |value| try payload.errorContext(entities.Ids, value, bounds);
 
     for (semantic.scopes.items) |scope| {
         if (scope.parent != .none) try require(verify.idFits(scope.parent, semantic.scopes.items.len));
@@ -266,7 +264,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
         .resolve_error_propagation => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.errable_value, semantic.nodes.items.len));
-            try require(verify.optionalIdFits(value.context, semantic.nodes.items.len));
         },
         .resolve_nullable_test => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
@@ -345,9 +342,7 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtualizes = semantic.virtualizes.items.len,
         .virtual_calls = semantic.virtual_calls.items.len,
         .nullable_unwraps = semantic.nullable_unwraps.items.len,
-        .testing_expect_errors = semantic.testing_expect_errors.items.len,
         .error_propagations = semantic.error_propagations.items.len,
-        .error_contexts = semantic.error_contexts.items.len,
         .node_refs = semantic.node_refs.items.len,
         .captured_expressions = semantic.parameterized_storage.ir.nodes.items.len,
         .type_refs = semantic.type_refs.items.len,

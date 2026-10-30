@@ -13,11 +13,10 @@ implement ImplicitlyCopyable#(StreamCopyResult) ()
 copy_stream_limited := #(
     .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
 ) (
-    .reader       : $&ReaderType,
-    .writer       : $&WriterType,
-    .buffer       : MutableArrayView#(.t: UInt8),
-    .limit        : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .reader : $&ReaderType,
+    .writer : $&WriterType,
+    .buffer : MutableArrayView#(.t: UInt8),
+    .limit  : UIntNative
 ) -> (
     .result : Errable#(
         StreamCopyResult,
@@ -29,7 +28,6 @@ copy_stream_limited := #(
         )
     )
 ) {
-    assume error_tracer
 
     copied :: UIntNative = 0
 
@@ -68,11 +66,10 @@ copy_stream_limited := #(
 read_all_limited := #(
     .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
 ) (
-    .self         : $&SelfType,
-    .buffer       : MutableArrayView#(.t: UInt8),
-    .limit        : UIntNative,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self      : $&SelfType,
+    .buffer    : MutableArrayView#(.t: UInt8),
+    .limit     : UIntNative,
+    .allocator : $&AllocatorType
 ) -> (
     .result : Errable#(
         DynamicArray#(UInt8),
@@ -84,7 +81,6 @@ read_all_limited := #(
         )
     )
 ) {
-    assume error_tracer
 
     assume allocator
     size ::= length(&buffer).count

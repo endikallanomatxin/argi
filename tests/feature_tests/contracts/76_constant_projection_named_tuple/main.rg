@@ -11,7 +11,7 @@ sum := (.values: &Array#(.n = Shape#(.Input: Cell).Count, .t: Int32)) -> (.value
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     values ::= (20, 22)
     if sum(&values).value != 42 { abort }
 }

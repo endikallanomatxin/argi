@@ -7,7 +7,7 @@ implement Deinit#(Tracked) (
 )
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     ring ::= unwrap_or_abort(
         .value = RingBuffer#(.t: Tracked)(.capacity = 1, .allocator = system.page_allocator)
     )

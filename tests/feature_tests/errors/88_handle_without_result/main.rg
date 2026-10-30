@@ -11,10 +11,7 @@ implement Deinit#(Owner) (
     }
 )
 
-attempt := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Owner, (..missing))
-) {
-    assume error_tracer
+attempt := (.fail: Bool) -> (.result: Errable#(Owner, (..missing))) {
 
     calls = calls + 1
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok Owner(7) }
@@ -26,8 +23,8 @@ discard := #(.t: Type) (.input: Errable#(t, (..missing)), .count: $&Int32) -> ()
     }
 }
 
-early_return := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Int32 = 5) {
-    assume error_tracer
+early_return := (.fail: Bool) -> (.result: Int32 = 5) {
+
     attempt(fail) handle error {
         result = 9
         return
@@ -35,8 +32,7 @@ early_return := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.resul
     result = 6
 }
 
-propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Void, (..missing))) {
-    assume error_tracer
+propagate := () -> (.result: Errable#(Void, (..missing))) {
 
     attempt(true) handle error {
         attempt(true)!
@@ -44,10 +40,7 @@ propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Errable#(Void
     result = ..ok Void()
 }
 
-recover_propagation := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Owner, (..missing))
-) {
-    assume error_tracer
+recover_propagation := () -> (.result: Errable#(Owner, (..missing))) {
 
     recovered ::= attempt(true) handle error, value {
         attempt(true)!
@@ -57,7 +50,7 @@ recover_propagation := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     attempt(false) handle error { handled = handled + 1 }
     if calls != 1 or handled != 0 or drops != 1 { abort }
 

@@ -1,7 +1,7 @@
 answer ::= #run (.system: System) -> (.value: Int32) {
     tracer :: NoopErrorTracer = (.marker = 0)
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
-    assume error_tracer ::= $&erased
+
     assume writer ::= $&system.terminal&.stdout
     assume ffi ::= system.ffi
     assume allocator ::= $&CAllocator(.ffi = ffi)

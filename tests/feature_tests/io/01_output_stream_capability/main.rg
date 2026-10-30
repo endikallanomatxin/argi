@@ -2,10 +2,10 @@ DummyOutput := (
     .flush_count : Int32 = 0
 )
 
-flush_stdout := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.value: Int32) {
-    assume error_tracer
+flush_stdout := #(.WriterType: Type: Writer#(WriterType)) (.writer: $&WriterType) -> (
+    .value : Int32
+) {
+
     assume writer
 
     Writer#().flush(.self = writer)
@@ -13,7 +13,7 @@ flush_stdout := #(.WriterType: Type: Writer#(WriterType)) (
 }
 
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     stdout_storage :: DummyOutput = (
         .flush_count = 0
     )
@@ -24,19 +24,17 @@ main := () -> (.status_code: Int32) {
 }
 
 implement Writer#(DummyOutput) (
-    .flush = (.self: $&DummyOutput, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&DummyOutput) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())
     }
 
-    .write_byte = (.self: $&DummyOutput, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .write_byte = (.self: $&DummyOutput, .byte: UInt8) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         _ ::= byte
         result = ..ok(.value = Void())

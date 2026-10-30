@@ -146,9 +146,9 @@ site. A method-local generic does not define one fixed virtual slot. These
 restrictions apply to virtual use; ordinary static contracts may
 continue to use concrete `Participant` types and compile-time specialization.
 
-Fallible methods carry a uniform error-tracer capability input, including
-implementations that always succeed. Errors created by a selected method
-therefore follow the same capability rules as static calls.
+Fallible methods follow the same error and capability rules as static calls.
+Ordinary errors need no tracer; a method that creates or extends a trace
+declares the required tracer input as part of its contract.
 
 Receiver and `Participant` restrictions apply at virtual conversion and dispatch,
 including methods that are never called but occupy a table slot. Virtual
@@ -361,9 +361,7 @@ Factory#(.Participant: Type): Contract = (
             owns(result)
             depends_on(result, self)
         }
-        on result ..error {
-            depends_on(result, error_tracer)
-        }
+        on result ..error {}
     }
 )
 ```
@@ -376,8 +374,9 @@ selectors and duplicate selectors are errors.
 Within the block, the selected output denotes that variant's payload. Common
 clauses remain applicable in every variant; conditional clauses add permissions
 and obligations for the selected outcome. An empty conditional block does not
-cancel a common dependency or invalidation permission. The implicit
-`error_tracer` input can be named in dependencies of fallible methods.
+cancel a common dependency or invalidation permission. Ordinary errors carry
+no tracer dependency. Traced outputs may refer to an explicitly declared
+`error_tracer` input using the same dependency rules as other references.
 No variant can authorize a reference to local storage that ends on return.
 
 Outcome conditions describe the call's effects, rather than only its payload.
@@ -605,8 +604,8 @@ but cannot be erased into a virtual handle. Adding an implementation does not
 change the safety obligations of existing virtual calls.
 
 Core's `ArgumentSource` illustrates borrowed results: `length` has an empty
-contract, while `get` permits its successful `StringView` to depend on `self`
-and its error to depend on `error_tracer`. Both native `Arguments` and borrowed
+contract, while `get` permits its successful `StringView` to depend on `self`.
+Its ordinary error has no borrowed dependencies. Both native `Arguments` and borrowed
 `CliArgumentViews` satisfy this signature. A virtual conversion preserves the
 source's dependencies; a wrapper returning `get` cannot outlive locally owned
 argument storage merely because the receiver's concrete layout was erased.
@@ -666,7 +665,7 @@ Permissions on the outer payload also apply to its nested alternatives.
         on result ..some { depends_on(result, self) }
         on result ..none {}
     }
-    on result ..error { depends_on(result, error_tracer) }
+    on result ..error {}
 }
 ```
 

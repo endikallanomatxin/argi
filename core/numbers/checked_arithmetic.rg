@@ -83,10 +83,9 @@ implement IntegerBounds#(UIntNative) (
 
 ..division_by_zero
 
-checked_add := #(.t: Type: Int) (.left: t, .right: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+checked_add := #(.t: Type: Int) (.left: t, .right: t) -> (
     .result : Errable#(t, (..out_of_range))
 ) {
-    assume error_tracer
 
     bounds ::= integer_limits(.value = left)
 
@@ -105,10 +104,9 @@ checked_add := #(.t: Type: Int) (.left: t, .right: t, .error_tracer: $&Virtual#(
     result = ..ok left + right
 }
 
-checked_subtract := #(.t: Type: Int) (
-    .left: t, .right: t, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(t, (..out_of_range))) {
-    assume error_tracer
+checked_subtract := #(.t: Type: Int) (.left: t, .right: t) -> (
+    .result : Errable#(t, (..out_of_range))
+) {
 
     bounds ::= integer_limits(.value = left)
 
@@ -127,10 +125,9 @@ checked_subtract := #(.t: Type: Int) (
     result = ..ok left - right
 }
 
-checked_multiply := #(.t: Type: Int) (
-    .left: t, .right: t, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(t, (..out_of_range))) {
-    assume error_tracer
+checked_multiply := #(.t: Type: Int) (.left: t, .right: t) -> (
+    .result : Errable#(t, (..out_of_range))
+) {
 
     bounds ::= integer_limits(.value = left)
     -- Divide a representable bound, never a potentially overflowing product.
@@ -160,10 +157,9 @@ checked_multiply := #(.t: Type: Int) (
     result = ..ok left * right
 }
 
-checked_divide := #(.t: Type: Int) (.left: t, .right: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+checked_divide := #(.t: Type: Int) (.left: t, .right: t) -> (
     .result : Errable#(t, (..out_of_range, ..division_by_zero))
 ) {
-    assume error_tracer
 
     if right == 0 {
         result = ..error(.reason = ..division_by_zero)

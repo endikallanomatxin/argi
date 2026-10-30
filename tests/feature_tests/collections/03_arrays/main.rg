@@ -1,6 +1,6 @@
 -- Arrays constructed from list literals allocate storage and copy elements.
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     arr :: [3]Int32 = (10, 20, 30)
     -- arr is now an array of three Int32 values: 10, 20, and 30.
 

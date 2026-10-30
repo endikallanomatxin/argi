@@ -5,7 +5,7 @@ sum := #(.T: Type) (.left: &T, .right: &T) -> (.result: Add#(&T, &T).Result) {
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     left :: math.Matrix#(.rows = 2, .cols = 2, .t: Int32) = (
         .values = (
             (1, 2),

@@ -1,18 +1,14 @@
 ..failed
 
 Mover#(.Participant: Type): Contract = (
-    .transfer : (
-        .self         : &Participant,
-        .source       : $&Resource,
-        .destination  : $&Resource,
-        .move         : Bool,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(?Int32, (..failed))) where {
+    .transfer : (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+        .result : Errable#(?Int32, (..failed))
+    ) where {
         on result ..ok {
             on result ..some { relocates(destination, source) }
             on result ..none {}
         }
-        on result ..error { depends_on(result, error_tracer) }
+
     }
 )
 
@@ -31,13 +27,8 @@ implement Deinit#(Resource) (
 drops :: Int32 = 0
 
 _impl_transfer_Manager := (
-    .self         : &Manager,
-    .source       : $&Resource,
-    .destination  : $&Resource,
-    .move         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &Manager, .source: $&Resource, .destination: $&Resource, .move: Bool
 ) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
 
     if move {
         relocate(source, destination)
@@ -49,19 +40,14 @@ _impl_transfer_Manager := (
 }
 
 transfer_owned := (
-    .mover        : &Virtual#(Mover),
-    .source       : $&Resource,
-    .destination  : $&Resource,
-    .move         : Bool,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool
 ) -> (.result: Errable#(?Int32, (..failed))) {
-    assume error_tracer
 
     result = transfer(mover, source, destination, move)
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

@@ -56,10 +56,8 @@ static_drain := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType, 
     result = drain(slot, empty)
 }
 
-make_slot := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .value : Slot
-) {
-    assume error_tracer
+make_slot := (.allocator: $&GeneralPurposeAllocator) -> (.value: Slot) {
+
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)
 
@@ -78,7 +76,7 @@ make_slot := (.allocator: $&GeneralPurposeAllocator, .error_tracer: $&Virtual#(E
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     implementation ::= make_slot(allocator)
     deinit($&implementation.storage)

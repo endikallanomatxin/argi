@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     args :: [7]StringView = ("-ab", "--size=12", "--offset", "-3", "file", "--", "--literal")
     source ::= CliArgumentViews(.values = view(.self = &args))

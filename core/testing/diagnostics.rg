@@ -13,7 +13,7 @@ implement Init#(_TestDiagnostic, _TestDiagnosticInitArgs) (
 )
 
 _testing_append := (.self: $&_TestDiagnostic, .text: StringView) -> () {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     index :: UIntNative = 0
 
     while index < text._length {
@@ -47,7 +47,7 @@ _testing_detail := (.self: &_TestDiagnostic) -> (.text: StringView) {
 
 _testing_failure := (
     .detail: StringView, .message: StringView, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     if message._length != 0 { add_context(.context = message) }
@@ -57,7 +57,7 @@ _testing_failure := (
 }
 
 fail := (.message: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..test_failed))
+    .result : Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))
 ) {
     assume error_tracer
 
@@ -68,7 +68,7 @@ fail := (.message: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
 
 _assert_equal_integer := #(.t: Type: Int) (
     .expected: t, .actual: t, .message: StringView = "", .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     if expected == actual {
@@ -87,7 +87,7 @@ _assert_equal_integer := #(.t: Type: Int) (
 
 _assert_equal_float := #(.t: Type: Float) (
     .expected: t, .actual: t, .message: StringView = "", .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     if expected == actual {
@@ -109,7 +109,7 @@ _assert_equal_bool := (
     .actual       : Bool,
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     if expected == actual {
@@ -137,7 +137,7 @@ _testing_compare_byte_ranges := (
     .kind         : StringView,
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     common ::= length(&expected).count
@@ -192,7 +192,7 @@ _assert_text_views := (
     .actual       : StringView,
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     result = _testing_compare_byte_ranges(
@@ -208,7 +208,7 @@ _assert_owned_strings := (
     .actual       : &String,
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     result = expect_equal_strings(
@@ -221,7 +221,7 @@ expect_equal_views := #(.t: Type) (
     .actual       : ArrayView#(.t: t),
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     expected_length ::= length(&expected).count
@@ -260,7 +260,7 @@ expect_equal_bytes := (
     .actual       : ArrayView#(.t: UInt8),
     .message      : StringView              = "",
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..test_failed))) {
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
     result = _testing_compare_byte_ranges(

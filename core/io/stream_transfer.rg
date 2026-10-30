@@ -1,8 +1,6 @@
 -- Transfer specialization belongs to one operation identity for both endpoints.
 StreamTransfer#(.ReaderType: Type, .WriterType: Type): Contract = (
-    .transfer_stream : (
-        .reader: $&ReaderType, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (
+    .transfer_stream : (.reader: $&ReaderType, .writer: $&WriterType) -> (
         .result : Errable#(
             UIntNative,
             (
@@ -21,9 +19,7 @@ StreamTransfer#(.ReaderType: Type, .WriterType: Type): Contract = (
 implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Writer#(WriterType)) StreamTransfer#(
     ReaderType, WriterType
 ) (
-    .transfer_stream = (
-        .reader: $&ReaderType, .writer: $&WriterType, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (
+    .transfer_stream = (.reader: $&ReaderType, .writer: $&WriterType) -> (
         .result : Errable#(
             UIntNative,
             (
@@ -34,7 +30,6 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Write
             )
         )
     ) {
-        assume error_tracer
 
         storage ::= zeroed#([1]UInt8)()
         buffer ::= view($&storage)
@@ -62,9 +57,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer
     ReaderType, BufferedWriter#(.base_type: base_type)
 ) (
     .transfer_stream = (
-        .reader       : $&ReaderType,
-        .writer       : $&BufferedWriter#(.base_type: base_type),
-        .error_tracer : $&Virtual#(ErrorTracer)
+        .reader: $&ReaderType, .writer: $&BufferedWriter#(.base_type: base_type)
     ) -> (
         .result : Errable#(
             UIntNative,
@@ -76,7 +69,6 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer
             )
         )
     ) {
-        assume error_tracer
 
         capacity ::= length(&writer&.buffer).count
         copied :: UIntNative = 0

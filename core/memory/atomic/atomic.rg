@@ -33,15 +33,12 @@ AtomicUInt32 := (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 AtomicUInt32InitArgs: Type = (
     .initial : UInt32                     = 0,
     .ffi     : $&ForeignFunctionInterface
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement Init#(AtomicUInt32, AtomicUInt32InitArgs) (
     .Result : Type = Errable#(AtomicUInt32, (..out_of_memory))
 
     .init = AtomicUInt32InitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_initial ::= initial
         _init_ffi ::= ffi
@@ -89,7 +86,7 @@ fetch_add := (.self: $&AtomicUInt32, .value: UInt32) -> (.previous: UInt32) {
 compare_exchange := (.self: $&AtomicUInt32, .expected: UInt32, .desired: UInt32) -> (
     .observed: UInt32, .swapped: Bool
 ) {
-    assume error_tracer ::= NoopErrorTracer() | to_virtual#(.contract: ErrorTracer)($&_) | $&_
+
     assume ffi := self&._ffi
     packed ::= _atomic_compare(
         .handle = self&._handle, .expected = expected, .desired = desired

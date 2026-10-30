@@ -2,7 +2,7 @@ Choice: Type = (..empty, ..number(.value: Int32))
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= CAllocator(.ffi = ffi)
     booleans ::= unwrap_or_abort(.value = allocate#(.t: Bool)(.self = $&allocator, .count = 2))
     choices ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = $&allocator, .count = 3))

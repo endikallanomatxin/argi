@@ -1,33 +1,25 @@
 -- Value and provider jointly select string formatting algorithms.
 StringFormatting#(.Value: Type, .Provider: Type): Contract = (
-    .append : (
-        .out          : $&String,
-        .value        : Value,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..out_of_memory)))
-    .render : (.value: Value, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .append : (.out: $&String, .value: Value, .allocator: $&Provider) -> (
+        .result : Errable#(Void, (..out_of_memory))
+    )
+    .render : (.value: Value, .allocator: $&Provider) -> (
         .result : Errable#(String, (..out_of_memory))
     )
 )
 
 format_into := #(.Value: Type, .Provider: Type: Allocator) (
-    .out          : $&String,
-    .value        : Value,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .out: $&String, .value: Value, .allocator: $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
-    assume error_tracer
 
     result = StringFormatting#(
         Value, Provider
     ).append(.out = out, .value = ~value, .allocator = allocator)
 }
 
-format := #(.Value: Type, .Provider: Type: Allocator) (
-    .value: Value, .allocator: $&Provider, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(String, (..out_of_memory))) {
-    assume error_tracer
+format := #(.Value: Type, .Provider: Type: Allocator) (.value: Value, .allocator: $&Provider) -> (
+    .result : Errable#(String, (..out_of_memory))
+) {
 
     result = ~StringFormatting#(Value, Provider).render(.value = ~value, .allocator = allocator)
 }

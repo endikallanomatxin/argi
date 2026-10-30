@@ -369,7 +369,8 @@ fn containsErasedParticipantVisited(self: *Resolver, ty: global_sg.GlobalTypeId,
     try visited.put(ty, {});
     switch (self.graph.semanticType(ty)) {
         .pointer => |pointer| return containsErasedParticipantVisited(self, pointer.child, erased, visited),
-        .nullable, .inferred_errable => |child| return containsErasedParticipantVisited(self, child, erased, visited),
+        .nullable => |child| return containsErasedParticipantVisited(self, child, erased, visited),
+        .inferred_errable => |value| return containsErasedParticipantVisited(self, value.child, erased, visited),
         .array => |array| return containsErasedParticipantVisited(self, array.element, erased, visited),
         .generic => |generic| {
             for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {

@@ -4,10 +4,7 @@ Reasons: Type = (..unavailable)
 
 Pair := #(.left: Type, .right: Type) (.left: left, .right: right)
 
-checked := (.value: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int32, Reasons)
-) {
-    assume error_tracer
+checked := (.value: Int32) -> (.result: Errable#(Int32, Reasons)) {
 
     if value < 0 {
         result = ..error(.reason = ..unavailable)
@@ -17,18 +14,12 @@ checked := (.value: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-echo := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(t, Reasons)
-) {
-    assume error_tracer
+echo := #(.t: Type) (.value: t) -> (.result: Errable#(t, Reasons)) {
 
     result = ..ok value
 }
 
-open_echo := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(t)
-) {
-    assume error_tracer
+open_echo := #(.t: Type) (.value: t) -> (.result: Errable#(t)) {
 
     result = ..ok value
 }
@@ -50,7 +41,7 @@ read_value := #(.t: Type, .source: Type: ReadValue#(.t: t)) (.self: &source) -> 
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     value ::= unwrap_or_abort(.value = checked(42)).result
     if value != 42 { abort }
 

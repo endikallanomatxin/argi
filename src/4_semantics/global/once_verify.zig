@@ -181,23 +181,9 @@ const State = struct {
                 try self.walkNode(unwrap.nullable_value);
                 try self.walkNode(unwrap.fallback_value);
             },
-            .testing_expect_error => |id| {
-                const value = self.graph.testing_expect_errors.items[@intFromEnum(id)];
-                try self.walkNode(value.expected_reason);
-                try self.walkNode(value.actual_result);
-                if (value.test_fail_input) |input| try self.walkNode(input);
-                try self.walkCall(node_id, value.test_fail_function);
-            },
             .error_propagation => |id| {
                 const value = self.graph.error_propagations.items[@intFromEnum(id)];
                 try self.walkNode(value.errable_value);
-                for (self.graph.node_refs.items[value.cleanup_nodes.start..][0..value.cleanup_nodes.len]) |cleanup|
-                    try self.walkNode(cleanup);
-            },
-            .error_context => |id| {
-                const value = self.graph.error_contexts.items[@intFromEnum(id)];
-                try self.walkNode(value.errable_value);
-                try self.walkNode(value.context);
                 for (self.graph.node_refs.items[value.cleanup_nodes.start..][0..value.cleanup_nodes.len]) |cleanup|
                     try self.walkNode(cleanup);
             },

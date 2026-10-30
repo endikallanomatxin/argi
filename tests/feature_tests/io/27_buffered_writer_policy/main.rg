@@ -7,8 +7,8 @@ RecordingWriter := (
     .fail_flush  : Bool       = false
 )
 
-main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
-    assume error_tracer
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     base ::= RecordingWriter()
     bytes ::= zeroed#(.t: [4]UInt8)()
     buffered ::= BufferedWriter#(.base_type: RecordingWriter)(
@@ -99,10 +99,9 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
 }
 
 implement Writer#(RecordingWriter) (
-    .write_byte = (
-        .self: $&RecordingWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         if self&.fail_write {
             result = ..error(.reason = ..stream_write_failed)
@@ -115,10 +114,9 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&RecordingWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&RecordingWriter) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_calls = self&.flush_calls + 1
         if self&.fail_flush {

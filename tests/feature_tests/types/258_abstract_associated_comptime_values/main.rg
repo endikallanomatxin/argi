@@ -18,7 +18,7 @@ require_dimensions := #(
     .matrix  : Type: AbstractMatrix#(.t: element, .rows = rows, .cols = cols),
     .element : Type,
     .rows    : UIntNative,
-    .cols    : UIntNative,
+    .cols    : UIntNative
 ) (.value: &matrix) -> () {}
 
 main := (.system: System) -> (.status_code: Int32 = 0) {

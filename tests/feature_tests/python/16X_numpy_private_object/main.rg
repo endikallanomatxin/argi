@@ -2,7 +2,7 @@ python := import ("python")
 numpy := import ("python/numpy")
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     interpreter ::= unwrap_or_abort(.value = python.Python(.ffi = system.ffi))
     values: [1]Float64 = (1.0)
     vector ::= unwrap_or_abort(

@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes ::= zeroed#(.t: [515]UInt8)().value
     bytes[0] = 17
     bytes[514] = 23

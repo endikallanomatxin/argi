@@ -8,10 +8,9 @@ implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () { record_drop() }
 )
 
-partial := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+partial := (.allocator: $&PageAllocator) -> (
     .result : Errable#(DynamicArray#(Owner), (..out_of_memory, ..copy_failed))
 ) {
-    assume error_tracer
 
     assume allocator
     values ::= DynamicArray#(Owner)(.capacity = 1)!
@@ -20,8 +19,8 @@ partial := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer))
     result = ..error(.reason = ..copy_failed)
 }
 
-nested := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+nested := (.allocator: $&PageAllocator) -> () {
+
     assume allocator
     inner ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 2))
     first ::= Owner(1)
@@ -32,8 +31,8 @@ nested := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) 
     push_assume_capacity#(DynamicArray#(Owner))($&outer, .value = ~inner)
 }
 
-explicit := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+explicit := (.allocator: $&PageAllocator) -> () {
+
     assume allocator
     values ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 1))
     item ::= Owner(7)
@@ -42,7 +41,7 @@ explicit := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume allocator := system.page_allocator
     match partial(allocator) {
         ..ok ~value { abort }

@@ -88,15 +88,13 @@ _tuple_set(
 PythonInitArgs: Type = (
     .ffi          : $&ForeignFunctionInterface,
     .program_name : StringView                  = "python3",
-    .home         : StringView                  = "",
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .home         : StringView                  = ""
 )
 
 implement Init#(Python, PythonInitArgs) (
     .Result : Type = Errable#(Python, (..python_initialization_failed))
 
     .init = PythonInitArgs -> (.result: Result) {
-        assume error_tracer
 
         _init_ffi ::= ffi
         _init_program_name ::= program_name
@@ -133,10 +131,9 @@ implement Deinit#(Object) (
     }
 )
 
-_owned := (
-    .self: &Python, .handle: RawPointer#(.t: _PyObject), .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+_owned := (.self: &Python, .handle: RawPointer#(.t: _PyObject)) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     if handle.address == 0 {
         result = ..error(.reason = ..python_error)
@@ -146,10 +143,9 @@ _owned := (
     result = ..ok(._handle = handle, ._python = self)
 }
 
-import_module := (.self: &Python, .name: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+import_module := (.self: &Python, .name: StringView) -> (
     .result : Errable#(Object, (..python_error))
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
 
@@ -163,10 +159,7 @@ import_module := (.self: &Python, .name: StringView, .error_tracer: $&Virtual#(E
     )
 }
 
-string := (.self: &Python, .value: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+string := (.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._ffi
 
@@ -180,10 +173,9 @@ string := (.self: &Python, .value: StringView, .error_tracer: $&Virtual#(ErrorTr
     )
 }
 
-bytes := (.self: &Python, .value: ArrayView#(UInt8), .error_tracer: $&Virtual#(ErrorTracer)) -> (
+bytes := (.self: &Python, .value: ArrayView#(UInt8)) -> (
     .result : Errable#(Object, (..python_error))
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     empty: UInt8 = 0
@@ -196,10 +188,7 @@ bytes := (.self: &Python, .value: ArrayView#(UInt8), .error_tracer: $&Virtual#(E
     )
 }
 
-_python_object_clone := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+_python_object_clone := (.self: &Object) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._python&._ffi
 
@@ -209,10 +198,9 @@ _python_object_clone := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer))
     )
 }
 
-attribute := (.self: &Object, .name: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+attribute := (.self: &Object, .name: StringView) -> (
     .result : Errable#(Object, (..python_error))
 ) {
-    assume error_tracer
 
     assume ffi := self&._python&._ffi
 
@@ -227,10 +215,7 @@ attribute := (.self: &Object, .name: StringView, .error_tracer: $&Virtual#(Error
     )
 }
 
-get_item := (.self: &Object, .key: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+get_item := (.self: &Object, .key: &Object) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._python&._ffi
 
@@ -242,10 +227,7 @@ get_item := (.self: &Object, .key: &Object, .error_tracer: $&Virtual#(ErrorTrace
     )
 }
 
-repr := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+repr := (.self: &Object) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._python&._ffi
 
@@ -255,10 +237,7 @@ repr := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     )
 }
 
-to_int64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Int64, (..python_error))
-) {
-    assume error_tracer
+to_int64 := (.self: &Object) -> (.result: Errable#(Int64, (..python_error))) {
 
     assume ffi := self&._python&._ffi
     value :: Int64 = 0
@@ -276,10 +255,7 @@ to_int64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-to_uint64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(UInt64, (..python_error))
-) {
-    assume error_tracer
+to_uint64 := (.self: &Object) -> (.result: Errable#(UInt64, (..python_error))) {
 
     assume ffi := self&._python&._ffi
     value :: UInt64 = 0
@@ -297,10 +273,7 @@ to_uint64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-to_float64 := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Float64, (..python_error))
-) {
-    assume error_tracer
+to_float64 := (.self: &Object) -> (.result: Errable#(Float64, (..python_error))) {
 
     assume ffi := self&._python&._ffi
     value :: Float64 = 0.0
@@ -325,12 +298,10 @@ _no_arguments := () -> (.value: ArrayView#(.t: &Object)) {
 _no_keywords := () -> (.value: ?&Object) { value = ..none }
 
 _call_from_view := (
-    .self         : &Object,
-    .arguments    : ArrayView#(.t: &Object) = _no_arguments(),
-    .keywords     : ?&Object                = _no_keywords(),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self      : &Object,
+    .arguments : ArrayView#(.t: &Object) = _no_arguments(),
+    .keywords  : ?&Object                = _no_keywords()
 ) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
 
     assume ffi := self&._python&._ffi
     tuple ::= _tuple(
@@ -428,10 +399,7 @@ _error_copy(.context: UIntNative, .destination: RawPointer#(.t: UInt8), .length:
     .status : Int32
 ): CFunction(.symbol = "_argi_python_error_copy")
 
-none := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+none := (.self: &Python) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._ffi
 
@@ -447,10 +415,7 @@ none := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     )
 }
 
-boolean := (.self: &Python, .value: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+boolean := (.self: &Python, .value: Bool) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._ffi
 
@@ -466,10 +431,9 @@ boolean := (.self: &Python, .value: Bool, .error_tracer: $&Virtual#(ErrorTracer)
     )
 }
 
-_python_signed_integer := (
-    .self: &Python, .value: Int64, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+_python_signed_integer := (.self: &Python, .value: Int64) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     assume ffi := self&._ffi
 
@@ -485,10 +449,9 @@ _python_signed_integer := (
     )
 }
 
-_python_unsigned_integer := (
-    .self: &Python, .value: UInt64, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Object, (..python_error))) {
-    assume error_tracer
+_python_unsigned_integer := (.self: &Python, .value: UInt64) -> (
+    .result : Errable#(Object, (..python_error))
+) {
 
     assume ffi := self&._ffi
 
@@ -504,10 +467,7 @@ _python_unsigned_integer := (
     )
 }
 
-floating := (.self: &Python, .value: Float64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+floating := (.self: &Python, .value: Float64) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._ffi
 
@@ -523,10 +483,7 @@ floating := (.self: &Python, .value: Float64, .error_tracer: $&Virtual#(ErrorTra
     )
 }
 
-list := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+list := (.self: &Python) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._ffi
 
@@ -542,10 +499,7 @@ list := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     )
 }
 
-dictionary := (.self: &Python, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Object, (..python_error))
-) {
-    assume error_tracer
+dictionary := (.self: &Python) -> (.result: Errable#(Object, (..python_error))) {
 
     assume ffi := self&._ffi
 
@@ -565,10 +519,7 @@ _boolean_int := (.value: Bool) -> (.number: Int64) {
     if value { number = 1 } else { number = 0 }
 }
 
-to_bool := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Bool, (..python_error))
-) {
-    assume error_tracer
+to_bool := (.self: &Object) -> (.result: Errable#(Bool, (..python_error))) {
 
     assume ffi := self&._python&._ffi
     status ::= _bool(.context = self&._python&._handle, .object = self&._handle).status
@@ -583,10 +534,7 @@ to_bool := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-is_none := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Bool, (..python_error))
-) {
-    assume error_tracer
+is_none := (.self: &Object) -> (.result: Errable#(Bool, (..python_error))) {
 
     assume ffi := self&._python&._ffi
     status ::= _is_none(.context = self&._python&._handle, .object = self&._handle).status
@@ -601,10 +549,7 @@ is_none := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok value
 }
 
-length := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(UIntNative, (..python_error))
-) {
-    assume error_tracer
+length := (.self: &Object) -> (.result: Errable#(UIntNative, (..python_error))) {
 
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
@@ -622,10 +567,7 @@ length := (.self: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     result = ..ok count
 }
 
-append := (.self: &Object, .value: &Object, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(Void, (..python_error))
-) {
-    assume error_tracer
+append := (.self: &Object, .value: &Object) -> (.result: Errable#(Void, (..python_error))) {
 
     assume ffi := self&._python&._ffi
 
@@ -642,10 +584,9 @@ append := (.self: &Object, .value: &Object, .error_tracer: $&Virtual#(ErrorTrace
     result = ..ok Void()
 }
 
-set_item := (
-    .self: &Object, .key: &Object, .value: &Object, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Void, (..python_error))) {
-    assume error_tracer
+set_item := (.self: &Object, .key: &Object, .value: &Object) -> (
+    .result : Errable#(Void, (..python_error))
+) {
 
     assume ffi := self&._python&._ffi
 
@@ -666,12 +607,8 @@ set_item := (
 }
 
 _copy_python_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &Object,
-    .kind         : Int32,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &Object, .kind: Int32, .allocator: $&AllocatorType
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
-    assume error_tracer
 
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
@@ -710,9 +647,8 @@ _copy_python_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 to_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Object, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &Object, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
-    assume error_tracer
 
     bytes ::= _copy_python_bytes(.self = self, .kind = 0, .allocator = allocator)!
     decoded ::= _native_text(.bytes = view(&bytes), .allocator = allocator)!
@@ -720,17 +656,15 @@ to_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 to_bytes := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Object, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &Object, .allocator: $&AllocatorType
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
-    assume error_tracer
 
     result = _copy_python_bytes(.self = self, .kind = 1, .allocator = allocator)
 }
 
 error_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Python, .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &Python, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     count ::= _error_size(.context = self&._handle).length

@@ -56,7 +56,7 @@ its containing function. For a program with an explicit exit status:
 defer {
     flush(output) handle error {
         status_code = 1
-        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+        report_error(.err = &error, .writer = writer) handle ignored {}
     }
 }
 ```
@@ -73,8 +73,8 @@ Only successful reads increase the pending length. On a read failure, previously
 accepted bytes remain pending; bytes written into free space by the failed read
 are ignored. Writes and flushes retain the buffered writer's existing failure
 policy, which discards pending bytes on failure to avoid repeating uncertain
-native progress. Buffered adapters forward the underlying error, including its
-original tracer. Stream errors and unrepresentable totals are reported through
+native progress. Buffered adapters forward the underlying ordinary error.
+Stream errors and unrepresentable totals are reported through
 an `Errable`; failure may follow consumed input and already written output.
 
 File streams retain their read/write access mode. Reads from write-only files

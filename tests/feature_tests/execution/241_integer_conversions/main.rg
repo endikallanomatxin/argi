@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     negative: Int8 = -42
     wide ::= negative | convert#(.to: Int64)(_)
     if wide != -42 { abort }
@@ -27,11 +27,7 @@ main := () -> (.status_code: Int32) {
     native ::= positive | convert#(.to: UIntNative)(_)
     if native != 255 { abort }
     status_code = #run () -> (.result: Int32) {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         byte: Int8 = 42
         result = byte | convert#(.to: Int32)(_)
     }

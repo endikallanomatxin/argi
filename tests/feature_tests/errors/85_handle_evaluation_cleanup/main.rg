@@ -10,15 +10,14 @@ implement Deinit#(Marker) (
     }
 )
 
-attempt := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> !Int32 {
-    assume error_tracer
+attempt := (.fail: Bool) -> !Int32 {
 
     calls = calls + 1
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 5 }
 }
 
-recover := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: Int32) {
-    assume error_tracer
+recover := (.fail: Bool) -> (.result: Int32) {
+
     result = attempt(.fail = fail) handle error, value {
         marker ::= Marker(.id = 1)
         result = 12
@@ -27,7 +26,7 @@ recover := (.fail: Bool, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: In
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     if recover(.fail = false).result != 5 or calls != 1 or drops != 0 { abort }
     if recover(.fail = true).result != 12 or calls != 2 or drops != 1 { abort }
     handled ::= attempt(.fail = true) handle error, value {

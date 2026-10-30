@@ -153,34 +153,19 @@ test "a losing invalid signature specialization cannot poison a valid operation"
     try std.testing.expectEqual(@as(i128, 42), try environment.execute(.{ .name = "invalid_losing_signature", .files = &.{.{ .path = "main.rg", .code = source }} }, .{}));
 }
 
-test "fallible core operations require an ordinary tracer input" {
+test "plain fallibility does not require diagnostic capabilities" {
     var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
     defer environment.deinit();
-    _ = try environment.check(.{ .name = "missing_error_tracer", .files = &.{.{ .path = "main.rg", .code =
-        \\main := () -> () {
-        \\    text ::= "hello"
-        \\    bytes_get(.view = &text, .index = 0)
-        \\}
-    }}, .diagnostic = .{ .message = "call to 'bytes_get' is missing required argument '.error_tracer'" } });
-    _ = try environment.check(.{ .name = "intermediate_tracer_is_required", .files = &.{.{ .path = "main.rg", .code =
-        \\read := (.text: StringView) -> (.result: UInt8) {
-        \\    result = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
-        \\}
-        \\main := () -> () {
-        \\    assume error_tracer ::= $&noop_error_tracer
-        \\    read(.text = "hello")
-        \\}
-    }}, .diagnostic = .{ .message = "call to 'bytes_get' is missing required argument '.error_tracer'" } });
-    _ = try environment.check(.{ .name = "explicit_tracer_forwarding", .files = &.{.{ .path = "main.rg", .code =
-        \\read := (.text: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (.result: UInt8) {
-        \\    assume error_tracer
-        \\    result = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
+    try std.testing.expectEqual(@as(i128, 104), try environment.execute(.{ .name = "plain_text_read_without_tracer", .files = &.{.{ .path = "main.rg", .code =
+        \\read := (.text: StringView) -> !UInt8 {
+        \\    byte ::= bytes_get(.view = &text, .index = 0)!
+        \\    result = ..ok byte
         \\}
         \\main := () -> (.status_code: Int32) {
-        \\    assume error_tracer ::= $&noop_error_tracer
-        \\    status_code = read(.text = "hello") | convert#(.to: Int32)(_)
+        \\    byte ::= unwrap_or_abort(.value = read(.text = "hello"))
+        \\    status_code = byte | convert#(.to: Int32)(_)
         \\}
-    }} });
+    }} }, .{}));
 }
 
 test "missing input diagnostics share ordinary and generic record matching" {
@@ -213,4 +198,50 @@ test "missing input diagnostics share ordinary and generic record matching" {
         \\    with_default()
         \\}
     }} });
+}
+
+test "error tracing requires explicit promotion and preserves borrowed lifetimes" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    _ = try environment.check(.{ .name = "plain_error_requires_explicit_promotion", .files = &.{.{ .path = "main.rg", .code =
+        \\plain := () -> !Int32 { result = ..error (.reason = ..invalid_input) }
+        \\traced := () -> !!Int32 { value ::= plain()!; result = ..ok value }
+        \\main := () -> () { traced() }
+    }}, .diagnostic = .{ .message = "propagating a plain error into a traced result requires '!! context'" } });
+    _ = try environment.check(.{ .name = "trace_cannot_be_discarded_by_propagation", .files = &.{.{ .path = "main.rg", .code =
+        \\traced := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
+        \\    assume error_tracer
+        \\    result = ..error (.reason = ..invalid_input)
+        \\}
+        \\plain := () -> !Int32 {
+        \\    value ::= traced(.error_tracer = $&noop_error_tracer)!
+        \\    result = ..ok value
+        \\}
+        \\main := () -> () { plain() }
+    }}, .diagnostic = .{ .message = "cannot discard an error trace during propagation" } });
+    _ = try environment.check(.{ .name = "trace_promotion_requires_lexical_capability", .files = &.{.{ .path = "main.rg", .code =
+        \\plain := () -> !Int32 { result = ..error (.reason = ..invalid_input) }
+        \\traced := () -> !!Int32 { value ::= plain()!! "context"; result = ..ok value }
+        \\main := () -> () { traced() }
+    }}, .diagnostic = .{ .message = "missing required argument '.error_tracer'" } });
+    _ = try environment.check(.{ .name = "local_tracer_cannot_escape_in_direct_error", .files = &.{.{ .path = "main.rg", .code =
+        \\traced := () -> !!Int32 {
+        \\    local: NoopErrorTracer = ()
+        \\    handle ::= to_virtual#(ErrorTracer)($&local)
+        \\    assume error_tracer ::= $&handle
+        \\    result = ..error (.reason = ..invalid_input)
+        \\}
+        \\main := () -> () { traced() }
+    }}, .diagnostic = .{ .message = "function output cannot depend on a local storage generation" } });
+    _ = try environment.check(.{ .name = "local_tracer_cannot_escape_in_promotion", .files = &.{.{ .path = "main.rg", .code =
+        \\plain := () -> !Int32 { result = ..error (.reason = ..invalid_input) }
+        \\traced := () -> !!Int32 {
+        \\    local: NoopErrorTracer = ()
+        \\    handle ::= to_virtual#(ErrorTracer)($&local)
+        \\    assume error_tracer ::= $&handle
+        \\    value ::= plain()!! "context"
+        \\    result = ..ok value
+        \\}
+        \\main := () -> () { traced() }
+    }}, .diagnostic = .{ .message = "function output cannot depend on a local storage generation" } });
 }

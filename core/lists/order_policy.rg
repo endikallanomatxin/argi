@@ -34,11 +34,7 @@ implement OrderPolicy#(StringViewOrderPolicy, StringView) (
     .less = (.self: &StringViewOrderPolicy, .left: &StringView, .right: &StringView) -> (
         .ok : Bool
     ) {
-        assume error_tracer ::= [
-            NoopErrorTracer()
-            | to_virtual#(.contract: ErrorTracer)($&_)
-            | $&_
-        ]
+
         index :: UIntNative = 0
 
         while index < left&._length and index < right&._length {

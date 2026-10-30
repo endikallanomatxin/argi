@@ -1,7 +1,7 @@
-escape := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: DynamicArray#(&Int32)) {
-    assume error_tracer
+escape := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
+    .result : DynamicArray#(&Int32)
+) {
+
     assume allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
     local :: Int32 = 7
@@ -11,7 +11,7 @@ escape := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 }
 
 main := (.system: System) -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= GeneralPurposeAllocator(system.page_allocator)
     escaped ::= escape($&allocator)
 }

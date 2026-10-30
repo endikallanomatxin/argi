@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     date ::= parse_utc(.text = "2024-02-29T12:34:56.123Z")!!!
     if date.nanoseconds != 123000000 { abort }

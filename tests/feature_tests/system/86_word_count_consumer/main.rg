@@ -1,13 +1,11 @@
 words ::= import ("../../../usecase_tests/03_word_count/library")
 
 expect_count := (
-    .self         : &HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
-    .word         : StringView,
-    .expected     : UIntNative,
-    .allocator    : $&PageAllocator,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self      : &HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+    .word      : StringView,
+    .expected  : UIntNative,
+    .allocator : $&PageAllocator
 ) -> !Void = ..ok Void() {
-    assume error_tracer
 
     assume allocator
     key ::= format(.value = word)!
@@ -18,6 +16,7 @@ expect_count := (
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
+
     assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator

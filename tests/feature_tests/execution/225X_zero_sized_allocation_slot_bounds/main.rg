@@ -2,7 +2,7 @@ Empty: Type = ()
 
 main := () -> (.status_code: Int32) {
     assume ffi ::= $&ForeignFunctionInterface()
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator ::= CAllocator(.ffi = ffi)
     allocated ::= allocate#(.t: Empty)(.self = $&allocator, .count = 2)
     match allocated {

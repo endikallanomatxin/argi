@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32) {
-    assume error_tracer ::= $&noop_error_tracer
+
     value :: Int32 = 9
     address ::= $&value | convert#(.to: UIntNative)(_)
     raw ::= raw_pointer#(.t: Int32)(.address = address)

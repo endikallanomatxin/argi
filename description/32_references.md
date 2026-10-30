@@ -55,7 +55,7 @@ it returns. This includes references to local variables, by-value input slots,
 local arrays, and temporary expression results. Wrapping a reference in a
 struct, choice, virtual value, or owning container does not extend its lifetime.
 The rule also applies to hidden dependencies: an `Allocation` cannot escape
-with a local deallocator, and an `Error` cannot escape with a local tracer.
+with a local deallocator, and an `ErrorWithTrace` cannot escape with a local tracer.
 
 Return an owned value when the caller should receive ownership. If the result
 must borrow storage, create the owner in the caller and pass its reference to

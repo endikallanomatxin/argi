@@ -1,9 +1,9 @@
-Direction : Type = (
+Direction: Type = (
     ..north,
-    ..south,
+    ..south
 )
 
-main := () -> (.status_code: Int32)  {
-    value : Direction = ..east
+main := () -> (.status_code: Int32) {
+    value: Direction = ..east
     status_code = 0
 }

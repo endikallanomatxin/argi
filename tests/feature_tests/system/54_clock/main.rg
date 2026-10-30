@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume clock ::= system.clock
     before ::= unwrap_or_abort(.value = monotonic_now(.self = clock)).result
     delay ::= unwrap_or_abort(.value = duration_from_milliseconds(.milliseconds = 2)).result

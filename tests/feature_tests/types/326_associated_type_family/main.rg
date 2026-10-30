@@ -31,7 +31,7 @@ known ::= #run () -> (.result: Bool) {
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     owner: Owner = (.flag = true)
     if InlineFactory#(Owner).get_flag#(Bool)(.owner = &owner, .value = true).result {
     } else {

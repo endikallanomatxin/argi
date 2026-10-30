@@ -1,25 +1,17 @@
 -- Path representation selects one operation identity; allocation is explicit.
 PathRemoval#(.PathValue: Type): Contract = (
     .Result : Type
-    .remove : (.self: &FileSystem, .path: PathValue, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Result
-    )
+    .remove : (.self: &FileSystem, .path: PathValue) -> (.result: Result)
 )
 
 AllocatingPathRemoval#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Result : Type
-    .remove : (
-        .self         : &FileSystem,
-        .path         : PathValue,
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Result)
+    .remove : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (.result: Result)
 )
 
-_path_remove_c := (.self: &FileSystem, .path: &CChar, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+_path_remove_c := (.self: &FileSystem, .path: &CChar) -> (
     .result : Errable#(Bool, (..path_remove_failed))
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
 
@@ -31,10 +23,9 @@ _path_remove_c := (.self: &FileSystem, .path: &CChar, .error_tracer: $&Virtual#(
     result = ..ok 1 == 1
 }
 
-_path_remove_string := (
-    .self: &FileSystem, .path: &String, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Bool, (..path_remove_failed))) {
-    assume error_tracer
+_path_remove_string := (.self: &FileSystem, .path: &String) -> (
+    .result : Errable#(Bool, (..path_remove_failed))
+) {
 
     assume ffi := self&._ffi
     c_path ::= as_c_string(path)
@@ -43,12 +34,8 @@ _path_remove_string := (
 }
 
 _path_remove_view := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &FileSystem,
-    .path         : StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &FileSystem, .path: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(Bool, (..path_remove_failed, ..out_of_memory))) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator
@@ -66,10 +53,9 @@ _path_remove_view := #(.Provider: Type: Allocator#(Provider)) (
     }
 }
 
-_path_remove_owned := (.self: &FileSystem, .path: &Path, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+_path_remove_owned := (.self: &FileSystem, .path: &Path) -> (
     .result : Errable#(Bool, (..path_remove_failed))
 ) {
-    assume error_tracer
 
     assume ffi := self&._ffi
 

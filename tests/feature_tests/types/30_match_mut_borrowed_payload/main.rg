@@ -1,6 +1,6 @@
 Result: Type = (
     ..ok(.value: Int32),
-    ..error,
+    ..error
 )
 
 main := () -> (.status_code: Int32) {

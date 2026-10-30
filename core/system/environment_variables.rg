@@ -17,10 +17,9 @@ implement Init#(EnvironmentVariables, EnvironmentVariablesInitArgs) (
     .init = _acquire_environment_variables
 )
 
-environment_variables_get_c_string := (
-    .key: &CChar, .ffi: $&ForeignFunctionInterface, .error_tracer: $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(?StringView, (..invalid_utf8))) {
-    assume error_tracer
+environment_variables_get_c_string := (.key: &CChar, .ffi: $&ForeignFunctionInterface) -> (
+    .result : Errable#(?StringView, (..invalid_utf8))
+) {
 
     raw_ptr ::= getenv(.name = key, .ffi = ffi).value
     raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
@@ -33,12 +32,8 @@ environment_variables_get_c_string := (
 }
 
 lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
-    .self         : &EnvironmentVariables,
-    .key          : StringView,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &EnvironmentVariables, .key: StringView, .allocator: $&Provider
 ) -> (.result: Errable#(?StringView, (..out_of_memory, ..invalid_utf8))) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator
@@ -54,12 +49,8 @@ lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
 }
 
 has := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self         : &EnvironmentVariables,
-    .key          : StringView,
-    .allocator    : $&AllocatorType,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &EnvironmentVariables, .key: StringView, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Bool, (..out_of_memory, ..invalid_utf8))) {
-    assume error_tracer
 
     assume ffi := self&._ffi
     assume allocator

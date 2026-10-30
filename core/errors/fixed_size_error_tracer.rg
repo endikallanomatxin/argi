@@ -47,9 +47,6 @@ implement Deinit#(FixedSizeErrorTracer) (
 _error_trace_header := (.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
     .header : MutableArrayView#(.t: UInt8)
 ) {
-    local_noop :: NoopErrorTracer = (.marker = 0)
-    local_trace ::= to_virtual#(.contract: ErrorTracer)(.value = $&local_noop)
-    assume error_tracer ::= $&local_trace
 
     if index >= self&._capacity { abort }
     header = unwrap_or_abort(
@@ -100,9 +97,6 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
     .add_context = (
         .self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context: StringView
     ) -> () {
-        local_noop :: NoopErrorTracer = (.marker = 0)
-        local_trace ::= to_virtual#(.contract: ErrorTracer)(.value = $&local_noop)
-        assume error_tracer ::= $&local_trace
 
         if self&._capacity == 0 {
             self&._dropped = true
@@ -147,12 +141,10 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
         }
     }
 
-    .report = (
-        .self         : $&FixedSizeErrorTracer,
-        .writer       : $&Virtual#(Writer),
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .report = (.self: $&FixedSizeErrorTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+
         write_trace_text(.text = "error trace (most recent first):\n", .writer = writer)!
 
         if self&._length == 0 {

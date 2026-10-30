@@ -6,10 +6,8 @@ RecordingWriter := (
     .flush_failure : Bool       = false
 )
 
-expect_written := #(.t: Type: Int) (
-    .value: t, .expected: StringView, .error_tracer: $&Virtual#(ErrorTracer)
-) -> () {
-    assume error_tracer
+expect_written := #(.t: Type: Int) (.value: t, .expected: StringView) -> () {
+
     base ::= RecordingWriter(.expected = expected)
     unwrap_or_abort(
         .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
@@ -26,7 +24,7 @@ expect_written := #(.t: Type: Int) (
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     int80: Int8 = -128
     expect_written(.value = int80, .expected = "-128")
     int81: Int8 = 0
@@ -108,10 +106,9 @@ main := () -> (.status_code: Int32 = 0) {
 }
 
 implement Writer#(RecordingWriter) (
-    .write_byte = (
-        .self: $&RecordingWriter, .byte: UInt8, .error_tracer: $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
-        assume error_tracer
+    .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
 
         if self&.count == self&.fail_at {
             if self&.flush_failure {
@@ -132,10 +129,9 @@ implement Writer#(RecordingWriter) (
         result = ..ok Void()
     }
 
-    .flush = (.self: $&RecordingWriter, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .flush = (.self: $&RecordingWriter) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) {
-        assume error_tracer
 
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()

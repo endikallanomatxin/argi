@@ -7,10 +7,9 @@ DynamicMatrix := #(.t: Type: Scalar) (
 
 ..dimension_mismatch
 
-_extent := (.rows: UIntNative, .cols: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+_extent := (.rows: UIntNative, .cols: UIntNative) -> (
     .result : Errable#(UIntNative, (..dimension_mismatch))
 ) {
-    assume error_tracer
 
     maximum ::= integer_limits(.value = rows).maximum
 
@@ -25,11 +24,10 @@ _extent := (.rows: UIntNative, .cols: UIntNative, .error_tracer: $&Virtual#(Erro
 }
 
 DynamicMatrixInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
-    .rows         : UIntNative,
-    .cols         : UIntNative,
-    .values       : ArrayView#(.t: t),
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .rows      : UIntNative,
+    .cols      : UIntNative,
+    .values    : ArrayView#(.t: t),
+    .allocator : $&Provider
 )
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
@@ -38,7 +36,6 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
 
     .init = DynamicMatrixInitArgs#(t, Provider) -> (.result: Result) {
-        assume error_tracer
 
         _init_rows ::= rows
         _init_cols ::= cols
@@ -73,12 +70,8 @@ shape := #(.t: Type: Scalar) (.self: &DynamicMatrix#(.t: t)) -> (
 }
 
 _math_get_dynamic_matrix := #(.t: Type: Scalar) (
-    .self         : &DynamicMatrix#(.t: t),
-    .row          : UIntNative,
-    .col          : UIntNative,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &DynamicMatrix#(.t: t), .row: UIntNative, .col: UIntNative
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
-    assume error_tracer
 
     if row >= self&._rows or col >= self&._cols {
         result = ..error(.reason = ..out_of_bounds)
@@ -89,13 +82,8 @@ _math_get_dynamic_matrix := #(.t: Type: Scalar) (
 }
 
 _math_set_dynamic_matrix := #(.t: Type: Scalar) (
-    .self         : $&DynamicMatrix#(.t: t),
-    .row          : UIntNative,
-    .col          : UIntNative,
-    .value        : t,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&DynamicMatrix#(.t: t), .row: UIntNative, .col: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    assume error_tracer
 
     if row >= self&._rows or col >= self&._cols {
         result = ..error(.reason = ..out_of_bounds)
@@ -111,12 +99,8 @@ _math_set_dynamic_matrix := #(.t: Type: Scalar) (
 implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left         : &DynamicMatrix#(.t: t),
-        .right        : &DynamicMatrix#(.t: t),
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Provider
     ) -> (.result: Result) {
-        assume error_tracer
 
         assume allocator
 
@@ -143,12 +127,8 @@ implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)
 implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .multiply = #(.Provider: Type: Allocator) (
-        .left         : &DynamicMatrix#(.t: t),
-        .right        : &DynamicMatrix#(.t: t),
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Provider
     ) -> (.result: Result) {
-        assume error_tracer
 
         assume allocator
 
@@ -193,11 +173,8 @@ implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.
 )
 
 _math_transpose_dynamic_matrix := #(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) (
-    .self         : &DynamicMatrix#(.t: t),
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &DynamicMatrix#(.t: t), .allocator: $&Provider
 ) -> (.result: Errable#(DynamicMatrix#(.t: t), (..out_of_memory))) {
-    assume error_tracer
 
     count ::= length(&self&._values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
@@ -227,8 +204,6 @@ DynamicVector := #(.t: Type: Scalar) (._values: DynamicArray#(.t: t))
 DynamicVectorInitArgs: Type = #(.t: Type: Scalar, .Provider: Type: Allocator) (
     .values    : ArrayView#(.t: t),
     .allocator : $&Provider
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
@@ -237,7 +212,6 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
     .Result : Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
 
     .init = DynamicVectorInitArgs#(t, Provider) -> (.result: Result) {
-        assume error_tracer
 
         _init_values ::= values
         _init_allocator ::= allocator
@@ -261,20 +235,15 @@ length := #(.t: Type: Scalar) (.self: &DynamicVector#(.t: t)) -> (.count: UIntNa
 }
 
 _math_get_dynamic_vector := #(.t: Type: Scalar) (
-    .self: &DynamicVector#(.t: t), .index: UIntNative, .error_tracer: $&Virtual#(ErrorTracer)
+    .self: &DynamicVector#(.t: t), .index: UIntNative
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
-    assume error_tracer
 
     result = get(.self = &self&._values, .index = index)
 }
 
 _math_set_dynamic_vector := #(.t: Type: Scalar) (
-    .self         : $&DynamicVector#(.t: t),
-    .index        : UIntNative,
-    .value        : t,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: $&DynamicVector#(.t: t), .index: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    assume error_tracer
 
     pointer ::= get_mutable_reference(.self = $&self&._values, .index = index)!
     pointer&= value
@@ -283,11 +252,8 @@ _math_set_dynamic_vector := #(.t: Type: Scalar) (
 }
 
 _math_dot_dynamic_vector := #(.t: Type: Scalar) (
-    .left         : &DynamicVector#(.t: t),
-    .right        : &DynamicVector#(.t: t),
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t)
 ) -> (.result: Errable#(t, (..dimension_mismatch))) {
-    assume error_tracer
 
     count ::= length(left).count
 
@@ -312,12 +278,8 @@ _math_dot_dynamic_vector := #(.t: Type: Scalar) (
 implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = #(.Provider: Type: Allocator) (
-        .left         : &DynamicVector#(.t: t),
-        .right        : &DynamicVector#(.t: t),
-        .allocator    : $&Provider,
-        .error_tracer : $&Virtual#(ErrorTracer)
+        .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t), .allocator: $&Provider
     ) -> (.result: Result) {
-        assume error_tracer
 
         assume allocator
 
@@ -343,12 +305,8 @@ implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)
 )
 
 _math_scale_dynamic_vector := #(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) (
-    .self         : &DynamicVector#(.t: t),
-    .factor       : t,
-    .allocator    : $&Provider,
-    .error_tracer : $&Virtual#(ErrorTracer)
+    .self: &DynamicVector#(.t: t), .factor: t, .allocator: $&Provider
 ) -> (.result: Errable#(DynamicVector#(.t: t), (..out_of_memory))) {
-    assume error_tracer
 
     count ::= length(self).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!

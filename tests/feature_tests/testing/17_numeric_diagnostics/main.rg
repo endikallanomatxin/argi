@@ -1,4 +1,4 @@
-test signed_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test signed_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     expected :: Int64 = -9223372036854775808
@@ -8,7 +8,7 @@ test signed_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -
     )!
 }
 
-test unsigned_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test unsigned_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     expected :: UInt64 = 18446744073709551615
@@ -16,13 +16,13 @@ test unsigned_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer))
     testing.expect_equal(.expected = expected, .actual = actual)!
 }
 
-test float_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test float_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     testing.expect_equal(.expected = 1.5, .actual = 2.5)!
 }
 
-test bool_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !() {
+test bool_value := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
     testing.expect_equal(.expected = true, .actual = false)!

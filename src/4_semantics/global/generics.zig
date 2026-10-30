@@ -336,14 +336,17 @@ pub const Resolver = struct {
     const InstanceMaterialization = enum { pending, complete, changed };
 
     fn materializeGenericInstance(self: *Resolver, ty: global_sg.GlobalTypeId) !InstanceMaterialization {
-        // Every published instance has validated declaration-order arguments.
-        // Semantic identity with one can reuse its shape without rebinding.
-        if (global_types.genericInstance(self.graph, ty) != null) return .complete;
         const identity = switch (self.graph.types.items[@intFromEnum(ty)]) {
             .generic => |value| value,
             else => return .complete,
         };
-        const located = self.findTypeParameterized(identity.base) orelse return .pending;
+        const template = self.findTypeParameterized(identity.base);
+        // A retained shape needs no template to remain complete. When its
+        // template is available, an alias may still expose omitted defaults;
+        // canonicalize those before reusing its argument identity.
+        if (global_types.genericInstance(self.graph, ty) != null and
+            (template == null or identity.arguments.len == template.?.parameterized.parameters.len)) return .complete;
+        const located = template orelse return .pending;
         var bindings = try Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         self.bindGlobalArguments(located.module_index, located.parameterized.parameters, identity.arguments, &bindings) catch |err| {
@@ -906,7 +909,7 @@ pub const Resolver = struct {
                 try global_types.materializeNullable(self.allocator, self.graph, nullable, instantiated_child, .{ .file_index = 0, .offset = 0 });
                 break :blk nullable;
             },
-            .inferred_errable => |child| self.internType(.{ .inferred_errable = try self.instantiateParameterizedType(module_index, child, bindings) }),
+            .inferred_errable => |child| self.internType(.{ .inferred_errable = .{ .child = try self.instantiateParameterizedType(module_index, child.child, bindings), .traced = child.traced } }),
             .inferred_choice => |choice| self.internType(.{ .inferred_choice = .{
                 .identity = choice.identity,
                 .kind = choice.kind,
@@ -1530,7 +1533,7 @@ fn sameShallowType(graph: *const global_sg.GlobalSemanticGraph, a: global_sg.Glo
         .pointer => |value| value.mutability == b.pointer.mutability and global_types.identityEqual(graph, value.child, b.pointer.child),
         .array => |value| value.length == b.array.length and global_types.identityEqual(graph, value.element, b.array.element),
         .nullable => |value| global_types.identityEqual(graph, value, b.nullable),
-        .inferred_errable => |value| global_types.identityEqual(graph, value, b.inferred_errable),
+        .inferred_errable => |value| value.traced == b.inferred_errable.traced and global_types.identityEqual(graph, value.child, b.inferred_errable.child),
         .generic => |value| value.base == b.generic.base and global_types.genericArgumentsEqual(graph, value.arguments, b.generic.arguments),
         .virtual => |value| global_types.identityEqual(graph, value, b.virtual),
         .inferred_choice, .structural, .structural_choice => false,

@@ -17,7 +17,7 @@ main := () -> (.status_code: Int32 = 0) {
         (.key = 2, .tag = 2),
         (.key = 1, .tag = 3),
         (.key = 3, .tag = 4),
-        (.key = 2, .tag = 5),
+        (.key = 2, .tag = 5)
     )
     borrowed_view ::= view(.self = $&records)
     order ::= ByKey()

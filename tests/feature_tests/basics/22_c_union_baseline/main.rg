@@ -1,6 +1,6 @@
 NumberValue: CUnion = (
     .small : Int16,
-    .large : Int64,
+    .large : Int64
 )
 
 main := () -> (.status_code: Int32) {

@@ -12,10 +12,7 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-make := (.self: &Cell, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(?Owned, (..failed))
-) {
-    assume error_tracer
+make := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) {
 
     if mode == 0 {
         result = ..ok ..none
@@ -31,14 +28,14 @@ make := (.self: &Cell, .mode: Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> 
 
 Envelope := (.result: Errable#(?Owned, (..failed)))
 
-leave_early := (.cell: &Cell, .error_tracer: $&Virtual#(ErrorTracer)) -> () {
-    assume error_tracer
+leave_early := (.cell: &Cell) -> () {
+
     result ::= make(cell, 1)
     return
 }
 
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     cell ::= Cell(0)
 
     if true {

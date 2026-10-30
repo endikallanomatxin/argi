@@ -8,10 +8,7 @@ RecordingAllocator := (
 Source := (.text: StringView, .position: UIntNative = 0, .fail_after: UIntNative = 999)
 
 implement Reader#(Source) (
-    .read_byte = (.self: $&Source, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) {
-        assume error_tracer
+    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
 
         if self&.position == self&.fail_after {
             result = ..error(.reason = ..stream_read_failed)
@@ -29,7 +26,7 @@ implement Reader#(Source) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     failed_reader ::= Source(.text = "abc", .fail_after = 1)
@@ -58,13 +55,9 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 }
 
 implement Allocator#(RecordingAllocator) (
-    .allocate = (
-        .self         : $&RecordingAllocator,
-        .size         : UIntNative,
-        .alignment    : UIntNative              = 1,
-        .error_tracer : $&Virtual#(ErrorTracer)
-    ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
-        assume error_tracer
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
 
         if self&.allocations == self&.fail_after {
             result = ..error(.reason = ..out_of_memory)
@@ -77,9 +70,7 @@ implement Allocator#(RecordingAllocator) (
             return
         }
         self&.allocations = self&.allocations + 1
-        deallocator: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
-            .value = self
-        )
+        deallocator: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(.value = self)
         result = ..ok ~trusted_establish_allocation(
             .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )

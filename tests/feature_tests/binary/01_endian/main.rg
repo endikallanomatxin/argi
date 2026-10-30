@@ -1,5 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 1) {
-    assume error_tracer ::= $&noop_error_tracer
+
     assume writer ::= $&system.terminal&.stderr
     bytes :: [10]UInt8 = (99, 0, 0, 0, 0, 0, 0, 0, 0, 88)
     output ::= view(.self = $&bytes)

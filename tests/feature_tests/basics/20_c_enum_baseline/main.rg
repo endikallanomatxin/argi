@@ -1,6 +1,6 @@
 AccessMode: CEnum = (
     ..missing,
-    ..exists,
+    ..exists
 )
 
 choose := (.flag: Bool) -> (.mode: AccessMode) {

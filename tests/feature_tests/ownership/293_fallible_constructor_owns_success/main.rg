@@ -3,15 +3,12 @@ Owned := (.allocation: Allocation)
 OwnedInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
     .allocator : $&AllocatorProvider,
     .fail      : Bool
-    ,
-    .error_tracer : $&Virtual#(ErrorTracer)
 )
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, OwnedInitArgs#(AllocatorProvider)) (
     .Result : Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
 
     .init = OwnedInitArgs#(AllocatorProvider) -> (.result: Result) {
-        assume error_tracer
 
         _init_allocator ::= ~allocator
         _init_fail ::= ~fail
@@ -43,7 +40,7 @@ implement Deinit#(Owned) (
 )
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     success ::= Owned(.allocator = $&allocator_storage, .fail = false)
     match success {

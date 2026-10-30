@@ -1,7 +1,6 @@
 -- Raw FNV-1a-64 known answers, independently of key encoding and map probing.
-check := (.bytes: ArrayView#(UInt8), .expected: UInt64, .error_tracer: $&Virtual#(ErrorTracer)) -> (
-) {
-    assume error_tracer
+check := (.bytes: ArrayView#(UInt8), .expected: UInt64) -> () {
+
     hasher ::= StandardHasher()
     Hasher#(StandardHasher).write_bytes($&hasher, .bytes = bytes)
     #if target_pointer_bits(64) {
@@ -13,7 +12,7 @@ check := (.bytes: ArrayView#(UInt8), .expected: UInt64, .error_tracer: $&Virtual
 }
 
 main := () -> () {
-    assume error_tracer ::= $&noop_error_tracer
+
     bytes_0: [0]UInt8 = ()
     check(.bytes = view(&bytes_0), .expected = 14695981039346656037)
     bytes_1: [1]UInt8 = (97)

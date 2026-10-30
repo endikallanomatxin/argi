@@ -1,5 +1,5 @@
 main := () -> (.status_code: Int32 = 0) {
-    assume error_tracer ::= $&noop_error_tracer
+
     small :: UInt8 = 0
     signed :: Int64 = 0
     wide :: UInt64 = 0

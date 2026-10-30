@@ -25,9 +25,7 @@ pub const Bounds = struct {
     virtualizes: usize = 0,
     virtual_calls: usize = 0,
     nullable_unwraps: usize = 0,
-    testing_expect_errors: usize = 0,
     error_propagations: usize = 0,
-    error_contexts: usize = 0,
     node_refs: usize = 0,
     type_refs: usize = 0,
     binding_refs: usize = 0,
@@ -78,7 +76,8 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
         .definition => |id| try require(verify.idFits(id, bounds.family_definitions)),
         .pointer => |item| try require(verify.idFits(item.child, bounds.types)),
         .array => |item| try require(verify.idFits(item.element, bounds.types)),
-        .nullable, .inferred_errable => |id| try require(verify.idFits(id, bounds.types)),
+        .nullable => |id| try require(verify.idFits(id, bounds.types)),
+        .inferred_errable => |inferred| try require(verify.idFits(inferred.child, bounds.types)),
         .inferred_choice => |item| try require(verify.rangeFits(item.variants, bounds.variants)),
         .structural => |item| try require(verify.rangeFits(item.fields, bounds.fields)),
         .structural_choice => |item| try require(verify.rangeFits(item.variants, bounds.variants)),
@@ -214,35 +213,8 @@ pub fn nullableUnwrap(comptime Ids: type, value: primitives.NullableUnwrap(Ids),
     try require(verify.idFits(value.result_type, bounds.types));
 }
 
-pub fn testingExpectError(comptime Ids: type, value: primitives.TestingExpectError(Ids), bounds: Bounds) !void {
-    try require(verify.idFits(value.expected_reason, bounds.nodes));
-    try require(verify.idFits(value.actual_result, bounds.nodes));
-    try require(verify.idFits(value.actual_error_variant, bounds.variants));
-    try require(verify.idFits(value.actual_error_payload_type, bounds.types));
-    try require(verify.idFits(value.result_type, bounds.types));
-    try require(verify.idFits(value.result_ok_variant, bounds.variants));
-    try require(verify.idFits(value.test_fail_function, bounds.functions));
-    if (value.test_fail_input) |input| try require(verify.idFits(input, bounds.nodes));
-    if (value.expected_reason_name) |name| try require(verify.stringFits(name, bounds.strings));
-    try require(verify.stringFits(value.diagnostic_source_line, bounds.strings));
-}
-
 pub fn errorPropagation(comptime Ids: type, value: primitives.ErrorPropagation(Ids), bounds: Bounds) !void {
     try require(verify.idFits(value.errable_value, bounds.nodes));
-    try require(verify.rangeFits(value.cleanup_nodes, bounds.node_refs));
-    try require(verify.idFits(value.ok_variant, bounds.variants));
-    try require(verify.idFits(value.error_variant, bounds.variants));
-    try require(verify.idFits(value.propagated_errable_type, bounds.types));
-    try require(verify.idFits(value.propagated_error_variant, bounds.variants));
-    try require(verify.idFits(value.ok_payload_type, bounds.types));
-    try require(verify.idFits(value.error_payload_type, bounds.types));
-    try require(verify.idFits(value.propagated_error_payload_type, bounds.types));
-    try require(verify.stringFits(value.diagnostic_source_line, bounds.strings));
-}
-
-pub fn errorContext(comptime Ids: type, value: primitives.ErrorContext(Ids), bounds: Bounds) !void {
-    try require(verify.idFits(value.errable_value, bounds.nodes));
-    try require(verify.idFits(value.context, bounds.nodes));
     try require(verify.rangeFits(value.cleanup_nodes, bounds.node_refs));
     try require(verify.idFits(value.ok_variant, bounds.variants));
     try require(verify.idFits(value.error_variant, bounds.variants));
@@ -301,9 +273,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.payload_type, bounds.types));
         },
         .nullable_unwrap_or => |id| try require(verify.idFits(id, bounds.nullable_unwraps)),
-        .testing_expect_error => |id| try require(verify.idFits(id, bounds.testing_expect_errors)),
         .error_propagation => |id| try require(verify.idFits(id, bounds.error_propagations)),
-        .error_context => |id| try require(verify.idFits(id, bounds.error_contexts)),
         .array_literal => |item| {
             try require(verify.rangeFits(item.elements, bounds.node_refs));
             try require(verify.idFits(item.element_type, bounds.types));
@@ -411,9 +381,7 @@ test "shared payload verifier covers declarations and inferred choices" {
         pub const VirtualizeId = enum(u32) { _ };
         pub const VirtualCallId = enum(u32) { _ };
         pub const NullableUnwrapId = enum(u32) { _ };
-        pub const TestingExpectErrorId = enum(u32) { _ };
         pub const ErrorPropagationId = enum(u32) { _ };
-        pub const ErrorContextId = enum(u32) { _ };
     };
 
     try declaration(Ids, .{
