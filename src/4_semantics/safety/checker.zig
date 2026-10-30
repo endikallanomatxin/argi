@@ -1038,12 +1038,7 @@ pub const SafetyChecker = struct {
                 };
             }
             try self.validateBlock(function, case.body, &branch, loop_transfers);
-            if (joined) |*existing| {
-                var combined = try self.cloneState(existing);
-                try self.joinState(&combined, existing, &branch);
-                existing.deinit();
-                existing.* = combined;
-            } else joined = try self.cloneState(&branch);
+            if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try self.cloneState(&branch);
         }
         if (sw.default_block) |child| {
             var branch = try self.cloneState(state);
@@ -5519,12 +5514,7 @@ pub const SafetyChecker = struct {
                     if (field.field_index != index) continue;
                     try self.evaluateAutoDeinitField(function, field, payload_storage, &branch);
                 }
-                if (joined) |*existing| {
-                    var combined = try self.cloneState(existing);
-                    try self.joinState(&combined, existing, &branch);
-                    existing.deinit();
-                    existing.* = combined;
-                } else joined = try self.cloneState(&branch);
+                if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try self.cloneState(&branch);
             }
             if (joined) |*value| self.commitState(state, value);
             return;
@@ -7886,6 +7876,29 @@ test "structural auto deinit marks nested fields and parent dead" {
     try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(child));
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(root));
+}
+
+test "Safety in-place branch joins release tables on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const facts_allocator = arena.allocator();
+            var checker = SafetyChecker.init(facts_allocator, undefined, undefined);
+            checker.state_allocator = a;
+            defer checker.deinit();
+            var left = SafetyChecker.FunctionState.initWithAllocators(facts_allocator, a);
+            defer left.deinit();
+            var right = SafetyChecker.FunctionState.initWithAllocators(facts_allocator, a);
+            defer right.deinit();
+            _ = try left.tracker.establish(.fresh);
+            _ = try right.tracker.establish(.fresh);
+            try left.storage_capabilities.append(.available);
+            try right.storage_capabilities.append(.consumed);
+            try checker.joinState(&left, &left, &right);
+            try std.testing.expectEqual(@import("state.zig").StorageCapabilityState.maybe_consumed, left.storage_capabilities.items[0]);
+        }
+    }.run, .{});
 }
 
 test "rich safety join preserves all compact state dimensions" {
