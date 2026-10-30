@@ -53,6 +53,25 @@ allocation. Completed submissions alone do not constitute an acceptance pass.
 Logs: `.zig-cache/repl-resource-cleanup-{failure,fixed}.csv` and
 `.zig-cache/repl-release-fixed-{calls,definitions,rejections}.csv`.
 
+The final reference rerun enforces a 512 MiB ceiling with the same four
+1,000-command workloads. Every workload completes checked close and releases
+all tracked backing on destruction:
+
+| Prelude workload | Final-window p95 ms | Peak MiB including cleanup | Cleanup ms |
+|---|---:|---:|---:|
+| Reused calls | 6.894 | 161.611 | 13.930 |
+| Persistent resources | 23.415 | 286.640 | 780.065 |
+| New definitions | 4.451 | 156.243 | 13.153 |
+| Rejected submissions | 4.101 | 145.785 | 10.945 |
+
+Logs: `.zig-cache/release-budget-{calls,resources,definitions,rejections}.csv`.
+
+The 10,000-command rejection control also passes under 512 MiB. Retained
+backing stays at 144.593 MiB from command 1,000 through 10,000, with unchanged
+graph payload and live VM backing. Commands 1,001–10,000 have p95 4.448 ms;
+checked close takes 11.419 ms, peak backing is 145.785 MiB, and destruction
+releases every tracked byte. Log: `.zig-cache/release-budget-rejections-long.csv`.
+
 ## One sweep for reference types
 
 Address and dereference type materialization now share one node-ordered scan.

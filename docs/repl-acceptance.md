@@ -35,7 +35,10 @@ byte reads; the native transport also compiles for x86-64 Windows.
 Windows workflow run `41022201658` passes the complete native ConPTY step:
 Unicode editing/history, continuation, Ctrl-C during execution with an inherited
 ignore attribute, recovery through reset, and both `:quit` and Ctrl-D teardown.
-The rest of that workflow and final-candidate platform validation remain separate.
+That run also passes compiler internals and the selected core/program suites.
+Native run `41022517153` completes Linux ARM64 and macOS ARM64 validation,
+including extracted distributions; the latter also validates the Darwin PTY
+resize fix. Other matrix jobs and final-candidate acceptance remain separate.
 
 Long input uses a horizontal viewport rather than terminal wrapping. Linux PTY
 acceptance passes with a 24-column function definition, a 12-column Unicode edit
@@ -56,6 +59,13 @@ Linux validation on 2026-10-30 also completed the full program suite (30/30 buil
 steps) and the full Debug internal suite (1,376 passed, one skipped, no failures).
 These runs cover the corresponding worktree builds; later changes still need
 their final candidate checks. Exhaustive allocation failure coverage is separate.
+
+Focused ReleaseSafe sweeps of real-core resource preparation pass allocation
+indices `[0, 545)` and `[29779, 32653)`, and every resize index `[0, 545)`.
+The baseline has 32,653 allocations and 545 resizes. These checks include the
+previously reproduced late leak; the middle allocation range still requires
+the complete CI sweep. Logs: `.zig-cache/repl-final-resize-sweep.log` and
+`.zig-cache/repl-final-tail-sweep.log`.
 
 ## Stability contract
 
@@ -83,9 +93,13 @@ calls, definitions, retained resources and rejected inputs:
   growth in semantic graph payload or live VM backing.
 - Healthy close must succeed and destruction must release every tracked byte.
 
-The 2026-10-30 runs satisfy these measured thresholds (largest peak 286.640 MiB,
-p95 23.219 ms and close 799.962 ms), using a 1 GiB tracking ceiling. Repeat with
-the 512 MiB ceiling and the final candidate, and retain longer-session controls.
+The 2026-10-30 reference rerun enforces the 512 MiB ceiling and satisfies these
+thresholds: largest peak 286.640 MiB, p95 23.415 ms and close 780.065 ms.
+All four workloads complete checked close and release all tracked backing.
+The 10,000-command rejection control also passes: retained backing stays at
+144.593 MiB from command 1,000 onward, graph payload and live VM backing remain
+unchanged, and final-window p95 is 4.448 ms. Checked close succeeds in 11.419 ms
+and destruction releases every tracked byte.
 See [measurements and the corrected teardown failure](compiler-performance.md#checked-resource-session-teardown).
 Tracked backing includes allocator slabs; it is not process RSS or user-owned
 payload alone. Execution instruction, call-depth and value-cell quotas remain
