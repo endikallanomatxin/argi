@@ -6502,6 +6502,7 @@ pub const SafetyChecker = struct {
         // its generations before cloning entry state so first address-taking
         // in the body is not mistaken for a conditionally created lifetime.
         const existing_places = try self.allocator.dupe(facts.PlaceFacts, state.places.items);
+        defer self.allocator.free(existing_places);
         for (existing_places) |place_facts| _ = try state.storageGeneration(place_facts.storage);
 
         var entry = try self.cloneState(state);
@@ -6857,10 +6858,7 @@ pub const SafetyChecker = struct {
         const Destination = @TypeOf(destination.*);
         if (comptime Destination == ?FunctionState) {
             if (destination.*) |*current| {
-                var joined = try self.cloneState(current);
-                try self.joinState(&joined, current, source);
-                current.deinit();
-                current.* = joined;
+                try self.joinState(current, current, source);
             } else {
                 destination.* = try self.cloneState(source);
             }
@@ -6869,6 +6867,7 @@ pub const SafetyChecker = struct {
                 try self.copyState(destination, source);
             } else {
                 var joined = try self.cloneState(destination);
+                errdefer joined.deinit();
                 try self.joinState(&joined, destination, source);
                 var join_context = LoopJoinContext.init(self.allocator);
                 defer join_context.deinit();
@@ -7898,6 +7897,12 @@ test "Safety in-place branch joins release tables on allocation failure" {
             try left.storage_capabilities.append(.available);
             try right.storage_capabilities.append(.consumed);
             try checker.joinState(&left, &left, &right);
+            try std.testing.expectEqual(@import("state.zig").StorageCapabilityState.maybe_consumed, left.storage_capabilities.items[0]);
+            var transfer: ?SafetyChecker.FunctionState = null;
+            defer if (transfer) |*state| state.deinit();
+            try checker.mergeLoopTransfer(&transfer, &left);
+            try checker.mergeLoopTransfer(&transfer, &right);
+            try checker.mergeLoopTransfer(&left, &right);
             try std.testing.expectEqual(@import("state.zig").StorageCapabilityState.maybe_consumed, left.storage_capabilities.items[0]);
         }
     }.run, .{});
