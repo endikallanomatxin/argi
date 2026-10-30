@@ -1,5 +1,21 @@
 # Measuring compiler frontend performance
 
+## Interactive latency windows
+
+The execution benchmark reports `# latency` rows at 10, 100, 1,000 and the final
+command. Each row contains the command count, number of commands since the
+previous sample, median, nearest-rank p95 and maximum submission time in ms.
+Windows are disjoint: the 100-command row measures commands 11–100, allowing
+later session latency to be compared with its initial commands. Submission time
+includes frontend/publication, lowering, verification and execution; source
+generation and sample sorting are outside the timer. Reset-cycle workloads keep
+their separate report.
+
+Samples use benchmark-only backing outside the session memory account (eight
+bytes per command). Reported session memory therefore remains comparable with
+earlier runs. Run measurements without concurrent tests; these percentiles are
+observations, not acceptance budgets or statistically established guarantees.
+
 ## One sweep for reference types
 
 Address and dereference type materialization now share one node-ordered scan.
