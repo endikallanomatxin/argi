@@ -7,6 +7,12 @@ semantics, Safety and VM; full LLVM parity and JIT are not release requirements.
 
 Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
 
+- Confirm the real-core allocation-failure leak is closed. The 32,722-allocation
+  baseline leaked 4,000 bytes in `[28000, 29000)`; redundant branch clones have
+  been removed. Revalidate against the new baseline, including resize failures.
+- Finish native console acceptance: Windows Unicode input/history pass, but
+  execution cancellation/reset still need confirmation. Verify Darwin PTY
+  resizing after the platform ioctl fix.
 - Define supported everyday programs through executable cases: text, collections,
   imports, generic functions/contracts, partial initialization, persistent owners
   and references, `#run` and `#if`. Inventory lowerer/verifier restrictions and
