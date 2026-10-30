@@ -65,6 +65,8 @@ pub fn run(backing_allocator: std.mem.Allocator, io: std.Io, environ: ?*const st
     const input_terminal = try std.Io.File.stdin().isTty(io);
     const output_terminal = try std.Io.File.stdout().isTty(io);
     const terminal = input_terminal and output_terminal;
+    const execution_input: ?repl_console.ExecutionInput = if (builtin.os.tag == .windows and input_terminal) try repl_console.ExecutionInput.enter(std.Io.File.stdin().handle) else null;
+    defer if (execution_input) |saved| saved.restore();
     const console_encoding: ?repl_console.OutputEncoding = if (builtin.os.tag == .windows and (output_terminal or try std.Io.File.stderr().isTty(io))) try repl_console.OutputEncoding.enter() else null;
     defer if (console_encoding) |saved| saved.restore();
     var input_buffer: [64 * 1024]u8 = undefined;
@@ -778,7 +780,9 @@ test "REPL resource prelude releases failed source and backend allocations" {
     const initial_graph = prepared.relocation.graph.checkpoint();
     // Thousands of rollbacks release the same core structures. Keep allocator
     // safety checks without repeatedly unwinding identical free-site stacks.
-    var strict = std.heap.DebugAllocator(.{ .stack_trace_frames = 0 }){};
+    const single_failure = options.extended_allocation_sweeps and
+        options.allocation_failure_end -| options.allocation_failure_start == 1;
+    var strict = std.heap.DebugAllocator(.{ .stack_trace_frames = if (single_failure) 8 else 0 }){};
     defer std.testing.expect(strict.deinit() == .ok) catch @panic("resource-prelude sweep leaked backing memory");
     const Preparation = struct {
         fn run(a: std.mem.Allocator, initial_files: []const sf.SourceFile, template: *const @import("../4_semantics/global/semantizer.zig").Session, text: []const u8) !void {

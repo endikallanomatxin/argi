@@ -49,6 +49,59 @@ pub const OutputEncoding = struct {
 
 pub const Input = ConsoleReader(Api);
 
+/// An inherited VT-input mode routes Ctrl-C as bytes instead of an execution
+/// interrupt. Editing temporarily enables VT input again; between reads the
+/// console must process control events for the installed cancellation handler.
+pub const ExecutionInput = struct {
+    handle: windows.HANDLE,
+    saved: u32,
+
+    pub fn enter(handle: windows.HANDLE) !ExecutionInput {
+        return enterWith(Api, handle);
+    }
+    fn enterWith(comptime Console: type, handle: windows.HANDLE) !ExecutionInput {
+        var saved: u32 = undefined;
+        if (Console.GetConsoleMode(handle, &saved) == .FALSE) return error.TerminalModeUnavailable;
+        const result: ExecutionInput = .{ .handle = handle, .saved = saved };
+        errdefer result.restoreWith(Console);
+        if (Console.SetConsoleMode(handle, (saved | 1) & ~@as(u32, 0x0200)) == .FALSE) return error.TerminalModeUnavailable;
+        return result;
+    }
+    pub fn restore(self: ExecutionInput) void {
+        self.restoreWith(Api);
+    }
+    fn restoreWith(self: ExecutionInput, comptime Console: type) void {
+        _ = Console.SetConsoleMode(self.handle, self.saved);
+    }
+};
+
+test "Windows REPL execution enables processed interrupts and restores inherited input" {
+    const Console = struct {
+        var mode: u32 = 0x0206;
+        var fail: bool = false;
+        fn GetConsoleMode(_: windows.HANDLE, value: *u32) windows.BOOL {
+            value.* = mode;
+            return .TRUE;
+        }
+        fn SetConsoleMode(_: windows.HANDLE, value: u32) windows.BOOL {
+            if (fail) {
+                fail = false;
+                return .FALSE;
+            }
+            mode = value;
+            return .TRUE;
+        }
+    };
+    Console.mode = 0x0206;
+    const saved = try ExecutionInput.enterWith(Console, @ptrFromInt(1));
+    try std.testing.expectEqual(@as(u32, 7), Console.mode);
+    saved.restoreWith(Console);
+    try std.testing.expectEqual(@as(u32, 0x0206), Console.mode);
+    Console.fail = true;
+    try std.testing.expectError(error.TerminalModeUnavailable, ExecutionInput.enterWith(Console, @ptrFromInt(1)));
+    try std.testing.expectEqual(@as(u32, 0x0206), Console.mode);
+}
+
 fn ConsoleReader(comptime Console: type) type {
     return struct {
         const Self = @This();

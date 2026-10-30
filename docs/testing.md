@@ -147,6 +147,9 @@ core-allocation stacks during thousands of rollbacks. The Linux x86-64 Debug
 baseline after separating Safety branch tables is 32,722 allocations and 545
 resizes. Rerun the complete coverage when allocation strategy changes; ranges
 validated against a previous baseline do not certify the new implementation.
+For a one-position range, allocation stack capture is enabled automatically to
+locate leaks; wider sweeps keep it disabled. Removing redundant Safety branch
+clones reduces the current baseline to 32,653 allocations and 545 resizes.
 
 Linux x86-64 CI also runs 1,000-command prelude sessions for calls, resources,
 definitions and rejections with a 512 MiB tracking ceiling. Every scenario must
