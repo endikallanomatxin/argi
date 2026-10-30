@@ -198,11 +198,15 @@ pub const Editor = struct {
             };
             switch (byte) {
                 '\n', '\r' => {
+                    // Finish after the displayed source, even when Enter is
+                    // pressed while editing in the middle of the line.
+                    if (cursor != self.line.items.len) try self.redraw(output, prompt, self.line.items.len);
                     try output.writeByte('\n');
                     try self.remember();
                     return self.line.items;
                 },
                 3 => {
+                    if (cursor != self.line.items.len) try self.redraw(output, prompt, self.line.items.len);
                     self.cancelled = true;
                     self.line.clearRetainingCapacity();
                     try output.writeAll("^C\n");
@@ -341,6 +345,19 @@ test "REPL redraw keeps typed UTF-8 characters complete" {
     defer output.deinit();
     try std.testing.expectEqualStrings("a界€ñ", (try editor.read(&input, &output.writer, "")).?);
     try std.testing.expect(std.unicode.utf8ValidateSlice(output.written()));
+}
+
+test "REPL submission and cancellation finish after the displayed source" {
+    var editor: Editor = .{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+    var input = std.Io.Reader.fixed("a界z\x1b[H\nignored\x1b[H\x03");
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try std.testing.expectEqualStrings("a界z", (try editor.read(&input, &output.writer, ">>> ")).?);
+    try std.testing.expect(std.mem.endsWith(u8, output.written(), "\r\x1b[2K>>> a界z\n"));
+    try std.testing.expectEqualStrings("", (try editor.read(&input, &output.writer, ">>> ")).?);
+    try std.testing.expect(editor.cancelled);
+    try std.testing.expect(std.mem.endsWith(u8, output.written(), "\r\x1b[2K>>> ignored^C\n"));
 }
 
 test "REPL truncated UTF-8 does not consume editing controls" {
