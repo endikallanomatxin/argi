@@ -104,7 +104,8 @@ int wmain(int argc, wchar_t **argv) {
     swprintf(command, capacity, L"\"%ls\" repl", argv[1]);
     startup.StartupInfo.cb = sizeof startup;
     if (!start_client(argv[1], command, &startup, &process)) goto cleanup;
-    if (!await_text(process.hProcess, ">>> ")) goto cleanup;
+    /* ConPTY can encode the trailing blank as cursor movement. */
+    if (!await_text(process.hProcess, ">>>")) goto cleanup;
     /* Home, right and Delete must edit complete UTF-8 scalars. */
     if (!send_text(input_write,
             "\"\xe7\x95\x8c" "a\xf0\x9f\x99\x82\"\x1b[H\x1b[C\x1b[3~\r") ||

@@ -148,6 +148,13 @@ baseline after separating Safety branch tables is 32,722 allocations and 545
 resizes. Rerun the complete coverage when allocation strategy changes; ranges
 validated against a previous baseline do not certify the new implementation.
 
+Linux x86-64 CI also runs 1,000-command prelude sessions for calls, resources,
+definitions and rejections with a 512 MiB tracking ceiling. Every scenario must
+complete checked close and release all tracked backing. Reports are uploaded as
+`repl-acceptance-linux-x86_64`; inspect their latency windows and separate cleanup
+rows against [the reference budgets](repl-acceptance.md#reference-resource-budgets).
+Timings are reported rather than used as noisy wall-clock CI thresholds.
+
 ## Isolation
 
 Declare `.fixture` only after reviewing the test's resources. All tests in that

@@ -75,6 +75,29 @@ jobs:
         timeout-minutes: 45
         run: zig build test-programs -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
 
+      - name: Validate bounded persistent REPL sessions
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 15
+        run: |
+          zig build build-execution-benchmark -Doptimize=ReleaseSafe -j2 --summary all
+          mkdir -p .zig-cache/repl-acceptance
+          for scenario in calls resources definitions rejections; do
+            report=".zig-cache/repl-acceptance/$scenario.csv"
+            if ! ./zig-out/bin/execution-benchmark 1000 prelude "$scenario" 512 > "$report" 2>&1; then
+              cat "$report"
+              exit 1
+            fi
+            tail -n 1 "$report"
+          done
+
+      - name: Upload REPL resource and latency reports
+        if: always() && matrix.target == 'linux-x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: repl-acceptance-${{ matrix.target }}
+          path: .zig-cache/repl-acceptance/
+          if-no-files-found: ignore
+
       - name: Upload program test logs
         if: always()
         uses: actions/upload-artifact@v4
