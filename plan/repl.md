@@ -1,56 +1,29 @@
-# REPL stabilization — next release
+# REPL — remaining release gates
 
-Ship a non-experimental REPL for a documented execution subset. Keep the shared
-semantics, Safety and VM; full LLVM parity and JIT are not release requirements.
+Ship a non-experimental REPL for the documented VM subset. No JIT, full native
+parity or general compiler redesign is required.
 
-## Acceptance work
+1. Finish the real-core allocation/resize sweep. The reproduced 4,000-byte leak
+   at allocation 28,909 is fixed and passes independently; complete coverage is
+   still running. Keep accepted-state rollback and retry checks passing.
+2. Pass native terminal acceptance: Windows execution cancellation/reset and both
+   exit paths; Darwin resizing after the ioctl fix. Unicode input/history already
+   pass on Windows; Linux narrow-terminal and resize probes pass.
+3. Finish reference-budget validation: rerun the existing 1,000-command workloads
+   with 512 MiB and the longer rejection control. Measurements and budgets exist;
+   the 1,000-owner cleanup OOM is fixed. Require clean checked teardown.
+4. Validate the final candidate together: internal/program suites and native/VM
+   cases, Linux/macOS/Windows CI and optional Python/package consumers. Resolve
+   demonstrated failures, then finalize usage/release notes and remove the REPL
+   experimental label. Do not publish the release yet.
 
-Evidence and release guarantees: [REPL acceptance](../docs/repl-acceptance.md).
+Scope, guarantees, exclusions and evidence: [REPL acceptance](../docs/repl-acceptance.md).
+Measurements: [compiler performance](../docs/compiler-performance.md).
 
-- Complete the real-core sweep after correcting loop-state failure cleanup.
-  Allocation 28,909 formerly leaked 4,000 bytes and now passes independently;
-  full allocation/resize coverage remains required for the 32,653 baseline.
-- Finish native console acceptance: Windows Unicode input/history pass, but
-  execution cancellation/reset still need confirmation. Verify Darwin PTY
-  resizing after the platform ioctl fix.
-- Define supported everyday programs through executable cases: text, collections,
-  imports, generic functions/contracts, partial initialization, persistent owners
-  and references, `#run` and `#if`. Inventory lowerer/verifier restrictions and
-  distinguish unsupported features from semantic discrepancies.
-- Extend existing native/VM comparisons for values, effects and cleanup:
-  replacement, aliases, early exits, numeric boundaries and calls/virtual dispatch
-  between old and new code units. Fix discrepancies within the supported scope.
-- Complete allocation/resize failure sweeps for resource-bearing prelude semantic
-  preparation: resolution, Safety, accepted-state rollback and retry. Source
-  preparation, retained graph creation and publication checks already exist.
-- Measure 10/100/1,000-command sessions and longer resource, definition and
-  rejection workloads. Separate phase latency and retained memory; establish
-  acceptance budgets and distinguish live results from reclaimable storage.
-- Validate terminal cursor save/restore and horizontal panning for long Unicode
-  lines and resizing, especially Windows consoles. Keep scalar navigation
-  explicit. Verify multiline indentation, history, Ctrl-C/EOF and piped input
-  with terminal/transport tests.
-- Publish the supported subset, resource policy and failure/reset guarantees in
-  usage documentation, and run acceptance cases in CI before removing the label.
+Existing coverage includes persistent values/owners/references, imports,
+generics/contracts, partial initialization, cleanup, cross-unit virtual calls,
+`#run`/`#if`, traps and reset. Do not keep these as open-ended feature tasks or
+expand acceptance without a concrete gap.
 
-## Boundaries to preserve
-
-- Unsupported operations can reject reachable bodies even in untaken branches.
-  General FFI/native pointers, indirect calls, owning globals and some acquired
-  layouts/indirect owning writes remain restricted; audit actual coverage.
-- The prelude supplies output, allocation and tracing, not unrestricted System.
-- Compilation rejection preserves accepted state. Traps/cancellation preserve
-  completed effects, poison execution and require reset. Healthy reset/exit clean
-  resources; execution is not transactional.
-- Numbered results intentionally retain values. Measure other retained storage
-  against live roots; coordinate reclamation with [compiler.md](compiler.md).
-
-Known differential boundary: `text/26_string_view_trim` tests address identity
-through unsupported `__reference_address`; ordinary trimming is covered by
-`text/29_string_view_split` on both backends.
-
-References: [usage](../docs/usage.md#experimental-persistent-repl),
-[measurements](../docs/compiler-performance.md), `src/execution/interactive.zig`,
-`src/5_codegen/bytecode/lower.zig`, `src/0_commands/repl{,_input}.zig` and
-`src/execution_benchmark.zig`. External compile-time reads and cross-compilation
-remain in [compiler.md](compiler.md); closures are unscheduled in [0.5.md](0.5.md).
+Compiler optimizations and broader execution support remain separate follow-ups
+in [compiler.md](compiler.md); closures and JIT are deferred.
