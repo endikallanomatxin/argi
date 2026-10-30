@@ -50,6 +50,27 @@ static int send_text(HANDLE input, const char *text) {
     return WriteFile(input, text, length, &count, NULL) && count == length;
 }
 
+static BOOL start_client(const wchar_t *executable, wchar_t *command,
+                         STARTUPINFOEXW *startup, PROCESS_INFORMATION *process) {
+    const DWORD streams[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    HANDLE saved[3];
+    for (size_t i = 0; i < 3; ++i) saved[i] = GetStdHandle(streams[i]);
+    BOOL created = FALSE;
+    DWORD error;
+    /* The CI shell redirects these streams. Do not let process creation
+       duplicate its EOF input pipe into the pseudoconsole client. */
+    for (size_t i = 0; i < 3; ++i)
+        if (!SetStdHandle(streams[i], NULL)) goto restore;
+    created = CreateProcessW(executable, command, NULL, NULL, FALSE,
+            EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+            &startup->StartupInfo, process);
+restore:
+    error = GetLastError();
+    for (size_t i = 0; i < 3; ++i) SetStdHandle(streams[i], saved[i]);
+    SetLastError(error);
+    return created;
+}
+
 int wmain(int argc, wchar_t **argv) {
     HANDLE input_read = NULL, input_write = NULL;
     HANDLE output_read = NULL, output_write = NULL, reader = NULL;
@@ -82,9 +103,7 @@ int wmain(int argc, wchar_t **argv) {
     if (!command) goto cleanup;
     swprintf(command, capacity, L"\"%ls\" repl", argv[1]);
     startup.StartupInfo.cb = sizeof startup;
-    if (!CreateProcessW(argv[1], command, NULL, NULL, FALSE,
-            EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
-            &startup.StartupInfo, &process)) goto cleanup;
+    if (!start_client(argv[1], command, &startup, &process)) goto cleanup;
     if (!await_text(process.hProcess, ">>> ")) goto cleanup;
     /* Home, right and Delete must edit complete UTF-8 scalars. */
     if (!send_text(input_write,
