@@ -169,6 +169,8 @@ pub fn build(b: *std.Build) void {
     internal_tests_mod.addOptions("frontend_build_options", frontend_build_options);
     const internal_test_options = b.addOptions();
     internal_test_options.addOption(bool, "extended_allocation_sweeps", b.option(bool, "test-extended-allocation-sweeps", "Sweep every resource-prelude semantic preparation allocation (expensive)") orelse false);
+    internal_test_options.addOption(usize, "allocation_failure_start", b.option(usize, "test-allocation-failure-start", "First extended allocation/resize failure index (inclusive)") orelse 0);
+    internal_test_options.addOption(usize, "allocation_failure_end", b.option(usize, "test-allocation-failure-end", "Last extended allocation/resize failure index (exclusive)") orelse std.math.maxInt(usize));
     internal_tests_mod.addOptions("internal_test_options", internal_test_options);
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{

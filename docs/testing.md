@@ -131,6 +131,20 @@ Ordinary internal runs retain the prepared-session, source, lowering, verifier
 and runtime sweeps, plus the selected accepted-state recovery probes. Release
 acceptance requires the extended sweep as well.
 
+To diagnose or validate a bounded part of the extended semantic sweep, add
+`-Dtest-allocation-failure-start=12000 -Dtest-allocation-failure-end=13000`.
+These are inclusive/exclusive indices, applied independently to allocations and
+successful-path resizes. Every range measures the same successful baseline and
+reports its counts before injecting failures; defaults cover the whole sweep.
+Only completed, non-overlapping ranges covering both reported counts establish
+exhaustive coverage. A partial range is not a passing release gate.
+
+This sweep uses a DebugAllocator with stack capture disabled, retaining its
+memory safety checks and leak detection without repeatedly unwinding the same
+core-allocation stacks during thousands of rollbacks. Linux x86-64 Debug
+validation of `[12000, 13000)` completed in about two minutes with a baseline of
+29,367 allocations and 545 resizes; this is partial evidence, not a full result.
+
 ## Isolation
 
 Declare `.fixture` only after reviewing the test's resources. All tests in that

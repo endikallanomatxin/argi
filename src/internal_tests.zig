@@ -83,6 +83,7 @@ comptime {
     _ = @import("1_base/target.zig");
     _ = @import("2_tokens/token.zig");
     _ = @import("4_semantics/frontend_test_support.zig");
+    _ = @import("test_support.zig");
     _ = @import("4_semantics/global/cleanup_input.zig");
     _ = @import("4_semantics/global/constructors.zig");
     _ = @import("4_semantics/global/contract_evidence.zig");

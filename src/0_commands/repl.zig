@@ -761,7 +761,11 @@ test "REPL resource prelude releases failed source and backend allocations" {
     defer pipeline.deinit();
     const prepared = try pipeline.prepareSessionFiles(files.items);
     const initial_graph = prepared.relocation.graph.checkpoint();
-    try checkFailures(std.testing.allocator, struct {
+    // Thousands of rollbacks release the same core structures. Keep allocator
+    // safety checks without repeatedly unwinding identical free-site stacks.
+    var strict = std.heap.DebugAllocator(.{ .stack_trace_frames = 0 }){};
+    defer std.testing.expect(strict.deinit() == .ok) catch @panic("resource-prelude sweep leaked backing memory");
+    const Preparation = struct {
         fn run(a: std.mem.Allocator, initial_files: []const sf.SourceFile, template: *const @import("../4_semantics/global/semantizer.zig").Session, text: []const u8) !void {
             const checkpoint = template.relocation.graph.checkpoint();
             var candidate: interactive.Interactive = undefined;
@@ -787,7 +791,11 @@ test "REPL resource prelude releases failed source and backend allocations" {
             }
             try std.testing.expectEqualDeep(accepted, candidate.compiler.semantic.relocation.graph.checkpoint());
         }
-    }.run, .{ diagnostics.source_files, prepared, source });
+    };
+    const options = @import("internal_test_options");
+    if (options.extended_allocation_sweeps) {
+        try @import("../test_support.zig").checkAllocationAndResizeFailureRange(strict.allocator(), Preparation.run, .{ diagnostics.source_files, prepared, source }, options.allocation_failure_start, options.allocation_failure_end);
+    } else try checkFailures(strict.allocator(), Preparation.run, .{ diagnostics.source_files, prepared, source });
     try std.testing.expectEqualDeep(initial_graph, prepared.relocation.graph.checkpoint());
     var session: interactive.Interactive = undefined;
     try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
