@@ -66,6 +66,10 @@ The baseline has 32,653 allocations and 545 resizes. These checks include the
 previously reproduced late leak; the middle allocation range still requires
 the complete CI sweep. Logs: `.zig-cache/repl-final-resize-sweep.log` and
 `.zig-cache/repl-final-tail-sweep.log`.
+The original full CI sweep reached its 60-minute step timeout without a result.
+It now runs consecutive ranges `[0, 8192)`, `[8192, 16384)`, `[16384, 24576)`
+and `[24576, end)`, with live progress. These ranges preserve complete coverage;
+the first also exercises every resize failure in the current baseline.
 
 ## Stability contract
 
