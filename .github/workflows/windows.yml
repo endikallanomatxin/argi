@@ -76,6 +76,13 @@ jobs:
           export PATH="$PWD/zig-out/bin:$PATH"
           zig build -j1 test-internal -Dtest-progress=true --summary all
 
+      - name: Validate REPL Unicode editing in a Windows pseudoconsole
+        shell: msys2 {0}
+        run: |
+          export PATH="$PWD/zig-out/bin:$PATH"
+          gcc -Wall -Wextra -Werror -municode tests/native/windows/repl_console.c -o windows-repl.exe
+          ./windows-repl.exe "$(cygpath -w "$PWD/zig-out/bin/argi.exe")"
+
       - name: Compile and execute a native program
         shell: msys2 {0}
         run: |

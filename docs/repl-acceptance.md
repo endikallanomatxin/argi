@@ -17,9 +17,11 @@ Use the existing internal and program suites; do not maintain a second runner.
 | Terminal and piped input | `repl_input.zig`, `repl.zig` and `tests/terminal_probe.zig` | Unicode display widths, cursor behavior and explicit platform coverage |
 
 Internal tests run on Unix and Windows. Windows program validation includes
-collections, text, I/O and system fixtures. The real-terminal probes currently
-use POSIX pseudoterminals; passing transport tests alone does not demonstrate
-Windows console behavior. Record actual workflow results for the final candidate,
+collections, text, I/O and system fixtures. Terminal probes use POSIX
+pseudoterminals and a Windows ConPTY child (`tests/native/windows/repl_console.c`).
+The Windows workflow builds that probe and checks Unicode input, scalar editing,
+history replay and clean exit against the installed compiler.
+Record actual workflow results for the final candidate,
 not merely the presence of workflow definitions.
 The cursor save/restore sequences used by the editor (`CSI s` / `CSI u`) are
 [documented by Windows Console](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#cursor-positioning).
