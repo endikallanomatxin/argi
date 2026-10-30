@@ -36,7 +36,10 @@ pub fn checkAllocationAndResizeFailureRange(backing: std.mem.Allocator, comptime
             } else |err| {
                 try std.testing.expectEqual(error.OutOfMemory, err);
             }
-            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            if (failing.allocated_bytes != failing.freed_bytes) {
+                std.debug.print("failure sweep leaked at {s} index {d}: allocated {d}, freed {d}\n", .{ if (resize) "resize" else "allocation", index, failing.allocated_bytes, failing.freed_bytes });
+                return error.TestExpectedEqual;
+            }
             if (!resize and !failing.has_induced_failure) return error.NondeterministicMemoryUsage;
         }
     }

@@ -121,7 +121,7 @@ int wmain(int argc, wchar_t **argv) {
         !await_text(process.hProcess, "_3 = 43")) goto cleanup;
     if (FAILED(ResizePseudoConsole(console, (COORD){160, 24}))) goto cleanup;
     if (!send_text(input_write,
-            "if true {\runwrap_or_abort(.value = print(\"RUNTIME_READY\\n\"))\rwhile true {}\r}\r") ||
+            "if true {\runwrap_or_abort(.value = print(\"RUNTIME_READY\\n\"))\runwrap_or_abort(.value = flush(.self = writer))\rwhile true {}\r}\r") ||
         !await_text(process.hProcess, "RUNTIME_READY\r\n")) goto cleanup;
     if (!send_text(input_write, "\x03") ||
         !await_text(process.hProcess, "ExecutionCancelled")) goto cleanup;

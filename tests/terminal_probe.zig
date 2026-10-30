@@ -228,7 +228,13 @@ const Child = struct {
     }
     fn resize(self: *Child, columns: u16) !void {
         var size: std.posix.winsize = .{ .row = 24, .col = columns, .xpixel = 0, .ypixel = 0 };
-        if (std.c.ioctl(self.output, @as(c_int, @bitCast(@as(u32, std.posix.T.IOCSWINSZ))), &size) != 0)
+        // Darwin's _IOW('t', 103, struct winsize); Zig exposes only its
+        // corresponding read request in std.posix.T on this platform.
+        const request: u32 = if (builtin.os.tag == .macos)
+            0x80000000 | (@as(u32, @sizeOf(std.posix.winsize)) << 16) | ('t' << 8) | 103
+        else
+            std.posix.T.IOCSWINSZ;
+        if (std.c.ioctl(self.output, @as(c_int, @bitCast(request)), &size) != 0)
             return error.TerminalResizeFailed;
     }
     fn line(self: *Child, text: []const u8, continuation: bool, spaces: usize) !void {
