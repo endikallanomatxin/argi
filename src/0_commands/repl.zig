@@ -118,7 +118,7 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
     var automatic = false;
     var completion: @import("../1_base/lexical.zig").Completion = .{};
     if (terminal) {
-        try output.writeAll("Argi experimental REPL. :help for commands.\n");
+        try output.writeAll("Argi REPL. :help for commands.\n");
         try showPrelude(session, output);
     }
     while (true) {

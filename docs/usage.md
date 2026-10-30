@@ -294,7 +294,7 @@ evaluation exposes no host I/O or native handles.
 `--vm` selects runtime execution; `#run` and computed conditions execute during
 compilation regardless of that option. JIT remains deferred.
 
-## Experimental persistent REPL
+## Persistent REPL
 
 Run `argi repl` to load core and start a retained bytecode session. The same VM
 subset and execution limits described above apply. `--sysroot <path>` selects an

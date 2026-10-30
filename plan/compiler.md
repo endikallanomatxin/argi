@@ -1,7 +1,8 @@
 # Compiler follow-ups
 
-REPL release acceptance is tracked in [repl.md](repl.md). The work below is not
-an automatic release blocker; prioritize demonstrated correctness or cost issues.
+REPL guarantees and acceptance evidence are recorded in
+[the acceptance notes](../docs/repl-acceptance.md). Prioritize demonstrated
+correctness or cost issues in the follow-ups below.
 
 ## Resolution
 

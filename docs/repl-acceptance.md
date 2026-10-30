@@ -1,8 +1,8 @@
 # REPL release acceptance
 
-This is an evidence map, not a claim that stabilization is complete. The REPL
-remains experimental until the open gates in [the plan](../plan/repl.md) close.
-Use the existing internal and program suites; do not maintain a second runner.
+The REPL is supported for the scope below. It uses ordinary semantic analysis,
+Safety and verified bytecode execution. Stability does not imply unrestricted
+native execution or complete LLVM parity.
 
 ## Supported scope and regression coverage
 
@@ -16,9 +16,8 @@ Use the existing internal and program suites; do not maintain a second runner.
 | Bounded resources and interactive latency | `src/execution_benchmark.zig`; measured budgets and longer rejection control below |
 | Terminal and piped input | `repl_input.zig`, `repl.zig`, POSIX terminal probes and native Windows ConPTY acceptance |
 
-The map example in [usage](usage.md#experimental-persistent-repl) also passes
+The map example in [usage](usage.md#persistent-repl) also passes
 through piped CLI input, producing the documented `0`, `()` and `..some` results.
-Pending candidate validation is tracked only in [the plan](../plan/repl.md).
 
 Internal tests run on Unix and Windows. Windows program validation includes
 collections, text, I/O and system fixtures. Terminal probes use POSIX
@@ -26,23 +25,16 @@ pseudoterminals and a Windows ConPTY child (`tests/native/windows/repl_console.c
 The Windows workflow builds that probe and checks Unicode input, scalar editing,
 history replay, cancellation and multiline continuation against the installed
 compiler. Separate children exercise clean `:quit` and Ctrl-D exits.
-Record actual workflow results for the final candidate,
-not merely the presence of workflow definitions.
-The cursor save/restore sequences used by the editor (`CSI s` / `CSI u`) are
-[documented by Windows Console](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#cursor-positioning).
-That protocol support does not replace an interactive Windows acceptance probe.
-Windows console input uses `ReadConsoleW` and decodes surrogate pairs across
-reads. UTF-8 output encoding lasts through evaluation and cleanup; editing modes
-are restored between input lines so execution can still receive Ctrl-C.
-Host-independent tests cover failed setup, split/malformed surrogates and short
-byte reads; the native transport also compiles for x86-64 Windows.
-Windows workflow run `41022201658` passes the complete native ConPTY step:
-Unicode editing/history, continuation, Ctrl-C during execution with an inherited
-ignore attribute, recovery through reset, and both `:quit` and Ctrl-D teardown.
-That run also passes compiler internals and the selected core/program suites.
-Native run `41022517153` completes Linux ARM64 and macOS ARM64 validation,
-including extracted distributions; the latter also validates the Darwin PTY
-resize fix. Other matrix jobs and final-candidate acceptance remain separate.
+Native validation [41030576835](https://github.com/endikallanomatxin/argi/actions/runs/41030576835)
+passes on Linux x86-64/ARM64 and macOS x86-64/ARM64, including internal tests,
+program fixtures, terminal probes and extracted distributions. Linux consumers
+also pass without installed LLVM. Windows validation
+[41022201658](https://github.com/endikallanomatxin/argi/actions/runs/41022201658)
+passes Unicode editing/history, continuation, runtime Ctrl-C with inherited
+ignore state, reset recovery and both clean exit paths, plus internal/core tests.
+Optional Python validation
+[41022201696](https://github.com/endikallanomatxin/argi/actions/runs/41022201696)
+passes all ten platform/Python combinations.
 
 Long input uses a horizontal viewport rather than terminal wrapping. Linux PTY
 acceptance passes with a 24-column function definition, a 12-column Unicode edit
@@ -50,19 +42,6 @@ and a resize back to 80 columns. Scalar-boundary and lexical-context unit tests
 cover the same renderer. The viewport conservatively reserves two cells per
 non-ASCII scalar; actual cursor placement remains the terminal's responsibility.
 This is not a grapheme-width or identical-font-rendering guarantee.
-
-Local preflight on Linux x86-64 (2026-10-29) passed the five collection/text
-fixtures listed above, including `collections/149_owned_ordering`, plus execution
-fixtures `02_floating_point_vm`, `14_integer_boundaries_vm`,
-`119_allocation_cleanup` and `138_comptime_transient_expression_defaults`.
-Each passed its native assertions and VM assertions with matching stdout and
-the expected exit status. This used the existing installed compiler; repeat
-against the final candidate, including its rebuilt editor and bundled libraries.
-
-Linux validation on 2026-10-30 also completed the full program suite (30/30 build
-steps) and the full Debug internal suite (1,376 passed, one skipped, no failures).
-These runs cover the corresponding worktree builds; later changes still need
-their final candidate checks. Exhaustive allocation failure coverage is separate.
 
 The local 0.4.0 candidate distribution also passes checksum verification and the
 extracted-package smoke test outside the checkout. Generated project tooling and
@@ -72,16 +51,11 @@ manifest version; a stale 0.3.0 installation is rejected before packaging.
 Logs: `.zig-cache/release-candidate-{package,smoke}.log` and
 `.zig-cache/release-version-mismatch.log`.
 
-Focused ReleaseSafe sweeps of real-core resource preparation pass allocation
-indices `[0, 545)` and `[29779, 32653)`, and every resize index `[0, 545)`.
-The baseline has 32,653 allocations and 545 resizes. These checks include the
-previously reproduced late leak; the middle allocation range still requires
-the complete CI sweep. Logs: `.zig-cache/repl-final-resize-sweep.log` and
-`.zig-cache/repl-final-tail-sweep.log`.
-The original full CI sweep reached its 60-minute step timeout without a result.
-It now runs consecutive ranges `[0, 8192)`, `[8192, 16384)`, `[16384, 24576)`
-and `[24576, end)`, with live progress. These ranges preserve complete coverage;
-the first also exercises every resize failure in the current baseline.
+The complete real-core ReleaseSafe preparation sweep passes all 32,653
+allocation failures and 545 resize failures in native run `41030576835`.
+Four consecutive ranges preserve exhaustive coverage while bounding each CI step.
+Accepted-state rollback, cleanup and retry are checked independently in the
+interactive and REPL tests. Log: `.zig-cache/repl-ci-complete.log`.
 
 ## Stability contract
 
@@ -121,7 +95,7 @@ Tracked backing includes allocator slabs; it is not process RSS or user-owned
 payload alone. Execution instruction, call-depth and value-cell quotas remain
 separate limits with their documented trap/reset behavior.
 
-## Exclusions to publish
+## Supported execution boundaries
 
 Current executable boundaries, checked against `bytecode/lower.zig` and
 `bytecode/verify.zig`:
@@ -147,14 +121,7 @@ These are restrictions to exercise with diagnostics, not reasons to exclude an
 entire library when its ordinary checked operations already work. In particular,
 supported collection owners use checked acquisition and cleanup paths.
 
-Full LLVM parity, JIT, closures and unrestricted native FFI are not prerequisites.
-Inventory actual bytecode rejections before finalizing the supported subset,
-including indirect calls, owning globals, acquired layouts and indirect owning
-writes. Untaken branches in reachable bodies may still require unsupported
-lowering. Cross-target compile-time semantics and dependency tracking for external
-compile-time reads remain separate compiler work.
-
-Do not remove the experimental label until the scope above has executable
-acceptance evidence, measured resource limits, documented exclusions and passing
-release-candidate CI. Terminal width policy must acknowledge terminal-specific
-rendering rather than promise identical glyph presentation everywhere.
+Full LLVM parity, JIT, closures and unrestricted native FFI are outside this
+release's supported scope. Untaken branches in reachable bodies may still require
+unsupported lowering. Cross-target compile-time semantics and dependency tracking
+for external compile-time reads remain separate compiler work.
