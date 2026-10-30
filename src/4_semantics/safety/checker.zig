@@ -6527,12 +6527,14 @@ pub const SafetyChecker = struct {
             }
 
             if (last_break) |*break_state| break_state.deinit();
+            last_break = null;
             last_break = if (transfers.break_state) |*break_state|
                 try self.cloneState(break_state)
             else
                 null;
 
             var next = try self.cloneState(&entry);
+            errdefer next.deinit();
             try self.joinState(&next, &entry, &iteration);
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             if (statesEqual(&current, &next)) {
