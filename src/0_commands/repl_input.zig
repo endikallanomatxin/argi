@@ -5,25 +5,53 @@ const builtin = @import("builtin");
 pub const Terminal = struct {
     saved: if (builtin.os.tag == .windows) WindowsMode else std.posix.termios,
 
-    const WindowsMode = struct { input: u32, output: u32 };
+    const WindowsMode = struct {
+        input: u32,
+        output: u32,
+        input_code_page: u32,
+        output_code_page: u32,
+
+        fn enter(comptime Api: type, input: std.os.windows.HANDLE, output: std.os.windows.HANDLE) !WindowsMode {
+            var saved: WindowsMode = .{
+                .input = undefined,
+                .output = undefined,
+                .input_code_page = Api.GetConsoleCP(),
+                .output_code_page = Api.GetConsoleOutputCP(),
+            };
+            if (saved.input_code_page == 0 or saved.output_code_page == 0 or
+                Api.GetConsoleMode(input, &saved.input) == .FALSE or
+                Api.GetConsoleMode(output, &saved.output) == .FALSE) return error.TerminalModeUnavailable;
+            errdefer saved.restore(Api, input, output);
+            // The editor transports UTF-8 bytes, independently of the user's
+            // console code pages. Every failed setup restores all saved state.
+            if (Api.SetConsoleCP(65001) == .FALSE or Api.SetConsoleOutputCP(65001) == .FALSE or
+                Api.SetConsoleMode(output, saved.output | 0x0004) == .FALSE or
+                Api.SetConsoleMode(input, (saved.input & ~@as(u32, 0x0007)) | 0x0200) == .FALSE)
+                return error.TerminalModeUnavailable;
+            return saved;
+        }
+
+        fn restore(self: WindowsMode, comptime Api: type, input: std.os.windows.HANDLE, output: std.os.windows.HANDLE) void {
+            _ = Api.SetConsoleMode(input, self.input);
+            _ = Api.SetConsoleMode(output, self.output);
+            _ = Api.SetConsoleCP(self.input_code_page);
+            _ = Api.SetConsoleOutputCP(self.output_code_page);
+        }
+    };
     const Console = struct {
         extern "kernel32" fn GetConsoleMode(std.os.windows.HANDLE, *u32) callconv(.winapi) std.os.windows.BOOL;
         extern "kernel32" fn SetConsoleMode(std.os.windows.HANDLE, u32) callconv(.winapi) std.os.windows.BOOL;
+        extern "kernel32" fn GetConsoleCP() callconv(.winapi) u32;
+        extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) u32;
+        extern "kernel32" fn SetConsoleCP(u32) callconv(.winapi) std.os.windows.BOOL;
+        extern "kernel32" fn SetConsoleOutputCP(u32) callconv(.winapi) std.os.windows.BOOL;
     };
 
     pub fn enter() !Terminal {
         if (builtin.os.tag == .windows) {
-            var saved: WindowsMode = undefined;
             const input = std.Io.File.stdin().handle;
             const output = std.Io.File.stdout().handle;
-            if (Console.GetConsoleMode(input, &saved.input) == .FALSE or
-                Console.GetConsoleMode(output, &saved.output) == .FALSE) return error.TerminalModeUnavailable;
-            // Enable virtual-terminal output before input so failure can roll back.
-            if (Console.SetConsoleMode(output, saved.output | 0x0004) == .FALSE) return error.TerminalModeUnavailable;
-            errdefer _ = Console.SetConsoleMode(output, saved.output);
-            // Disable processed, line and echo input; request ANSI key sequences.
-            if (Console.SetConsoleMode(input, (saved.input & ~@as(u32, 0x0007)) | 0x0200) == .FALSE) return error.TerminalModeUnavailable;
-            return .{ .saved = saved };
+            return .{ .saved = try WindowsMode.enter(Console, input, output) };
         }
         const saved = try std.posix.tcgetattr(std.Io.File.stdin().handle);
         var edited = saved;
@@ -40,11 +68,63 @@ pub const Terminal = struct {
 
     pub fn restore(self: Terminal) void {
         if (builtin.os.tag == .windows) {
-            _ = Console.SetConsoleMode(std.Io.File.stdin().handle, self.saved.input);
-            _ = Console.SetConsoleMode(std.Io.File.stdout().handle, self.saved.output);
+            self.saved.restore(Console, std.Io.File.stdin().handle, std.Io.File.stdout().handle);
         } else std.posix.tcsetattr(std.Io.File.stdin().handle, .NOW, self.saved) catch {};
     }
 };
+
+test "Windows terminal setup restores code pages and modes after every failure" {
+    const Handle = std.os.windows.HANDLE;
+    const Bool = std.os.windows.BOOL;
+    const Api = struct {
+        var state: Terminal.WindowsMode = undefined;
+        var calls: usize = 0;
+        var fail_at: usize = 0;
+        fn GetConsoleCP() u32 {
+            return state.input_code_page;
+        }
+        fn GetConsoleOutputCP() u32 {
+            return state.output_code_page;
+        }
+        fn GetConsoleMode(handle: Handle, mode: *u32) Bool {
+            mode.* = if (@intFromPtr(handle) == 1) state.input else state.output;
+            return .TRUE;
+        }
+        fn set(destination: *u32, mode: u32) Bool {
+            calls += 1;
+            if (calls == fail_at) return .FALSE;
+            destination.* = mode;
+            return .TRUE;
+        }
+        fn SetConsoleCP(page: u32) Bool {
+            return set(&state.input_code_page, page);
+        }
+        fn SetConsoleOutputCP(page: u32) Bool {
+            return set(&state.output_code_page, page);
+        }
+        fn SetConsoleMode(handle: Handle, mode: u32) Bool {
+            return set(if (@intFromPtr(handle) == 1) &state.input else &state.output, mode);
+        }
+    };
+    const initial: Terminal.WindowsMode = .{ .input = 0x87, .output = 1, .input_code_page = 437, .output_code_page = 850 };
+    const input: Handle = @ptrFromInt(1);
+    const output: Handle = @ptrFromInt(2);
+    for (0..5) |failure| {
+        Api.state = initial;
+        Api.calls = 0;
+        Api.fail_at = failure;
+        if (failure == 0) {
+            const saved = try Terminal.WindowsMode.enter(Api, input, output);
+            try std.testing.expectEqualDeep(initial, saved);
+            try std.testing.expectEqual(@as(u32, 65001), Api.state.input_code_page);
+            try std.testing.expectEqual(@as(u32, 65001), Api.state.output_code_page);
+            try std.testing.expectEqual(initial.input & ~@as(u32, 7) | 0x0200, Api.state.input);
+            try std.testing.expectEqual(initial.output | 0x0004, Api.state.output);
+            saved.restore(Api, input, output);
+        } else try std.testing.expectError(error.TerminalModeUnavailable, Terminal.WindowsMode.enter(Api, input, output));
+        try std.testing.expectEqualDeep(initial, Api.state);
+    }
+}
 
 /// Bounded session-local editing. No semantic or execution state is stored here.
 pub const Editor = struct {

@@ -21,6 +21,14 @@ collections, text, I/O and system fixtures. The real-terminal probes currently
 use POSIX pseudoterminals; passing transport tests alone does not demonstrate
 Windows console behavior. Record actual workflow results for the final candidate,
 not merely the presence of workflow definitions.
+The cursor save/restore sequences used by the editor (`CSI s` / `CSI u`) are
+[documented by Windows Console](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#cursor-positioning).
+That protocol support does not replace an interactive Windows acceptance probe.
+Windows terminal setup now saves both console modes and code pages, selects
+UTF-8 for byte I/O, and restores the saved state after normal exit or partial
+setup failure. Host-independent tests inject each setup failure; the real API
+path also compiles for x86-64 Windows. Native console Unicode acceptance remains
+open, including the actual byte-input behavior of supported Windows versions.
 
 Local preflight on Linux x86-64 (2026-10-29) passed the five collection/text
 fixtures listed above, including `collections/149_owned_ordering`, plus execution
