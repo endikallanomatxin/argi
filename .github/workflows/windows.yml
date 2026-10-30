@@ -82,6 +82,7 @@ jobs:
           export PATH="$PWD/zig-out/bin:$PATH"
           gcc -Wall -Wextra -Werror -municode tests/native/windows/repl_console.c -o windows-repl.exe
           ./windows-repl.exe "$(cygpath -w "$PWD/zig-out/bin/argi.exe")"
+          ./windows-repl.exe "$(cygpath -w "$PWD/zig-out/bin/argi.exe")" --eof
 
       - name: Compile and execute a native program
         shell: msys2 {0}

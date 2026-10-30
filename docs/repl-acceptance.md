@@ -20,7 +20,8 @@ Internal tests run on Unix and Windows. Windows program validation includes
 collections, text, I/O and system fixtures. Terminal probes use POSIX
 pseudoterminals and a Windows ConPTY child (`tests/native/windows/repl_console.c`).
 The Windows workflow builds that probe and checks Unicode input, scalar editing,
-history replay and clean exit against the installed compiler.
+history replay, cancellation and multiline continuation against the installed
+compiler. Separate children exercise clean `:quit` and Ctrl-D exits.
 Record actual workflow results for the final candidate,
 not merely the presence of workflow definitions.
 The cursor save/restore sequences used by the editor (`CSI s` / `CSI u`) are
@@ -66,7 +67,15 @@ Current executable boundaries, checked against `bytecode/lower.zig` and
 | Memory representation | Acquired references and byte reinterpretation require supported numeric layouts and checked allocation receipts where owning storage needs them |
 | Global/captured storage | Unresolved storage outside local/session bindings is rejected; this is not a general closure or owning-global execution facility |
 | Compile-time execution | Acquired metadata preparation is rejected in compile-time mode |
+| Compile-time entry dependencies | `once` functions cannot execute in compile-time mode; the ordinary REPL execution mode is a separate boundary |
+| Function exits | Explicit return expressions are rejected by VM lowering; output bindings and checked early exits remain the ordinary supported forms |
 | Targets | Verification currently requires the native host target |
+
+Additional structural limits are explicit: storage projections have at most 64
+components, and acquired numeric storage must have a representable layout.
+Lowering also checks its own invariants (typed expressions, completed record
+arguments and checked helper evidence). Those failures must not be advertised as
+intentional restrictions on otherwise supported source programs.
 
 These are restrictions to exercise with diagnostics, not reasons to exclude an
 entire library when its ordinary checked operations already work. In particular,

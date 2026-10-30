@@ -54,7 +54,7 @@ int wmain(int argc, wchar_t **argv) {
     SIZE_T attribute_bytes = 0;
     int initialized = 0, result = 1;
     wchar_t *command = NULL;
-    if (argc != 2) return 2;
+    if (argc != 2 && !(argc == 3 && wcscmp(argv[2], L"--eof") == 0)) return 2;
     if (!CreatePipe(&input_read, &input_write, NULL, 0) ||
         !CreatePipe(&output_read, &output_write, NULL, 0)) goto cleanup;
     if (FAILED(CreatePseudoConsole((COORD){80, 24}, input_read, output_write,
@@ -87,7 +87,14 @@ int wmain(int argc, wchar_t **argv) {
         !await_text(process.hProcess, "_0 = \"a\xf0\x9f\x99\x82\"")) goto cleanup;
     if (!send_text(input_write, "\x1b[A\r") ||
         !await_text(process.hProcess, "_1 = \"a\xf0\x9f\x99\x82\"")) goto cleanup;
-    if (!send_text(input_write, ":quit\r") ||
+    if (!send_text(input_write, "discarded\x03") ||
+        !await_text(process.hProcess, "^C")) goto cleanup;
+    if (!send_text(input_write, "42\r") ||
+        !await_text(process.hProcess, "_2 = 42")) goto cleanup;
+    if (!send_text(input_write,
+            "answer := () -> (.result: Int32) {\rresult = 43\r}\ranswer()\r") ||
+        !await_text(process.hProcess, "_3 = 43")) goto cleanup;
+    if (!send_text(input_write, argc == 3 ? "\x04" : ":quit\r") ||
         WaitForSingleObject(process.hProcess, 30000) != WAIT_OBJECT_0) goto cleanup;
     DWORD exit_code;
     if (!GetExitCodeProcess(process.hProcess, &exit_code) || exit_code) goto cleanup;
