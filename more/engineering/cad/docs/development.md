@@ -58,11 +58,16 @@ construction](model-builder.md) for the handle design.
 
 ## Large test modules
 
-The exhaustive `argi check topology` invocation can exceed 15 GiB of compiler
-memory. Validation of the imported suite therefore checks one test body at a
-time with the module's shared helpers and production sources retained. This
-changes the compilation workload, not the test assertions. The repository's
-integration fixture exercises the installed public modules independently.
+An older exhaustive `argi check topology` run exceeded 15 GiB. The CLI now
+reclaims discarded frontend allocations: an isolated tetrahedron check dropped
+from 1.67 GiB to 215 MiB RSS, and four construction examples checked together
+used about 201 MiB. See the [measurement and reproduction notes](../../../../docs/compiler-performance.md#reclaimable-cli-frontend-storage).
+
+The complete working-tree check currently stops earlier on expected-error reason
+inference in an imported geometry test, so the older exhaustive workload has not
+yet been revalidated. Isolated test checks retain shared helpers and production
+sources; they change the compilation workload, not the test assertions. The
+repository integration fixture exercises the installed public modules separately.
 
 Run public examples from a directory outside the checkout when validating the
 installed bundle. Bare imports prefer the working-tree `more/` directory when

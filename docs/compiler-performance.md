@@ -1,5 +1,50 @@
 # Measuring compiler frontend performance
 
+## Reclaimable CLI frontend storage
+
+The CLI previously supplied its command-wide arena to `FrontendPipeline`.
+Resolver rollback, summary reevaluation and per-body Safety teardown called
+`free`, but the arena retained their backing allocations until command exit.
+The frontend now uses a reclaimable allocator; command arguments, sources and
+diagnostics retain their separate command lifetime. Existing per-body and
+per-evaluation arenas still define fact lifetimes. No checking roots or Safety
+rules change.
+
+A protected Linux x86-64 ReleaseSafe comparison used the CAD construction
+`tetrahedron_test.rg` with production geometry/storage/topology sources only.
+The isolated source tree omitted colocated development tests from dependencies;
+the same tree was checked by both binaries with `--stats --frontend-jobs 1`.
+Each process had a 2 GiB cgroup limit with swap disabled.
+
+| Measurement | Command-arena frontend | Reclaimable frontend |
+|---|---:|---:|
+| Peak process RSS (KiB, `/usr/bin/time -v`) | 1,752,508 | 220,056 |
+| Frontend elapsed (ms) | 2,362.722 | 2,045.188 |
+| Summary evaluations | 2,789 | 2,789 |
+| Checked functions | 1,600 | 1,600 |
+| Checked calls | 4,137 | 4,137 |
+| State clones | 25,352 | 25,352 |
+| State elements copied | 24,471,466 | 24,471,466 |
+
+These are individual observations, not a statistical timing comparison. Requested
+allocation bytes differ because resize/remap can now reclaim or reuse storage;
+they are not a measure of retained live facts. Four construction examples checked
+together with the corrected allocator peaked at 205,668 KiB and completed in
+5.20 s of frontend work. This does not establish a bound for exhaustive CAD tests.
+
+To reproduce, copy CAD `geometry`, `storage` and `topology` to a temporary sibling
+module tree, omitting `*_test.rg`. Put the construction test in a fourth module
+with `g := import("../geometry")` and `t := import("../topology")`, then run:
+
+```sh
+/usr/bin/time -v argi check <temporary-tree>/construction --stats --frontend-jobs 1
+```
+
+The full working-tree `argi check more/engineering/cad/topology` currently stops
+on an unresolved expected-error reason in an imported geometry test. That run
+cannot reproduce or disprove the older report of more than 15 GiB. Resolve the
+fixture/inference issue before measuring the complete exhaustive workload again.
+
 ## Interactive latency windows
 
 The execution benchmark reports `# latency` rows at 10, 100, 1,000 and the final

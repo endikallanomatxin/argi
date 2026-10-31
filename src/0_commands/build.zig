@@ -344,7 +344,9 @@ fn compileResolvedPlan(
     frontend_options.collect_stats = flags.stats;
     frontend_options.module_jobs = flags.frontend_jobs.resolve();
     frontend_options.entry_module_dir = plan.module_dir;
-    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, frontend_options);
+    // Semantic passes explicitly release speculative state and per-body facts.
+    // A command-wide arena would retain all of that discarded work.
+    var pipeline = frontend.FrontendPipeline.init(std.heap.smp_allocator, io, &diagnostics, frontend_options);
     defer pipeline.deinit();
 
     const frontend_start = nowNs(io);

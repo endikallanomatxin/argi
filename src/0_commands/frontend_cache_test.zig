@@ -868,11 +868,9 @@ fn stagedFrontendAllocationFailures(allocator: std.mem.Allocator) !void {
     const diagnostic_allocator = diagnostic_arena.allocator();
     var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
     defer diagnostics.deinit();
-    // Frontend safety facts share the invocation arena, as in CLI compilation.
-    // Inject failure into arena growth and verify the whole invocation releases.
-    var invocation = std.heap.ArenaAllocator.init(allocator);
-    defer invocation.deinit();
-    var pipeline = frontend.FrontendPipeline.init(invocation.allocator(), std.testing.io, &diagnostics, .{});
+    // Diagnostics own their arena; compiler state must release each allocation
+    // through the reclaimable frontend allocator, including on failure.
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
     defer pipeline.deinit();
     _ = try pipeline.semantizeGlobalFiles(&files);
 }
