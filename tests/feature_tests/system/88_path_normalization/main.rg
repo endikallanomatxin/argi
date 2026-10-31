@@ -14,7 +14,7 @@ check := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 
     assume allocator
     path ::= normalize_path(.view = input, .allocator = allocator)!! "normalizing path"
-    expect(.condition = view(.self = &path) == expected)!
+    testing.expect_with_trace(.condition = view(.self = &path) == expected)!
 }
 
 main := (.system: System) -> (.status_code: Int32 = 1) {
