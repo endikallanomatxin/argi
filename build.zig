@@ -76,6 +76,8 @@ pub fn build(b: *std.Build) void {
         .source_dir = b.path("more"),
         .install_dir = .prefix,
         .install_subdir = "lib/argi/more",
+        // Colocated library tests and their helpers are development sources.
+        .exclude_extensions = &.{"_test.rg"},
     });
     install_more.step.dependOn(&clean_installed_more.step);
     b.getInstallStep().dependOn(&install_more.step);
