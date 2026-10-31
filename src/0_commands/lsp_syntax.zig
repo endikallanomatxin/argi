@@ -284,7 +284,7 @@ fn findDeclarationInFiles(work: std.mem.Allocator, io: std.Io, files: []const Fi
         for (files) |*candidate| {
             const same_module = std.mem.eql(u8, std.fs.path.dirname(candidate.source.path) orelse ".", std.fs.path.dirname(path) orelse ".");
             if (module_dir) |dir| {
-                if (core or !std.mem.eql(u8, std.fs.path.dirname(candidate.source.path) orelse ".", dir)) continue;
+                if (core or !@import("../1_base/path_identity.zig").equal(std.fs.path.dirname(candidate.source.path) orelse ".", dir)) continue;
             } else if (core) {
                 if (same_module or candidate.source.origin != .bundled_core) continue;
             } else if (!same_module) continue;
