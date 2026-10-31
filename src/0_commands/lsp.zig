@@ -76,7 +76,6 @@ fn runBackground(allocator: std.mem.Allocator, io: std.Io, background: *Backgrou
         const uri = documentUri(root.object.get("params"));
         // Apply queued full-sync updates before analysis. Keep every dirty
         // document until a current revision has actually been published.
-        if (server.service) |*svc| svc.syntax_only = edited;
         server.dispatch(&writer, root) catch |err| {
             log.err("background request failed: {s}", .{@errorName(err)});
             if (root.object.get("id")) |id| server.respondInternalErrorOrLog(&writer, id, "analysis failed");
@@ -111,7 +110,6 @@ fn runBackground(allocator: std.mem.Allocator, io: std.Io, background: *Backgrou
             };
             defer allocator.free(path);
             if (server.service) |*svc| {
-                svc.syntax_only = false;
                 var diagnostics = svc.documentDiagnostics(document) catch |err| {
                     log.err("background diagnostics failed: {s}", .{@errorName(err)});
                     allocator.free(dirty.orderedRemove(0));
@@ -383,7 +381,6 @@ const LanguageServer = struct {
             }
         }
 
-        if (self.service) |*svc| svc.syntax_only = self.foreground;
         if (params_value) |params| {
             self.refresh_supported = semanticRefreshSupported(params);
         }
@@ -415,12 +412,16 @@ const LanguageServer = struct {
         defer self.allocator.free(path);
 
         if (self.service) |*svc| {
+            if (self.background != null) {
+                try svc.storeDocument(uri_value.string, path, version, text_value.string);
+                return;
+            }
             var diagnostics = svc.openDocument(uri_value.string, path, version, text_value.string) catch |err| {
                 log.err("openDocument failed for '{s}' ({s}): {s}", .{ uri_value.string, path, @errorName(err) });
                 return;
             };
             defer diagnostics.deinit();
-            if (!self.foreground and !svc.syntax_only) try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
+            try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
         }
     }
 
@@ -455,12 +456,16 @@ const LanguageServer = struct {
         defer self.allocator.free(path);
 
         if (self.service) |*svc| {
+            if (self.background != null) {
+                try svc.storeChange(uri_value.string, path, version, text_value.string);
+                return;
+            }
             var diagnostics = svc.changeDocument(uri_value.string, path, version, text_value.string) catch |err| {
                 log.err("changeDocument failed for '{s}' ({s}): {s}", .{ uri_value.string, path, @errorName(err) });
                 return;
             };
             defer diagnostics.deinit();
-            if (!self.foreground and !svc.syntax_only) try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
+            try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
         }
     }
 
@@ -733,7 +738,7 @@ const LanguageServer = struct {
                 if (try self.background.?.copyTokens(self.allocator, uri_value.string)) |cached|
                     std.array_list.Managed(u32).fromOwnedSlice(self.allocator, cached)
                 else
-                    try svc.semanticTokensFull(uri_value.string)
+                    try svc.syntaxTokens(uri_value.string)
             else
                 try svc.semanticTokensFull(uri_value.string);
             defer data.deinit();
@@ -2005,7 +2010,6 @@ test "LSP foreground serves syntax and cached colors without semantic work" {
     server.background = &background;
     server.foreground = true;
     server.service = service.LanguageService.init(a, std.testing.io);
-    server.service.?.syntax_only = true;
     server.service.?.analysis_memory_limit = 0;
     var out: CapturedResponseWriter = undefined;
     out.init(a);

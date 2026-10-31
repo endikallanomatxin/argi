@@ -205,13 +205,10 @@ const Analysis = struct {
     source_db: source_db.SourceDb,
     graph: graph_mod.GlobalSemanticGraph,
     index: editor_index.Index,
-    tokens: token.View,
 
     fn deinit(self: *Analysis, allocator: std.mem.Allocator) void {
         self.index.deinit(allocator);
         self.graph.deinit(allocator);
-        allocator.free(self.tokens.contents);
-        allocator.free(self.tokens.locations);
         self.source_db.deinit(allocator);
     }
 };
@@ -234,7 +231,10 @@ const Snapshot = struct {
     }
 
     fn matches(self: *const Snapshot, path: []const u8, files: []const sf.SourceFile) bool {
-        if (!std.mem.eql(u8, self.path, path) or self.files.len != files.len) return false;
+        if (!@import("../1_base/path_identity.zig").equal(
+            std.fs.path.dirname(self.path) orelse ".",
+            std.fs.path.dirname(path) orelse ".",
+        ) or self.files.len != files.len) return false;
         for (self.files, files) |previous, current| {
             if (previous.origin != current.origin or
                 !std.mem.eql(u8, previous.path, current.path) or
@@ -253,7 +253,6 @@ pub const LanguageService = struct {
     snapshot: ?*Snapshot = null,
     // Semantic analysis must not exhaust the editor host on large modules.
     analysis_memory_limit: usize = 512 * 1024 * 1024,
-    syntax_only: bool = false,
     analysis_builds: usize = 0,
     analysis_hits: usize = 0,
     syntax_cache: editor_syntax.Cache = .{},
@@ -283,23 +282,32 @@ pub const LanguageService = struct {
         self.root_path = path;
     }
 
-    pub fn openDocument(self: *LanguageService, uri: []const u8, path: []const u8, version: ?i64, text: []const u8) !DiagnosticsResult {
+    /// Update the document store without starting semantic work.
+    pub fn storeDocument(self: *LanguageService, uri: []const u8, path: []const u8, version: ?i64, text: []const u8) !void {
         if (self.findDocument(uri)) |index| {
             try self.documents.items[index].update(self.allocator, path, version, text);
         } else {
-            try self.documents.append(try Document.init(self.allocator, uri, path, version, text));
+            var document = try Document.init(self.allocator, uri, path, version, text);
+            errdefer document.deinit(self.allocator);
+            try self.documents.append(document);
         }
-        if (self.syntax_only) return DiagnosticsResult.empty(self.allocator);
-        return self.analyzeDocument(&self.documents.items[self.findDocument(uri).?]);
+    }
+
+    pub fn storeChange(self: *LanguageService, uri: []const u8, path: []const u8, version: ?i64, text: []const u8) !void {
+        const index = self.findDocument(uri) orelse return;
+        if (version) |incoming| if (self.documents.items[index].version) |current| if (incoming <= current) return;
+        try self.documents.items[index].update(self.allocator, path, version, text);
+    }
+
+    pub fn openDocument(self: *LanguageService, uri: []const u8, path: []const u8, version: ?i64, text: []const u8) !DiagnosticsResult {
+        try self.storeDocument(uri, path, version, text);
+        return self.documentDiagnostics(uri);
     }
 
     pub fn changeDocument(self: *LanguageService, uri: []const u8, path: []const u8, version: ?i64, text: []const u8) !DiagnosticsResult {
-        const index = self.findDocument(uri) orelse return DiagnosticsResult.empty(self.allocator);
-        if (version) |incoming| if (self.documents.items[index].version) |current| if (incoming <= current)
-            return if (self.syntax_only) DiagnosticsResult.empty(self.allocator) else self.analyzeDocument(&self.documents.items[index]);
-        try self.documents.items[index].update(self.allocator, path, version, text);
-        if (self.syntax_only) return DiagnosticsResult.empty(self.allocator);
-        return self.analyzeDocument(&self.documents.items[index]);
+        if (self.findDocument(uri) == null) return DiagnosticsResult.empty(self.allocator);
+        try self.storeChange(uri, path, version, text);
+        return self.documentDiagnostics(uri);
     }
 
     pub fn documentDiagnostics(self: *LanguageService, uri: []const u8) !DiagnosticsResult {
@@ -364,6 +372,14 @@ pub const LanguageService = struct {
     }
 
     pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
+        return self.documentTokens(uri, true);
+    }
+
+    pub fn syntaxTokens(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
+        return self.documentTokens(uri, false);
+    }
+
+    fn documentTokens(self: *LanguageService, uri: []const u8, semantic: bool) !std.array_list.Managed(u32) {
         const doc = try self.getDoc(uri);
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -382,7 +398,7 @@ pub const LanguageService = struct {
 
         // Resolved identities refine syntax roles; syntax remains usable while
         // an unfinished edit prevents global semantizing from producing a graph.
-        if (!self.syntax_only) {
+        if (semantic) {
             const analysis = try self.collectAnalysis(&work, doc);
             if (analysis) |value| try classifyOccurrences(work, &value, doc.path, &classes);
         }
@@ -730,11 +746,9 @@ pub const LanguageService = struct {
                 .graph = graph,
                 .index = .{},
                 .source_db = .{},
-                .tokens = .{},
             };
             const analysis = &snapshot.analysis.?;
             analysis.source_db = try diagnostics.source_db.clone(analysis_allocator);
-            analysis.tokens = try (pipeline.tokensForPath(path) orelse token.View{}).clone(analysis_allocator);
             analysis.index = try editor_index.Index.build(analysis_allocator, &analysis.graph);
             try augmentTypeOccurrences(analysis_allocator, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
             analysis.index.sort();
@@ -751,6 +765,14 @@ pub const LanguageService = struct {
             .fallback_core_dir = core_dir,
             .source_overrides = overrides,
         }, doc.path, doc.text);
+        // Entry-first collection changes ordering when switching sibling
+        // buffers. Canonical order makes module reuse independent of that UI
+        // choice without another persistent index or cache.
+        std.mem.sort(sf.SourceFile, files.items, {}, struct {
+            fn lessThan(_: void, left: sf.SourceFile, right: sf.SourceFile) bool {
+                return std.mem.lessThan(u8, left.path, right.path);
+            }
+        }.lessThan);
         return files.items;
     }
 
@@ -2264,19 +2286,53 @@ test "LSP syntax-only document updates and tokens never start semantic analysis"
     const code = "main := () -> () { value: Int32 = 42; missing(value) }";
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
-    svc.syntax_only = true;
     svc.analysis_memory_limit = 0;
-    var diagnostics = try svc.openDocument("file:///syntax-fast.rg", "/syntax-fast.rg", 1, code);
-    defer diagnostics.deinit();
-    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
-    var tokens = try svc.semanticTokensFull("file:///syntax-fast.rg");
+    try svc.storeDocument("file:///syntax-fast.rg", "/syntax-fast.rg", 1, code);
+    var tokens = try svc.syntaxTokens("file:///syntax-fast.rg");
     defer tokens.deinit();
     try expectSemanticToken(tokens.items, code, "value: Int32", TOKEN_INDEX.variable, 3);
     try expectSemanticToken(tokens.items, code, "42", TOKEN_INDEX.number, 0);
     try std.testing.expectEqual(@as(usize, 0), svc.analysis_builds);
-    var change = try svc.changeDocument("file:///syntax-fast.rg", "/syntax-fast.rg", 2, "unfinished := (");
-    defer change.deinit();
-    var changed = try svc.semanticTokensFull("file:///syntax-fast.rg");
+    try svc.storeChange("file:///syntax-fast.rg", "/syntax-fast.rg", 2, "unfinished := (");
+    var changed = try svc.syntaxTokens("file:///syntax-fast.rg");
     defer changed.deinit();
     try std.testing.expectEqual(@as(usize, 0), svc.analysis_builds);
+}
+
+test "LSP sibling documents reuse one module analysis and observe unsaved changes" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const first = "first := () -> (.result: Int32 = 1) {}\n";
+    const second = "second := () -> (.result: Int32 = 2) {}\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "first.rg", .data = first });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "second.rg", .data = second });
+    const first_path = try @import("../test_support.zig").tmpFilePath(&tmp, "first.rg");
+    defer a.free(first_path);
+    const second_path = try @import("../test_support.zig").tmpFilePath(&tmp, "second.rg");
+    defer a.free(second_path);
+    const uri = "file:///first.rg";
+    const sibling = "file:///second.rg";
+    var svc = LanguageService.init(a, std.testing.io);
+    defer svc.deinit();
+    try svc.storeDocument(uri, first_path, 1, first);
+    try svc.storeDocument(sibling, second_path, 1, second);
+    var diagnostics = try svc.documentDiagnostics(uri);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 1), svc.analysis_builds);
+    var sibling_diagnostics = try svc.documentDiagnostics(sibling);
+    defer sibling_diagnostics.deinit();
+    var tokens = try svc.semanticTokensFull(sibling);
+    defer tokens.deinit();
+    try std.testing.expectEqual(@as(usize, 1), svc.analysis_builds);
+    try svc.storeChange(sibling, second_path, 2, "second := () -> (.result: Int32 = 3) {}\n");
+    // Older client updates cannot replace the accepted unsaved contents.
+    try svc.storeChange(sibling, second_path, 1, second);
+    try std.testing.expect(std.mem.indexOf(u8, svc.document_text(sibling).?, "= 3") != null);
+    var changed = try svc.documentDiagnostics(uri);
+    defer changed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), svc.analysis_builds);
+    var sibling_tokens = try svc.semanticTokensFull(sibling);
+    defer sibling_tokens.deinit();
+    try std.testing.expectEqual(@as(usize, 2), svc.analysis_builds);
 }
