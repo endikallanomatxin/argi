@@ -411,9 +411,9 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var work = arena.allocator();
-        var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
+        var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntaxHover(work, doc, position);
 
-        const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return try self.syntaxHover(work, doc, position);
         const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else null);
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
@@ -428,7 +428,7 @@ pub const LanguageService = struct {
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntax_definition(work, doc, position);
 
-        const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return try self.syntax_definition(work, doc, position);
         if (occurrence.operation != null and occurrence.target == .declaration and
             occurrence.target.declaration == analysis.graph.familyDefinition(occurrence.operation.?.contract).declaration)
         {
@@ -453,6 +453,20 @@ pub const LanguageService = struct {
             else => return null,
         };
         return try self.definitionForOccurrence(&analysis, target);
+    }
+
+    fn syntaxHover(self: *LanguageService, work: std.mem.Allocator, doc: *Document, position: Position) !?Hover {
+        const offset = completion_offset(doc.text, position) orelse return null;
+        var allocator = work;
+        const files = self.collectFiles(&allocator, doc) catch return null;
+        const preview = (try editor_syntax.declarationPreview(work, self.io, files, doc.path, offset)) orelse return null;
+        return .{
+            .contents = try std.fmt.allocPrint(self.allocator, "```argi\n{s}\n```", .{std.mem.trim(u8, preview.text, " \t\r\n")}),
+            .range = .{
+                .start = outlinePosition(doc.text, preview.selection.offset),
+                .end = outlinePosition(doc.text, preview.selection.offset + preview.selection.len),
+            },
+        };
     }
 
     fn syntax_definition(self: *LanguageService, work: std.mem.Allocator, doc: *Document, position: Position) !?Definition {
@@ -616,6 +630,16 @@ pub const LanguageService = struct {
         // edits do not retain overlapping whole-program allocations.
         if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
         self.snapshot = null;
+        return self.buildSnapshot(doc.path, collected, false) catch |err| switch (err) {
+            error.OutOfMemory => self.buildSnapshot(doc.path, collected, true),
+            else => err,
+        };
+    }
+
+    // Reuse the compiler's declaration-only root selection when exhaustive
+    // body checking exceeds the editor budget. Retain that result so hover and
+    // highlighting do not repeatedly retry the same oversized analysis.
+    fn buildSnapshot(self: *LanguageService, path: []const u8, collected: []const sf.SourceFile, declarations_only: bool) !*Snapshot {
         const snapshot = try self.allocator.create(Snapshot);
         snapshot.* = .{
             .budget = .{ .child = self.allocator, .limit = self.analysis_memory_limit },
@@ -626,7 +650,7 @@ pub const LanguageService = struct {
         snapshot.arena = std.heap.ArenaAllocator.init(snapshot.budget.allocator());
         errdefer snapshot.deinit(self.allocator);
         var work = snapshot.arena.allocator();
-        snapshot.path = try work.dupe(u8, doc.path);
+        snapshot.path = try work.dupe(u8, path);
         const files = try work.alloc(sf.SourceFile, collected.len);
         for (collected, files) |source, *owned| {
             owned.* = source;
@@ -636,7 +660,7 @@ pub const LanguageService = struct {
         snapshot.files = files;
         var diagnostics = try diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = true } });
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = !declarations_only, .root_selection = if (declarations_only) .requests_only else .program } });
         defer pipeline.deinit();
         const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         _ = pipeline.semantizeGlobalFiles(files) catch |err| switch (err) {
@@ -647,13 +671,18 @@ pub const LanguageService = struct {
         log.debug("LSP global semantizing: {d} us", .{@divTrunc(std.Io.Timestamp.now(self.io, .boot).nanoseconds - start, 1000)});
         var output: std.ArrayList(Diagnostic) = .empty;
         for (diagnostics.list.items) |entry| {
-            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), doc.path)) continue;
+            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), path)) continue;
             try output.append(work, .{
                 .range = tokenRange(&diagnostics.source_db, entry.loc, 1),
                 .severity = .err,
                 .message = try work.dupe(u8, entry.msg),
             });
         }
+        if (declarations_only) try output.append(work, .{
+            .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 1 } },
+            .severity = .warn,
+            .message = "body checking exceeded the editor memory budget; declaration analysis is available",
+        });
         snapshot.diagnostics = output.items;
         // A safety diagnostic may coexist with a resolved graph. Syntax and
         // unresolved global failures keep diagnostics cached without an index.
@@ -663,7 +692,7 @@ pub const LanguageService = struct {
                 .graph = graph,
                 .index = .{},
                 .source_db = try diagnostics.source_db.clone(work),
-                .tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(work),
+                .tokens = try (pipeline.tokensForPath(path) orelse token.View{}).clone(work),
             };
             const analysis = &snapshot.analysis.?;
             analysis.index = try editor_index.Index.build(work, &analysis.graph);
@@ -2078,4 +2107,33 @@ test "LSP semantic memory exhaustion preserves syntax and recovers on the next r
     defer recovered.deinit();
     try std.testing.expectEqual(@as(usize, 0), recovered.items.len);
     try std.testing.expect(service.snapshot != null);
+}
+
+test "LSP declaration snapshots retain navigation and avoid repeated body checks" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "Thing := (.x: Int32)\nmain := () -> () { unfinished() }\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///declarations.rg";
+    try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var work = arena.allocator();
+    const files = try service.collectFiles(&work, &service.documents.items[0]);
+    const snapshot = try service.buildSnapshot(path, files, true);
+    try std.testing.expect(snapshot.analysis != null);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.diagnostics.len);
+    try std.testing.expectEqual(.warn, snapshot.diagnostics[0].severity);
+    const hover_value = (try service.hover(uri, .{ .line = 0, .character = 1 })).?;
+    defer std.testing.allocator.free(hover_value.contents);
+    try std.testing.expect(std.mem.indexOf(u8, hover_value.contents, "Thing") != null);
+    const target = (try service.definition(uri, .{ .line = 0, .character = 1 })).?;
+    defer target.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, target.path);
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_builds);
+    try std.testing.expectEqual(@as(usize, 2), service.analysis_hits);
 }

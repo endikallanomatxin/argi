@@ -70,9 +70,13 @@ are specified but not implemented yet.
 The LSP provides diagnostics, semantic highlighting, hover, completion,
 document symbols, and navigation to definitions.
 
-Each semantic analysis has a 512 MiB allocation budget. If a module exceeds
-it, the server reports the limit and releases the analysis; syntax-based
-features remain available. CLI compilation has no corresponding limit.
+Each semantic analysis has a 512 MiB allocation budget. If exhaustive body
+checking exceeds it, the server releases that attempt and retains a bounded
+declaration analysis for navigation and type information. A warning identifies
+this partial result; it is reused until the sources change. Hover can show the
+written declaration when full inference is unavailable. If declaration analysis
+also exceeds the budget, syntax-based features remain available. CLI compilation
+has no corresponding limit.
 
 Run `argi format [paths...]` to format files or directories,
 `argi format --check [paths...]` to check without writing, or

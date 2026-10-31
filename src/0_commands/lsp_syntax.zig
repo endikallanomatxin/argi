@@ -204,7 +204,10 @@ fn previous_token(file: *const File, index: usize) ?usize {
 /// declarations. Overload selection and inferred receiver types require GlobalSG;
 /// an unresolved expression must never turn into a guess across unrelated modules.
 pub fn find_declaration(work: std.mem.Allocator, io: std.Io, sources: []const sf.SourceFile, path: []const u8, offset: usize) !?Declaration {
-    const files = try load_files(work, sources);
+    return findDeclarationInFiles(work, io, try load_files(work, sources), path, offset);
+}
+
+fn findDeclarationInFiles(work: std.mem.Allocator, io: std.Io, files: []const File, path: []const u8, offset: usize) !?Declaration {
     var current: ?*const File = null;
     for (files) |*file| if (std.mem.eql(u8, file.source.path, path)) {
         current = file;
@@ -229,14 +232,20 @@ pub fn find_declaration(work: std.mem.Allocator, io: std.Io, sources: []const sf
             const alias_index = previous_token(file, previous) orelse return null;
             if (file.tokens.contents[alias_index] != .identifier) return null;
             const alias = file.tree.tokenTextFromSource(file.source.code, @enumFromInt(@as(u32, @intCast(alias_index))));
-            for (file.tree.roots) |node| {
-                const binding = file.tree.symbolDeclaration(node) orelse continue;
-                if (!std.mem.eql(u8, file.tree.tokenTextFromSource(file.source.code, binding.name_token), alias)) continue;
-                const import = file.tree.importStatement(binding.value orelse continue) orelse continue;
-                const literal = file.tree.tokenTextFromSource(file.source.code, import.path_token);
-                const import_path = try token.decodeStringLiteral(work, literal);
-                var allocator = work;
-                module_dir = sf.resolveImportDir(&allocator, io, path, import_path) catch null;
+            // All source files in one folder share their import aliases.
+            for (files) |*peer| {
+                if (!std.mem.eql(u8, std.fs.path.dirname(peer.source.path) orelse ".", std.fs.path.dirname(path) orelse ".")) continue;
+                for (peer.tree.roots) |node| {
+                    const binding = peer.tree.symbolDeclaration(node) orelse continue;
+                    if (!std.mem.eql(u8, peer.tree.tokenTextFromSource(peer.source.code, binding.name_token), alias)) continue;
+                    const import = peer.tree.importStatement(binding.value orelse continue) orelse continue;
+                    const literal = peer.tree.tokenTextFromSource(peer.source.code, import.path_token);
+                    const import_path = try token.decodeStringLiteral(work, literal);
+                    var allocator = work;
+                    const resolved = sf.resolveImportDir(&allocator, io, peer.source.path, import_path) catch continue;
+                    if (module_dir) |previous_dir| if (!std.mem.eql(u8, previous_dir, resolved)) return null;
+                    module_dir = resolved;
+                }
             }
             if (module_dir == null) return null;
         }
@@ -336,4 +345,62 @@ test "syntax navigation respects visibility and refuses duplicate function ident
     try std.testing.expect((try test_definition(&sources, "overload()")) == null);
     try std.testing.expect((try test_definition(&sources, "foreign()")) == null);
     try std.testing.expect((try test_definition(&sources, "_private()")) == null);
+}
+
+pub const DeclarationPreview = struct {
+    text: []const u8,
+    selection: Declaration,
+};
+
+/// Show the written declaration without inferring a type or choosing a method.
+pub fn declarationPreview(work: std.mem.Allocator, io: std.Io, sources: []const sf.SourceFile, path: []const u8, offset: usize) !?DeclarationPreview {
+    const files = try load_files(work, sources);
+    const target = (try findDeclarationInFiles(work, io, files, path, offset)) orelse return null;
+    var selection: ?Declaration = null;
+    for (files) |*file| {
+        if (!std.mem.eql(u8, file.source.path, path)) continue;
+        for (file.tokens.contents, file.tokens.locations, 0..) |content, location, index| {
+            if (content != .identifier) continue;
+            const selected = declaration(file, @enumFromInt(index));
+            if (location.offset <= offset and offset < location.offset + selected.len) {
+                selection = selected;
+                break;
+            }
+        }
+    }
+    for (files) |file| {
+        if (!std.mem.eql(u8, file.source.path, target.path)) continue;
+        var depth: usize = 0;
+        var end: usize = target.offset + target.len;
+        for (file.tokens.contents, file.tokens.locations, 0..) |content, location, index| {
+            if (location.offset < target.offset) continue;
+            if (content == .eof or (depth == 0 and (content == .new_line or content == .open_brace))) break;
+            switch (content) {
+                .open_parenthesis, .open_bracket, .open_brace => depth += 1,
+                .close_parenthesis, .close_bracket, .close_brace => {
+                    if (depth == 0) break;
+                    depth -= 1;
+                },
+                else => {},
+            }
+            end = location.offset + file.tree.tokenTextFromSource(file.source.code, @enumFromInt(index)).len;
+        }
+        return .{ .text = file.source.code[target.offset..end], .selection = selection orelse return null };
+    }
+    return null;
+}
+
+test "syntax previews follow import aliases in sibling files and omit function bodies" {
+    const sources = [_]sf.SourceFile{
+        .{ .path = "/app/main.rg", .code = "main := () -> () { lib.work() }" },
+        .{ .path = "/app/imports.rg", .code = "lib := import(\"../library\")" },
+        .{ .path = "/library/work.rg", .code = "work := #(.T: Type) (.value: T) -> (.result: T) { result = value }" },
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const offset = std.mem.indexOf(u8, sources[0].code, "work()").?;
+    const preview = (try declarationPreview(arena.allocator(), std.testing.io, &sources, sources[0].path, offset)).?;
+    try std.testing.expectEqualStrings("work := #(.T: Type) (.value: T) -> (.result: T)", preview.text);
+    const target = (try find_declaration(arena.allocator(), std.testing.io, &sources, sources[0].path, offset)).?;
+    try std.testing.expectEqualStrings("/library/work.rg", target.path);
 }
