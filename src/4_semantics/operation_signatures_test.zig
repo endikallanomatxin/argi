@@ -245,3 +245,26 @@ test "error tracing requires explicit promotion and preserves borrowed lifetimes
         \\main := () -> () { traced() }
     }}, .diagnostic = .{ .message = "function output cannot depend on a local storage generation" } });
 }
+
+test "typed generic inputs contextualize earlier choice and numeric literals" {
+    var environment = try support.Environment.init(std.testing.allocator, std.testing.io);
+    defer environment.deinit();
+    try std.testing.expectEqual(@as(i128, 42), try environment.execute(.{ .name = "typed_input_context", .files = &.{.{ .path = "main.rg", .code =
+        \\Reasons := (..missing, ..invalid)
+        \\Outcome := #(.Reason: Type) (.reason: Reason)
+        \\same := #(.Reason: Type) (.expected: Reason, .actual: Outcome#(Reason)) -> (.ok: Bool) {
+        \\    ok = expected == actual.reason
+        \\}
+        \\Box := #(.Scalar: Type) (.value: Scalar)
+        \\numeric := #(.Scalar: Type: Float) (.expected: Scalar, .box: Box#(Scalar)) -> (.ok: Bool) {
+        \\    ok = expected == box.value
+        \\}
+        \\main := () -> (.status_code: Int32 = 1) {
+        \\    outcome: Outcome#(Reasons) = (.reason = ..missing)
+        \\    if same(.actual = outcome, .expected = ..missing).ok == false { abort }
+        \\    box: Box#(Float64) = (.value = 0.0)
+        \\    if numeric(.expected = 0.0, .box = box).ok == false { abort }
+        \\    status_code = 42
+        \\}
+    }} }, .{}));
+}

@@ -58,16 +58,17 @@ construction](model-builder.md) for the handle design.
 
 ## Large test modules
 
-An older exhaustive `argi check topology` run exceeded 15 GiB. The CLI now
-reclaims discarded frontend allocations: an isolated tetrahedron check dropped
-from 1.67 GiB to 215 MiB RSS, and four construction examples checked together
-used about 201 MiB. See the [measurement and reproduction notes](../../../../docs/compiler-performance.md#reclaimable-cli-frontend-storage).
+The complete `argi check more/engineering/cad/topology` workload now passes,
+including imported development tests. A protected Linux ReleaseSafe run took
+31.8 seconds of frontend work and peaked at 416 MiB RSS, below a 2 GiB limit
+with swap disabled. The earlier report above 15 GiB preceded reclaimable CLI
+frontend storage and the generic contextual-input inference fix. See the
+[measurement and reproduction notes](../../../../docs/compiler-performance.md#complete-cad-topology-validation).
 
-The complete working-tree check currently stops earlier on expected-error reason
-inference in an imported geometry test, so the older exhaustive workload has not
-yet been revalidated. Isolated test checks retain shared helpers and production
-sources; they change the compilation workload, not the test assertions. The
-repository integration fixture exercises the installed public modules separately.
+This checks every body and its Safety obligations; it does not execute every
+test. Isolated native tests remain useful for focused validation and retain
+shared helpers and production sources. The repository integration fixture
+exercises the installed public modules separately.
 
 Run public examples from a directory outside the checkout when validating the
 installed bundle. Bare imports prefer the working-tree `more/` directory when

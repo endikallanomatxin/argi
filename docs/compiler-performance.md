@@ -40,10 +40,44 @@ with `g := import("../geometry")` and `t := import("../topology")`, then run:
 /usr/bin/time -v argi check <temporary-tree>/construction --stats --frontend-jobs 1
 ```
 
-The full working-tree `argi check more/engineering/cad/topology` currently stops
-on an unresolved expected-error reason in an imported geometry test. That run
-cannot reproduce or disprove the older report of more than 15 GiB. Resolve the
-fixture/inference issue before measuring the complete exhaustive workload again.
+### Complete CAD topology validation
+
+Generic input inference now gathers evidence from typed arguments before
+contextualizing literals. An earlier choice literal no longer blocks a reason
+type supplied by a later Errable argument; numeric literal defaults also defer
+to concrete types supplied by other inputs. No CAD assertions were annotated,
+omitted or disabled to unblock the check.
+
+The full working-tree workload previously reported above 15 GiB now completes:
+
+```sh
+/usr/bin/time -v ./zig-out/bin/argi check more/engineering/cad/topology \
+    --stats --frontend-jobs 1
+```
+
+Both runs below used the complete module and imported development tests, a
+2 GiB process-group limit and disabled swap. ReleaseSafe reported 29 module-cache
+misses and zero hits.
+
+| Measurement | Debug | ReleaseSafe |
+|---|---:|---:|
+| Frontend elapsed (ms) | 111,691.797 | 31,807.125 |
+| GlobalSema (ms) | 39,559.231 | 7,867.340 |
+| Safety (ms) | 70,931.319 | 23,668.566 |
+| Peak process RSS (KiB, `/usr/bin/time -v`) | 444,036 | 426,416 |
+| Checked functions | 3,562 | 3,562 |
+| Summary evaluations | 6,311 | 6,311 |
+
+The ReleaseSafe run checked 42,316 calls and cloned 357,567 Safety states,
+copying 369,673,716 state elements. Safety remains the largest measured cost.
+The historical memory figure is not a same-revision controlled baseline: the
+older compiler did not complete this workload under the current limit.
+
+`argi check` validates all function bodies and Safety; it does not execute every
+CAD test. The formerly blocking contour-region test was also executed natively
+in isolation with production dependencies, and passed. Type/signature validation
+passed 83 focused internal tests, including contextual choice and numeric inputs.
+Another 104 contract and nominal-diagnostic checks passed.
 
 ## Interactive latency windows
 

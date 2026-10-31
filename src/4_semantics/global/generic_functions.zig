@@ -914,8 +914,19 @@ pub const Resolver = struct {
         if (field_offset > shape.fields.len) return false;
 
         const fields = storage.fields.items[shape.fields.start + field_offset ..][0 .. shape.fields.len - field_offset];
-        for (fields, 0..) |field, expected_position| {
+        // Typed arguments establish generic evidence before contextual literals
+        // consume it. Declaration order must not make an untyped choice reason
+        // block inference from a later Errable argument.
+        for ([_]bool{ true, false }) |typed_pass| for (fields, 0..) |field, expected_position| {
             const value = self.core.recordFieldValue(literal, expected_position, module.text(field.name)) orelse continue;
+            const supplied = self.graph.node(value);
+            // Default literal widths are fallback evidence, not a reason to
+            // reject a concrete type supplied by another argument.
+            const evidence = supplied.ty != null and switch (supplied.content) {
+                .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => false,
+                else => true,
+            };
+            if (evidence != typed_pass) continue;
             // Reject unrelated nominal references before instantiating their
             // constraints; an inapplicable identity must not emit type diagnostics.
             if (self.graph.node(value).ty) |actual|
@@ -925,7 +936,7 @@ pub const Resolver = struct {
             }
             const actual = self.graph.node(value).ty orelse return false;
             if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
-        }
+        };
         return true;
     }
 
