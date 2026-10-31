@@ -32,6 +32,7 @@ pub const FrontendPipeline = struct {
         target: @import("../1_base/target.zig").Config = .{},
         semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
+        cancellation: @import("../1_base/cancellation.zig").Token = .{},
         module_jobs: usize = 1,
         entry_module_dir: ?[]const u8 = null,
         module_cache: ?*cache.ModuleCache = null,
@@ -285,9 +286,13 @@ pub const FrontendPipeline = struct {
 
     /// Produce and safety-check the final indexed semantic graph.
     pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+        try self.options.cancellation.check();
         try self.prepareFiles(files, true);
+        try self.options.cancellation.check();
         try self.buildGlobalGraph();
+        try self.options.cancellation.check();
         try self.analyzeGlobalSafety();
+        try self.options.cancellation.check();
         // Initial source execution consumes finalized dependencies. Keep the
         // request table until this boundary so caching and specialization cannot
         // silently turn #run into an ordinary runtime call. Staged type/value
@@ -453,6 +458,7 @@ pub const FrontendPipeline = struct {
         arena.* = .init(self.allocator);
         self.safety_arena = arena;
         self.safety_ctx = global_safety_checker.SafetyChecker.init(arena.allocator(), self.diagnostics, graph);
+        self.safety_ctx.?.cancellation = self.options.cancellation;
         self.safety_ctx.?.state_allocator = self.allocator;
         self.safety_ctx.?.graph_allocator = self.allocator;
         self.safety_ctx.?.unit = if (self.global_unit) |*unit| unit else null;
@@ -635,6 +641,7 @@ pub const FrontendPipeline = struct {
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .body_module_dir = self.options.semantizing.body_module_dir,
+            .cancellation = self.options.cancellation,
             .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
             .profile_io = if (self.options.collect_stats) self.io else null,
@@ -672,6 +679,7 @@ pub const FrontendPipeline = struct {
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .body_module_dir = self.options.semantizing.body_module_dir,
+            .cancellation = self.options.cancellation,
             .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
         });

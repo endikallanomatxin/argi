@@ -19,6 +19,7 @@ const primitive_transfer = @import("../primitives/registry.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     cache: ?*const @import("summary_cache.zig").Store = null,
     cache_reused: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, void) = .empty,
     unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
@@ -117,6 +118,7 @@ pub const Infer = struct {
     /// the function's own approximation. Virtual effects come from fixed contracts,
     /// independently of implementation reachability and conformance checks.
     pub fn inferSafetySummariesFixedPoint(self: *Infer) !void {
+        try self.cancellation.check();
         if (self.cache) |cache| if (cache.graph != self.graph) return error.ForeignSafetySummaryCache;
         self.engine.retain_dependencies = self.cache != null;
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
@@ -171,6 +173,7 @@ pub const Infer = struct {
         if (self.cache) |cache| self.cache_reused = try cache.restore(self.engine, &self.requested_selectors);
         for (order) |function| if (!self.cache_reused.contains(function)) try self.engine.seed(&.{function});
         while (self.engine.nextDirty()) |function| {
+            try self.cancellation.check();
             _ = self.cache_reused.remove(function);
             self.evaluations += 1;
             self.engine.beginInference(function);
@@ -1255,6 +1258,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            try self.cancellation.check();
             const node = self.graph.node(node_id);
             switch (node.content) {
                 .binding_declaration => |binding| {

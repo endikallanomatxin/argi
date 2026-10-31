@@ -11,6 +11,7 @@ pub const Background = struct {
     jobs: std.ArrayList(Job) = .empty,
     stopped: bool = false,
     generation: u64 = 0,
+    revision: std.atomic.Value(u64) = .init(0),
     tokens: std.StringHashMapUnmanaged([]u32) = .empty,
 
     pub const Job = struct {
@@ -50,6 +51,7 @@ pub const Background = struct {
         try self.jobs.ensureUnusedCapacity(self.allocator, 1);
         if (edited) {
             self.generation += 1;
+            self.revision.store(self.generation, .release);
             self.clearTokens();
         }
         const job: Job = .{ .payload = owned, .generation = self.generation, .change_uri = uri };
@@ -80,6 +82,7 @@ pub const Background = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.stopped = true;
+        self.revision.store(std.math.maxInt(u64), .release);
         self.ready.signal(self.io);
     }
 
@@ -88,6 +91,20 @@ pub const Background = struct {
         defer self.mutex.unlock(self.io);
         return generation == self.generation;
     }
+
+    pub const Evaluation = struct {
+        source: *const Background,
+        generation: u64,
+
+        pub fn token(self: *const Evaluation) @import("../1_base/cancellation.zig").Token {
+            return .{ .context = self, .is_cancelled = cancelled };
+        }
+
+        fn cancelled(context: ?*const anyopaque) bool {
+            const self: *const Evaluation = @ptrCast(@alignCast(context.?));
+            return self.source.revision.load(.acquire) != self.generation;
+        }
+    };
 
     pub fn publishTokens(self: *Background, uri: []const u8, generation: u64, data: []const u32) !bool {
         self.mutex.lockUncancelable(self.io);
@@ -137,4 +154,17 @@ test "LSP background coalesces edits, preserves requests and rejects stale token
         try std.testing.expectEqualStrings(payload, job.payload);
     }
     try std.testing.expect(worker.next() == null);
+}
+
+test "LSP evaluation cancellation follows edits and shutdown" {
+    var background: Background = .{ .allocator = std.testing.allocator, .io = std.testing.io };
+    defer background.deinit();
+    const first: Background.Evaluation = .{ .source = &background, .generation = 0 };
+    try first.token().check();
+    try background.enqueue("edit", true, null);
+    try std.testing.expectError(error.Cancelled, first.token().check());
+    const next: Background.Evaluation = .{ .source = &background, .generation = 1 };
+    try next.token().check();
+    background.stop();
+    try std.testing.expectError(error.Cancelled, next.token().check());
 }

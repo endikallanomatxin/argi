@@ -21,11 +21,6 @@ correctness or cost issues in the follow-ups below.
   fields when a consumer needs them.
 - Represent hidden storage and cleanup identities before virtualizing Resizable.
 
-## Editor
-
-- Add cooperative cancellation checkpoints to obsolete LSP analyses without
-  publishing partial graphs or confusing cancellation with allocation failure.
-
 ## Execution
 
 - Track external compile-time reads in build dependencies/cache identity.

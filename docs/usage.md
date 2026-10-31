@@ -76,8 +76,10 @@ clients supporting semantic-token refresh receive refined colors when it finishe
 Consecutive pending edits are coalesced, and obsolete analysis results are not
 published over newer edits. Open buffers in the same folder reuse the same
 semantic result when their complete collected sources agree, including unsaved
-changes. An already-running analysis is allowed to finish; its obsolete output
-is discarded.
+changes. Obsolete analyses stop cooperatively at frontend phase, semantic
+resolution and Safety checkpoints. Partial graphs are released, never published
+as diagnostics or treated as memory-budget failures. Cancellation latency depends
+on reaching the next checkpoint; an individual operation is not preempted.
 
 The LSP checks all files in the opened folder-level module and follows the
 functions they call. Imported modules provide declarations without making

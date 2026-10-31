@@ -253,6 +253,7 @@ pub const LanguageService = struct {
     snapshot: ?*Snapshot = null,
     // Semantic analysis must not exhaust the editor host on large modules.
     analysis_memory_limit: usize = 512 * 1024 * 1024,
+    cancellation: @import("../1_base/cancellation.zig").Token = .{},
     analysis_builds: usize = 0,
     analysis_hits: usize = 0,
     syntax_cache: editor_syntax.Cache = .{},
@@ -628,7 +629,10 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var work = arena.allocator();
-        const snapshot = self.ensureSnapshot(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
+        const snapshot = self.ensureSnapshot(&work, doc) catch |err| {
+            if (err == error.Cancelled) return err;
+            return self.loadFailureDiagnostic(doc, err);
+        };
         var output = std.array_list.Managed(Diagnostic).init(self.allocator);
         errdefer {
             for (output.items) |item| {
@@ -664,7 +668,9 @@ pub const LanguageService = struct {
     }
 
     fn ensureSnapshot(self: *LanguageService, scratch: *std.mem.Allocator, doc: *Document) !*Snapshot {
+        try self.cancellation.check();
         const collected = try self.collectFiles(scratch, doc);
+        try self.cancellation.check();
         if (self.snapshot) |snapshot| if (snapshot.matches(doc.path, collected)) {
             self.analysis_hits += 1;
             return snapshot;
@@ -709,6 +715,7 @@ pub const LanguageService = struct {
         defer diagnostics.deinit();
         var pipeline = frontend.FrontendPipeline.init(analysis_allocator, self.io, &diagnostics, .{
             .module_cache = &self.module_cache,
+            .cancellation = self.cancellation,
             .semantizing = .{
                 .exhaustive_function_bodies = false,
                 .body_module_dir = if (declarations_only) null else std.fs.path.dirname(path),
@@ -718,7 +725,7 @@ pub const LanguageService = struct {
         defer pipeline.deinit();
         const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         _ = pipeline.semantizeGlobalFiles(files) catch |err| switch (err) {
-            error.OutOfMemory => return err,
+            error.OutOfMemory, error.Cancelled => return err,
             else => {},
         };
         self.analysis_builds += 1;
@@ -737,6 +744,7 @@ pub const LanguageService = struct {
             .severity = .warn,
             .message = "body checking exceeded the editor memory budget; declaration analysis is available",
         });
+        try self.cancellation.check();
         snapshot.diagnostics = output.items;
         // A safety diagnostic may coexist with a resolved graph. Syntax and
         // unresolved global failures keep diagnostics cached without an index.
@@ -753,6 +761,7 @@ pub const LanguageService = struct {
             try augmentTypeOccurrences(analysis_allocator, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
             analysis.index.sort();
         }
+        try self.cancellation.check();
         self.snapshot = snapshot;
         return snapshot;
     }
@@ -2335,4 +2344,38 @@ test "LSP sibling documents reuse one module analysis and observe unsaved change
     var sibling_tokens = try svc.semanticTokensFull(sibling);
     defer sibling_tokens.deinit();
     try std.testing.expectEqual(@as(usize, 2), svc.analysis_builds);
+}
+
+test "LSP cancellation discards partial analysis and permits a clean retry" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "main := () -> () { value: Int32 = 42 }\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer a.free(path);
+    const uri = "file:///cancelled.rg";
+    const Probe = struct {
+        checks: usize = 0,
+        limit: usize,
+        fn cancelled(context: ?*const anyopaque) bool {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(context.?)));
+            self.checks += 1;
+            return self.checks >= self.limit;
+        }
+    };
+    for ([_]usize{ 1, 5, 12 }) |limit| {
+        var svc = LanguageService.init(a, std.testing.io);
+        defer svc.deinit();
+        try svc.storeDocument(uri, path, 1, code);
+        var probe: Probe = .{ .limit = limit };
+        svc.cancellation = .{ .context = &probe, .is_cancelled = Probe.cancelled };
+        try std.testing.expectError(error.Cancelled, svc.documentDiagnostics(uri));
+        try std.testing.expect(svc.snapshot == null);
+        svc.cancellation = .{};
+        var recovered = try svc.documentDiagnostics(uri);
+        defer recovered.deinit();
+        try std.testing.expectEqual(@as(usize, 0), recovered.items.len);
+        try std.testing.expect(svc.snapshot != null);
+    }
 }

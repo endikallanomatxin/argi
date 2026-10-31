@@ -27,6 +27,7 @@ const call_context = @import("call_context.zig");
 pub const RootSelection = enum { program, requests_only };
 
 pub const Options = struct {
+    cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     target: @import("../../1_base/target.zig").Config = .{},
     selected_test_name: ?[]const u8 = null,
     root_selection: RootSelection = .program,
@@ -992,6 +993,7 @@ pub const Session = struct {
         defer if (measurement) |m| m.finish(false);
         if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
         errdefer self.phase = .failed;
+        try self.options.cancellation.check();
         const allocator = self.allocator;
         const modules = self.modules;
         const options = self.options;
@@ -1365,6 +1367,7 @@ fn advanceResolution(
     var changed = true;
     while (true) {
         while (changed) {
+            try options.cancellation.check();
             staged_execution.stable_type_count = graph.types.items.len;
             staged_execution.stable_declaration_count = graph.declarations.items.len;
             staged_execution.stable_type_definition_count = graph.type_definitions.items.len;
@@ -1483,6 +1486,7 @@ fn advanceResolution(
         const finalization_count = graph.functions.items.len;
         var raw: usize = 0;
         while (raw < finalization_count) : (raw += 1) {
+            try options.cancellation.check();
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (finalized_functions.contains(id)) continue;
             if (reachable) |set| {

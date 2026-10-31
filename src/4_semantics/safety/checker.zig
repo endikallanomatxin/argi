@@ -155,6 +155,7 @@ pub const SafetyChecker = struct {
     diagnostics: *diagnostics.Diagnostics,
     graph: *graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
+    cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     active_summaries: ?*summary_engine.Engine = null,
     // Outputs and input post-states of one call share acquisition identities.
     // Nested calls install their own map so repeated acquisitions stay distinct.
@@ -228,6 +229,7 @@ pub const SafetyChecker = struct {
     }
 
     pub fn analyze(self: *SafetyChecker) !void {
+        try self.cancellation.check();
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
         self.annotations.clear(self.allocator);
@@ -244,6 +246,7 @@ pub const SafetyChecker = struct {
         inference.scratch_allocator = if (self.collect_stats) scratch_allocations.allocator() else self.state_allocator;
         inference.profile_io = self.profile_io;
         inference.unit = self.unit;
+        inference.cancellation = self.cancellation;
         inference.cache = self.summary_cache;
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
@@ -270,6 +273,7 @@ pub const SafetyChecker = struct {
         defer self.active_summaries = null;
 
         for (self.graph.functions.items, 0..) |function, raw| {
+            try self.cancellation.check();
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (self.unit) |unit| if (!unit.contains(id)) continue;
@@ -780,6 +784,7 @@ pub const SafetyChecker = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
         for (nodes, 0..) |node_id, node_index| {
+            try self.cancellation.check();
             if (!state.reachable) break;
             const node = self.graph.nodes.items[@intFromEnum(node_id)];
             switch (node.content) {

@@ -110,7 +110,11 @@ fn runBackground(allocator: std.mem.Allocator, io: std.Io, background: *Backgrou
             };
             defer allocator.free(path);
             if (server.service) |*svc| {
+                const evaluation: Background.Evaluation = .{ .source = background, .generation = job.generation };
+                svc.cancellation = evaluation.token();
+                defer svc.cancellation = .{};
                 var diagnostics = svc.documentDiagnostics(document) catch |err| {
+                    if (err == error.Cancelled) break;
                     log.err("background diagnostics failed: {s}", .{@errorName(err)});
                     allocator.free(dirty.orderedRemove(0));
                     continue;
