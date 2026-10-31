@@ -426,6 +426,7 @@ pub const Resolver = struct {
             .file_index = o.file_base + value.source.file_index,
             .offset = value.source.offset,
         };
+        if (!self.errorPayloadReady(error_payload) or !self.errorPayloadReady(propagated_error_payload)) return false;
         try self.requireCompatibleErrorPayload(error_payload, propagated_error_payload, source);
         try self.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
         const empty = try self.graph.addString(self.allocator, "");
@@ -495,6 +496,14 @@ pub const Resolver = struct {
             return error.Reported;
         }
         return error.IncompatibleErrorPayload;
+    }
+
+    /// A named reason union can still be awaiting computed-type resolution
+    /// after its enclosing Errable has acquired a concrete representation.
+    pub fn errorPayloadReady(self: *const Resolver, payload: global_sg.GlobalTypeId) bool {
+        if (self.graph.isTypeUnresolved(payload)) return false;
+        const reason = global_types.findField(self.graph, payload, "reason") orelse return true;
+        return global_types.representation(self.graph, reason.field.ty) != null;
     }
 
     pub fn errorPayloadCanPropagate(self: *const Resolver, source: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId) bool {
@@ -889,4 +898,22 @@ test "error inference visits propagation in a value block result" {
     const function: global_sg.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) };
     try resolver.collectBlock(function, @enumFromInt(0), &reasons);
     try std.testing.expectEqualSlices(global_sg.GlobalVariantId, &.{@enumFromInt(0)}, reasons.items);
+}
+
+test "error payload compatibility waits for named reason resolution" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Void });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = @enumFromInt(0), .source = source });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
+    const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    try std.testing.expect(!resolver.errorPayloadReady(@enumFromInt(1)));
+    try graph.resolveType(allocator, @enumFromInt(0), .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 0 } } });
+    try std.testing.expect(resolver.errorPayloadReady(@enumFromInt(1)));
+    // A resolved invalid reason type must be diagnosed, rather than deferred.
+    try graph.resolveType(allocator, @enumFromInt(0), .{ .builtin = .Int32 });
+    try std.testing.expect(resolver.errorPayloadReady(@enumFromInt(1)));
 }
