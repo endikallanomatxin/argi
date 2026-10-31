@@ -31,6 +31,10 @@ position : (
 
 That unnamed definition has its own identity. Value literals such as
 `(.x = 20, .y = 22)` use the expected type and do not create another type.
+Positional literals such as `(20, 22)` use the expected record's declaration
+order. Named and positional forms share field type checks and defaults; neither
+creates a structural identity or converts an already-typed nominal value.
+Without record context, positional literals retain their list/array meaning.
 An aggregate literal needs an annotation or explicit constructor when its type
 cannot otherwise be determined. Constructors may accept positional arguments
 when their order is unambiguous.

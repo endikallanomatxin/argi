@@ -375,13 +375,8 @@ pub const Resolver = struct {
                     }
                     break :blk .deferred;
                 }
-                if (self.graph.node(id).content == .list_literal) {
-                    // Nonempty lists retain tuple/list diagnostics; only empty
-                    // parentheses can supply an omitted record field set.
-                    if (self.graph.node(id).content.list_literal.elements.len != 0) break :blk .resolved;
-                    try self.graph.setNodeContent(self.allocator, id, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
-                }
                 if (self.contextualIdentityConflict(id, target)) break :blk .resolved;
+                try self.normalizePositionalRecord(id, target);
                 try self.graph.setNodeType(self.allocator, id, target);
                 // Leave required-field diagnostics to the shared publication check.
                 if (!@import("record_literals.zig").hasRequiredFields(self.graph, id, target)) break :blk .resolved;
@@ -1323,7 +1318,7 @@ pub const Resolver = struct {
 
     /// Probe a record without assigning its contextual type or executing defaults.
     /// Calls and ordinary aggregate literals share the same field/value rules.
-    pub fn matchRecordFields(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: @FieldType(global_sg.Node.Content, "struct_value_literal")) RecordMatch {
+    pub fn matchRecordFields(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: anytype) RecordMatch {
         return self.inspectRecordFields(expected_fields, literal).status;
     }
 
@@ -1334,7 +1329,7 @@ pub const Resolver = struct {
 
     /// Report missing inputs only after every supplied value has matched. This
     /// keeps diagnostics and applicability on the same contextual typing rules.
-    pub fn inspectRecordFields(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: @FieldType(global_sg.Node.Content, "struct_value_literal")) RecordInspection {
+    pub fn inspectRecordFields(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: anytype) RecordInspection {
         if (!self.recordFieldNamesMatch(expected_fields, literal)) return .{ .status = .no_match };
         var missing: ?primitives.StringRange = null;
         for (0..expected_fields.len) |expected_offset| {
@@ -1363,6 +1358,7 @@ pub const Resolver = struct {
     }
 
     pub fn recordFieldNamesMatch(self: *const Resolver, expected_fields: global_sg.FieldRange, literal: anytype) bool {
+        if (comptime @hasField(@TypeOf(literal), "elements")) return literal.elements.len <= expected_fields.len;
         if (literal.fields.len > expected_fields.len) return false;
         for (0..literal.fields.len) |supplied_offset| {
             const supplied = self.graph.value_fields.items[literal.fields.start + @as(u32, @intCast(supplied_offset))];
@@ -1408,9 +1404,9 @@ pub const Resolver = struct {
 
     pub fn recordFieldValue(self: *const Resolver, literal: anytype, expected_offset: usize, expected_name: []const u8) ?global_sg.GlobalNodeId {
         if (@import("record_literals.zig").suppliedField(self.graph, literal, expected_offset, expected_name)) |value| return value;
-        for (self.graph.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |assumed| {
+        if (comptime @hasField(@TypeOf(literal), "assumed_fields")) for (self.graph.value_fields.items[literal.assumed_fields.start..][0..literal.assumed_fields.len]) |assumed| {
             if (std.mem.eql(u8, self.graph.text(assumed.name), expected_name)) return assumed.value;
-        }
+        };
         return null;
     }
 
@@ -1435,6 +1431,21 @@ pub const Resolver = struct {
         };
     }
 
+    fn normalizePositionalRecord(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) !void {
+        if (self.graph.node(node).content != .list_literal or types.arrayElement(self.graph, target) != null or
+            types.fields(self.graph, target) == null or types.isCUnion(self.graph, target)) return;
+        const elements = self.graph.node(node).content.list_literal.elements;
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.ensureUnusedCapacity(self.allocator, elements.len);
+        for (self.graph.node_refs.items[elements.start..][0..elements.len]) |value|
+            self.graph.value_fields.appendAssumeCapacity(.{ .name = .{ .start = 0, .len = 0 }, .value = value });
+        // Keep the expected nominal identity. The ordinary record path checks
+        // field counts/types and materializes defaults in the lexical context.
+        try self.graph.setNodeContent(self.allocator, node, .{ .struct_value_literal = .{
+            .fields = .{ .start = start, .len = elements.len },
+        } });
+    }
+
     fn completeAggregateValue(self: *Resolver, target: global_sg.GlobalTypeId, node: global_sg.GlobalNodeId, context: call_context.Context, depth: usize) anyerror!bool {
         if (depth > 64) return false;
         if (types.arrayElement(self.graph, target)) |element| {
@@ -1455,8 +1466,7 @@ pub const Resolver = struct {
             return true;
         }
         const content = self.graph.node(node).content;
-        if (content == .list_literal and content.list_literal.elements.len == 0 and types.fields(self.graph, target) != null)
-            try self.graph.setNodeContent(self.allocator, node, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        if (content == .list_literal) try self.normalizePositionalRecord(node, target);
         if (self.graph.node(node).content == .struct_value_literal) {
             if (self.contextualIdentityConflict(node, target)) return true;
             if (!@import("record_literals.zig").hasRequiredFields(self.graph, node, target)) {
@@ -1710,6 +1720,11 @@ pub const Resolver = struct {
     }
 
     fn contextualListLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
+        if (types.arrayElement(self.graph, target) == null) {
+            if (types.fields(self.graph, target)) |fields| {
+                if (!types.isCUnion(self.graph, target)) return self.matchRecordFields(fields, literal) == .applicable;
+            }
+        }
         if (literal.elements.len == 0) {
             if (types.isBuiltin(self.graph, target, .Void)) return true;
             if (types.fields(self.graph, target)) |fields| {
@@ -1768,6 +1783,10 @@ pub const Resolver = struct {
             // incompatible lists untyped so diagnostics can inspect their elements.
             if (!self.contextualListLiteralFits(self.graph.node(node).content.list_literal, target)) return false;
             const literal = self.graph.node(node).content.list_literal;
+            if (types.arrayElement(self.graph, target) == null and types.fields(self.graph, target) != null) {
+                try self.normalizePositionalRecord(node, target);
+                return self.coerceContextualValue(node, target);
+            }
             // Parentheses have no inherent element/record type. Normalize an
             // empty literal only after its destination establishes the shape.
             if (literal.elements.len == 0 and types.arrayElement(self.graph, target) == null) {
@@ -2675,4 +2694,54 @@ test "typed record literals complete nested lists after operand types resolve" {
     selected.rollback();
     try std.testing.expect(graph.node(@enumFromInt(1)).content == .list_literal);
     try std.testing.expect(try resolver.materializeAssignmentValuesForUnit(&unit));
+}
+
+test "positional records share named field defaults and transactional normalization" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var graph: global_sg.GlobalSemanticGraph = .{};
+            defer graph.deinit(a);
+            const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+            const x = try graph.addString(a, "x");
+            const y = try graph.addString(a, "y");
+            try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .nominal = @enumFromInt(0) }, .{ .nominal = @enumFromInt(1) } });
+            for (0..2) |_| try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 2 } });
+            try graph.fields.appendSlice(a, &.{
+                .{ .name = x, .source = source, .ty = @enumFromInt(0) },
+                .{ .name = y, .source = source, .ty = @enumFromInt(0), .default_value = @enumFromInt(1) },
+            });
+            try graph.nodes.appendSlice(a, &.{
+                .{ .source = source, .ty = null, .content = .{ .int_literal = 42 } },
+                .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 7 } },
+                .{ .source = source, .ty = null, .content = .{ .list_literal = .{ .elements = .{ .start = 0, .len = 1 } } } },
+            });
+            try graph.node_refs.append(a, @enumFromInt(0));
+            var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+            defer resolver.deinit();
+            try std.testing.expect(resolver.contextualLiteralFits(@enumFromInt(2), @enumFromInt(1)));
+            const saved = graph.checkpoint();
+            var transaction = graph.beginTransaction(a);
+            defer transaction.deinit();
+            errdefer {
+                transaction.rollback();
+                std.debug.assert(std.meta.eql(saved, graph.checkpoint()));
+                std.debug.assert(graph.node(@enumFromInt(2)).content == .list_literal);
+                std.debug.assert(graph.node(@enumFromInt(0)).ty == null);
+            }
+            try std.testing.expect(try resolver.completeAggregateValue(@enumFromInt(1), @enumFromInt(2), call_context.Context.fromGlobal(&.{}, null), 0));
+            const value = graph.node(@enumFromInt(2));
+            try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), value.ty);
+            try std.testing.expect(value.content == .struct_value_literal);
+            const fields = graph.value_fields.items[value.content.struct_value_literal.fields.start..][0..2];
+            try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(0)), fields[0].value);
+            try std.testing.expectEqual(@as(global_sg.GlobalNodeId, @enumFromInt(1)), fields[1].value);
+            // A completed value cannot acquire another nominal identity.
+            try std.testing.expect(!resolver.contextualLiteralFits(@enumFromInt(2), @enumFromInt(2)));
+            try std.testing.expect(!try resolver.coerceContextualValue(@enumFromInt(2), @enumFromInt(2)));
+            transaction.rollback();
+            try std.testing.expectEqualDeep(saved, graph.checkpoint());
+            try std.testing.expect(graph.node(@enumFromInt(2)).content == .list_literal);
+            try std.testing.expect(graph.node(@enumFromInt(0)).ty == null);
+        }
+    }.run, .{});
 }

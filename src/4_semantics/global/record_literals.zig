@@ -18,6 +18,10 @@ pub fn fieldsInDeclarationOrder(graph: *const g.GlobalSemanticGraph, literal: an
 // Written record fields share positional/name matching with call inputs.
 // Lexical assumptions are handled separately: they are not stored fields.
 pub fn suppliedField(graph: *const g.GlobalSemanticGraph, literal: anytype, expected_offset: usize, expected_name: []const u8) ?g.GlobalNodeId {
+    if (comptime @hasField(@TypeOf(literal), "elements")) {
+        if (expected_offset >= literal.elements.len) return null;
+        return graph.node_refs.items[literal.elements.start + expected_offset];
+    }
     for (0..literal.fields.len) |supplied_offset| {
         const supplied = graph.value_fields.items[literal.fields.start + @as(u32, @intCast(supplied_offset))];
         if (supplied_offset < literal.dispatch_prefix_positional_count or graph.text(supplied.name).len == 0) {
