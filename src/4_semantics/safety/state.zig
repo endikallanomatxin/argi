@@ -703,28 +703,49 @@ pub const State = struct {
         }
     }
 
+    fn symbolicProjectionIndex(self: *const State, identity: facts.SymbolicPointeeId) ?usize {
+        const namespace = self.tracker.namespace orelse return null;
+        for (namespace.projected_storage.items, 0..) |entry, index|
+            if (entry.identity == identity and entry.projection != .dereference) return index;
+        return null;
+    }
+
+    fn symbolicStorageDepth(self: *const State, identity: facts.SymbolicPointeeId) usize {
+        const namespace = self.tracker.namespace orelse return 0;
+        var current = identity;
+        var depth: usize = 0;
+        while (self.symbolicProjectionIndex(current)) |index| {
+            current = namespace.projected_storage.items[index].parent;
+            depth += 1;
+        }
+        return depth;
+    }
+
     pub fn symbolicStorageMayOverlap(self: *const State, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {
-        if (self.symbolicStorageContains(left, right) or self.symbolicStorageContains(right, left)) return true;
-        const namespace = self.tracker.namespace orelse return false;
-        for (namespace.projected_storage.items) |a| {
-            if (a.identity != left or a.projection == .dereference) continue;
-            for (namespace.projected_storage.items) |b| {
-                if (b.identity != right or b.projection == .dereference) continue;
-                if (a.parent == b.parent and a.parent_generation == b.parent_generation) {
-                    if (a.projection == .dynamic_index or b.projection == .dynamic_index) return true;
-                    return a.projection.eql(b.projection);
-                }
-                // Descendants of the same possibly overlapping element retain
-                // that uncertainty; distinct fixed siblings remain separate.
-                return self.symbolicStorageMayOverlap(a.parent, b.parent);
+        const namespace = self.tracker.namespace orelse return left == right;
+        var a = left;
+        var b = right;
+        var a_depth = self.symbolicStorageDepth(a);
+        var b_depth = self.symbolicStorageDepth(b);
+        // Compare paths at the same depth. Peeling unequal paths together can
+        // turn distinct sibling fields into an apparent ancestor relationship.
+        while (a_depth > b_depth) : (a_depth -= 1)
+            a = namespace.projected_storage.items[self.symbolicProjectionIndex(a).?].parent;
+        while (b_depth > a_depth) : (b_depth -= 1)
+            b = namespace.projected_storage.items[self.symbolicProjectionIndex(b).?].parent;
+        while (true) {
+            if (a == b) return true;
+            const a_index = self.symbolicProjectionIndex(a) orelse return false;
+            const b_index = self.symbolicProjectionIndex(b) orelse return false;
+            const first = namespace.projected_storage.items[a_index];
+            const second = namespace.projected_storage.items[b_index];
+            if (first.parent == second.parent and first.parent_generation == second.parent_generation) {
+                if (first.projection == .dynamic_index or second.projection == .dynamic_index) return true;
+                return first.projection.eql(second.projection);
             }
-            return self.symbolicStorageMayOverlap(a.parent, right);
+            a = first.parent;
+            b = second.parent;
         }
-        for (namespace.projected_storage.items) |b| {
-            if (b.identity == right and b.projection != .dereference)
-                return self.symbolicStorageMayOverlap(left, b.parent);
-        }
-        return false;
     }
 
     pub fn symbolicStorageDescendsFrom(self: *const State, child: facts.SymbolicPointeeId, parent: facts.SymbolicPointeeId) bool {
@@ -1284,4 +1305,54 @@ test "Safety choice refinements propagate allocation failure without discarding 
     try state.setActiveVariant(storage, 2);
     try std.testing.expectEqual(@as(u32, 2), state.choice_active.items[0].variant_index);
     try std.testing.expect(!state.variantRejected(storage, 2));
+}
+
+test "Safety symbolic overlap compares unequal-depth paths at their common ancestor" {
+    const allocator = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var state = State.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const generation: facts.ValidityRootId = @enumFromInt(0);
+    // owner.first.shape and owner.second.allocation.receipt have different
+    // depths but remain disjoint. Unknown array indices remain conservative.
+    const edges = [_]struct { parent: u32, field: facts.Projection }{
+        .{ .parent = 0, .field = .{ .field = 0 } },
+        .{ .parent = 0, .field = .{ .field = 1 } },
+        .{ .parent = 1, .field = .{ .field = 3 } },
+        .{ .parent = 2, .field = .{ .field = 0 } },
+        .{ .parent = 4, .field = .{ .field = 0 } },
+        .{ .parent = 0, .field = .dynamic_index },
+        .{ .parent = 6, .field = .{ .field = 0 } },
+        .{ .parent = 0, .field = .dereference },
+        .{ .parent = 0, .field = .{ .static_index = 0 } },
+        .{ .parent = 0, .field = .{ .static_index = 1 } },
+        .{ .parent = 9, .field = .{ .field = 0 } },
+        .{ .parent = 10, .field = .{ .field = 0 } },
+    };
+    for (edges, 1..) |edge, identity| try namespace.projected_storage.append(allocator, .{
+        .parent = @enumFromInt(edge.parent),
+        .projection = edge.field,
+        .parent_generation = generation,
+        .identity = @enumFromInt(identity),
+        .backing = generation,
+        .generation = generation,
+    });
+    try namespace.projected_storage.append(allocator, .{
+        .parent = @enumFromInt(0),
+        .projection = .{ .field = 1 },
+        .parent_generation = @enumFromInt(1),
+        .identity = @enumFromInt(13),
+        .backing = generation,
+        .generation = generation,
+    });
+    for ([_][2]u32{ .{ 3, 5 }, .{ 1, 5 }, .{ 3, 8 }, .{ 9, 10 }, .{ 11, 12 } }) |pair| {
+        try std.testing.expect(!state.symbolicStorageMayOverlap(@enumFromInt(pair[0]), @enumFromInt(pair[1])));
+        try std.testing.expect(!state.symbolicStorageMayOverlap(@enumFromInt(pair[1]), @enumFromInt(pair[0])));
+    }
+    for ([_][2]u32{ .{ 0, 5 }, .{ 2, 5 }, .{ 5, 5 }, .{ 3, 7 }, .{ 1, 13 } }) |pair| {
+        try std.testing.expect(state.symbolicStorageMayOverlap(@enumFromInt(pair[0]), @enumFromInt(pair[1])));
+        try std.testing.expect(state.symbolicStorageMayOverlap(@enumFromInt(pair[1]), @enumFromInt(pair[0])));
+    }
 }
