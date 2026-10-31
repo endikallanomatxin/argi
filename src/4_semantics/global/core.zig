@@ -631,6 +631,19 @@ pub const Resolver = struct {
         module_filter: ?global_sg.GlobalModuleId,
         input_node: global_sg.GlobalNodeId,
     ) !FunctionMatch {
+        // A module-local callable shadows the ambient core spelling, even
+        // while its signature is pending. Otherwise resolution order can bind
+        // the call to core before the local declaration finishes materializing.
+        const lookup_module = module_filter orelse local: {
+            for (try self.graph.declarationsNamed(self.allocator, name)) |id| {
+                const declaration = self.graph.declaration(id);
+                if (declaration.kind != .function and declaration.kind != .binding) continue;
+                const owner = self.graph.moduleForDeclaration(id) orelse continue;
+                if (self.graph.sameModuleNamespace(owner, @enumFromInt(current_module)))
+                    break :local @as(?global_sg.GlobalModuleId, owner);
+            }
+            break :local @as(?global_sg.GlobalModuleId, null);
+        };
         var selected: ?global_sg.GlobalFunctionId = null;
         var saw_deferred = false;
         // A constant alias names the same compile-time function value. Its
@@ -638,7 +651,7 @@ pub const Resolver = struct {
         const declarations = try self.graph.declarationsNamed(self.allocator, name);
         for (declarations) |declaration_id| {
             const declaration = self.graph.declaration(declaration_id);
-            if (declaration.kind != .binding or !self.declarationVisible(current_module, declaration_id, module_filter)) continue;
+            if (declaration.kind != .binding or !self.declarationVisible(current_module, declaration_id, lookup_module)) continue;
             const binding = self.declarationBinding(declaration_id) orelse continue;
             if (self.graph.isBindingTypeUnresolved(binding)) {
                 saw_deferred = true;
@@ -668,7 +681,7 @@ pub const Resolver = struct {
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
             const function = self.graph.function(id);
-            if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
+            if (!self.declarationVisible(current_module, function.declaration, lookup_module)) continue;
             if (self.functionSignaturePending(id)) {
                 saw_deferred = true;
                 continue;

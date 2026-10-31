@@ -238,8 +238,7 @@ test "installed argi test resolves core from its installation prefix outside rep
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\test installed_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
-        \\    assume error_tracer
+        \\test installed_prefix := () -> !() {
         \\    testing.expect(.condition = true)!
         \\}
         \\
@@ -2767,7 +2766,7 @@ test "argi test runs configured modules and explicit target overrides suite" {
         try tmp.dir.createDir(std.testing.io, module, .default_dir);
         const source = try std.fs.path.join(std.testing.allocator, &.{ module, "main.rg" });
         defer std.testing.allocator.free(source);
-        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() { assume error_tracer; testing.expect(.condition = true)! }\n" });
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = source, .data = "test same_name := () -> !() { testing.expect(.condition = true)! }\n" });
     }
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = "[test]\nmodules = [\n  'first',\n  'second',\n]\n" });
     const suite = try runChildInCwd(&.{ argi, "test", "--filter", "same_name" }, root);

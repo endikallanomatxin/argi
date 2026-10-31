@@ -104,9 +104,9 @@ expect_error := #(.t: Type, .reasons: Type, .error_type: Type) (
     }
 }
 
-fail := test_fail_impl
+fail := () -> (.result: Errable#(Void, (..test_failed))) { result = test_fail_impl() }
 
-skip := test_skip_impl
+skip := () -> (.result: Errable#(Void, (..test_skipped))) { result = test_skip_impl() }
 
 expect_equal_strings := #(.Value: Type: _TestTextEquality#(Value)) (
     .expected: Value, .actual: Value
