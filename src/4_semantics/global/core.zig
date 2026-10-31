@@ -635,6 +635,9 @@ pub const Resolver = struct {
         // while its signature is pending. Otherwise resolution order can bind
         // the call to core before the local declaration finishes materializing.
         const lookup_module = module_filter orelse local: {
+            // Bundled core modules share their callable namespace. A helper
+            // in one core folder must not hide a peer's applicable signature.
+            if (self.graph.modules.items[current_module].is_bundled_core) break :local @as(?global_sg.GlobalModuleId, null);
             for (try self.graph.declarationsNamed(self.allocator, name)) |id| {
                 const declaration = self.graph.declaration(id);
                 if (declaration.kind != .function and declaration.kind != .binding) continue;
@@ -2757,4 +2760,36 @@ test "positional records share named field defaults and transactional normalizat
             try std.testing.expect(graph.node(@enumFromInt(0)).ty == null);
         }
     }.run, .{});
+}
+
+test "local call shadowing preserves the shared bundled core namespace" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "shared_call");
+    const field_name = try graph.addString(a, "required");
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.fields.append(a, .{ .name = field_name, .source = source, .ty = @enumFromInt(0) });
+    for (0..2) |i| {
+        try graph.declarations.append(a, .{ .kind = .function, .name = name, .source = source, .function_id = @enumFromInt(i) });
+        try graph.functions.append(a, .{
+            .declaration = @enumFromInt(i),
+            .input = .{ .start = 0, .len = if (i == 0) 1 else 0 },
+            .output = .{ .start = 0, .len = 0 },
+        });
+        try graph.modules.append(a, .{
+            .dir = try graph.addString(a, if (i == 0) "current" else "peer"),
+            .files = .{ .start = 0, .len = 0 },
+            .declarations = .{ .start = @intCast(i), .len = 1 },
+            .is_bundled_core = true,
+        });
+    }
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer resolver.deinit();
+    try std.testing.expectEqual(@as(global_sg.GlobalFunctionId, @enumFromInt(1)), (try resolver.matchVisibleFunction(0, "shared_call", null, @enumFromInt(0))).function);
+    graph.modules.items[0].is_bundled_core = false;
+    try std.testing.expect(try resolver.matchVisibleFunction(0, "shared_call", null, @enumFromInt(0)) == .no_match);
+    try std.testing.expectEqual(@as(global_sg.GlobalFunctionId, @enumFromInt(1)), (try resolver.matchVisibleFunction(0, "shared_call", @enumFromInt(1), @enumFromInt(0))).function);
 }
