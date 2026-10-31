@@ -3,6 +3,7 @@ const json = std.json;
 const log = std.log.scoped(.argi_lsp);
 
 const service = @import("lsp_service.zig");
+const Background = @import("lsp_background.zig").Background;
 const argi_version = @import("version.zig");
 const test_support = @import("../test_support.zig");
 
@@ -31,12 +32,123 @@ pub fn start(io: std.Io) !void {
     try server.run(io);
 }
 
+fn documentUri(params_value: ?json.Value) ?[]const u8 {
+    const params = params_value orelse return null;
+    if (params != .object) return null;
+    const document = params.object.get("textDocument") orelse return null;
+    if (document != .object) return null;
+    const uri = document.object.get("uri") orelse return null;
+    return if (uri == .string) uri.string else null;
+}
+
+fn semanticRefreshSupported(params: json.Value) bool {
+    var current = params;
+    for ([_][]const u8{ "capabilities", "workspace", "semanticTokens", "refreshSupport" }) |key| {
+        if (current != .object) return false;
+        current = current.object.get(key) orelse return false;
+    }
+    return current == .bool and current.bool;
+}
+
+fn runBackground(allocator: std.mem.Allocator, io: std.Io, background: *Background) void {
+    var server = LanguageServer.init(allocator, io);
+    server.background = background;
+    defer server.deinit();
+    var output_buffer: [4096]u8 = undefined;
+    var writer = std.Io.File.stdout().writer(io, &output_buffer);
+    var dirty: std.ArrayList([]u8) = .empty;
+    defer {
+        for (dirty.items) |uri| allocator.free(uri);
+        dirty.deinit(allocator);
+    }
+    while (background.next()) |job| {
+        defer background.freeJob(job);
+        server.generation = job.generation;
+        var parsed = json.parseFromSlice(json.Value, allocator, job.payload, .{}) catch continue;
+        defer parsed.deinit();
+        const root = parsed.value;
+        if (root != .object) continue;
+        const method_value = root.object.get("method") orelse continue;
+        if (method_value != .string) continue;
+        const method = method_value.string;
+        const edited = std.mem.eql(u8, method, "textDocument/didOpen") or
+            std.mem.eql(u8, method, "textDocument/didChange");
+        const uri = documentUri(root.object.get("params"));
+        // Apply queued full-sync updates before analysis. Keep every dirty
+        // document until a current revision has actually been published.
+        if (server.service) |*svc| svc.syntax_only = edited;
+        server.dispatch(&writer, root) catch |err| {
+            log.err("background request failed: {s}", .{@errorName(err)});
+            if (root.object.get("id")) |id| server.respondInternalErrorOrLog(&writer, id, "analysis failed");
+        };
+        if (uri) |value| {
+            if (edited) {
+                var found = false;
+                for (dirty.items) |existing| if (std.mem.eql(u8, existing, value)) {
+                    found = true;
+                    break;
+                };
+                if (!found) {
+                    const owned = allocator.dupe(u8, value) catch continue;
+                    dirty.append(allocator, owned) catch {
+                        allocator.free(owned);
+                        continue;
+                    };
+                }
+            } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
+                for (dirty.items, 0..) |existing, index| if (std.mem.eql(u8, existing, value)) {
+                    allocator.free(dirty.orderedRemove(index));
+                    break;
+                };
+            }
+        }
+        var refresh = false;
+        while (dirty.items.len > 0 and background.current(job.generation)) {
+            const document = dirty.items[0];
+            const path = server.uriToPath(document) catch {
+                allocator.free(dirty.orderedRemove(0));
+                continue;
+            };
+            defer allocator.free(path);
+            if (server.service) |*svc| {
+                svc.syntax_only = false;
+                var diagnostics = svc.documentDiagnostics(document) catch |err| {
+                    log.err("background diagnostics failed: {s}", .{@errorName(err)});
+                    allocator.free(dirty.orderedRemove(0));
+                    continue;
+                };
+                defer diagnostics.deinit();
+                server.sendAnalysisDiagnostics(&writer, document, path, diagnostics.items) catch {};
+                if (!background.current(job.generation)) break;
+                var tokens = svc.semanticTokensFull(document) catch {
+                    allocator.free(dirty.orderedRemove(0));
+                    continue;
+                };
+                defer tokens.deinit();
+                const published = background.publishTokens(document, job.generation, tokens.items) catch false;
+                if (!background.current(job.generation)) break;
+                refresh = refresh or published;
+            }
+            allocator.free(dirty.orderedRemove(0));
+        }
+        if (refresh and server.refresh_supported) {
+            const request = std.fmt.allocPrint(allocator, "{{\"jsonrpc\":\"2.0\",\"id\":\"argi-semantic-refresh-{d}\",\"method\":\"workspace/semanticTokens/refresh\",\"params\":null}}", .{job.generation}) catch continue;
+            defer allocator.free(request);
+            server.sendCurrentMessage(&writer, request) catch {};
+        }
+    }
+}
+
 const LanguageServer = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     buffer: std.array_list.Managed(u8),
     service: ?service.LanguageService = null,
     shutdown_requested: bool = false,
+    background: ?*Background = null,
+    foreground: bool = false,
+    generation: u64 = 0,
+    refresh_supported: bool = false,
     // Client diagnostics outlive one analysis. Remember their owning module so
     // a later edit can clear errors from repaired or removed sibling files.
     diagnostic_owners: std.StringHashMapUnmanaged([]u8) = .empty,
@@ -77,6 +189,17 @@ const LanguageServer = struct {
         var reader = std.Io.File.stdin().reader(io, &stdin_buffer);
         var writer = std.Io.File.stdout().writer(io, &stdout_buffer);
 
+        var background: Background = .{ .allocator = self.allocator, .io = io };
+        defer background.deinit();
+        self.background = &background;
+        self.foreground = true;
+        defer self.background = null;
+        const worker = try std.Thread.spawn(.{}, runBackground, .{ self.allocator, io, &background });
+        defer {
+            background.stop();
+            worker.join();
+        }
+
         while (true) {
             const payload = self.readMessage(&reader) catch |err| switch (err) {
                 error.EndOfStream => break,
@@ -92,100 +215,122 @@ const LanguageServer = struct {
 
             const root = parsed.value;
             if (root != .object) continue;
-            const obj = root.object;
-
-            const method_value = obj.get("method") orelse continue;
+            const method_value = root.object.get("method") orelse continue;
             if (method_value != .string) continue;
             const method = method_value.string;
-
-            const id_value = obj.get("id");
-            const params_value = obj.get("params");
-
-            if (std.mem.eql(u8, method, "initialize")) {
-                if (id_value) |id| {
-                    self.handleInitialize(&writer, id, params_value) catch |err| {
-                        log.err("initialize failed: {s}", .{@errorName(err)});
-                        self.respondInternalErrorOrLog(&writer, id, "initialize failed");
-                    };
-                }
-            } else if (std.mem.eql(u8, method, "initialized")) {
-                // No-op
-            } else if (std.mem.eql(u8, method, "textDocument/formatting")) {
-                if (id_value) |id| self.handleFormatting(&writer, id, params_value) catch {
-                    self.respondInternalErrorOrLog(&writer, id, "formatting failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
-                self.handleDidOpen(&writer, params_value) catch |err| {
-                    log.err("didOpen failed: {s}", .{@errorName(err)});
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
-                self.handleDidChange(&writer, params_value) catch |err| {
-                    log.err("didChange failed: {s}", .{@errorName(err)});
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
-                self.handleDidClose(&writer, params_value) catch |err| {
-                    log.err("didClose failed: {s}", .{@errorName(err)});
-                };
-            } else if (std.mem.eql(u8, method, "shutdown")) {
-                if (id_value) |id| self.handleShutdown(&writer, id) catch |err| {
-                    log.err("shutdown failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "shutdown failed");
-                };
-            } else if (std.mem.eql(u8, method, "exit")) {
-                break;
-            } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/full")) {
-                if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch |err| {
-                    log.err("semanticTokens/full failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "semantic tokens failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
-                if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch |err| {
-                    log.err("semanticTokens/range failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "semantic tokens failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
-                if (id_value) |id| self.handleInlayHints(&writer, id, params_value) catch |err| {
-                    log.err("inlay hints failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "inlay hints failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/completion")) {
-                if (id_value) |id| self.handle_completion(&writer, id, params_value) catch |err| {
-                    log.err("completion failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "completion failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
-                if (id_value) |id| self.handleDocumentSymbols(&writer, id, params_value) catch |err| {
-                    log.err("document symbols failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "document symbols failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/hover")) {
-                if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
-                    log.err("hover failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "hover failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/definition")) {
-                if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch |err| {
-                    log.err("definition failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "definition failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/references")) {
-                if (id_value) |id| self.handleReferences(&writer, id, params_value) catch |err| {
-                    log.err("references failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "references failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/prepareRename")) {
-                if (id_value) |id| self.handlePrepareRename(&writer, id, params_value) catch |err| {
-                    log.err("prepareRename failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "prepare rename failed");
-                };
-            } else if (std.mem.eql(u8, method, "textDocument/rename")) {
-                if (id_value) |id| self.handleRename(&writer, id, params_value) catch |err| {
-                    log.err("rename failed: {s}", .{@errorName(err)});
-                    self.respondInternalErrorOrLog(&writer, id, "rename failed");
-                };
-            } else {
-                // Ignore unknown methods.
+            if (std.mem.eql(u8, method, "exit")) break;
+            const edit = std.mem.eql(u8, method, "textDocument/didOpen") or
+                std.mem.eql(u8, method, "textDocument/didChange") or
+                std.mem.eql(u8, method, "textDocument/didClose");
+            const fast = edit or std.mem.eql(u8, method, "initialize") or
+                std.mem.eql(u8, method, "initialized") or
+                std.mem.eql(u8, method, "textDocument/semanticTokens/full") or
+                std.mem.eql(u8, method, "textDocument/semanticTokens/range") or
+                std.mem.eql(u8, method, "textDocument/formatting") or
+                std.mem.eql(u8, method, "textDocument/completion") or
+                std.mem.eql(u8, method, "textDocument/documentSymbol");
+            if (fast) try self.dispatch(&writer, root);
+            if (!fast or edit or std.mem.eql(u8, method, "initialize")) {
+                try background.enqueue(payload, edit, if (std.mem.eql(u8, method, "textDocument/didChange")) documentUri(root.object.get("params")) else null);
             }
+        }
+    }
+
+    fn dispatch(self: *LanguageServer, writer: anytype, root: json.Value) !void {
+        if (root != .object) return;
+        const obj = root.object;
+
+        const method_value = obj.get("method") orelse return;
+        if (method_value != .string) return;
+        const method = method_value.string;
+
+        const id_value = obj.get("id");
+        const params_value = obj.get("params");
+
+        if (std.mem.eql(u8, method, "initialize")) {
+            if (id_value) |id| {
+                self.handleInitialize(writer, id, params_value) catch |err| {
+                    log.err("initialize failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(writer, id, "initialize failed");
+                };
+            }
+        } else if (std.mem.eql(u8, method, "initialized")) {
+            // No-op
+        } else if (std.mem.eql(u8, method, "textDocument/formatting")) {
+            if (id_value) |id| self.handleFormatting(writer, id, params_value) catch {
+                self.respondInternalErrorOrLog(writer, id, "formatting failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
+            self.handleDidOpen(writer, params_value) catch |err| {
+                log.err("didOpen failed: {s}", .{@errorName(err)});
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
+            self.handleDidChange(writer, params_value) catch |err| {
+                log.err("didChange failed: {s}", .{@errorName(err)});
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
+            self.handleDidClose(writer, params_value) catch |err| {
+                log.err("didClose failed: {s}", .{@errorName(err)});
+            };
+        } else if (std.mem.eql(u8, method, "shutdown")) {
+            if (id_value) |id| self.handleShutdown(writer, id) catch |err| {
+                log.err("shutdown failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "shutdown failed");
+            };
+        } else if (std.mem.eql(u8, method, "exit")) {
+            return;
+        } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/full")) {
+            if (id_value) |id| self.handleSemanticTokensFull(writer, id, params_value) catch |err| {
+                log.err("semanticTokens/full failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "semantic tokens failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
+            if (id_value) |id| self.handleSemanticTokensRange(writer, id, params_value) catch |err| {
+                log.err("semanticTokens/range failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "semantic tokens failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
+            if (id_value) |id| self.handleInlayHints(writer, id, params_value) catch |err| {
+                log.err("inlay hints failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "inlay hints failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/completion")) {
+            if (id_value) |id| self.handle_completion(writer, id, params_value) catch |err| {
+                log.err("completion failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "completion failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
+            if (id_value) |id| self.handleDocumentSymbols(writer, id, params_value) catch |err| {
+                log.err("document symbols failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "document symbols failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/hover")) {
+            if (id_value) |id| self.handleHover(writer, id, params_value) catch |err| {
+                log.err("hover failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "hover failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/definition")) {
+            if (id_value) |id| self.handleDefinition(writer, id, params_value) catch |err| {
+                log.err("definition failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "definition failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/references")) {
+            if (id_value) |id| self.handleReferences(writer, id, params_value) catch |err| {
+                log.err("references failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "references failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/prepareRename")) {
+            if (id_value) |id| self.handlePrepareRename(writer, id, params_value) catch |err| {
+                log.err("prepareRename failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "prepare rename failed");
+            };
+        } else if (std.mem.eql(u8, method, "textDocument/rename")) {
+            if (id_value) |id| self.handleRename(writer, id, params_value) catch |err| {
+                log.err("rename failed: {s}", .{@errorName(err)});
+                self.respondInternalErrorOrLog(writer, id, "rename failed");
+            };
+        } else {
+            // Ignore unknown methods.
         }
     }
 
@@ -238,7 +383,11 @@ const LanguageServer = struct {
             }
         }
 
-        try self.respondInitialize(writer, id_value);
+        if (self.service) |*svc| svc.syntax_only = self.foreground;
+        if (params_value) |params| {
+            self.refresh_supported = semanticRefreshSupported(params);
+        }
+        if (self.background == null or self.foreground) try self.respondInitialize(writer, id_value);
     }
 
     fn handleDidOpen(self: *LanguageServer, writer: anytype, params_value: ?json.Value) !void {
@@ -271,7 +420,7 @@ const LanguageServer = struct {
                 return;
             };
             defer diagnostics.deinit();
-            try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
+            if (!self.foreground and !svc.syntax_only) try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
         }
     }
 
@@ -311,7 +460,7 @@ const LanguageServer = struct {
                 return;
             };
             defer diagnostics.deinit();
-            try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
+            if (!self.foreground and !svc.syntax_only) try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
         }
     }
 
@@ -328,6 +477,7 @@ const LanguageServer = struct {
         if (uri_value != .string) return;
 
         if (self.service) |*svc| svc.closeDocument(uri_value.string);
+        if (self.foreground) return;
         if (self.diagnostic_owners.fetchRemove(uri_value.string)) |removed| {
             self.allocator.free(removed.key);
             self.allocator.free(removed.value);
@@ -566,7 +716,7 @@ const LanguageServer = struct {
         try stream.endObject();
         try stream.endObject();
 
-        try self.sendMessage(writer, payload.writer.buffered());
+        try self.sendCurrentMessage(writer, payload.writer.buffered());
     }
 
     fn handleSemanticTokensFull(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
@@ -579,7 +729,13 @@ const LanguageServer = struct {
         if (uri_value != .string) return;
 
         if (self.service) |*svc| {
-            var data = try svc.semanticTokensFull(uri_value.string); // ArrayList(u32)
+            var data = if (self.foreground)
+                if (try self.background.?.copyTokens(self.allocator, uri_value.string)) |cached|
+                    std.array_list.Managed(u32).fromOwnedSlice(self.allocator, cached)
+                else
+                    try svc.semanticTokensFull(uri_value.string)
+            else
+                try svc.semanticTokensFull(uri_value.string);
             defer data.deinit();
 
             var payload = std.Io.Writer.Allocating.init(self.allocator);
@@ -1053,7 +1209,23 @@ const LanguageServer = struct {
     }
 
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
-        _ = self;
+        try self.sendOutput(writer, payload, false);
+    }
+
+    fn sendCurrentMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
+        try self.sendOutput(writer, payload, true);
+    }
+
+    fn sendOutput(self: *LanguageServer, writer: anytype, payload: []const u8, current_only: bool) !void {
+        if (self.background) |background| {
+            background.output_mutex.lockUncancelable(self.io);
+        }
+        defer if (self.background) |background| background.output_mutex.unlock(self.io);
+        // Compare under the output lock so no stale publication can follow
+        // a newer notification. Responses are always delivered to their IDs.
+        if (current_only and !self.foreground) if (self.background) |background| {
+            if (!background.current(self.generation)) return;
+        };
         try writer.interface.print("Content-Length: {d}\r\n\r\n", .{payload.len});
         try writer.interface.writeAll(payload);
         try writer.interface.flush();
@@ -1822,4 +1994,43 @@ test "module diagnostics publish sibling locations and clear repaired files" {
     try std.testing.expect(std.mem.indexOf(u8, repaired.writer.buffered(), sibling_uri) != null);
     try std.testing.expect(std.mem.indexOf(u8, repaired.writer.buffered(), "\"diagnostics\":[]") != null);
     try std.testing.expectEqual(@as(usize, 0), server.diagnostic_owners.count());
+}
+
+test "LSP foreground serves syntax and cached colors without semantic work" {
+    const a = std.testing.allocator;
+    var background: Background = .{ .allocator = a, .io = std.testing.io };
+    defer background.deinit();
+    var server = LanguageServer.init(a, std.testing.io);
+    defer server.deinit();
+    server.background = &background;
+    server.foreground = true;
+    server.service = service.LanguageService.init(a, std.testing.io);
+    server.service.?.syntax_only = true;
+    server.service.?.analysis_memory_limit = 0;
+    var out: CapturedResponseWriter = undefined;
+    out.init(a);
+    defer out.deinit();
+    var open = try json.parseFromSlice(json.Value, a,
+        \\{"textDocument":{"uri":"file:///app/main.rg","version":1,"text":"main := () -> () { value: Int32 = 42 }"}}
+    , .{});
+    defer open.deinit();
+    try server.handleDidOpen(&out.writer, open.value);
+    try std.testing.expectEqual(@as(usize, 0), out.buffer.items.len);
+    var params = try json.parseFromSlice(json.Value, a, "{\"textDocument\":{\"uri\":\"file:///app/main.rg\"}}", .{});
+    defer params.deinit();
+    try server.handleSemanticTokensFull(&out.writer, .{ .integer = 1 }, params.value);
+    try std.testing.expect(out.flushed);
+    try std.testing.expectEqual(@as(usize, 0), server.service.?.analysis_builds);
+    out.buffer.clearRetainingCapacity();
+    try std.testing.expect(try background.publishTokens("file:///app/main.rg", 0, &.{ 0, 0, 4, 2, 1 }));
+    try server.handleSemanticTokensFull(&out.writer, .{ .integer = 2 }, params.value);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffer.items, "\"data\":[0,0,4,2,1]") != null);
+    try std.testing.expectEqual(@as(usize, 0), server.service.?.analysis_builds);
+    out.buffer.clearRetainingCapacity();
+    try background.enqueue("edit", true, null);
+    server.foreground = false;
+    try server.sendCurrentMessage(&out.writer, "obsolete diagnostics");
+    try std.testing.expectEqual(@as(usize, 0), out.buffer.items.len);
+    try server.respondNullResult(&out.writer, .{ .integer = 3 });
+    try std.testing.expect(out.buffer.items.len > 0);
 }

@@ -253,6 +253,7 @@ pub const LanguageService = struct {
     snapshot: ?*Snapshot = null,
     // Semantic analysis must not exhaust the editor host on large modules.
     analysis_memory_limit: usize = 512 * 1024 * 1024,
+    syntax_only: bool = false,
     analysis_builds: usize = 0,
     analysis_hits: usize = 0,
     syntax_cache: editor_syntax.Cache = .{},
@@ -288,15 +289,21 @@ pub const LanguageService = struct {
         } else {
             try self.documents.append(try Document.init(self.allocator, uri, path, version, text));
         }
+        if (self.syntax_only) return DiagnosticsResult.empty(self.allocator);
         return self.analyzeDocument(&self.documents.items[self.findDocument(uri).?]);
     }
 
     pub fn changeDocument(self: *LanguageService, uri: []const u8, path: []const u8, version: ?i64, text: []const u8) !DiagnosticsResult {
         const index = self.findDocument(uri) orelse return DiagnosticsResult.empty(self.allocator);
         if (version) |incoming| if (self.documents.items[index].version) |current| if (incoming <= current)
-            return self.analyzeDocument(&self.documents.items[index]);
+            return if (self.syntax_only) DiagnosticsResult.empty(self.allocator) else self.analyzeDocument(&self.documents.items[index]);
         try self.documents.items[index].update(self.allocator, path, version, text);
+        if (self.syntax_only) return DiagnosticsResult.empty(self.allocator);
         return self.analyzeDocument(&self.documents.items[index]);
+    }
+
+    pub fn documentDiagnostics(self: *LanguageService, uri: []const u8) !DiagnosticsResult {
+        return self.analyzeDocument(try self.getDoc(uri));
     }
 
     pub fn closeDocument(self: *LanguageService, uri: []const u8) void {
@@ -375,8 +382,10 @@ pub const LanguageService = struct {
 
         // Resolved identities refine syntax roles; syntax remains usable while
         // an unfinished edit prevents global semantizing from producing a graph.
-        const analysis = try self.collectAnalysis(&work, doc);
-        if (analysis) |value| try classifyOccurrences(work, &value, doc.path, &classes);
+        if (!self.syntax_only) {
+            const analysis = try self.collectAnalysis(&work, doc);
+            if (analysis) |value| try classifyOccurrences(work, &value, doc.path, &classes);
+        }
 
         var output = std.array_list.Managed(u32).init(self.allocator);
         errdefer output.deinit();
@@ -2249,4 +2258,25 @@ test "LSP module roots enforce once use independently without main" {
         reported = true;
     };
     try std.testing.expect(reported);
+}
+
+test "LSP syntax-only document updates and tokens never start semantic analysis" {
+    const code = "main := () -> () { value: Int32 = 42; missing(value) }";
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    svc.syntax_only = true;
+    svc.analysis_memory_limit = 0;
+    var diagnostics = try svc.openDocument("file:///syntax-fast.rg", "/syntax-fast.rg", 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    var tokens = try svc.semanticTokensFull("file:///syntax-fast.rg");
+    defer tokens.deinit();
+    try expectSemanticToken(tokens.items, code, "value: Int32", TOKEN_INDEX.variable, 3);
+    try expectSemanticToken(tokens.items, code, "42", TOKEN_INDEX.number, 0);
+    try std.testing.expectEqual(@as(usize, 0), svc.analysis_builds);
+    var change = try svc.changeDocument("file:///syntax-fast.rg", "/syntax-fast.rg", 2, "unfinished := (");
+    defer change.deinit();
+    var changed = try svc.semanticTokensFull("file:///syntax-fast.rg");
+    defer changed.deinit();
+    try std.testing.expectEqual(@as(usize, 0), svc.analysis_builds);
 }

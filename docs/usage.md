@@ -70,6 +70,12 @@ are specified but not implemented yet.
 The LSP provides diagnostics, semantic highlighting, hover, completion,
 document symbols, and navigation to definitions.
 
+Syntax highlighting, formatting and document outlines do not wait for semantic
+analysis. A single background worker checks documents and publishes diagnostics;
+clients supporting semantic-token refresh receive refined colors when it finishes.
+Consecutive pending edits are coalesced, and obsolete analysis results are not
+published over newer edits.
+
 The LSP checks all files in the opened folder-level module and follows the
 functions they call. Imported modules provide declarations without making
 every unused body a checking root. This also applies to libraries without
