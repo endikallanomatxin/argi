@@ -26,13 +26,13 @@ context := (.evaluations: $&Int32) -> (.text: StringView) {
 
 traced := (.fail: Bool, .evaluations: $&Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
     assume error_tracer
-    value ::= plain(.fail = fail)!! context(.evaluations = evaluations)
+    value ::= fail | plain(_)!! context(.evaluations = evaluations)
     result = ..ok value
 }
 
 forward := (.evaluations: $&Int32, .error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
     assume error_tracer
-    value ::= traced(.fail = true, .evaluations = evaluations)!
+    value ::= true | traced(_, .evaluations = evaluations)!
     result = ..ok value
 }
 

@@ -1612,3 +1612,14 @@ test "formatter packs expression lists using the available width" {
         "values := (\n    first_value,\n    -- explanation\n    second_value\n)\n",
     );
 }
+
+test "formatter preserves error handling on completed pipe stages" {
+    try expectFormat(
+        "main:=()->(){\nvalue|first(_)!|second(_)!!!\nvalue|call(_)!!!{return}\n}\n",
+        "main := () -> () {\n    value | first(_)! | second(_)!!!\n    value | call(_)!!! { return }\n}\n",
+    );
+    try expectFormat(
+        "result:=value|call(.value=_,.other=fallible()!)!!\"context\"\n",
+        "result := value | call(.value = _, .other = fallible()!)!! \"context\"\n",
+    );
+}

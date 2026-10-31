@@ -22,7 +22,7 @@ finish := #(.WriterType: Type: Writer#(WriterType)) (.fail: Bool, .writer: $&Wri
 
     assume writer
     owner ::= Owner(1)
-    value ::= attempt(fail)!!! {
+    value ::= fail | attempt(_)!!! {
         action_owner ::= Owner(2)
         result = 9
     }
@@ -61,7 +61,7 @@ identity := (.input: Int32) -> (.value: Int32) { value = input }
 finish_argument := (.fail: Bool, .writer: $&File) -> (.result: Int32 = 0) {
 
     assume writer
-    if identity(attempt(fail)!!! { result = 17 }) == 7 { result = 7 }
+    if identity(fail | attempt(_)!!! { result = 17 }) == 7 { result = 7 }
 }
 
 BrokenWriter: Type = ()

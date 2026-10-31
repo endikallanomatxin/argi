@@ -169,5 +169,12 @@ sum ::= 5 | add(.left = _ | identity(.value = _), .right = _)
 Pipes bind more tightly than multiplication and addition, retaining the same
 precedence as direct call/postfix expressions. Use `[a + b] | process(_)` to
 pipe the sum, or `[value | transform(_)] * scale` to group the transformed value.
+Trailing error operators apply to the completed pipe stage. For example,
+`value | transform(_)!!!` means `[value | transform(_)]!!!`, and
+`value | first(_)! | second(_)!` propagates after each stage. This applies to
+`!`, `!! context`, and `!!!`, including its optional reporting block. Error
+operators inside call arguments or explicit brackets keep their ordinary scope:
+`value | combine(_, other()!)!` propagates the nested argument independently.
+
 The right operand is a call or another primary expression, so a complete
 arithmetic right operand uses brackets. Braces remain lexical blocks.

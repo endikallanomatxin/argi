@@ -10,7 +10,29 @@ inferred_identity := #(.t: Type) (.x: t) -> (.y: t) { y = x }
 
 explicit_identity := #(.t: Type) (.x: t) -> (.y: t) { y = x }
 
+checked_increment := (.value: Int32) -> !Int32 {
+    if value < 0 {
+        result = ..error(.reason = ..invalid_input);
+        return
+    }
+    incremented ::= value + 1
+    result = ..ok incremented
+}
+
+checked_pipeline := (.value: Int32) -> !Int32 {
+    incremented ::= value | checked_increment(_)! | checked_increment(_)!
+    result = ..ok incremented
+}
+
 main := () -> (.status_code: Int32 = 42) {
+    match checked_pipeline(40) {
+        ..ok value { if value != 42 { abort } }
+        ..error _ { abort }
+    }
+    match checked_pipeline(-1) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..invalid_input { abort } }
+    }
     point: Point = (.x = 20, .y = 21)
     total: Int32 = point | sum_point(.a = _.x, .b = _.y)
     if total != 41 { abort }

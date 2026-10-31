@@ -1455,6 +1455,10 @@ pub const Syntaxer = struct {
     }
 
     fn parsePostfixWithCalls(self: *Syntaxer, mut: syn.NodeIndex, allow_identifier_calls: bool) !syn.NodeIndex {
+        return self.parsePostfixOptions(mut, allow_identifier_calls, true);
+    }
+
+    fn parsePostfixOptions(self: *Syntaxer, mut: syn.NodeIndex, allow_identifier_calls: bool, error_postfix: bool) !syn.NodeIndex {
         var node = mut;
         while (true) {
             if (self.tokenIs(.dot)) {
@@ -1542,6 +1546,10 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            // At the outer edge of a pipe stage, error handling belongs to
+            // the completed pipe. Nested arguments parse normally.
+            if (!error_postfix and (self.tokenIs(.bang) or self.tokenIs(.double_bang) or self.tokenIs(.triple_bang))) break;
+
             if (self.tokenIs(.triple_bang)) {
                 const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
@@ -1587,7 +1595,8 @@ pub const Syntaxer = struct {
             // A nested pipe binds its own RHS placeholders. Only its left
             // operand may refer to the enclosing pipe's value.
             .pipe_expression => self.hasPipePlaceholder(self.file.binaryOperation(node).?.lhs),
-            .address_of, .address_of_mut, .move_expression, .error_propagation, .nullable_test, .dereference => self.hasPipePlaceholder(self.file.unaryOperand(node).?),
+            .address_of, .address_of_mut, .move_expression, .error_propagation, .error_report_return, .nullable_test, .dereference => self.hasPipePlaceholder(self.file.unaryOperand(node).?),
+            .error_report_return_block => self.hasPipePlaceholder(self.file.data(node).node_and_node.first),
             .struct_field_access => self.hasPipePlaceholder(self.file.structFieldAccess(node).?.value),
             .choice_payload_access => self.hasPipePlaceholder(self.file.choicePayloadAccess(node).?.value),
             .function_call => self.hasPipePlaceholder(self.file.functionCall(node).?.input),
@@ -1618,12 +1627,16 @@ pub const Syntaxer = struct {
         const prev_pipe_rhs = self.parsing_pipe_rhs;
         self.parsing_pipe_rhs = true;
         defer self.parsing_pipe_rhs = prev_pipe_rhs;
-        return self.parsePrimary();
+        return self.parsePrimaryWithErrors(false);
     }
 
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !syn.NodeIndex {
+        return self.parsePrimaryWithErrors(true);
+    }
+
+    fn parsePrimaryWithErrors(self: *Syntaxer, error_postfix: bool) !syn.NodeIndex {
         const content = self.currentContent();
 
         if (self.tokenIs(.keyword_once)) {
@@ -1631,7 +1644,7 @@ pub const Syntaxer = struct {
             const location = self.tokenLocation();
             self.advanceOne();
             self.skipNewLinesAndComments();
-            const value = try self.parsePrimary();
+            const value = try self.parsePrimaryWithErrors(error_postfix);
             const body = self.file.definitionBody(value);
             var definition = self.file.functionDefinition(body) orelse {
                 try self.diags.add(location, .syntax, "once requires a function definition value", .{});
@@ -1682,7 +1695,7 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.tilde)) {
             const move_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
-            const inner = try self.parsePrimary();
+            const inner = try self.parsePrimaryWithErrors(error_postfix);
             return try self.addNode(.move_expression, move_token, .{ .node = inner });
         }
 
@@ -1708,7 +1721,7 @@ pub const Syntaxer = struct {
             }
 
             self.advanceOne();
-            const inner = try self.parsePrimary(); // recursivo
+            const inner = try self.parsePrimaryWithErrors(error_postfix); // recursivo
             return try self.addNode(if (mutable) .address_of_mut else .address_of, main_token, .{ .node = inner });
         }
 
@@ -1735,7 +1748,7 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne();
             const node = try self.addNode(.import_statement, import_token, .{ .token = path_token });
-            return try self.parsePostfix(node);
+            return try self.parsePostfixOptions(node, false, error_postfix);
         }
 
         if (self.tokenIs(.hash)) {
@@ -1839,7 +1852,7 @@ pub const Syntaxer = struct {
 
         // A grouped name can still be a callee. Declaration syntaxing uses
         // the restricted postfix form so it can recognize function signatures.
-        const value = try self.parsePostfixWithCalls(base, grouped);
+        const value = try self.parsePostfixOptions(base, grouped, error_postfix);
         return if (self.tokenIs(.arrow)) self.parseFunctionValue(value) else value;
     }
 
@@ -1891,6 +1904,7 @@ pub const Syntaxer = struct {
                 );
             }
             lhs = try self.addNode(.pipe_expression, pipe_token, .{ .node_and_node = .{ .first = lhs, .second = right } });
+            lhs = try self.parsePostfix(lhs);
         }
         return lhs;
     }

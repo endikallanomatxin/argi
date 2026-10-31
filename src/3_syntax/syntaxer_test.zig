@@ -472,3 +472,41 @@ test "compact syntaxing preserves once on named and parameterized signatures" {
     try std.testing.expect(generic.is_once);
     try std.testing.expectEqual(@as(usize, 1), generic.generic_params.len);
 }
+
+test "pipe stage error operators wrap the completed pipe" {
+    const source =
+        \\plain := value | call(_)!
+        \\report := value | call(_)!!!
+        \\context := value | call(_)!! "context"
+        \\block := value | call(_)!!! { return }
+        \\chain := value | first(_)! | second(_)!!!
+        \\nested := value | call(.value = _, .other = fallible()!)!
+        \\grouped := value | [call(_)!]
+        \\grouped_report := value | [call(_)!!!]
+        \\grouped_block := value | [call(_)!!! { return }]
+    ;
+    var tree = try parseTestSource("pipe-errors.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    const tags = [_]syntax_tree.Node.Tag{ .error_propagation, .error_report_return, .error_context, .error_report_return_block };
+    for (tags, 0..) |tag, index| {
+        const expression = tree.definitionValue(tree.roots[index]).?;
+        try std.testing.expectEqual(tag, tree.tag(expression));
+        const operand = if (tag == .error_context or tag == .error_report_return_block)
+            tree.data(expression).node_and_node.first
+        else
+            tree.unaryOperand(expression).?;
+        try std.testing.expectEqual(syntax_tree.Node.Tag.pipe_expression, tree.tag(operand));
+        try std.testing.expect(tree.functionCall(tree.binaryOperation(operand).?.rhs) != null);
+    }
+    const chain = tree.unaryOperand(tree.definitionValue(tree.roots[4]).?).?;
+    const left = tree.binaryOperation(chain).?.lhs;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.error_propagation, tree.tag(left));
+    try std.testing.expectEqual(syntax_tree.Node.Tag.pipe_expression, tree.tag(tree.unaryOperand(left).?));
+    const nested = tree.unaryOperand(tree.definitionValue(tree.roots[5]).?).?;
+    const call = tree.functionCall(tree.binaryOperation(nested).?.rhs).?;
+    const fields = tree.structValueLiteral(call.input).?.fields;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.error_propagation, tree.tag(tree.valueField(fields[1]).?.value));
+    const grouped = tree.definitionValue(tree.roots[6]).?;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.pipe_expression, tree.tag(grouped));
+    try std.testing.expectEqual(syntax_tree.Node.Tag.error_propagation, tree.tag(tree.binaryOperation(grouped).?.rhs));
+}
