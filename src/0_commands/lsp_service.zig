@@ -1123,6 +1123,14 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
         const file = editor_index.sourceFileId(graph, &analysis.source_db, occurrence.source) orelse continue;
         if (!std.mem.eql(u8, analysis.source_db.path(file), path)) continue;
         if (!editor_index.occurrence_matches_source(graph, &analysis.source_db, occurrence)) continue;
+        // Contextual choice metadata can inherit the initializer's source.
+        // It describes the value, not a new variant declaration at the binding.
+        if (occurrence.target == .variant) {
+            if (classes.get(occurrence.source.offset)) |syntax| {
+                if (syntax.type_index == TOKEN_INDEX.variable and
+                    syntax.modifiers & (@as(u32, 1) << MOD_INDEX.declaration) != 0) continue;
+            }
+        }
         var classification: TokenClass = .{ .type_index = TOKEN_INDEX.variable };
         switch (occurrence.target) {
             .function => classification.type_index = if (occurrence.constructor_call) TOKEN_INDEX.type_ else TOKEN_INDEX.function,
@@ -1381,10 +1389,13 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
         \\    .Result: Type = Box#(.t: t)
         \\.init = BoxInitArgs2#(t) -> (.result: Box#(.t: t)) { result = (.value = value) })
         \\implement#(.t: Type) Deinit#(Box#(.t: t)) (.deinit = (.self: $&Box#(.t: t)) -> () {})
+        \\Surface := (..plane(.payload: Int32), ..other)
         \\identity := (.value: Int32) -> (.result: Int32)  { result = value }
         \\main := (.system: System) -> (.status_code: Int32 = 0)  {
         \\    assume writer := $&system.terminal&.stdout; assume error_tracer ::= $&noop_error_tracer
         \\    point ::= Point(.x = 2)
+        \\    plane: Surface = ..plane(.payload = 1)
+        \\    surface := plane
         \\    defer {}
         \\    amount := identity(.value = point.x)
         \\    print("Hello world")
@@ -1418,6 +1429,9 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     try expectSemanticToken(data.items, code, "system.terminal", TOKEN_INDEX.parameter, 2);
     try expectSemanticToken(data.items, code, "terminal&", TOKEN_INDEX.property, 0);
     try expectSemanticToken(data.items, code, "point ::=", TOKEN_INDEX.variable, 1);
+    try expectSemanticToken(data.items, code, "plane: Surface", TOKEN_INDEX.variable, 3);
+    try expectSemanticToken(data.items, code, "plane(.payload = 1)", TOKEN_INDEX.enum_member, 0);
+    try expectSemanticToken(data.items, code, "plane\n    defer", TOKEN_INDEX.variable, 2);
     try expectSemanticToken(data.items, code, "Point(.x", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "amount :=", TOKEN_INDEX.variable, 3);
     try expectSemanticToken(data.items, code, "identity(.value =", TOKEN_INDEX.function, 0);
