@@ -70,6 +70,10 @@ are specified but not implemented yet.
 The LSP provides diagnostics, semantic highlighting, hover, completion,
 document symbols, and navigation to definitions.
 
+Each semantic analysis has a 512 MiB allocation budget. If a module exceeds
+it, the server reports the limit and releases the analysis; syntax-based
+features remain available. CLI compilation has no corresponding limit.
+
 Run `argi format [paths...]` to format files or directories,
 `argi format --check [paths...]` to check without writing, or
 `argi format file.rg --stdout` to preview a file. Editors can request document

@@ -212,6 +212,7 @@ const Analysis = struct {
 // the occurrence index across diagnostics and navigation. Source bytes remain
 // owned by this arena, including unsaved buffers that documents later replace.
 const Snapshot = struct {
+    budget: @import("bounded_allocator.zig").BoundedAllocator,
     arena: std.heap.ArenaAllocator,
     path: []const u8,
     files: []const sf.SourceFile,
@@ -242,6 +243,8 @@ pub const LanguageService = struct {
     root_path: ?[]u8 = null,
     module_cache: frontend.cache.ModuleCache,
     snapshot: ?*Snapshot = null,
+    // Semantic analysis must not exhaust the editor host on large modules.
+    analysis_memory_limit: usize = 512 * 1024 * 1024,
     analysis_builds: usize = 0,
     analysis_hits: usize = 0,
     syntax_cache: editor_syntax.Cache = .{},
@@ -614,7 +617,13 @@ pub const LanguageService = struct {
         if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
         self.snapshot = null;
         const snapshot = try self.allocator.create(Snapshot);
-        snapshot.* = .{ .arena = std.heap.ArenaAllocator.init(self.allocator), .path = "", .files = &.{} };
+        snapshot.* = .{
+            .budget = .{ .child = self.allocator, .limit = self.analysis_memory_limit },
+            .arena = undefined,
+            .path = "",
+            .files = &.{},
+        };
+        snapshot.arena = std.heap.ArenaAllocator.init(snapshot.budget.allocator());
         errdefer snapshot.deinit(self.allocator);
         var work = snapshot.arena.allocator();
         snapshot.path = try work.dupe(u8, doc.path);
@@ -630,7 +639,10 @@ pub const LanguageService = struct {
         var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = true } });
         defer pipeline.deinit();
         const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        _ = pipeline.semantizeGlobalFiles(files) catch {};
+        _ = pipeline.semantizeGlobalFiles(files) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => {},
+        };
         self.analysis_builds += 1;
         log.debug("LSP global semantizing: {d} us", .{@divTrunc(std.Io.Timestamp.now(self.io, .boot).nanoseconds - start, 1000)});
         var output: std.ArrayList(Diagnostic) = .empty;
@@ -707,6 +719,7 @@ pub const LanguageService = struct {
             .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 1 } },
             .severity = .err,
             .message = try self.allocator.dupe(u8, switch (err) {
+                error.OutOfMemory => "semantic analysis exceeded its memory budget; syntax features remain available",
                 error.FileNotFound => "failed to load an imported module",
                 error.ImportCycle => "import cycle detected",
                 else => "failed to load module graph",
@@ -2038,4 +2051,31 @@ test "LSP classifies implement and defer as keywords with exact lengths" {
     try std.testing.expectEqual(TOKEN_INDEX.keyword, classifyToken(deferred).?.type_index);
     try std.testing.expectEqual(@as(u32, 9), tokenLength(implementation, code, 0));
     try std.testing.expectEqual(@as(u32, 5), tokenLength(deferred, code, 10));
+}
+
+test "LSP semantic memory exhaustion preserves syntax and recovers on the next request" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "Point := (.x: Int32)\nmain := () -> () {}\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{path});
+    defer std.testing.allocator.free(uri);
+    service.analysis_memory_limit = 1;
+    const limited = try service.openDocument(uri, path, 1, code);
+    defer limited.deinit();
+    try std.testing.expectEqual(@as(usize, 1), limited.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, limited.items[0].message, "memory budget") != null);
+    try std.testing.expect(service.snapshot == null);
+    var symbols = try service.documentSymbols(uri);
+    defer symbols.deinit();
+    try std.testing.expect(symbols.items.len != 0);
+    service.analysis_memory_limit = 512 * 1024 * 1024;
+    const recovered = try service.changeDocument(uri, path, 2, code);
+    defer recovered.deinit();
+    try std.testing.expectEqual(@as(usize, 0), recovered.items.len);
+    try std.testing.expect(service.snapshot != null);
 }
