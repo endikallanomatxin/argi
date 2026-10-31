@@ -2249,7 +2249,9 @@ test "usecase_tests/03_word_count" {
     }
     try expectEqualStrings("", failure.stdout);
     try expect(std.mem.indexOf(u8, failure.stderr, "read_all_limited") != null);
-    try expect(std.mem.indexOf(u8, failure.stderr, "first.txt") != null);
+    // Directory enumeration does not promise which oversized file fails first.
+    try expect(std.mem.indexOf(u8, failure.stderr, "first.txt") != null or
+        std.mem.indexOf(u8, failure.stderr, "second.txt") != null);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
