@@ -6,8 +6,7 @@ Tests are declared explicitly at top level with the same named-function syntax
 used by `main`, prefixed with `test`. The assignment precedes the signature:
 
 ```rg
-test my_test := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
-    assume error_tracer
+test my_test := () -> !() {
     testing.expect(true)!
 }
 ```
@@ -57,82 +56,45 @@ Current behavior:
 
 ### `core.testing`
 
-The official testing helpers live in `core/testing/testing.rg`.
+Basic assertions return plain errors and need no tracer or `System`:
 
-Current helpers:
-
-- `testing.expect(...)`
-- `testing.expect_equal(...)`
-- `testing.expect_error(...)`
-- `testing.fail(...)`
-- `testing.skip(...)`
-
-They compose with Argi’s existing `Errable` and `!` flow.
-
-Examples:
+- `testing.expect(condition)` checks a Boolean condition.
+- `testing.expect_equal(expected, actual)` compares values through equality.
+- `testing.expect_error(.expected_reason, .actual_result)` checks a failure's reason.
+- `testing.expect_equal_strings`, `expect_equal_views` and `expect_equal_bytes`
+  compare text or initialized views.
+- `testing.fail()` returns `..test_failed`; `testing.skip()` returns `..test_skipped`.
 
 ```rg
-test simple_pass := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
-    assume error_tracer
+test equality := () -> !() {
     testing.expect(true)!
+    testing.expect_equal(42, 42)!
 }
 ```
+
+Each helper also has an explicit diagnostic form ending in `_with_trace`.
+These forms require `error_tracer`, resolve it through ordinary explicit or
+lexically assumed arguments, and return errors carrying its trace. They can
+include a message and detailed mismatch information. No default tracer is
+provided and no trace is implicitly discarded.
 
 ```rg
-test equality := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
+test detailed_equality := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
-    testing.expect_equal(.expected = 1, .actual = 1)!
+    testing.expect_equal_with_trace(42, 42, .message = "vertex count")!
 }
 ```
 
-```rg
-..some_reason
+Both forms preserve the same assertion failure and skip reasons. A plain test
+uses `!` to propagate ordinary failures. A traced test promotes those failures
+explicitly with `!! "context"`; forwarding an existing trace with `!` adds no
+context. Prefer a context describing the test's intent over repeating each
+operation's name. Tests that inspect error traces use the diagnostic forms.
 
-some_fallible_call := () -> (.result: Errable#(Int32, (..some_reason))) {
-    result = ..error(.reason = ..some_reason)
-}
-
-test expected_error := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
-    assume error_tracer
-    call_result := some_fallible_call()
-    testing.expect_error(.expected_reason = ..some_reason, .actual_result = call_result)!
-}
-```
-
-### Failures, skips, and propagated program errors
-
-There is a distinction between testing-framework outcomes and real program errors that happen inside a test.
-
-Testing-framework layer:
-
-- assertion/helper failure -> `..test_failed`
-- explicit skip -> `..test_skipped`
-
-Program-under-test layer:
-
-- ordinary errors can propagate through `!` in a plain test; a traced test
-  explicitly promotes them with `!! "context"`, preserving their reason
-
-So:
-
-- `testing.expect(false)!` fails the test with `..test_failed`
-- `testing.skip("not implemented yet")!` skips the test with `..test_skipped`
-- `testing.expect_error(...)` fails with `..test_failed` when the actual result succeeds unexpectedly or fails with a different reason
-- `some_fallible_call()!! "preparing test input"` adds diagnostic context while
-  preserving the original program error reason
-
-`testing.expect_error(...)` checks the actual error reason, not merely that an error happened.
-
-### Trace and context
-
-Testing helpers reuse the normal error trace/context machinery.
-
-That means:
-
-- helper-originated failures produce normal traced errors
-- `expect_error` mismatch messages appear as normal test failure context
-- `!` preserves an existing trace without adding entries
-- `!! "context"` explicitly creates or extends diagnostic context
+`expect_error` examines the actual reason, not merely whether an error occurred.
+Its result is a normal assertion error even when the inspected result was traced;
+it consumes that result explicitly instead of converting or propagating its error.
+Unexpected successful owning values receive ordinary lexical cleanup.
 
 ### `once`
 
@@ -159,22 +121,22 @@ This is intentional:
 
 ### Equality diagnostics
 
-`expect` and `expect_equal` accept an optional bounded `.message: StringView`
+`expect_with_trace` and `expect_equal_with_trace` accept a bounded `.message: StringView`
 that supplies caller context. Integer, floating-point, and Boolean equality
 failures report the expected and actual values; other comparable types retain
 an ordinary equality failure message. Successful checks produce no output.
 
-`expect_equal_strings(.expected, .actual, .message)` compares complete byte
+`expect_equal_strings_with_trace(.expected, .actual, .message)` compares complete byte
 extents, including embedded NULs. Inputs may be two StringViews or two borrowed
-Strings. `expect_equal` also compares StringViews by their byte contents.
+Strings. `expect_equal_with_trace` also compares StringViews by their byte contents.
 Failures report the first differing byte index, expected and actual byte values
 (or `<end>` for a shorter input), and both lengths. Indices count bytes, not
 Unicode scalars or graphemes.
 
-`expect_equal_views(.expected, .actual, .message)` compares readonly initialized
+`expect_equal_views_with_trace(.expected, .actual, .message)` compares readonly initialized
 array views element by element. Element types must support equality. Failures
 report the first differing element index and both lengths. A differing length
-reports the common-prefix length as its index. `expect_equal_bytes` additionally
+reports the common-prefix length as its index. `expect_equal_bytes_with_trace` additionally
 reports byte values or `<end>`. Empty views require no data pointer.
 
 Assertion diagnostics use bounded stack storage and require no allocator.

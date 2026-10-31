@@ -14,5 +14,5 @@ test expected_error_unexpected_ok := (.system: System, .error_tracer: $&Virtual#
     assume error_tracer
 
     call_result := some_fallible_call()
-    testing.expect_error(.expected_reason = ..some_reason, .actual_result = ~call_result)!
+    testing.expect_error_with_trace(.expected_reason = ..some_reason, .actual_result = ~call_result)!
 }

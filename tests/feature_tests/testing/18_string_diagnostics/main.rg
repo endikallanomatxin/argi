@@ -1,7 +1,7 @@
 test string_mismatch := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
-    testing.expect_equal_strings(
+    testing.expect_equal_strings_with_trace(
         .expected = "abc", .actual = "axc", .message = "checking payload"
     )!
 }
@@ -9,13 +9,13 @@ test string_mismatch := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)
 test string_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
-    testing.expect_equal_strings(.expected = "abc", .actual = "ab")!
+    testing.expect_equal_strings_with_trace(.expected = "abc", .actual = "ab")!
 }
 
 test string_empty := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
-    testing.expect_equal_strings(.expected = "", .actual = "x")!
+    testing.expect_equal_strings_with_trace(.expected = "", .actual = "x")!
 }
 
 test string_embedded_nul := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
@@ -23,5 +23,5 @@ test string_embedded_nul := (.system: System, .error_tracer: $&Virtual#(ErrorTra
 
     expected :: [3]UInt8 = (65, 0, 90)
     actual :: [3]UInt8 = (65, 0, 91)
-    testing.expect_equal_strings(.expected = "A\0Z", .actual = "A\0[")!
+    testing.expect_equal_strings_with_trace(.expected = "A\0Z", .actual = "A\0[")!
 }

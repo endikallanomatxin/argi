@@ -11,10 +11,8 @@ const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_functions_mod = @import("generic_functions.zig");
 const contract_mod = @import("contracts.zig");
-const error_mod = @import("errors.zig");
 
 pub const PendingCallStage = enum {
-    errors,
     ordinary,
     generic,
     constructor,
@@ -38,7 +36,6 @@ pub const Resolver = struct {
     constructors: *constructor_mod.Resolver,
     contracts: *contract_mod.Resolver,
     control: *control_mod.Resolver,
-    errors: *error_mod.Resolver,
     profile_io: ?std.Io = null,
     pending_call_stages: [@typeInfo(PendingCallStage).@"enum".fields.len]PendingCallStageStats = @splat(.{}),
 
@@ -111,10 +108,6 @@ pub const Resolver = struct {
             }
         }
         var stage_start = self.profileTimestamp();
-        const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
-        self.profilePendingStage(.errors, stage_start, error_result);
-        if (!error_result.allowsFallback()) return error_result;
-        stage_start = self.profileTimestamp();
         const core_result = try self.core.tryResolve(module_index, module, o, operation);
         self.profilePendingStage(.ordinary, stage_start, core_result);
         if (core_result == .resolved or core_result == .invalid) return core_result;

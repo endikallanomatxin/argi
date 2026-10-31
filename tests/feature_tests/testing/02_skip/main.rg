@@ -1,5 +1,5 @@
 test skipped_case := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
     assume error_tracer
 
-    testing.skip(.message = "not implemented yet")!
+    testing.skip_with_trace(.message = "not implemented yet")!
 }

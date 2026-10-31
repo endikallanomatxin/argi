@@ -11,13 +11,13 @@ test named_optional_view_return := (.system: System, .error_tracer: $&Virtual#(E
 
     name ::= file_name(.self = &path).value
     match name {
-        ..some payload { testing.expect(.condition = payload.value == "file.txt")! }
-        ..none { testing.fail(.message = "missing file name")! }
+        ..some payload { testing.expect_with_trace(.condition = payload.value == "file.txt")! }
+        ..none { testing.fail_with_trace(.message = "missing file name")! }
     }
 
     extension_view ::= extension(.self = &path).value
     match extension_view {
-        ..some payload { testing.expect(.condition = payload.value == ".txt")! }
-        ..none { testing.fail(.message = "missing extension")! }
+        ..some payload { testing.expect_with_trace(.condition = payload.value == ".txt")! }
+        ..none { testing.fail_with_trace(.message = "missing extension")! }
     }
 }

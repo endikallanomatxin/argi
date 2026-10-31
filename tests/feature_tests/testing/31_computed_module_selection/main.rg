@@ -6,7 +6,7 @@ main := () -> () { missing_in_main() }
     test selected := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
         assume error_tracer
 
-        testing.expect(.condition = true)!
+        testing.expect_with_trace(.condition = true)!
     }
 } #else {
     missing := import ("./does_not_exist")

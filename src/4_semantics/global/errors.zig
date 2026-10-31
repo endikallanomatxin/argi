@@ -324,56 +324,6 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn tryResolveCall(
-        self: *Resolver,
-        module_index: usize,
-        module: *const module_sg.ModuleSemanticGraph,
-        o: globalizer.Offsets,
-        operation: module_entities.PendingOperation,
-    ) !resolution.Result {
-        _ = module_index;
-        const value = switch (operation) {
-            .resolve_call => |call| call,
-            else => return .not_applicable,
-        };
-        const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (!std.mem.eql(u8, module.text(reference.name), "expect_error")) return .not_applicable;
-        const qualifier = reference.module_path orelse return .not_applicable;
-        if (!std.mem.eql(u8, module.text(qualifier), "testing")) return .not_applicable;
-
-        const input = globalizer.globalNode(o, value.input);
-        const literal = switch (self.graph.node(input).content) {
-            .struct_value_literal => |item| item,
-            else => return .deferred,
-        };
-        var expected_reason: ?global_sg.GlobalNodeId = null;
-        var actual_result: ?global_sg.GlobalNodeId = null;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (std.mem.eql(u8, self.graph.text(field.name), "expected_reason")) expected_reason = field.value;
-            if (std.mem.eql(u8, self.graph.text(field.name), "actual_result")) actual_result = field.value;
-        }
-        const expected = expected_reason orelse return error.InvalidTestingExpectErrorArguments;
-        const actual = actual_result orelse return error.InvalidTestingExpectErrorArguments;
-        const actual_ty = self.graph.node(actual).ty orelse return .deferred;
-        const error_variant = global_types.findVariant(self.graph, actual_ty, "error") orelse return error.TestingExpectErrorRequiresErrable;
-        const error_payload = error_variant.variant.payload_type orelse return error.TestingExpectErrorRequiresErrable;
-        const reason = global_types.findField(self.graph, error_payload, "reason") orelse return error.TestingExpectErrorRequiresReason;
-        if (self.graph.node(expected).ty == null) {
-            try self.graph.setNodeType(self.allocator, expected, reason.field.ty);
-            return .deferred;
-        }
-        const expected_literal = switch (self.graph.node(expected).content) {
-            .choice_literal => |choice| choice,
-            else => return .deferred,
-        };
-        if (!global_types.equal(self.graph, expected_literal.choice_type, reason.field.ty)) return error.IncompatibleExpectedErrorReason;
-
-        // Supply the expected literal's context, then let the ordinary core
-        // function perform matching, diagnostics, tracing and cleanup. Neither
-        // backend needs a testing-specific execution operation.
-        return .not_applicable;
-    }
-
     /// Contextual literal typing can finish a nominal payload after propagation
     /// first resolves. Keep transparent result unwrapping tied to the final
     /// payload identity rather than retaining its provisional structural shape.

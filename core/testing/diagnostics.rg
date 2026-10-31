@@ -56,7 +56,7 @@ _testing_failure := (
     result = ..ok Void()
 }
 
-fail := (.message: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+fail_with_trace := (.message: StringView, .error_tracer: $&Virtual#(ErrorTracer)) -> (
     .result : Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))
 ) {
     assume error_tracer
@@ -211,12 +211,12 @@ _assert_owned_strings := (
 ) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
     assume error_tracer
 
-    result = expect_equal_strings(
+    result = expect_equal_strings_with_trace(
         .expected = view(expected), .actual = view(actual), .message = message
     )
 }
 
-expect_equal_views := #(.t: Type) (
+expect_equal_views_with_trace := #(.t: Type) (
     .expected     : ArrayView#(.t: t),
     .actual       : ArrayView#(.t: t),
     .message      : StringView              = "",
@@ -255,7 +255,7 @@ expect_equal_views := #(.t: Type) (
     result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-expect_equal_bytes := (
+expect_equal_bytes_with_trace := (
     .expected     : ArrayView#(.t: UInt8),
     .actual       : ArrayView#(.t: UInt8),
     .message      : StringView              = "",

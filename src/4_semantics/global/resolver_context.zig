@@ -175,7 +175,6 @@ pub const Context = struct {
             .constructors = &self.constructors,
             .contracts = &self.contracts,
             .control = &self.control,
-            .errors = &self.errors,
             .profile_io = profile_io,
         };
         self.ownership = .{

@@ -2,11 +2,11 @@ test collections_text_array_slice := (.system: System, .error_tracer: $&Virtual#
     assume error_tracer
 
     arr :: [3]Int32 = (10, 20, 30)
-    testing.expect(.condition = length(.value = arr) == 3)!
-    testing.expect(.condition = arr[0] == 10)!
+    testing.expect_with_trace(.condition = length(.value = arr) == 3)!
+    testing.expect_with_trace(.condition = arr[0] == 10)!
 
     arr[1] = 99
-    testing.expect(.condition = arr[1] == 99)!
+    testing.expect_with_trace(.condition = arr[1] == 99)!
 }
 
 test collections_text_format_slice := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
@@ -21,10 +21,10 @@ test collections_text_format_slice := (.system: System, .error_tracer: $&Virtual
             text ::= ~format_payload
             defer deinit(.self = $&text)
             view ::= view(.self = &text)
-            testing.expect(.condition = view == "7")!
+            testing.expect_with_trace(.condition = view == "7")!
         }
         ..error _ {
-            testing.fail(.message = "format failed")!
+            testing.fail_with_trace(.message = "format failed")!
         }
     }
 }

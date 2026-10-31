@@ -10,18 +10,18 @@ test language_regression_slice := (.system: System, .error_tracer: $&Virtual#(Er
     missing: ?Int32 = ..none
     left ::= present unwrap_or 1
     right ::= missing unwrap_or 7
-    testing.expect_equal(.expected = 12, .actual = left + right)!
+    testing.expect_equal_with_trace(.expected = 12, .actual = left + right)!
 
     side_effect :: Int32 = 0
     if true or increment_and_is_true(.value = $&side_effect) {
     }
-    testing.expect_equal(.expected = 0, .actual = side_effect)!
+    testing.expect_equal_with_trace(.expected = 0, .actual = side_effect)!
 
     if false and increment_and_is_true(.value = $&side_effect) {
     }
-    testing.expect_equal(.expected = 0, .actual = side_effect)!
+    testing.expect_equal_with_trace(.expected = 0, .actual = side_effect)!
 
     if false or increment_and_is_true(.value = $&side_effect) {
     }
-    testing.expect_equal(.expected = 1, .actual = side_effect)!
+    testing.expect_equal_with_trace(.expected = 1, .actual = side_effect)!
 }
