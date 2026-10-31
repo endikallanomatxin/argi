@@ -31,9 +31,26 @@ pub const Options = struct {
     selected_test_name: ?[]const u8 = null,
     root_selection: RootSelection = .program,
     exhaustive_function_bodies: bool = true,
+    // Editor units check this module's bodies and their ordinary dependencies.
+    // Imported declarations remain visible without becoming body roots.
+    body_module_dir: ?[]const u8 = null,
     diagnostics: ?*diagnostics_mod.Diagnostics = null,
     profile_io: ?std.Io = null,
 };
+
+fn bodyRoots(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, options: Options) !reachability_mod.FunctionSet {
+    if (options.body_module_dir) |path| return reachability_mod.moduleRoots(allocator, graph, path);
+    return reachability_mod.executionRoots(allocator, graph, options.selected_test_name);
+}
+
+fn expandBodyRoots(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, functions: *reachability_mod.FunctionSet, options: *const Options) !bool {
+    const added = if (options.root_selection == .program and options.body_module_dir != null)
+        try reachability_mod.includeModuleRoots(graph, options.body_module_dir.?, functions)
+    else
+        false;
+    const expanded = try reachability_mod.expand(allocator, graph, functions);
+    return added or expanded;
+}
 
 pub const SetupStage = enum { external_types, conformance_registration, associated_types, known_types, sugar_types, worklists, conformance_validation, roots };
 const setup_stage_count = @typeInfo(SetupStage).@"enum".fields.len;
@@ -668,7 +685,7 @@ pub const Session = struct {
         if (options.root_selection == .requests_only) {
             self.reachable = reachability_mod.FunctionSet.init(allocator);
         } else if (!options.exhaustive_function_bodies) {
-            self.reachable = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
+            self.reachable = try bodyRoots(allocator, &relocation.graph, options);
         }
         profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
         self.phase = .ready;
@@ -709,7 +726,7 @@ pub const Session = struct {
         const next: ?reachability_mod.FunctionSet = if (self.options.root_selection == .requests_only)
             reachability_mod.FunctionSet.init(self.allocator)
         else if (!self.options.exhaustive_function_bodies)
-            try reachability_mod.executionRoots(self.allocator, &self.relocation.graph, self.options.selected_test_name)
+            try bodyRoots(self.allocator, &self.relocation.graph, self.options)
         else
             null;
         if (self.reachable) |*previous| previous.deinit();
@@ -780,7 +797,7 @@ pub const Session = struct {
         try contracts.validateParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
         if (self.reachable) |*set| if (self.options.root_selection == .program) {
-            var roots = try reachability_mod.executionRoots(allocator, &self.relocation.graph, self.options.selected_test_name);
+            var roots = try bodyRoots(allocator, &self.relocation.graph, self.options);
             defer roots.deinit();
             // Root selection includes newly added entry and test declarations;
             // retain the existing closure through the ordinary expansion pass.
@@ -1365,7 +1382,7 @@ fn advanceResolution(
             }) changed = true;
             if (reachable) |set| {
                 const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
-                const expanded = try reachability_mod.expand(allocator, graph, set);
+                const expanded = try expandBodyRoots(allocator, graph, set, options);
                 if (reach_profile) |m| m.finish(expanded);
                 if (expanded) changed = true;
             }
@@ -1457,7 +1474,7 @@ fn advanceResolution(
             if (try staged_execution.materialize()) changed = true;
             if (reachable) |set| {
                 const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
-                const expanded = try reachability_mod.expand(allocator, graph, set);
+                const expanded = try expandBodyRoots(allocator, graph, set, options);
                 if (reach_profile) |m| m.finish(expanded);
                 if (expanded) changed = true;
             }
@@ -1482,7 +1499,7 @@ fn advanceResolution(
         }
         const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
         const reached_cleanup = if (reachable) |set|
-            try reachability_mod.expand(allocator, graph, set)
+            try expandBodyRoots(allocator, graph, set, options)
         else
             false;
         if (reach_profile) |m| m.finish(reached_cleanup);

@@ -48,7 +48,12 @@ pub const semantic_token_modifiers = [_][]const u8{ "declaration", "readonly" };
 pub const Severity = enum(u8) { err = 1, warn = 2, info = 3, hint = 4 };
 pub const Position = struct { line: u32, character: u32 };
 pub const Range = struct { start: Position, end: Position };
-pub const Diagnostic = struct { range: Range, severity: Severity, message: []const u8 };
+pub const Diagnostic = struct {
+    range: Range,
+    severity: Severity,
+    message: []const u8,
+    path: ?[]const u8 = null,
+};
 pub const InlayHint = struct { position: Position, label: []const u8 };
 pub const Hover = struct { range: Range, contents: []const u8 };
 
@@ -123,7 +128,10 @@ pub const DiagnosticsResult = struct {
     }
     pub fn deinit(self: DiagnosticsResult) void {
         if (!self.owned) return;
-        for (self.items) |item| self.allocator.free(item.message);
+        for (self.items) |item| {
+            self.allocator.free(item.message);
+            if (item.path) |path| self.allocator.free(path);
+        }
         self.allocator.free(self.items);
     }
 };
@@ -220,7 +228,7 @@ const Snapshot = struct {
     diagnostics: []const Diagnostic = &.{},
 
     fn deinit(self: *Snapshot, allocator: std.mem.Allocator) void {
-        if (self.analysis) |*analysis| analysis.deinit(self.arena.allocator());
+        if (self.analysis) |*analysis| analysis.deinit(self.budget.allocator());
         self.arena.deinit();
         allocator.destroy(self);
     }
@@ -598,14 +606,24 @@ pub const LanguageService = struct {
         const snapshot = self.ensureSnapshot(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
         var output = std.array_list.Managed(Diagnostic).init(self.allocator);
         errdefer {
-            for (output.items) |item| self.allocator.free(item.message);
+            for (output.items) |item| {
+                self.allocator.free(item.message);
+                if (item.path) |source| self.allocator.free(source);
+            }
             output.deinit();
         }
-        for (snapshot.diagnostics) |entry| try output.append(.{
-            .range = entry.range,
-            .severity = entry.severity,
-            .message = try self.allocator.dupe(u8, entry.message),
-        });
+        for (snapshot.diagnostics) |entry| {
+            const message = try self.allocator.dupe(u8, entry.message);
+            errdefer self.allocator.free(message);
+            const source_path = if (entry.path) |source| try self.allocator.dupe(u8, source) else null;
+            errdefer if (source_path) |source| self.allocator.free(source);
+            try output.append(.{
+                .range = entry.range,
+                .severity = entry.severity,
+                .message = message,
+                .path = source_path,
+            });
+        }
         return .{ .allocator = self.allocator, .items = try output.toOwnedSlice(), .owned = true };
     }
 
@@ -636,7 +654,7 @@ pub const LanguageService = struct {
         };
     }
 
-    // Reuse the compiler's declaration-only root selection when exhaustive
+    // Reuse the compiler's declaration-only root selection when module-focused
     // body checking exceeds the editor budget. Retain that result so hover and
     // highlighting do not repeatedly retry the same oversized analysis.
     fn buildSnapshot(self: *LanguageService, path: []const u8, collected: []const sf.SourceFile, declarations_only: bool) !*Snapshot {
@@ -658,9 +676,20 @@ pub const LanguageService = struct {
             owned.code = try work.dupe(u8, source.code);
         }
         snapshot.files = files;
+        // Temporary resolver and checker buffers must actually be freed.
+        // Backing them with the retained arena accumulates every speculative
+        // attempt until the document changes, despite their local deinit calls.
+        const analysis_allocator = snapshot.budget.allocator();
         var diagnostics = try diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = !declarations_only, .root_selection = if (declarations_only) .requests_only else .program } });
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, self.io, &diagnostics, .{
+            .module_cache = &self.module_cache,
+            .semantizing = .{
+                .exhaustive_function_bodies = false,
+                .body_module_dir = if (declarations_only) null else std.fs.path.dirname(path),
+                .root_selection = if (declarations_only) .requests_only else .program,
+            },
+        });
         defer pipeline.deinit();
         const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         _ = pipeline.semantizeGlobalFiles(files) catch |err| switch (err) {
@@ -671,8 +700,8 @@ pub const LanguageService = struct {
         log.debug("LSP global semantizing: {d} us", .{@divTrunc(std.Io.Timestamp.now(self.io, .boot).nanoseconds - start, 1000)});
         var output: std.ArrayList(Diagnostic) = .empty;
         for (diagnostics.list.items) |entry| {
-            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), path)) continue;
             try output.append(work, .{
+                .path = try work.dupe(u8, diagnostics.source_db.path(entry.loc.file)),
                 .range = tokenRange(&diagnostics.source_db, entry.loc, 1),
                 .severity = .err,
                 .message = try work.dupe(u8, entry.msg),
@@ -691,12 +720,14 @@ pub const LanguageService = struct {
             snapshot.analysis = .{
                 .graph = graph,
                 .index = .{},
-                .source_db = try diagnostics.source_db.clone(work),
-                .tokens = try (pipeline.tokensForPath(path) orelse token.View{}).clone(work),
+                .source_db = .{},
+                .tokens = .{},
             };
             const analysis = &snapshot.analysis.?;
-            analysis.index = try editor_index.Index.build(work, &analysis.graph);
-            try augmentTypeOccurrences(work, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
+            analysis.source_db = try diagnostics.source_db.clone(analysis_allocator);
+            analysis.tokens = try (pipeline.tokensForPath(path) orelse token.View{}).clone(analysis_allocator);
+            analysis.index = try editor_index.Index.build(analysis_allocator, &analysis.graph);
+            try augmentTypeOccurrences(analysis_allocator, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
             analysis.index.sort();
         }
         self.snapshot = snapshot;
@@ -2136,4 +2167,72 @@ test "LSP declaration snapshots retain navigation and avoid repeated body checks
     try std.testing.expectEqualStrings(path, target.path);
     try std.testing.expectEqual(@as(usize, 1), service.analysis_builds);
     try std.testing.expectEqual(@as(usize, 2), service.analysis_hits);
+}
+
+test "LSP checks sibling bodies while unused imported bodies remain dormant" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const main_code = "dependency := import(\"./dep\")\nmain := () -> () { helper() }\n";
+    const helper_code = "helper := () -> (.value: Int32) { value = 7 }\n";
+    const unrelated_code = "unrelated := () -> () {}\n";
+    try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dep/main.rg", .data = "unused := () -> () { missing_imported() }\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = main_code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "helper.rg", .data = helper_code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "unrelated.rg", .data = unrelated_code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer allocator.free(path);
+    const unrelated_path = try @import("../test_support.zig").tmpFilePath(&tmp, "unrelated.rg");
+    defer allocator.free(unrelated_path);
+    var service = LanguageService.init(allocator, std.testing.io);
+    defer service.deinit();
+    const checked = try service.openDocument("file:///main.rg", path, 1, main_code);
+    defer checked.deinit();
+    try std.testing.expectEqual(@as(usize, 0), checked.items.len);
+    const graph = &service.snapshot.?.analysis.?.graph;
+    var found_helper = false;
+    var found_unrelated = false;
+    for (graph.functions.items) |function| {
+        const name = graph.text(graph.declaration(function.declaration).name);
+        if (std.mem.eql(u8, name, "helper")) {
+            found_helper = true;
+            try std.testing.expect(function.body != null);
+        } else if (std.mem.eql(u8, name, "unrelated")) {
+            found_unrelated = true;
+        }
+    }
+    try std.testing.expect(found_helper and found_unrelated);
+    // An unused sibling's body is checked even while main.rg remains open.
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "unrelated.rg", .data = "unrelated := () -> () { missing() }\n" });
+    const invalid = try service.changeDocument("file:///main.rg", path, 2, main_code);
+    defer invalid.deinit();
+    var reported = false;
+    for (invalid.items) |diagnostic| if (std.mem.indexOf(u8, diagnostic.message, "missing") != null) {
+        try std.testing.expectEqualStrings(unrelated_path, diagnostic.path.?);
+        reported = true;
+    };
+    try std.testing.expect(reported);
+}
+
+test "LSP module roots enforce once use independently without main" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "setup := once () -> () {}\nfirst := () -> () { setup() }\nsecond := () -> () { setup() }\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "library.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "library.rg");
+    defer a.free(path);
+    var service = LanguageService.init(a, std.testing.io);
+    defer service.deinit();
+    const checked = try service.openDocument("file:///library.rg", path, 1, code);
+    defer checked.deinit();
+    try std.testing.expectEqual(@as(usize, 0), checked.items.len);
+    const invalid = try service.changeDocument("file:///library.rg", path, 2, code ++ "duplicate := () -> () { setup() setup() }\n");
+    defer invalid.deinit();
+    var reported = false;
+    for (invalid.items) |diagnostic| if (std.mem.indexOf(u8, diagnostic.message, "consumed more than once") != null) {
+        reported = true;
+    };
+    try std.testing.expect(reported);
 }

@@ -42,6 +42,10 @@ pub const Infer = struct {
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
     allocator: std.mem.Allocator,
+    // Persistent effects and cached descriptors are independent of the
+    // current evaluation's disposable fact arena and the engine's tables.
+    storage_allocator: std.mem.Allocator,
+    scratch_allocator: ?std.mem.Allocator = null,
     graph: *const graph_mod.GlobalSemanticGraph,
     engine: *summaries.Engine,
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
@@ -80,6 +84,7 @@ pub const Infer = struct {
             .requested_selectors = .init(allocator),
             .cleanup_activations = .init(allocator),
             .allocator = allocator,
+            .storage_allocator = allocator,
             .graph = graph,
             .engine = engine,
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect).init(allocator),
@@ -169,7 +174,7 @@ pub const Infer = struct {
             _ = self.cache_reused.remove(function);
             self.evaluations += 1;
             self.engine.beginInference(function);
-            const next = self.inferFunction(function) catch |err| {
+            const next = self.inferPublishedFunction(function) catch |err| {
                 self.engine.current = null;
                 return err;
             };
@@ -189,6 +194,10 @@ pub const Infer = struct {
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
         if (registry.contract_input_count == null) return error.MissingVirtualSafetyContract;
         const declared = registry.safety_contract orelse return error.MissingVirtualSafetyContract;
+        // Cached virtual effects outlive the current function evaluation.
+        const temporary = self.allocator;
+        self.allocator = self.storage_allocator;
+        defer self.allocator = temporary;
         // Only the declaration and fixed signature determine virtual effects.
         // Concrete bodies are checked separately for conformance.
         const contract = try contracts.fromDeclaration(self.allocator, declared);
@@ -630,6 +639,32 @@ pub const Infer = struct {
         return result;
     }
 
+    // Fixed-point evaluations produce disposable intermediate effects. Only
+    // changed summaries survive in the engine; a rejected approximation must
+    // not retain another copy of its complete analysis history.
+    fn inferPublishedFunction(self: *Infer, function: graph_mod.GlobalFunctionId) !facts.SafetySummary {
+        const parent = self.allocator;
+        const scratch = self.scratch_allocator orelse parent;
+        var arena = std.heap.ArenaAllocator.init(scratch);
+        defer arena.deinit();
+        self.allocator = arena.allocator();
+        defer {
+            self.allocator = parent;
+            self.bindings.clearRetainingCapacity();
+            self.place_bindings.clearRetainingCapacity();
+            self.local_address_bindings.clearRetainingCapacity();
+            self.addressed_outputs.clearRetainingCapacity();
+            self.domain_invalidations.clearRetainingCapacity();
+            self.unbound_opaque_dependencies = .{};
+        }
+        const next = try self.inferFunction(function);
+        if (self.engine.summaries.get(function)) |previous|
+            if (summaries.summaryEql(previous, next)) return previous;
+        var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = self.storage_allocator, .scratch = scratch };
+        defer copy.deinit();
+        return copy.value(facts.SafetySummary, next);
+    }
+
     fn inferFunction(self: *Infer, function_id: graph_mod.GlobalFunctionId) !facts.SafetySummary {
         const function = self.graph.function(function_id);
         const stored = self.engine.summaries.get(function_id) orelse return error.MissingSafetySummary;
@@ -659,7 +694,7 @@ pub const Infer = struct {
         // Drop activation depends only on the finalized GlobalSG. Cache it
         // across fixed-point reevaluations, independently of inferred effects.
         if (!self.cleanup_activations.contains(function_id)) {
-            var activation = try cleanup_activation.collect(self.allocator, self.graph, function_id);
+            var activation = try cleanup_activation.collect(self.storage_allocator, self.graph, function_id);
             errdefer activation.deinit();
             try self.cleanup_activations.put(function_id, activation);
         }
@@ -6123,6 +6158,7 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     var engine = summaries.Engine.init(summary_allocator);
     defer engine.deinit();
     var infer = Infer.init(summary_allocator, &graph, &engine);
+    infer.scratch_allocator = allocator;
     defer infer.deinit();
     try infer.inferSafetySummariesFixedPoint();
     try std.testing.expect(infer.evaluations < graph.functions.items.len);
@@ -6140,6 +6176,14 @@ test "output summaries reach a fixed point through reverse call dependencies" {
     try std.testing.expectEqual(@as(usize, 1), wrapper.required_live_inputs.len);
     try std.testing.expectEqual(@as(u32, 0), wrapper.required_live_inputs[0].input_index);
     try expectGlobalReseedingStable(&infer);
+    // Stable evaluations release their temporary facts and reuse the published
+    // approximation rather than growing the summary arena on every attempt.
+    const retained_capacity = arena.queryCapacity();
+    for (0..16) |_| {
+        const repeated = try infer.inferPublishedFunction(@enumFromInt(0));
+        try std.testing.expect(repeated.outputs.ptr == wrapper.outputs.ptr);
+    }
+    try std.testing.expectEqual(retained_capacity, arena.queryCapacity());
 
     // Add a back edge while preserving identity's local source of effects.
     // Reversing the function IDs then exercises both initial scheduling orders.
@@ -6159,6 +6203,7 @@ test "output summaries reach a fixed point through reverse call dependencies" {
         var recursive_engine = summaries.Engine.init(summary_allocator);
         defer recursive_engine.deinit();
         var recursive_infer = Infer.init(summary_allocator, &graph, &recursive_engine);
+        recursive_infer.scratch_allocator = allocator;
         defer recursive_infer.deinit();
         try recursive_infer.inferSafetySummariesFixedPoint();
         for (0..2) |raw| {

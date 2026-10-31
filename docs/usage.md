@@ -70,8 +70,13 @@ are specified but not implemented yet.
 The LSP provides diagnostics, semantic highlighting, hover, completion,
 document symbols, and navigation to definitions.
 
-Each semantic analysis has a 512 MiB allocation budget. If exhaustive body
-checking exceeds it, the server releases that attempt and retains a bounded
+The LSP checks all files in the opened folder-level module and follows the
+functions they call. Imported modules provide declarations without making
+every unused body a checking root. This also applies to libraries without
+`main`. Diagnostics retain their source file, including errors in siblings.
+
+Each semantic analysis has a 512 MiB allocation budget. If body checking
+exceeds it, the server releases that attempt and retains a bounded
 declaration analysis for navigation and type information. A warning identifies
 this partial result; it is reused until the sources change. Hover can show the
 written declaration when full inference is unavailable. If declaration analysis

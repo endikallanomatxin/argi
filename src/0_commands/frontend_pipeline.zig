@@ -24,6 +24,7 @@ pub const FrontendPipeline = struct {
         selected_test_name: ?[]const u8 = null,
         implicit_testing_module_dir: ?[]const u8 = null,
         exhaustive_function_bodies: bool = false,
+        body_module_dir: ?[]const u8 = null,
         root_selection: global_semantizer.RootSelection = .program,
     };
 
@@ -60,6 +61,7 @@ pub const FrontendPipeline = struct {
     global_unit: ?@import("../4_semantics/global/reachability.zig").FunctionSet = null,
     global_safety_stats: global_safety_checker.SafetyChecker.Stats = .{},
     safety_ctx: ?global_safety_checker.SafetyChecker = null,
+    safety_arena: ?*std.heap.ArenaAllocator = null,
     safety_ns: u64 = 0,
     module_semantizing_ns: u64 = 0,
     global_semantic_ns: u64 = 0,
@@ -443,10 +445,16 @@ pub const FrontendPipeline = struct {
     }
 
     fn analyzeGlobalSafety(self: *FrontendPipeline) !void {
-        if (self.safety_ctx) |*ctx| ctx.deinit();
-        self.safety_ctx = null;
+        self.clearSafety();
         const graph = &self.global_graph.?;
-        self.safety_ctx = global_safety_checker.SafetyChecker.init(self.allocator, self.diagnostics, graph);
+        // Immutable safety facts live for the checked unit. Branch tables use
+        // the reclaimable pipeline allocator instead of accumulating in it.
+        const arena = try self.allocator.create(std.heap.ArenaAllocator);
+        arena.* = .init(self.allocator);
+        self.safety_arena = arena;
+        self.safety_ctx = global_safety_checker.SafetyChecker.init(arena.allocator(), self.diagnostics, graph);
+        self.safety_ctx.?.state_allocator = self.allocator;
+        self.safety_ctx.?.graph_allocator = self.allocator;
         self.safety_ctx.?.unit = if (self.global_unit) |*unit| unit else null;
         if (self.options.collect_stats) self.safety_ctx.?.enableStats(self.io);
         const safety_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
@@ -626,6 +634,7 @@ pub const FrontendPipeline = struct {
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .body_module_dir = self.options.semantizing.body_module_dir,
             .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
             .profile_io = if (self.options.collect_stats) self.io else null,
@@ -633,7 +642,9 @@ pub const FrontendPipeline = struct {
         self.global_graph = result.graph;
         self.global_stats = result.stats;
         self.global_unit = result.unit;
-        try global_once_verify.verify(
+        if (self.options.semantizing.body_module_dir) |path| {
+            try global_once_verify.verifyModule(self.allocator, &self.global_graph.?, self.diagnostics, path);
+        } else try global_once_verify.verify(
             self.allocator,
             &self.global_graph.?,
             self.diagnostics,
@@ -660,6 +671,7 @@ pub const FrontendPipeline = struct {
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
+            .body_module_dir = self.options.semantizing.body_module_dir,
             .root_selection = self.options.semantizing.root_selection,
             .diagnostics = self.diagnostics,
         });
@@ -846,14 +858,23 @@ pub const FrontendPipeline = struct {
         return cache.finishHash(&hash);
     }
 
+    fn clearSafety(self: *FrontendPipeline) void {
+        if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.safety_ctx = null;
+        if (self.safety_arena) |arena| {
+            arena.deinit();
+            self.allocator.destroy(arena);
+        }
+        self.safety_arena = null;
+    }
+
     fn clearModuleGraphs(self: *FrontendPipeline) void {
         if (self.prepared_session) |session| {
             session.deinit();
             self.allocator.destroy(session);
             self.prepared_session = null;
         }
-        if (self.safety_ctx) |*ctx| ctx.deinit();
-        self.safety_ctx = null;
+        self.clearSafety();
         if (self.global_unit) |*unit| unit.deinit();
         self.global_unit = null;
         if (self.global_graph) |*graph| graph.deinit(self.allocator);

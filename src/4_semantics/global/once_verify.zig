@@ -22,6 +22,19 @@ pub fn verifyContinuation(allocator: std.mem.Allocator, graph: *const graph_mod.
     if (state.had_error) return error.Reported;
 }
 
+/// Editor roots are independent entrypoints, not sequential invocations.
+/// Check each with fresh once-use state and follow its resolved callees.
+pub fn verifyModule(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, path: []const u8) !void {
+    var roots = try @import("reachability.zig").moduleRoots(allocator, graph, path);
+    defer roots.deinit();
+    var entries = roots.values.keyIterator();
+    while (entries.next()) |entry| {
+        var uses = Uses.init(allocator);
+        defer uses.deinit();
+        try verifyContinuation(allocator, graph, diagnostics, entry.*, &uses);
+    }
+}
+
 pub fn verify(
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,

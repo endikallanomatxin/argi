@@ -240,6 +240,8 @@ pub const SafetyChecker = struct {
         defer engine.deinit();
         var inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
         defer inference.deinit();
+        var scratch_allocations = profile.AllocationCounter{ .child = self.state_allocator, .requested_bytes = &self.stats.summary_allocated_bytes };
+        inference.scratch_allocator = if (self.collect_stats) scratch_allocations.allocator() else self.state_allocator;
         inference.profile_io = self.profile_io;
         inference.unit = self.unit;
         inference.cache = self.summary_cache;
@@ -302,19 +304,26 @@ pub const SafetyChecker = struct {
                 return;
             }
         }
-        // Keep function-relative execution proofs separate from annotations
-        // already established for the continuation and other helper bodies.
-        var outer: ?@import("annotations.zig").Annotations = null;
-        if (self.body_cache != null) {
-            outer = self.annotations;
-            self.annotations = .{};
-            engine.beginInference(id);
+        // A body's transient facts are not part of another body's state.
+        // Publish only its annotations/proof, then release its branch history.
+        const parent = self.allocator;
+        const graph_allocator = self.graph_allocator;
+        var arena = std.heap.ArenaAllocator.init(self.state_allocator);
+        defer arena.deinit();
+        self.allocator = arena.allocator();
+        self.graph_allocator = graph_allocator orelse parent;
+        defer {
+            self.allocator = parent;
+            self.graph_allocator = graph_allocator;
         }
-        defer if (outer) |saved| {
+        var outer = self.annotations;
+        self.annotations = .{};
+        if (self.body_cache != null) engine.beginInference(id);
+        defer {
             self.annotations.deinit(self.allocator);
-            self.annotations = saved;
-            engine.current = null;
-        };
+            self.annotations = outer;
+            if (self.body_cache != null) engine.current = null;
+        }
         var namespace: facts.Tracker.RootNamespace = .{};
         defer namespace.deinit(self.allocator);
         var state = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
@@ -331,7 +340,7 @@ pub const SafetyChecker = struct {
             const cache = self.body_cache orelse return error.MissingSafetyBodyCache;
             if (!function.flags.is_comptime_entry) try cache.stage(batch, id, engine, &self.annotations);
         };
-        if (outer) |*saved| try saved.merge(self.allocator, &self.annotations);
+        try outer.merge(parent, &self.annotations);
         self.stats.bodies_checked += 1;
         if (self.collect_stats) self.stats.functions += 1;
     }
@@ -4018,6 +4027,9 @@ pub const SafetyChecker = struct {
     }
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
+        // Facts are immutable. Joining unchanged branch/loop values can retain
+        // their existing tree instead of reconstructing every aggregate leaf.
+        if (valueFactsEqual(left, right)) return left;
         const domains = try mergeDomainFacts(self.allocator, left.domains, right.domains);
         var choice_selectors: std.ArrayList(facts.CallChoiceSelector) = .empty;
         var choice_observations: std.ArrayList(facts.CallChoiceSelector) = .empty;
@@ -10387,4 +10399,28 @@ test "Safety primitive and summary acquisitions stay distinct across concrete br
     try std.testing.expectEqual(.available, joined.capabilityState(second));
     try checker.activate_conditional_capabilities(&joined, first);
     try std.testing.expectEqual(.consumed, joined.capabilityState(first.storage_capabilities[0]));
+}
+
+test "joining identical aggregate facts reuses their immutable storage" {
+    const a = std.testing.allocator;
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var empty: [0]u8 = .{};
+    var backing = std.heap.FixedBufferAllocator.init(&empty);
+    var checker = SafetyChecker.init(backing.allocator(), &diags, undefined);
+    defer checker.deinit();
+    const leaf: facts.ValueFacts = .{
+        .dependencies = &.{.{ .root = @enumFromInt(1) }},
+        .owned_roots = &.{@enumFromInt(2)},
+        .symbolic_pointees = &.{@enumFromInt(3)},
+        .storage_capabilities = &.{@enumFromInt(4)},
+    };
+    const value: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &leaf }}, .known_choice_variant = 1 };
+    const joined = try checker.mergeValueFacts(value, value);
+    try std.testing.expect(joined.fields.ptr == value.fields.ptr);
+    try std.testing.expect(valueFactsEqual(value, joined));
+    // The fast path must not erase differences in a nested ownership fact.
+    const other_leaf: facts.ValueFacts = .{ .dependencies = &.{.{ .root = @enumFromInt(9) }} };
+    const other: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &other_leaf }}, .known_choice_variant = 1 };
+    try std.testing.expectError(error.OutOfMemory, checker.mergeValueFacts(value, other));
 }

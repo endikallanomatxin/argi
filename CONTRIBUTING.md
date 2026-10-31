@@ -9,9 +9,13 @@ Building the compiler requires Zig 0.16.x and LLVM 21 development files:
 
 ```sh
 zig build                    # local installation in zig-out/
-zig build -p ~/.local        # user installation, including core and more
+zig build -Doptimize=ReleaseSafe --prefix "$HOME/.local" -j1
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+The user installation includes core and more. Use `ReleaseSafe` for normal CLI
+and LSP use: it enables optimizations while retaining safety checks. After
+reinstalling, restart the editor's LSP process to use the updated executable.
 
 LLVM is located through `llvm-config-21` or `llvm-config`; override paths with
 `LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS` when needed.

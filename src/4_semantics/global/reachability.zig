@@ -101,6 +101,38 @@ pub fn executionRoots(
     return result;
 }
 
+/// An editor unit checks every source in its folder-level module. Imported
+/// modules supply declarations; expand() discovers their actual callees.
+pub fn moduleRoots(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, path: []const u8) !FunctionSet {
+    var result = FunctionSet.init(allocator);
+    errdefer result.deinit();
+    _ = try includeModuleRoots(graph, path, &result);
+    return result;
+}
+
+fn sourceModuleMatches(graph: *const graph_mod.GlobalSemanticGraph, source: @import("../primitives/schema.zig").SourceRef, path: []const u8) bool {
+    if (source.file_index >= graph.files.items.len) return false;
+    const file = graph.files.items[source.file_index];
+    return std.mem.eql(u8, graph.text(graph.modules.items[@intFromEnum(file.module)].dir), path);
+}
+
+/// Resolution may materialize a module's operation bodies after initial root
+/// selection. Their declared safety promises belong to the same editor unit.
+pub fn includeModuleRoots(graph: *const graph_mod.GlobalSemanticGraph, path: []const u8, result: *FunctionSet) !bool {
+    var changed = false;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!sourceModuleMatches(graph, graph.declaration(function.declaration).source, path)) continue;
+        if (try result.include(@enumFromInt(@as(u32, @intCast(raw))))) changed = true;
+    }
+    for (graph.contract_safety_conformances.items) |proof| {
+        if (!sourceModuleMatches(graph, proof.source, path)) continue;
+        if (try result.include(proof.method)) changed = true;
+        const operation = try result.operations.getOrPut(.{ .operation = proof.selection, .function = proof.method });
+        if (!operation.found_existing) changed = true;
+    }
+    return changed;
+}
+
 /// Generated propagation and source-location operations call these ordinary
 /// core functions without a source-level call edge. Explicit execution roots
 /// need the same support whether they originate in a program or a REPL command.
@@ -629,4 +661,24 @@ test "match payload bindings are reachable even when their body never reads them
     try std.testing.expect(!unit.containsBinding(@enumFromInt(0)));
     try std.testing.expect(unit.containsNode(@enumFromInt(0)));
     try std.testing.expect(unit.containsNode(@enumFromInt(1)));
+}
+
+test "module roots include sibling files and distinguish imported modules" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    for ([_][]const u8{ "library", "other" }) |dir| try graph.modules.append(a, .{
+        .dir = try graph.addString(a, dir),
+        .files = .{ .start = 0, .len = 0 },
+        .declarations = .{ .start = 0, .len = 0 },
+    });
+    for ([_][]const u8{ "values.rg", "sibling.rg", "values.rg" }, 0..) |name, index| {
+        try graph.files.append(a, .{ .module = @enumFromInt(@as(u32, if (index == 2) 1 else 0)), .path = try graph.addString(a, name) });
+        try graph.declarations.append(a, .{ .kind = .function, .name = try graph.addString(a, "helper"), .source = .{ .file_index = @intCast(index), .offset = 0 }, .function_id = @enumFromInt(@as(u32, @intCast(index))) });
+        try graph.functions.append(a, .{ .declaration = @enumFromInt(@as(u32, @intCast(index))), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    }
+    var roots = try moduleRoots(a, &graph, "library");
+    defer roots.deinit();
+    try std.testing.expectEqual(@as(usize, 2), roots.values.count());
+    try std.testing.expect(roots.contains(@enumFromInt(0)));
 }

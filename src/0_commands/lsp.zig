@@ -37,6 +37,9 @@ const LanguageServer = struct {
     buffer: std.array_list.Managed(u8),
     service: ?service.LanguageService = null,
     shutdown_requested: bool = false,
+    // Client diagnostics outlive one analysis. Remember their owning module so
+    // a later edit can clear errors from repaired or removed sibling files.
+    diagnostic_owners: std.StringHashMapUnmanaged([]u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageServer {
         return .{
@@ -48,6 +51,12 @@ const LanguageServer = struct {
 
     pub fn deinit(self: *LanguageServer) void {
         self.buffer.deinit();
+        var diagnostics = self.diagnostic_owners.iterator();
+        while (diagnostics.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.diagnostic_owners.deinit(self.allocator);
         if (self.service) |*svc| svc.deinit();
     }
 
@@ -262,7 +271,7 @@ const LanguageServer = struct {
                 return;
             };
             defer diagnostics.deinit();
-            try self.sendPublishDiagnostics(writer, uri_value.string, diagnostics.items);
+            try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
         }
     }
 
@@ -302,7 +311,7 @@ const LanguageServer = struct {
                 return;
             };
             defer diagnostics.deinit();
-            try self.sendPublishDiagnostics(writer, uri_value.string, diagnostics.items);
+            try self.sendAnalysisDiagnostics(writer, uri_value.string, path, diagnostics.items);
         }
     }
 
@@ -319,6 +328,10 @@ const LanguageServer = struct {
         if (uri_value != .string) return;
 
         if (self.service) |*svc| svc.closeDocument(uri_value.string);
+        if (self.diagnostic_owners.fetchRemove(uri_value.string)) |removed| {
+            self.allocator.free(removed.key);
+            self.allocator.free(removed.value);
+        }
         try self.sendPublishDiagnostics(writer, uri_value.string, &[_]service.Diagnostic{});
     }
 
@@ -456,6 +469,48 @@ const LanguageServer = struct {
         try stream.endObject();
 
         try self.sendMessage(writer, payload.writer.buffered());
+    }
+
+    fn sendAnalysisDiagnostics(self: *LanguageServer, writer: anytype, uri: []const u8, path: []const u8, diagnostics: []const service.Diagnostic) !void {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const owner = std.fs.path.dirname(path) orelse ".";
+        var groups = std.StringHashMap(std.array_list.Managed(service.Diagnostic)).init(a);
+        try groups.put(uri, .init(a));
+        for (diagnostics) |diagnostic| {
+            const target = if (diagnostic.path) |source| try pathToFileUri(a, source) else uri;
+            const group = try groups.getOrPut(target);
+            if (!group.found_existing) group.value_ptr.* = .init(a);
+            try group.value_ptr.append(diagnostic);
+        }
+        var previous = self.diagnostic_owners.iterator();
+        while (previous.next()) |entry| {
+            if (std.mem.eql(u8, entry.value_ptr.*, owner) and !groups.contains(entry.key_ptr.*))
+                try groups.put(try a.dupe(u8, entry.key_ptr.*), .init(a));
+        }
+        var batches = groups.iterator();
+        while (batches.next()) |batch| {
+            const target = batch.key_ptr.*;
+            try self.sendPublishDiagnostics(writer, target, batch.value_ptr.items);
+            if (batch.value_ptr.items.len == 0) {
+                if (self.diagnostic_owners.fetchRemove(target)) |removed| {
+                    self.allocator.free(removed.key);
+                    self.allocator.free(removed.value);
+                }
+            } else {
+                const key = try self.allocator.dupe(u8, target);
+                errdefer self.allocator.free(key);
+                const module = try self.allocator.dupe(u8, owner);
+                errdefer self.allocator.free(module);
+                const retained = try self.diagnostic_owners.getOrPut(self.allocator, key);
+                if (retained.found_existing) {
+                    self.allocator.free(key);
+                    self.allocator.free(retained.value_ptr.*);
+                }
+                retained.value_ptr.* = module;
+            }
+        }
     }
 
     fn sendPublishDiagnostics(
@@ -1730,4 +1785,41 @@ test "document symbols response uses standard LSP names and ranges" {
     try std.testing.expectEqual(@as(i64, 12), symbol.get("kind").?.integer);
     try std.testing.expectEqual(@as(i64, 4), symbol.get("selectionRange").?.object.get("end").?.object.get("character").?.integer);
     try std.testing.expect(symbol.get("range") != null);
+}
+
+test "module diagnostics publish sibling locations and clear repaired files" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = "" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "broken.rg", .data = "" });
+    const path = try test_support.tmpFilePath(&tmp, "main.rg");
+    defer a.free(path);
+    const sibling = try test_support.tmpFilePath(&tmp, "broken.rg");
+    defer a.free(sibling);
+    const uri = try pathToFileUri(a, path);
+    defer a.free(uri);
+    const sibling_uri = try pathToFileUri(a, sibling);
+    defer a.free(sibling_uri);
+    var server = LanguageServer.init(a, std.testing.io);
+    defer server.deinit();
+    var first: CapturedResponseWriter = undefined;
+    first.init(a);
+    defer first.deinit();
+    try server.sendAnalysisDiagnostics(&first.writer, uri, path, &.{.{
+        .path = sibling,
+        .range = .{ .start = .{ .line = 2, .character = 3 }, .end = .{ .line = 2, .character = 4 } },
+        .severity = .err,
+        .message = "unknown sibling function",
+    }});
+    try std.testing.expect(std.mem.indexOf(u8, first.writer.buffered(), sibling_uri) != null);
+    try std.testing.expect(std.mem.indexOf(u8, first.writer.buffered(), "unknown sibling function") != null);
+    try std.testing.expectEqual(@as(usize, 1), server.diagnostic_owners.count());
+    var repaired: CapturedResponseWriter = undefined;
+    repaired.init(a);
+    defer repaired.deinit();
+    try server.sendAnalysisDiagnostics(&repaired.writer, uri, path, &.{});
+    try std.testing.expect(std.mem.indexOf(u8, repaired.writer.buffered(), sibling_uri) != null);
+    try std.testing.expect(std.mem.indexOf(u8, repaired.writer.buffered(), "\"diagnostics\":[]") != null);
+    try std.testing.expectEqual(@as(usize, 0), server.diagnostic_owners.count());
 }
