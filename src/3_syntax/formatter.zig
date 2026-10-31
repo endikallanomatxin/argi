@@ -8,7 +8,7 @@ const source_files = @import("../1_base/source_files.zig");
 
 const Tag = std.meta.Tag(tok.Content);
 const List = std.array_list.Managed(u8);
-const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, hanging: bool = false, reflow: bool = false, comma_free: bool = false };
+const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, hanging: bool = false, reflow: bool = false, comma_free: bool = false, dense: bool = false };
 const line_width = 96;
 const max_alignment_padding = 24;
 const InsertedToken = struct { ordinal: usize, tag: Tag };
@@ -72,7 +72,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         if (layout.item_start[i] and stack.items.len != 0) {
             const frame = stack.items[stack.items.len - 1];
             if (frame.reflow and frame.tag == .open_parenthesis and previous != .open_parenthesis) {
-                if (frame.expand and !frame.hanging) {
+                if (frame.expand and !frame.hanging and !frame.dense) {
                     pending_newlines = @max(pending_newlines, 1);
                 } else if (previous != .comma) {
                     trimSpaces(&out);
@@ -81,13 +81,16 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                     try out.append(',');
                     previous = .comma;
                 }
+                if (frame.dense and frame.expand and !frame.hanging and
+                    out.items.len - line_start + 1 + layout.item_width[i] + 1 > line_width)
+                    pending_newlines = @max(pending_newlines, 1);
             }
         }
         if (tag == .comma and stack.items.len != 0) {
             const frame = stack.items[stack.items.len - 1];
             var next = i + 1;
             while (next < tokens.len and tokens.contents[next] == .new_line) : (next += 1) {}
-            if (frame.reflow and (!frame.expand or frame.hanging) and std.meta.activeTag(tokens.contents[next]) == .close_parenthesis) {
+            if (frame.reflow and !frame.dense and (!frame.expand or frame.hanging) and std.meta.activeTag(tokens.contents[next]) == .close_parenthesis) {
                 removed[i] = true;
                 continue;
             }
@@ -167,12 +170,12 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             // A hanging group keeps its arguments together on a fresh line.
             // The closing delimiter and any suffix resume on the next line.
             const hanging = !layout.table_rows[i] and tag == .open_parenthesis and reflow and expand and continuation_indent + compactLength(tokens, source, i, layout.ends[i] + 1, layout) - 2 <= line_width;
-            try stack.append(.{ .tag = tag, .multiline = if (reflow) expand else multiline or expand, .expand = expand, .hanging = hanging, .reflow = reflow, .comma_free = layout.struct_literals[i] });
+            try stack.append(.{ .tag = tag, .multiline = if (reflow) expand else multiline or expand, .expand = expand, .hanging = hanging, .reflow = reflow, .comma_free = layout.struct_literals[i], .dense = reflow and layout.packed_lists[i] });
             if (expand) pending_newlines = 1;
         }
         // Expanded collections use complete rows rather than spilling only
         // the last argument onto a continuation line.
-        if (tag == .comma and stack.items.len != 0 and stack.items[stack.items.len - 1].expand and !stack.items[stack.items.len - 1].hanging and stack.items[stack.items.len - 1].tag == .open_parenthesis)
+        if (tag == .comma and stack.items.len != 0 and stack.items[stack.items.len - 1].expand and !stack.items[stack.items.len - 1].dense and !stack.items[stack.items.len - 1].hanging and stack.items[stack.items.len - 1].tag == .open_parenthesis)
             pending_newlines = @max(pending_newlines, 1);
         for (0..layout.wrap_after[i]) |_| {
             const frame = stack.pop().?;
@@ -243,6 +246,8 @@ const Layout = struct {
     expand: []bool,
     reflow: []bool,
     table_rows: []bool,
+    packed_lists: []bool,
+    item_width: []usize,
     chain_suffix: []usize,
     item_start: []bool,
     item_padding: []usize,
@@ -284,6 +289,8 @@ const Layout = struct {
             .expand = try allocator.alloc(bool, tokens.len),
             .reflow = try allocator.alloc(bool, tokens.len),
             .table_rows = try allocator.alloc(bool, tokens.len),
+            .packed_lists = try allocator.alloc(bool, tokens.len),
+            .item_width = try allocator.alloc(usize, tokens.len),
             .chain_suffix = try allocator.alloc(usize, tokens.len),
             .item_start = try allocator.alloc(bool, tokens.len),
             .item_padding = try allocator.alloc(usize, tokens.len),
@@ -302,6 +309,8 @@ const Layout = struct {
         @memset(layout.expand, false);
         @memset(layout.reflow, false);
         @memset(layout.table_rows, false);
+        @memset(layout.packed_lists, false);
+        @memset(layout.item_width, 0);
         @memset(layout.chain_suffix, 0);
         @memset(layout.item_start, false);
         @memset(layout.item_padding, 0);
@@ -533,13 +542,24 @@ const Layout = struct {
         for (0..tree.nodes.len) |raw_node| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw_node)));
             const literal = tree.listLiteral(node) orelse continue;
-            if (literal.elements.len < 2) continue;
-            var rows = true;
+            if (literal.elements.len == 0) continue;
+            var rows = literal.elements.len > 1;
             for (literal.elements) |element| {
                 if (tree.listLiteral(element) == null) rows = false;
             }
+            const open = @intFromEnum(tree.mainToken(node));
+            if (!rows and canFlatten(tokens, source, open, layout)) {
+                var compact_elements = true;
+                for (literal.elements) |element| {
+                    if (tree.listLiteral(element) != null or tree.structValueLiteral(element) != null)
+                        compact_elements = false;
+                }
+                if (compact_elements) {
+                    layout.packed_lists[open] = true;
+                    layout.reflow[open] = true;
+                }
+            }
             if (rows) {
-                const open = @intFromEnum(tree.mainToken(node));
                 layout.table_rows[open] = true;
                 layout.reflow[open] = true;
                 for (literal.elements) |element| layout.reflow[@intFromEnum(tree.mainToken(element))] = true;
@@ -610,6 +630,17 @@ const Layout = struct {
             }
             @memset(enclosed[span.first .. span.last + 1], true);
             markOperatorChain(&tree, node, node, tokens, &layout, handled);
+        }
+        for (0..tree.nodes.len) |raw_node| {
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw_node)));
+            const literal = tree.listLiteral(node) orelse continue;
+            if (!layout.packed_lists[@intFromEnum(tree.mainToken(node))]) continue;
+            for (literal.elements) |element| {
+                const span = expressionSpan(&tree, element, tokens, layout);
+                layout.item_start[firstToken(&tree, element)] = false;
+                layout.item_start[span.first] = true;
+                layout.item_width[span.first] = compactLength(tokens, source, span.first, span.last + 1, layout);
+            }
         }
         return layout;
     }
@@ -793,7 +824,7 @@ fn compactLength(tokens: tok.View, source: []const u8, start: usize, end: usize,
         if (tag == .comma) {
             var next = index + 1;
             while (next < end and tokens.contents[next] == .new_line) : (next += 1) {}
-            if (next < end and std.meta.activeTag(tokens.contents[next]) == .close_parenthesis and layout.reflow[layout.ends[next]]) continue;
+            if (next < end and std.meta.activeTag(tokens.contents[next]) == .close_parenthesis and layout.reflow[layout.ends[next]] and !layout.packed_lists[layout.ends[next]]) continue;
         }
         if (layout.item_start[index] and previous != .open_parenthesis and previous != .comma and previous != null) {
             length += 1;
@@ -1560,4 +1591,24 @@ test "formatter retains once with a named input signature across whitespace" {
 
 test "formatter keeps traced output markers distinct from context operators" {
     try expectFormat("f:=()->!!Int32{result=..ok 1}\n", "f := () -> !!Int32 { result = ..ok 1 }\n");
+}
+
+test "formatter packs expression lists using the available width" {
+    try expectFormat(
+        "values := (\n[-1 + 2],\nitem.value,\nget(.index=0)\n)\n",
+        "values := ([-1 + 2], item.value, get(.index = 0))\n",
+    );
+    try expectFormat("values := (\n42,\n)\n", "values := (42,)\n");
+    try expectFormat(
+        "values: [6]UIntNative = (\n0,\n1,\n2,\n3,\n4,\n5\n)\n",
+        "values: [6]UIntNative = (0, 1, 2, 3, 4, 5)\n",
+    );
+    try expectFormat(
+        "values := (first_value, second_value, third_value, fourth_value, fifth_value, sixth_value, seventh_value, eighth_value)\n",
+        "values := (\n    first_value, second_value, third_value, fourth_value, fifth_value, sixth_value,\n    seventh_value, eighth_value\n)\n",
+    );
+    try expectFormat(
+        "values := (first_value, -- explanation\nsecond_value)\n",
+        "values := (\n    first_value,\n    -- explanation\n    second_value\n)\n",
+    );
 }

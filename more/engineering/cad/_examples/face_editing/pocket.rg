@@ -18,38 +18,8 @@ _closed_pocket := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> (
     )
     -- An outer pyramid with an open pyramidal pocket. Its planar top has a hole.
     vertices: [32]UIntNative = (
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        1,
-        0,
-        8,
-        2,
-        1,
-        8,
-        3,
-        2,
-        8,
-        0,
-        3,
-        8,
-        5,
-        4,
-        9,
-        6,
-        5,
-        9,
-        7,
-        6,
-        9,
-        4,
-        7,
-        9
+        0, 1, 2, 3, 4, 5, 6, 7, 1, 0, 8, 2, 1, 8, 3, 2, 8, 0, 3, 8, 5, 4, 9, 6, 5, 9, 7, 6, 9,
+        4, 7, 9
     )
     lengths: [10]UIntNative = (4, 4, 3, 3, 3, 3, 3, 3, 3, 3)
     face_loops: [9]UIntNative = (2, 1, 1, 1, 1, 1, 1, 1, 1)

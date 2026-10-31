@@ -1,12 +1,14 @@
 # Source formatting
 
 The standard formatter uses four spaces for indentation and a soft width of
-100 columns. Parentheses, brackets, and braces determine indentation; existing
-line breaks in calls, lists, and blocks are retained. A multiline collection
-places its opening and closing delimiters on separate lines and uses one row
-per field. Long calls expand their complete argument group rather than moving
-only the final argument to a continuation line. Lines without a safe break point,
-including comments and strings, may exceed the width.
+96 columns. Parentheses, brackets, and braces determine indentation. Short
+expression lists stay inline; longer lists pack complete elements into rows
+using the available width after indentation. Their row sizes depend on the
+rendered expressions, not the element count or type. Lists with comments retain
+separate rows, records use one row per field, and nested matrix lists keep one
+row per inner list. Long calls expand their complete argument group rather
+than moving only the final argument to a continuation line. Lines without a
+safe break point, including comments and strings, may exceed the width.
 
 Opening braces remain on the same line as their declaration or condition.
 A short body containing one statement can remain on one line; a body with
