@@ -890,7 +890,8 @@ pub const Infer = struct {
         var capability_exits: ?CapabilityFlow = null;
         defer if (capability_exits) |*exit| exit.deinit();
         try self.infer_capability_block(function_id, function.body.?, &capability_flow, &capability_exits);
-        if (capability_flow.reachable) try self.record_capability_exit(&capability_flow, &capability_exits);
+        // With no earlier exit, the fallthrough already is the final flow.
+        if (capability_flow.reachable and capability_exits != null) try self.record_capability_exit(&capability_flow, &capability_exits);
         profile.accumulate(self.profile_io, start, &self.capability_flow_ns);
         const counts = if (capability_exits) |exit| exit.counts.items else capability_flow.counts.items;
         var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
@@ -1730,15 +1731,15 @@ pub const Infer = struct {
                 try self.join_capability_fallthrough(flow, &left, &right);
             },
             .while_statement => |loop| {
-                var before_loop = try flow.clone(self.allocator);
-                defer before_loop.deinit();
+                const before_loop = try self.allocator.dupe(CapabilityCount, flow.counts.items);
+                defer self.allocator.free(before_loop);
                 try self.infer_capability_node(function, loop.condition, flow, exits);
                 var body = try flow.clone(self.allocator);
                 defer body.deinit();
                 try self.infer_capability_block(function, loop.body, &body, exits);
                 if (!body.breaks_loop) for (body.counts.items) |*count| {
                     var before: u2 = 0;
-                    for (before_loop.counts.items) |prior| if (self.capability_source_equal(count.source, prior.source)) {
+                    for (before_loop) |prior| if (self.capability_source_equal(count.source, prior.source)) {
                         before = prior.maximum;
                         break;
                     };
@@ -1748,8 +1749,8 @@ pub const Infer = struct {
             },
             .for_statement => |loop| {
                 if (loop.init) |value| try self.infer_capability_node(function, value, flow, exits);
-                var before_loop = try flow.clone(self.allocator);
-                defer before_loop.deinit();
+                const before_loop = try self.allocator.dupe(CapabilityCount, flow.counts.items);
+                defer self.allocator.free(before_loop);
                 try self.infer_capability_node(function, loop.condition, flow, exits);
                 var body = try flow.clone(self.allocator);
                 defer body.deinit();
@@ -1757,7 +1758,7 @@ pub const Infer = struct {
                 if (body.reachable) if (loop.increment) |value| try self.infer_capability_node(function, value, &body, exits);
                 if (!body.breaks_loop) for (body.counts.items) |*count| {
                     var before: u2 = 0;
-                    for (before_loop.counts.items) |prior| if (self.capability_source_equal(count.source, prior.source)) {
+                    for (before_loop) |prior| if (self.capability_source_equal(count.source, prior.source)) {
                         before = prior.maximum;
                         break;
                     };
@@ -1794,9 +1795,7 @@ pub const Infer = struct {
                     if (joined) |*value| try self.join_capability_fallthrough(value, value, flow) else joined = try flow.clone(self.allocator);
                 }
                 if (joined) |*value| {
-                    const copied = try value.clone(self.allocator);
-                    flow.deinit();
-                    flow.* = copied;
+                    std.mem.swap(CapabilityFlow, flow, value);
                 }
             },
             .logical_operation => |op| {
@@ -1954,7 +1953,7 @@ pub const Infer = struct {
                 // maximum use count must not add their consumptions together.
                 try self.join_capability_flows(&joined, &joined, &branch);
             }
-            try self.join_capability_flows(flow, &joined, &joined);
+            std.mem.swap(CapabilityFlow, flow, &joined);
             return;
         }
         for (children, 0..) |field, index| {

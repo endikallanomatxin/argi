@@ -190,7 +190,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (!domainsEql(a.input_domains, b.input_domains)) return false;
     if (a.domain_values.len != b.domain_values.len) return false;
-    for (a.domain_values, b.domain_values) |x, y| if (x.domain_index != y.domain_index or !valueEffectEql(x.value.*, y.value.*)) return false;
+    if (a.domain_values.ptr != b.domain_values.ptr) for (a.domain_values, b.domain_values) |x, y| {
+        if (x.domain_index != y.domain_index or (x.value != y.value and !valueEffectEql(x.value.*, y.value.*))) return false;
+    };
     if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
         a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
@@ -224,12 +226,14 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     for (a.input_owned_roots, b.input_owned_roots) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_generation_dependencies, b.opaque_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_storage_dependencies, b.opaque_storage_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
-    for (a.fields, b.fields) |left, right| {
-        if (left.index != right.index or !valueEffectEql(left.value.*, right.value.*)) return false;
-    }
-    for (a.variants, b.variants) |left, right| {
-        if (left.index != right.index or !valueEffectEql(left.value.*, right.value.*)) return false;
-    }
+    // Published effects share immutable subtrees across branch snapshots.
+    // Identity proves equality only for that subtree, never for its envelope.
+    if (a.fields.ptr != b.fields.ptr) for (a.fields, b.fields) |left, right| {
+        if (left.index != right.index or (left.value != right.value and !valueEffectEql(left.value.*, right.value.*))) return false;
+    };
+    if (a.variants.ptr != b.variants.ptr) for (a.variants, b.variants) |left, right| {
+        if (left.index != right.index or (left.value != right.value and !valueEffectEql(left.value.*, right.value.*))) return false;
+    };
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_dependencies, b.fresh_dependencies)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_owned_roots, b.fresh_owned_roots)) return false;
     if (a.input_storage_capabilities.len != b.input_storage_capabilities.len) return false;
@@ -239,6 +243,42 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     for (a.unavailable_fresh_storage, b.unavailable_fresh_storage) |left, right|
         if (left.source != right.source or left.maybe_consumed != right.maybe_consumed) return false;
     return true;
+}
+
+test "shared effect subtrees preserve envelope and projection distinctions" {
+    const leaf: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{7} };
+    const other_leaf: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{8} };
+    const effect: facts.ValueEffect = .{
+        .fields = &.{.{ .index = 0, .value = &leaf }},
+        .variants = &.{.{ .index = 1, .value = &leaf }},
+        .domain_values = &.{.{ .domain_index = 2, .value = &leaf }},
+    };
+    try std.testing.expect(valueEffectEql(effect, effect));
+
+    var changed = effect;
+    changed.explicit_dependency = true;
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.fields = effect.fields[0..0];
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.fields = &.{.{ .index = 1, .value = &leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.variants = &.{.{ .index = 2, .value = &leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.domain_values = &.{.{ .domain_index = 3, .value = &leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.fields = &.{.{ .index = 0, .value = &other_leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.variants = &.{.{ .index = 1, .value = &other_leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.domain_values = &.{.{ .domain_index = 2, .value = &other_leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
 }
 
 fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {

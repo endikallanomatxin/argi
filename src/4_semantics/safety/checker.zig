@@ -5227,7 +5227,7 @@ pub const SafetyChecker = struct {
                 try self.setSymbolicVariant(&branch, pointer, @intCast(variant));
                 if (!try self.evaluateSymbolicCleanupOperation(function, callee, input, self_index, fields, pointer, &branch)) return false;
                 if (joined) |*previous| {
-                    var combined = try self.cloneState(previous);
+                    var combined = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
                     errdefer combined.deinit();
                     try self.joinState(&combined, previous, &branch);
                     self.commitState(previous, &combined);
@@ -6534,7 +6534,7 @@ pub const SafetyChecker = struct {
             else
                 null;
 
-            var next = try self.cloneState(&entry);
+            var next = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
             errdefer next.deinit();
             try self.joinState(&next, &entry, &iteration);
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
@@ -6866,7 +6866,7 @@ pub const SafetyChecker = struct {
             if (!destination.*.reachable) {
                 try self.copyState(destination, source);
             } else {
-                var joined = try self.cloneState(destination);
+                var joined = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
                 errdefer joined.deinit();
                 try self.joinState(&joined, destination, source);
                 var join_context = LoopJoinContext.init(self.allocator);

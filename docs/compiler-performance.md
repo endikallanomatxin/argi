@@ -79,6 +79,109 @@ in isolation with production dependencies, and passed. Type/signature validation
 passed 83 focused internal tests, including contextual choice and numeric inputs.
 Another 104 contract and nominal-diagnostic checks passed.
 
+### Safety joins and remaining work
+
+Three checker paths cloned a destination immediately before `joinState`:
+loop fixed-point iterations, concrete loop transfers and symbolic variant
+cleanup. The join constructs a fresh result before replacing its destination,
+so those destinations can start empty. This preserves the input states and
+the existing allocation-failure behavior without copying discarded tables.
+
+The same complete CAD check, using ReleaseSafe, one frontend worker, a 2 GiB
+limit and no swap, produced the following observations:
+
+| Measurement | Before | Empty join destinations |
+|---|---:|---:|
+| State clones | 357,567 | 351,327 |
+| State elements copied | 369,673,716 | 364,820,614 |
+| State copy time (ms) | 4,159.342 | 3,772.704 |
+| Safety elapsed (ms) | 23,668.566 | 21,717.692 |
+| Peak process RSS (KiB) | 426,416 | 426,272 |
+
+Both runs checked 3,562 functions and 42,316 calls, with 6,311 summary
+evaluations and 3,147 summary changes. The deterministic reduction is 6,240
+clones and 4,853,102 copied elements. These single-run timings do not establish
+the speedup: summary inference and GlobalSema also ran faster despite being
+unchanged. This removes unnecessary work but does not resolve the main cost.
+
+Summary inference accounts for 8.85 s in the original run, including 6.07 s
+for capabilities, almost entirely capability-flow traversal. Its flow clones
+are separate from the checker clone counters above. One concrete opportunity
+was the loop-entry snapshot: it copied bindings, addresses, calls and conflicts,
+although the subsequent comparison only reads capability counts. Both `while`
+and `for` now copy only those counts, before evaluating the condition (and after
+the initializer for `for`). The independent body flow and loop widening rules
+are unchanged.
+
+On the same complete workload, this reduced requested summary allocation bytes
+from 8,744,919,142 to 8,735,710,704, a reduction of 9,208,438 bytes. These are
+cumulative allocator requests, not retained memory. Summary evaluations, changes,
+checked functions/calls and checker clone counters were identical. Capability
+flow took 5,832.541 ms versus 5,651.336 ms in the preceding run; peak RSS was
+426,352 versus 426,272 KiB. There is no demonstrated timing or peak-memory
+improvement. Keep this as removal of unused snapshot data, not as an explanation
+of the capability-flow bottleneck. Before a broader change, break down time by
+function and by flow cloning, value-effect reconstruction and joins.
+
+Do not remove summary self-dependencies merely to reduce evaluations. Functions
+with outputs reuse their previous output approximation; recursive calls also
+record dependencies. Eliminating the confirmation pass requires proving which
+summary dimensions no longer depend on that approximation. Call candidates
+likewise retain transactional state copies to preserve the caller when checking
+adds a diagnostic. Any broader reduction must preserve that isolation and OOM
+behavior, rather than replacing copies with unchecked in-place mutation.
+
+### Shared summary subtrees and completed capability flows
+
+A temporary probe measured capability joins and outermost capability-value
+queries per function evaluation. Evaluations exceeding 5 ms accounted for
+5,165.962 ms across 172 evaluations of 112 functions: joins took 4,089.624 ms
+and value queries 71.343 ms. These are instrumented, partially inclusive
+timings, not a disjoint accounting of the whole pass. The probe was removed
+after locating the cost; it adds no persistent resolver state.
+
+Branch flows already share immutable `ValueEffect` trees. Equality now skips
+shared field, variant and domain-value slices and shared child pointers, while
+still comparing their lengths, projection identities and all envelope facts.
+Distinct trees retain recursive comparison. This avoids repeatedly descending
+unchanged nested records during joins without hashes or an equality cache.
+
+Completed match and cleanup flows now transfer their tables into the destination
+instead of copying or joining a flow with itself. A function with no earlier
+exit also uses its fallthrough directly instead of cloning it into an exit
+accumulator. Actual branch combinations and earlier exits still use joins.
+
+With the same complete CAD workload and resource limits:
+
+| Measurement | Count-only loop snapshots | Shared subtrees and flow transfers |
+|---|---:|---:|
+| Capability flow (ms) | 5,832.541 | 3,505.755 |
+| Summary inference (ms) | 8,565.533 | 6,194.770 |
+| Safety elapsed (ms) | 22,291.407 | 19,919.323 |
+| Requested summary allocation bytes | 8,735,710,704 | 8,713,930,068 |
+| Peak process RSS (KiB) | 426,352 | 426,400 |
+
+Both runs retained 6,311 summary evaluations, 3,147 summary changes, 3,562
+checked functions and 42,316 checked calls. Checker clone counters were also
+unchanged. These observations show a substantially lower capability-flow cost;
+they do not establish a peak-memory reduction or attribute the gain separately
+to equality and flow transfers.
+
+A second run completed with 3,531.242 ms of capability flow, 6,248.381 ms
+of summary inference and 20,441.444 ms of Safety, with identical semantic and
+allocation counters. The lower capability-flow cost repeated; overall timings
+still vary between runs.
+
+Validation passed 87 focused Debug internal tests, including shared-subtree
+equality, summaries, loops and allocation failures. Direct native/VM executions
+of partial-choice and failed-choice-construction cleanup both returned their
+expected status 42. Nested nominal choice cleanup passed natively, and capability
+reuse in loop bodies and conditions retained its expected rejection. Compiling
+the broader ReleaseSafe fixture runner exceeded its 3 GiB cgroup limit, including
+a narrower retry; those runner invocations did not complete. Direct fixture
+checks and CAD used separate 2 GiB limits without increasing the memory budget.
+
+
 ## Interactive latency windows
 
 The execution benchmark reports `# latency` rows at 10, 100, 1,000 and the final
