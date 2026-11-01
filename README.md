@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="logo.svg" alt="Argi Logo" width="200"/>
-</p>
+<img src="logo.svg" alt="Argi Logo" width="100"/>
 
 Argi is an experimental general-purpose programming language that aims to
 combine high-level expressiveness and ergonomics with low-level performance and
