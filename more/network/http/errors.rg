@@ -11,6 +11,7 @@ HttpReasons: Type = (
     ..invalid_chunk,
     ..invalid_response,
     ..invalid_state,
+    ..invalid_stream_buffer,
     ..stream_read_failed,
     ..stream_write_failed,
     ..stream_flush_failed
