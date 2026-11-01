@@ -185,6 +185,19 @@ pub fn build(b: *std.Build) void {
     const internal_test_step = b.step("test-internal", "Run compiler unit tests");
     internal_test_step.dependOn(&run_internal_tests.step);
 
+    const http_tests = b.addRunArtifact(exe);
+    http_tests.addArgs(&.{ "test", "more/network/http", "--sysroot", b.getInstallPath(.prefix, "") });
+    if (b.args) |args| http_tests.addArgs(args);
+    http_tests.step.dependOn(b.getInstallStep());
+    http_tests.has_side_effects = true;
+    const http_test_step = b.step("test-http", "Run the HTTP library's native Argi tests");
+    http_test_step.dependOn(&http_tests.step);
+    const http_example = b.addRunArtifact(exe);
+    http_example.addArgs(&.{ "build", "more/network/http/examples/server", "--sysroot", b.getInstallPath(.prefix, ""), "--frontend-jobs", "1", "--output", ".zig-cache/http-server-example" });
+    http_example.step.dependOn(&http_tests.step);
+    http_example.has_side_effects = true;
+    http_test_step.dependOn(&http_example.step);
+
     const benchmark_mod = b.createModule(.{
         .root_source_file = b.path("src/frontend_benchmark.zig"),
         .target = target,
@@ -218,6 +231,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);
+    if (test_filters.len == 0) test_step.dependOn(http_test_step);
 }
 
 fn addTestRun(b: *std.Build, tests: *std.Build.Step.Compile, progress: bool) *std.Build.Step.Run {

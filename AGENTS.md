@@ -19,6 +19,9 @@ This repository contains a compiler for a new programming language written in Zi
       remains in `tests/test.zig`. See `docs/testing.md` for details.
 
 - `more/`: Official library modules that are not part of `core/`.
+    - Library behavior tests belong beside the implementation as `*_test.rg`
+      and run with `argi test <module-directory>`. Keep compiler regressions,
+      including rejected programs and backend-specific checks, under `tests/`.
 
 - `description/`: Language specification and open language-design questions.
 

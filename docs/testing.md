@@ -1,4 +1,16 @@
-# Fixture tests
+# Library and compiler tests
+
+Behavior tests for a `more/` library live in that module as `*_test.rg` files,
+using native Argi `test` declarations. Run them with `argi test <module-directory>`.
+They are excluded from installed library bundles. HTTP tests run with
+`zig build test-http -j16 -Dtest-jobs=16`; the unfiltered `zig build test` also
+includes them. Pass `-- --filter <name>` to `test-http` to select native tests.
+
+Keep compiler acceptance, rejection, lifetime diagnostics, and backend regression
+fixtures under `tests/`. A library's functional test suite should not need a
+parallel set of executable fixtures there.
+
+## Fixture tests
 
 Each ordinary feature fixture keeps a `test.zig` beside its Argi sources:
 
