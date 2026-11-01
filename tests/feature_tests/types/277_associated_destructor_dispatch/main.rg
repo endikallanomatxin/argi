@@ -20,7 +20,7 @@ implement Deinit#(Other) (
     }
 )
 
-exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
+exercise := (.allocator: $&Virtual#(Allocator)) -> (
 ) {
 
     assume allocator
@@ -33,7 +33,7 @@ exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&Al
         .value = DynamicArray#(.t: Box#(.t: UnicodeScalar))(.capacity = 1)
     )
     element ::= Box#(.t: UnicodeScalar)(.value = 'b')
-    pushed ::= push(.self = $&array, .value = ~element)
+    pushed ::= push(.self = $&array, .value = ~element, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) { abort }
 }
 

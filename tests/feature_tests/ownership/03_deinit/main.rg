@@ -50,7 +50,9 @@ main := (.system: System) -> (.status_code: Int32) {
 
     assume ffi := system.ffi
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     counter :: Int32 = 0
     status_code = 9
     defer verify(.counter = $&counter, .status = $&status_code)

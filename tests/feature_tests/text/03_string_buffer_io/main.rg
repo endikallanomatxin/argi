@@ -1,10 +1,12 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     buffer ::= unwrap_or_abort(
-        .value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 8)
+        .value = string_with_capacity(.allocator = allocator, .capacity = 8)
     )
 
     match push_ascii(.self = $&buffer, .byte = 79) {

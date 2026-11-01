@@ -3,7 +3,9 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(
         .allocator = system.page_allocator
     )
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1, .alignment = 1)
     match first_result {
         ..error _ { status_code = 1 }
@@ -53,7 +55,7 @@ main := (.system: System) -> (.status_code: Int32) {
                     }
                     many ::= unwrap_or_abort(
                         .value = DynamicArray#(.t: Allocation)(
-                            .allocator = $&allocator_storage, .capacity = 520
+                            .allocator = allocator, .capacity = 520
                         )
                     )
                     i :: UIntNative = 0
@@ -69,7 +71,7 @@ main := (.system: System) -> (.status_code: Int32) {
                             ..ok ~next_payload {
                                 pushed ::= push(
                                     .self      = $&many
-                                    .allocator = $&allocator_storage
+                                    .allocator = allocator
                                     .value     = ~next_payload
                                 )
                                 if is(.value = pushed, .variant = ..error) {

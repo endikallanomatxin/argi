@@ -18,8 +18,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     arena :: ArenaAllocator
     arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
+    arena_virtual ::= to_virtual#(Allocator)($&arena)
     array ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: UIntNative)(.allocator = $&arena, .capacity = 2)
+        .value = DynamicArray#(.t: UIntNative)(.allocator = $&arena_virtual, .capacity = 2)
     )
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     borrowed_view ::= window(.array = $&array).borrowed_view

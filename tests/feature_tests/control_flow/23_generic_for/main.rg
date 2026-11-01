@@ -20,7 +20,7 @@ implement Deinit#(Tracked) (
     }
 )
 
-consume := #(.t: Type) (.input: DynamicArray#(.t: t), .allocator: $&PageAllocator) -> () {
+consume := #(.t: Type) (.input: DynamicArray#(.t: t), .allocator: $&Virtual#(Allocator)) -> () {
     assume allocator
     for ~item in input { break }
 }

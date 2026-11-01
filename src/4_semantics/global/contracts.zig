@@ -304,6 +304,17 @@ pub const Resolver = struct {
         };
         const concrete = pointer.child;
         if (!try self.validateVirtualContract(contract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
+        // A matching erased handle already contains the selected methods and
+        // their receiver. Copy it through the supplied reference instead of
+        // looking for a concrete conformance for the virtual type itself.
+        const concrete_type = self.graph.semanticType(concrete);
+        if (concrete_type == .virtual and global_types.equal(self.graph, concrete_type.virtual, contract_ty)) {
+            return .{
+                .source = self.sourceFor(module_index, reference.source),
+                .ty = concrete,
+                .content = .{ .dereference = .{ .pointer = handle, .pointer_type = handle_ty, .ty = concrete } },
+            };
+        }
         var evidence_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer evidence_bindings.deinit(self.allocator);
         const evidence = try self.selectConformance(contract_decl, &.{concrete}, &evidence_bindings, 0, null) orelse {

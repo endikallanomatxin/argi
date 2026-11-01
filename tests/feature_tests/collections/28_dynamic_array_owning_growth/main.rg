@@ -22,6 +22,7 @@ make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 
     assume allocator
 
+
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -35,7 +36,9 @@ make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 1))
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
@@ -53,9 +56,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                         ..error _ { status_code = 3 }
                         ..ok ~third_payload {
                             third ::= ~third_payload
-                            first_push ::= push(.self = $&array, .value = ~first)
-                            second_push ::= push(.self = $&array, .value = ~second)
-                            third_push ::= push(.self = $&array, .value = ~third)
+                            first_push ::= push(.self = $&array, .value = ~first, .allocator = allocator)
+                            second_push ::= push(.self = $&array, .value = ~second, .allocator = allocator)
+                            third_push ::= push(.self = $&array, .value = ~third, .allocator = allocator)
                             if [
                                 is(.value = first_push, .variant = ..error)
                                 or is(.value = second_push, .variant = ..error)

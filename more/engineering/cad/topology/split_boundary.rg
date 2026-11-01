@@ -78,13 +78,14 @@ _SplitBoundary := (
 
 -- Expand both uses of a split edge. Old edge IDs keep the first canonical
 -- segment; appended IDs identify the second segment, independently of winding.
-_split_refine := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_split_refine := #(.Scalar: Type: Float) (
     .model     : &Model#(Scalar),
     .first     : _SplitEndpoint#(Scalar),
     .second    : _SplitEndpoint#(Scalar),
     .parts     : [2]EdgeId,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(_SplitBoundary, SplitErrors)) {
+
     counts ::= entity_counts(model)
     uses ::= DynamicArray#(_BoundaryUse)(
         .allocator = allocator, .capacity = [counts.halfedges + 4]
@@ -164,7 +165,7 @@ _split_refine := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 
 -- A cut closes a contiguous part of the topological walk. Extract geometry
 -- after adding the chord; bridges shared by both output faces remain boundaries.
-_split_candidate_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_split_candidate_region := #(.Scalar: Type: Float) (
     .uses       : &DynamicArray#(_BoundaryUse),
     .range      : _BoundaryRange,
     .offset     : UIntNative,
@@ -175,8 +176,9 @@ _split_candidate_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     .plane      : g.Plane#(Scalar),
     .positive   : Bool,
     .tolerance  : Scalar,
-    .allocator  : $&Provider
+    .allocator  : $&Virtual#(Allocator)
 ) -> (.result: Errable#(_PlanarContours#(Scalar), SplitErrors)) {
+
     if count < 3 {
         result = ..error(.reason = ..degenerate_cut)
         return

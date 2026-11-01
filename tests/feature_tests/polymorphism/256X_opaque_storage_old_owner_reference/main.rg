@@ -17,7 +17,11 @@ _impl_put_Cell := (
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     storage ::= unwrap_or_abort(allocate#(Allocation)(allocator))
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(
         unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference

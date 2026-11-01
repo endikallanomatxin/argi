@@ -1,4 +1,4 @@
-make_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
+make_text := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(.t: String, .reasons: (..out_of_memory))
 ) {
 
@@ -25,9 +25,11 @@ make_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&A
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
-    made ::= make_text(.allocator = $&allocator_storage)
+    made ::= make_text(.allocator = allocator)
     match made {
         ..ok ~payload {
             text ::= ~payload

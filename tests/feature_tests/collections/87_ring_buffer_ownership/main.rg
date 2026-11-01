@@ -10,7 +10,7 @@ implement Deinit#(Tracked) (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     ring ::= unwrap_or_abort(
         .value = RingBuffer#(.t: Tracked)(.capacity = 2, .allocator = allocator)
     )

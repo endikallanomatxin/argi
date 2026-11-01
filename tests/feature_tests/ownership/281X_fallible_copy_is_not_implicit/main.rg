@@ -2,9 +2,9 @@ FallibleValue := (
     .value : Int32
 )
 
-implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider) (
+implement FalliblyCopyable#(FallibleValue) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &FallibleValue, .allocator: $&Provider) -> (
+    .copy    = (.self: &FallibleValue, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(.t: FallibleValue, .reasons: (..copy_failed))
     ) {
 

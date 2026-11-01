@@ -20,19 +20,19 @@ DirectoryWalker := (
     ._ended         : Bool
 )
 
-DirectoryWalkerInitArgs: Type = #(.Provider: Type: Allocator) (
+DirectoryWalkerInitArgs: Type = (
     .self          : &FileSystem,
     .path          : StringView,
     .maximum_depth : UIntNative   = 64,
-    .allocator     : $&Provider
+    .allocator     : $&Virtual#(Allocator)
 )
 
-implement#(.Provider: Type: Allocator) Init#(
-    DirectoryWalker, DirectoryWalkerInitArgs#(Provider)
+implement Init#(
+    DirectoryWalker, DirectoryWalkerInitArgs
 ) (
     .Result : Type = Errable#(DirectoryWalker, _FilesystemReasons)
 
-    .init = DirectoryWalkerInitArgs#(Provider) -> (.result: Result) {
+    .init = DirectoryWalkerInitArgs -> (.result: Result) {
 
         _init_self ::= self
         _init_path ::= path
@@ -69,8 +69,8 @@ implement Deinit#(DirectoryWalker) (
 )
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
-_next_directory_walker := #(.Provider: Type: Allocator#(Provider)) (
-    .self: $&DirectoryWalker, .allocator: $&Provider
+_next_directory_walker := (
+    .self: $&DirectoryWalker, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(?WalkEntry, _FilesystemReasons)) {
 
     assume allocator

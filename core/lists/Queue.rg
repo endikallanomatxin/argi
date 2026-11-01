@@ -6,10 +6,10 @@ Queue#(.Collection: Type): Contract = (
 )
 
 -- A bounded queue retains the provider needed to clean rejected owning inputs.
-QueueInsertion#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+QueueInsertion#(.Collection: Type): Contract = (
     Queue#(Collection)
     .Result : Type
-    .push   : (.self: $&Collection, .value: Queue#(Collection).Item, .allocator: $&Provider) -> (
+    .push   : (.self: $&Collection, .value: Queue#(Collection).Item, .allocator: $&Virtual#(Allocator)) -> (
         .result : Result
     )
 )

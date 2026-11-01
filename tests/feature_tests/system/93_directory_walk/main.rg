@@ -39,10 +39,11 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     )!!!
     match next(.self = $&zero, .allocator = allocator)!!! { ..none {} ..some ~_ { abort } }
     refusing ::= RefusingAllocator()
+    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
     match DirectoryWalker(
         .self      = system.file_system
         .path      = "tests/feature_tests/system/86_word_count_consumer/data"
-        .allocator = $&refusing
+        .allocator = $&refusing_virtual
     ) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }
@@ -63,11 +64,11 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         }
         -- The directory entry is returned after its child frame is opened.
         -- Refuse the next entry allocation while both frames remain owned.
-        match next(.self = $&interrupted, .allocator = $&refusing) {
+        match next(.self = $&interrupted, .allocator = $&refusing_virtual) {
             ..ok ~_ { abort }
             ..error error { if error.reason != ..out_of_memory { abort } }
         }
-        match next(.self = $&interrupted, .allocator = $&refusing)!!! {
+        match next(.self = $&interrupted, .allocator = $&refusing_virtual)!!! {
             ..none {} ..some ~_ { abort }
         }
         deinit(.self = $&interrupted)

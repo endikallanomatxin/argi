@@ -4,9 +4,9 @@ FallibleValue := (
     .value : Int32
 )
 
-implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider) (
+implement FalliblyCopyable#(FallibleValue) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &FallibleValue, .allocator: $&Provider) -> (
+    .copy    = (.self: &FallibleValue, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(.t: FallibleValue, .reasons: (..copy_failed))
     ) {
 
@@ -20,7 +20,6 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider
 require_array_reasons := #(
     .t : Type: FalliblyCopyable#(
         .Value    : t,
-        .Provider : GeneralPurposeAllocator,
         .reasons  : (..copy_failed, ..out_of_memory)
     )
 ) (.value: &t) -> () {}
@@ -28,7 +27,9 @@ require_array_reasons := #(
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: FallibleValue)(.capacity = 1))
     defer deinit(.self = $&source)

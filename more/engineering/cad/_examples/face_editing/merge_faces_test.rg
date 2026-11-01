@@ -2,7 +2,7 @@
 -- The result owns a new model plus source-to-result correspondences.
 -- Query that correspondence instead of assuming a face kept its old ID.
 test usage_merge_coplanar_faces := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

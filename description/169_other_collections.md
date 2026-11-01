@@ -223,9 +223,9 @@ with self preserve the set, and difference with self clears it.
 
 Queue supplies Item and the selected pop Result. RingBuffer returns Errable with
 empty, while both priority queue families return an optional item. All expose the
-result through the same .result label. QueueInsertion selects a collection and
-allocation Provider jointly; push uses its Result for full or out_of_memory.
+result through the same .result label. QueueInsertion selects the collection and accepts a virtual allocator; push uses
+its Result for full or out_of_memory.
 These are scoped contract operations, with no ordinary push/pop overload family.
-Provider defaults use lexical allocator lookup. Owning inputs move into lexical
+Allocator inputs use lexical capability lookup. Owning inputs move into lexical
 owners before fallible insertion, retaining cleanup on rejection and allocation
-failure. Dynamic-array reservation keeps that static Provider through allocation.
+failure. Dynamic-array reservation forwards the same virtual allocator capability.

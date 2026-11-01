@@ -2,17 +2,17 @@
 -- logical order into new storage and moves every element exactly once.
 Deque := #(.t: Type) (._ring: RingBuffer#(.t: t))
 
-DequeInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
+DequeInitArgs: Type = #(.t: Type) (
     .capacity  : UIntNative = 8,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.t: Type, .Provider: Type: Allocator) Init#(
-    Deque#(.t: t), DequeInitArgs#(t, Provider)
+implement#(.t: Type) Init#(
+    Deque#(.t: t), DequeInitArgs#(t)
 ) (
     .Result : Type = Errable#(Deque#(.t: t), (..out_of_memory))
 
-    .init = DequeInitArgs#(t, Provider) -> (.result: Result) {
+    .init = DequeInitArgs#(t) -> (.result: Result) {
 
         _init_capacity ::= capacity
         _init_allocator ::= allocator
@@ -35,8 +35,8 @@ implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
     .measure_capacity = _collection_capacity_deque
 )
 
-reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&AllocatorType
+reserve := #(.t: Type) (
+    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     if capacity <= self&._ring._capacity {
@@ -75,8 +75,8 @@ reserve := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok Void()
 }
 
-_deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .allocator: $&AllocatorType
+_deque_ensure_room := #(.t: Type) (
+    .self: $&Deque#(.t: t), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     if self&._ring._length < self&._ring._capacity {
@@ -96,8 +96,8 @@ _deque_ensure_room := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType
     result = reserve(self, .capacity = grown, .allocator = allocator)
 }
 
-push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType
+push_back := #(.t: Type) (
+    .self: $&Deque#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -118,8 +118,8 @@ push_back := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok Void()
 }
 
-push_front := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Deque#(.t: t), .value: t, .allocator: $&AllocatorType
+push_front := #(.t: Type) (
+    .self: $&Deque#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator

@@ -8,14 +8,15 @@ PlanarProfile := #(.Scalar: Type: Float) (
     ._tolerance       : Scalar
 )
 
-planar_profile := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+planar_profile := #(.Scalar: Type: Float) (
     .points          : ArrayView#(g.Point#(Scalar)),
     .contour_lengths : ArrayView#(UIntNative),
     .region_lengths  : ArrayView#(UIntNative),
     .tolerance       : Scalar                        = 0.000001,
-    .allocator       : $&Provider
+    .allocator       : $&Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
-    plane ::= g.planar_regions_plane#(.Scalar: Scalar, .Provider: Provider)(
+
+    plane ::= g.planar_regions_plane#(.Scalar: Scalar)(
         .points          = points
         .contour_lengths = contour_lengths
         .region_lengths  = region_lengths
@@ -79,8 +80,8 @@ planar_profile := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     )
 }
 
-profile_from_contour := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .points: ArrayView#(g.Point#(Scalar)), .tolerance: Scalar = 0.000001, .allocator: $&Provider
+profile_from_contour := #(.Scalar: Type: Float) (
+    .points: ArrayView#(g.Point#(Scalar)), .tolerance: Scalar = 0.000001, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
     contours :: [1]UIntNative = (
         length(&points).count
@@ -100,12 +101,12 @@ profile_from_contour := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 
 -- One exterior followed by holes, already oriented in the supplied frame.
 -- This constructor admits analytic segments and circular arcs without sampling.
-profile_from_spans := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+profile_from_spans := #(.Scalar: Type: Float) (
     .spans           : ArrayView#(g.ContourSpan#(Scalar)),
     .contour_lengths : ArrayView#(UIntNative),
     .frame           : g.Frame#(Scalar),
     .tolerance       : Scalar                  = 0.000001,
-    .allocator       : $&Provider
+    .allocator       : $&Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
     g.validate_frame(frame)!
     g.validate_contour_region(

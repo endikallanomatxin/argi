@@ -10,12 +10,15 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
 }
 
 main := (.system: System) -> (.status_code: Int32) {
+    page :: PageAllocator = PageAllocator(.memory = system.memory)
     counting_allocator :: CountAllocator = (
-        .backing = system.page_allocator
+        .backing = $&page
         .calls   = 0
         .fail    = false
     )
-    assume allocator ::= $&counting_allocator
+    allocator_concrete := $&counting_allocator
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer

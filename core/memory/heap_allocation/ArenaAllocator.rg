@@ -34,15 +34,15 @@ ArenaAllocator := (
     ._current_block_offset : UIntNative
 )
 
-ArenaAllocatorInitArgs: Type = #(.Provider: Type: Allocator) (
-    .allocator  : $&Provider,
+ArenaAllocatorInitArgs: Type = (
+    .allocator  : $&Virtual#(Allocator),
     .block_size : UIntNative  = 4096
 )
 
-implement#(.Provider: Type: Allocator) Init#(ArenaAllocator, ArenaAllocatorInitArgs#(Provider)) (
+implement Init#(ArenaAllocator, ArenaAllocatorInitArgs) (
     .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
 
-    .init = ArenaAllocatorInitArgs#(Provider) -> (.result: Result) {
+    .init = ArenaAllocatorInitArgs -> (.result: Result) {
 
         _init_allocator ::= allocator
         _init_block_size ::= block_size
@@ -53,7 +53,7 @@ implement#(.Provider: Type: Allocator) Init#(ArenaAllocator, ArenaAllocatorInitA
 
         if actual_block_size == 0 { actual_block_size = 1 }
         constructed = (
-            ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = _init_allocator)
+            ._backing_allocator    = _init_allocator&
             .domain                = ArenaDomain()
             ._block_head           = 0
             .block_count           = 0

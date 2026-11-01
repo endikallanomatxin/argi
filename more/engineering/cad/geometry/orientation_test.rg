@@ -70,7 +70,8 @@ test geometry_orientation_sign_and_reversal := (.system: System) -> !() {
 }
 
 test geometry_containment_propagates_uncertainty := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+
     points ::= DynamicArray#(_RegionPoint#(Float64))(.allocator = allocator)!
     [push($&points, .value = (0.0, 0.0), .allocator = allocator)!]
     [push($&points, .value = (2.0, 2.0), .allocator = allocator)!]
@@ -90,7 +91,8 @@ test geometry_containment_propagates_uncertainty := (.system: System) -> !() {
 }
 
 test geometry_area_rejects_cancellation := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+
     points ::= DynamicArray#(_RegionPoint#(Float64))(.allocator = allocator)!
     [push($&points, .value = (0.0, 0.0), .allocator = allocator)!]
     [push($&points, .value = (1.0, 1.0), .allocator = allocator)!]

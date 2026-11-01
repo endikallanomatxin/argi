@@ -13,9 +13,11 @@ main := (.system: System) -> (.status_code: Int32) {
         .alloc_count     = 0
         .dealloc_count   = 0
     )
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
-    text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 3))
+    text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 3))
     if allocator_storage.last_alloc_size != 4 {
         status_code = 1
         return

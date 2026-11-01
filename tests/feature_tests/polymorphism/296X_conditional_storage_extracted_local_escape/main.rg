@@ -76,6 +76,10 @@ extract := (.allocator: $&GeneralPurposeAllocator) -> (.value: Tracked) {
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    _ ::= extract(allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
+    _ ::= extract(allocator_concrete)
 }

@@ -151,14 +151,15 @@ _region_contains := #(.Scalar: Type: Float) (
 -- Contiguous points per contour, contiguous contours per region. The first
 -- contour of each region is its exterior; subsequent contours are holes.
 -- Regions may be disconnected or lie inside another region's hole.
-planar_regions_plane := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+planar_regions_plane := #(.Scalar: Type: Float) (
     .points              : ArrayView#(Point#(Scalar)),
     .contour_lengths     : ArrayView#(UIntNative),
     .region_lengths      : ArrayView#(UIntNative),
     .tolerance           : Scalar                      = 0.000001,
-    .allocator           : $&Provider,
+    .allocator           : $&Virtual#(Allocator),
     .require_orientation : Bool                        = false
 ) -> (.result: Errable#(Plane#(Scalar), GeometryErrors)) {
+
     if is_finite(tolerance).ok == false or tolerance <= 0.0 {
         result = ..error(.reason = ..invalid_tolerance)
         return

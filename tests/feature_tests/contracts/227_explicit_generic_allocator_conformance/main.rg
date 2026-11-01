@@ -24,8 +24,9 @@ implement Deinit#(Owner) (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
+    page :: PageAllocator = PageAllocator(.memory = system.memory)
     args :: ConstructionArgs#(PageAllocator) = (
-        .allocator = system.page_allocator
+        .allocator = $&page
         .length    = 4
     )
     owner ::= unwrap_or_abort(

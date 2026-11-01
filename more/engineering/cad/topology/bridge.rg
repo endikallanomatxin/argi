@@ -12,13 +12,14 @@ FaceBridge := #(.Scalar: Type: Float) (
     ._edge_parts     : [2]EdgeId
 )
 
-bridge_planar_face := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+bridge_planar_face := #(.Scalar: Type: Float) (
     .model     : &Model#(Scalar),
     .face      : FaceId,
     .exterior  : BoundaryPoint#(Scalar),
     .hole      : BoundaryPoint#(Scalar),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(FaceBridge#(Scalar), SplitErrors)) {
+
     original ::= face_info(model, .face = face)!
     plane ::= face_plane(model, .face = face)!
     if original.loop_count < 2 or original.genus != 0 {
@@ -210,13 +211,14 @@ bridge_planar_face := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     )
 }
 
-_bridge_append := #(.Provider: Type: Allocator) (
+_bridge_append := (
     .uses        : &DynamicArray#(_BoundaryUse),
     .destination : $&DynamicArray#(_BoundaryUse),
     .range       : _BoundaryRange,
     .offset      : UIntNative,
-    .allocator   : $&Provider
+    .allocator   : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
+
     cursor ::= offset
     i :: UIntNative = 0
     while i < range.count {

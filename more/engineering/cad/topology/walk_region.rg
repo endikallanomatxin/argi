@@ -44,13 +44,14 @@ _BoundaryContours := #(.Scalar: Type: Float) (
 
 -- The ranges partition uses in order. Pairing is local to each range; the edge
 -- lookup is initialized once for the whole selection, including all its holes.
-_boundary_contours := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_boundary_contours := #(.Scalar: Type: Float) (
     .uses       : &DynamicArray#(_BoundaryUse),
     .ranges     : ArrayView#(_BoundaryRange),
     .points     : &DynamicArray#(g.Point#(Scalar)),
     .edge_count : UIntNative,
-    .allocator  : $&Provider
+    .allocator  : $&Virtual#(Allocator)
 ) -> (.result: Errable#(_BoundaryContours#(Scalar), _BoundaryErrors)) {
+
     count ::= length(uses).count
     first ::= DynamicArray#(UIntNative)(.allocator = allocator, .capacity = edge_count)!
     twins ::= DynamicArray#(UIntNative)(.allocator = allocator, .capacity = count)!
@@ -172,7 +173,7 @@ _boundary_contours := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = ..ok(.points = ~coordinates, .lengths = ~lengths, .walks = ~walks)
 }
 
-_walk_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_walk_region := #(.Scalar: Type: Float) (
     .uses       : &DynamicArray#(_BoundaryUse),
     .range      : _BoundaryRange,
     .points     : &DynamicArray#(g.Point#(Scalar)),
@@ -180,8 +181,9 @@ _walk_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     .plane      : g.Plane#(Scalar),
     .positive   : Bool,
     .tolerance  : Scalar,
-    .allocator  : $&Provider
+    .allocator  : $&Virtual#(Allocator)
 ) -> (.result: Errable#(_PlanarContours#(Scalar), SplitErrors)) {
+
     ranges: [1]_BoundaryRange = (range)
     contours ::= _boundary_contours(
         .uses       = uses
@@ -245,8 +247,8 @@ _walk_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = ..ok ~region
 }
 
-_walk_validate_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .region: &_PlanarContours#(Scalar), .tolerance: Scalar, .allocator: $&Provider
+_walk_validate_region := #(.Scalar: Type: Float) (
+    .region: &_PlanarContours#(Scalar), .tolerance: Scalar, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BuildErrors)) {
     regions: [1]UIntNative = (
         length(&region&.lengths).count
@@ -262,7 +264,7 @@ _walk_validate_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = ..ok Void()
 }
 
-_walk_validate_cut := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_walk_validate_cut := #(.Scalar: Type: Float) (
     .face      : Face,
     .boundary  : &_SplitBoundary,
     .points    : &DynamicArray#(g.Point#(Scalar)),
@@ -271,8 +273,9 @@ _walk_validate_cut := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     .bridge    : Bool              = false,
     .plane     : g.Plane#(Scalar),
     .tolerance : Scalar,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
+
     coordinates ::= DynamicArray#(g.Point#(Scalar))(.allocator = allocator)!
     lengths ::= DynamicArray#(UIntNative)(.allocator = allocator, .capacity = face.loop_count)!
     first ::= face.first_loop | convert#(.to: UIntNative)(_)

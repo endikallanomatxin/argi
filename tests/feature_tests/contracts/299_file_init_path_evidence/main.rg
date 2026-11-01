@@ -47,11 +47,12 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     )
     unwrap_or_abort(.value = close(.self = $&view_file))
     refusing ::= RefusingAllocator()
-    match read_file(.self = system.file_system, .path = c_path, .allocator = $&refusing) {
+    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
+    match read_file(.self = system.file_system, .path = c_path, .allocator = $&refusing_virtual) {
         ..ok ~text { status_code = 3 }
         ..error error { if error.reason != ..out_of_memory { status_code = 4 } }
     }
-    match open_file(.file_system = system.file_system, .path = path, .allocator = $&refusing) {
+    match open_file(.file_system = system.file_system, .path = path, .allocator = $&refusing_virtual) {
         ..ok ~file { status_code = 1 }
         ..error error { if error.reason != ..out_of_memory { status_code = 2 } }
     }

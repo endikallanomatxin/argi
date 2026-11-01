@@ -32,15 +32,15 @@ _GeometryPools := #(.Scalar: Type: Float) (
     .pcurves   : DynamicArray#(PCurve#(Scalar))
 )
 
-_GeometryPoolsInitArgs := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .allocator : $&Provider
+_GeometryPoolsInitArgs := #(.Scalar: Type: Float) (
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.Scalar: Type: Float, .Provider: Type: Allocator) Init#(
-    _GeometryPools#(Scalar), _GeometryPoolsInitArgs#(Scalar, Provider)
+implement#(.Scalar: Type: Float) Init#(
+    _GeometryPools#(Scalar), _GeometryPoolsInitArgs#(Scalar)
 ) (
     .Result : Type = Errable#(_GeometryPools#(Scalar), BuildErrors)
-    .init   = _GeometryPoolsInitArgs#(Scalar, Provider) -> (.result: Result) {
+    .init   = _GeometryPoolsInitArgs#(Scalar) -> (.result: Result) {
         surfaces ::= DynamicArray#(_SurfaceRef)(.allocator = allocator)!
         planes ::= DynamicArray#(g.Plane#(Scalar))(.allocator = allocator)!
         cylinders ::= DynamicArray#(g.Cylinder#(Scalar))(.allocator = allocator)!
@@ -68,9 +68,10 @@ implement#(.Scalar: Type: Float, .Provider: Type: Allocator) Init#(
     }
 )
 
-_pool_add_surface := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .pools: $&_GeometryPools#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Provider
+_pool_add_surface := #(.Scalar: Type: Float) (
+    .pools: $&_GeometryPools#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(SurfaceId, BuildErrors)) {
+
     index ::= length(&pools&.surfaces).count
     if index == integer_limits(.value = index).maximum {
         result = ..error(.reason = ..out_of_memory)
@@ -145,9 +146,10 @@ _pool_surface := #(.Scalar: Type: Float) (.pools: &_GeometryPools#(Scalar), .sur
     }
 }
 
-_pool_add_curve := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .pools: $&_GeometryPools#(Scalar), .curve: Curve#(Scalar), .allocator: $&Provider
+_pool_add_curve := #(.Scalar: Type: Float) (
+    .pools: $&_GeometryPools#(Scalar), .curve: Curve#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(CurveId, BuildErrors)) {
+
     index ::= length(&pools&.curves).count
     if index == integer_limits(.value = index).maximum {
         result = ..error(.reason = ..out_of_memory)
@@ -198,12 +200,13 @@ _pool_curve := #(.Scalar: Type: Float) (.pools: &_GeometryPools#(Scalar), .curve
     }
 }
 
-_pool_append_face_surface := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_pool_append_face_surface := #(.Scalar: Type: Float) (
     .pools     : $&_GeometryPools#(Scalar),
     .faces     : $&DynamicArray#(SurfaceId),
     .surface   : g.Surface#(Scalar),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BuildErrors)) {
+
     id ::= _pool_add_surface(.pools = pools, .surface = surface, .allocator = allocator)!
     push(faces, .value = id, .allocator = allocator)!
     result = ..ok Void()
@@ -261,8 +264,8 @@ geometry_storage_info := #(.Scalar: Type: Float) (.model: &Model#(Scalar)) -> (
 
 _pool_type_size := #(.T: Type) () -> (.bytes: UIntNative) { bytes = size_of(.type = T) }
 
-_copy_geometry_pools := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .source: &_GeometryPools#(Scalar), .allocator: $&Provider
+_copy_geometry_pools := #(.Scalar: Type: Float) (
+    .source: &_GeometryPools#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(_GeometryPools#(Scalar), BuildErrors)) {
     surfaces ::= copy(&source&.surfaces, .allocator = allocator)!
     planes ::= copy(&source&.planes, .allocator = allocator)!

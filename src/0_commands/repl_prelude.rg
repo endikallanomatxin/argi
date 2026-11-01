@@ -6,4 +6,5 @@ assume ffi ::= $&ForeignFunctionInterface()
 _repl_terminal ::= Terminal()
 assume writer ::= $&_repl_terminal.stdout
 _repl_allocator ::= CAllocator(.ffi = ffi)
-assume allocator ::= $&_repl_allocator
+_repl_allocator_handle ::= to_virtual#(Allocator)($&_repl_allocator)
+assume allocator ::= $&_repl_allocator_handle

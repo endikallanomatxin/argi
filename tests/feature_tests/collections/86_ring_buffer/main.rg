@@ -1,6 +1,6 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     ring ::= unwrap_or_abort(
         .value = RingBuffer#(.t: Int32)(.capacity = 3, .allocator = allocator)
     )

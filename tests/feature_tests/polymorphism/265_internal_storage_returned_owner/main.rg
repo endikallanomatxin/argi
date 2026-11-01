@@ -58,10 +58,14 @@ make_slot := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.resul
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drops :: Int32 = 0
     {
-        implementation ::= make_slot(allocator, $&drops)
+        implementation ::= make_slot(allocator_concrete, $&drops)
         slot ::= to_virtual#(SlotProtocol)($&implementation)
         extracted ::= forward_take($&slot)
         deinit($&implementation.storage)

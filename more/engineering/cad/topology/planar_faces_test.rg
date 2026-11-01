@@ -20,7 +20,7 @@ _planar_annulus := () -> (
 }
 
 test model_planar_face_with_hole := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _planar_annulus()
     model ::= [
         from_planar_faces(
@@ -53,7 +53,7 @@ test model_planar_face_with_hole := (.system: System) -> !() {
 }
 
 test model_planar_face_rejects_hole_winding := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _planar_annulus()
     input.indices[5] = 7
     input.indices[7] = 5
@@ -72,7 +72,7 @@ test model_planar_face_rejects_hole_winding := (.system: System) -> !() {
 }
 
 test model_planar_face_rejects_bad_loop_counts := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _planar_annulus()
     input.face_loops[0] = 3
     [
@@ -90,7 +90,7 @@ test model_planar_face_rejects_bad_loop_counts := (.system: System) -> !() {
 }
 
 test model_planar_faces_preserve_shared_coordinates_and_tolerance := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

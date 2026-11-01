@@ -1,5 +1,5 @@
 test model_face_region_respects_support_domain := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _brep_hemisphere#(.Scalar: Float64)(.allocator = allocator)!
     support ::= face_surface(&model, .face = (.value = 0))!
     [

@@ -4,7 +4,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     arena :: ArenaAllocator
     arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
-    gpa ::= GeneralPurposeAllocator(.allocator = $&arena)
+    arena_virtual ::= to_virtual#(Allocator)($&arena)
+    gpa ::= GeneralPurposeAllocator(.allocator = $&arena_virtual)
     allocation ::= unwrap_or_abort(
         .value = allocate_bytes(.self = $&gpa, .size = 32, .alignment = 8)
     )

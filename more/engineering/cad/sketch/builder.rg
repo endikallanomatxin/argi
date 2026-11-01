@@ -34,18 +34,18 @@ Sketch := #(.Scalar: Type: Float) (
     ._tolerance : Scalar
 )
 
-SketchBuilderInitArgs := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+SketchBuilderInitArgs := #(.Scalar: Type: Float) (
     .plane     : SketchPlane      = ..xy,
     .origin    : g.Point#(Scalar) = (0.0, 0.0, 0.0),
     .tolerance : Scalar           = 0.000001,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.Scalar: Type: Float, .Provider: Type: Allocator) Init#(
-    SketchBuilder#(Scalar), SketchBuilderInitArgs#(Scalar, Provider)
+implement#(.Scalar: Type: Float) Init#(
+    SketchBuilder#(Scalar), SketchBuilderInitArgs#(Scalar)
 ) (
     .Result : Type = Errable#(SketchBuilder#(Scalar), t.BuildErrors)
-    .init   = SketchBuilderInitArgs#(Scalar, Provider) -> (.result: Result) {
+    .init   = SketchBuilderInitArgs#(Scalar) -> (.result: Result) {
         frame: g.Frame#(Scalar) = (
             .origin = origin, .x = (1.0, 0.0, 0.0), .y = (0.0, 1.0, 0.0), .z = (0.0, 0.0, 1.0)
         )
@@ -70,8 +70,8 @@ implement#(.Scalar: Type: Float, .Provider: Type: Allocator) Init#(
 
 -- The frame fixes origin, local X/Y axes and normal. It must be right-handed
 -- and orthonormal; placement is never silently normalized, scaled or reflected.
-sketch_builder_on_frame := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .frame: g.Frame#(Scalar), .tolerance: Scalar = 0.000001, .allocator: $&Provider
+sketch_builder_on_frame := #(.Scalar: Type: Float) (
+    .frame: g.Frame#(Scalar), .tolerance: Scalar = 0.000001, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(SketchBuilder#(Scalar), t.BuildErrors)) {
     if is_finite(tolerance).ok == false or tolerance <= 0.0 {
         result = ..error(.reason = ..invalid_tolerance)
@@ -92,10 +92,10 @@ sketch_builder_on_frame := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 
 -- Explicit directed spans form one counterclockwise contour. Validate before
 -- reserving and appending, so rejected geometry leaves logical contents intact.
-contour := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+contour := #(.Scalar: Type: Float) (
     .builder   : $&SketchBuilder#(Scalar),
     .spans     : ArrayView#(g.ContourSpan#(Scalar)),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     count ::= length(&spans).count
     lengths: [1]UIntNative = (count,)

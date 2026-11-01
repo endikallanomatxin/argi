@@ -66,6 +66,10 @@ escape := (.allocator: $&GeneralPurposeAllocator) -> (.result: Allocation) {
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    escape(.allocator = allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
+    escape(.allocator = allocator_concrete)
 }

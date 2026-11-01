@@ -104,7 +104,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     print(view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
-print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
+print_python_error := (.interpreter: &p.Python, .writer: $&File, .allocator: $&Virtual#(Allocator)) -> !Void = ..ok Void(
 ) {
 
     assume allocator
@@ -138,7 +138,7 @@ invalid_duration := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 read_csv_input := (
     .path         : StringView,
     .file_system  : $&FileSystem,
-    .allocator    : $&PageAllocator,
+    .allocator    : $&Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> !!DynamicArray#(UInt8) {
     assume error_tracer
@@ -151,7 +151,7 @@ read_csv_input := (
 
 decode_csv_input := (
     .bytes        : ArrayView#(UInt8),
-    .allocator    : $&PageAllocator,
+    .allocator    : $&Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> !!String {
     assume allocator

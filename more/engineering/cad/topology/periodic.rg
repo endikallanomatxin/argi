@@ -1,12 +1,13 @@
 -- Complete analytic supports and finite cylinders use the same Model and queries
 -- as polyhedra. Circular boundaries are single closed edges without vertices.
-from_periodic_surface := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+from_periodic_surface := #(.Scalar: Type: Float) (
     .surface      : g.Surface#(Scalar),
     .cap_cylinder : Bool                = false,
     .height       : Scalar              = 1.0,
     .tolerance    : Scalar              = 0.000001,
-    .allocator    : $&Provider
+    .allocator    : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
+
     if is_finite(tolerance).ok == false or tolerance <= 0.0 {
         result = ..error(.reason = ..invalid_tolerance)
         return

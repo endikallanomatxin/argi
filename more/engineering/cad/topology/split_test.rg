@@ -9,7 +9,7 @@ _split_square := () -> (.points: [4]g.Point#(Float64), .faces: [1][4]UIntNative)
 }
 
 test model_split_diagonal := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_square()
     source ::= [
         from_equal_length_faces(
@@ -60,7 +60,7 @@ test model_split_diagonal := (.system: System) -> !() {
 }
 
 test model_split_edge_interiors := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_square()
     source ::= [
         from_equal_length_faces(
@@ -168,7 +168,7 @@ _split_cube := () -> (.points: [8]g.Point#(Float64), .faces: [6][4]UIntNative) {
 }
 
 test model_split_shared_edges_preserves_closed_shell := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_cube()
     source ::= [
         from_equal_length_faces(.points = view(&input.points), .faces = view(&input.faces))!
@@ -236,7 +236,7 @@ test model_split_shared_edges_preserves_closed_shell := (.system: System) -> !()
 }
 
 test model_split_rejects_invalid_endpoints := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_square()
     source ::= [
         from_equal_length_faces(
@@ -335,7 +335,7 @@ test model_split_rejects_invalid_endpoints := (.system: System) -> !() {
 }
 
 test model_split_concave_and_exterior_chord := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),
@@ -383,7 +383,7 @@ test model_split_concave_and_exterior_chord := (.system: System) -> !() {
 }
 
 test model_split_float32_reversed_endpoints := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [4]g.Point#(Float32) = (
         (0.0, 0.0, 1.0),
         (2.0, 0.0, 1.0),
@@ -418,7 +418,7 @@ test model_split_float32_reversed_endpoints := (.system: System) -> !() {
 }
 
 test model_split_rejects_hole_endpoints_and_foreign_boundary := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     annulus ::= _planar_annulus()
     vertices: [8]UIntNative = (0, 1, 2, 3, 4, 5, 6, 7)
     lengths: [2]UIntNative = (4, 4)
@@ -461,7 +461,7 @@ test model_split_rejects_hole_endpoints_and_foreign_boundary := (.system: System
 }
 
 test model_split_history_checks_domains := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_square()
     source ::= [
         from_equal_length_faces(
@@ -563,7 +563,7 @@ test model_split_history_checks_domains := (.system: System) -> !() {
     ]
 }
 
-_split_owned_patch := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> (
+_split_owned_patch := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(Model#(Float64), SplitErrors)
 ) {
     input ::= _split_square()
@@ -584,7 +584,7 @@ _split_owned_patch := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> 
 }
 
 test model_split_result_owns_geometry := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _split_owned_patch(.allocator = allocator)!
     testing.expect(entity_counts(&model).faces == 2 and entity_counts(&model).vertices == 5)!
     testing.expect([point(&model, .vertex = (.value = 4))!].x == 1.0)!
@@ -594,7 +594,8 @@ test model_split_result_owns_geometry := (.system: System) -> !() {
 }
 
 test model_split_preserves_unrelated_analytic_face := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+
     input ::= _split_square()
     source ::= [
         from_equal_length_faces(
@@ -624,11 +625,11 @@ test model_split_preserves_unrelated_analytic_face := (.system: System) -> !() {
     )
     loop: Loop = (.first = (.value = 4), .count = 1)
     face: Face = (.first_loop = (.value = 1), .loop_count = 1, .genus = 0)
-    [push($&source._topology._edges, .value = edge)!]
-    [push($&source._topology._halfedges, .value = use)!]
-    [push($&source._topology._loops, .value = loop)!]
-    [push($&source._topology._faces, .value = face)!]
-    [push($&source._face_surfaces, .value = support)!]
+    [push($&source._topology._edges, .value = edge, .allocator = allocator)!]
+    [push($&source._topology._halfedges, .value = use, .allocator = allocator)!]
+    [push($&source._topology._loops, .value = loop, .allocator = allocator)!]
+    [push($&source._topology._faces, .value = face, .allocator = allocator)!]
+    [push($&source._face_surfaces, .value = support, .allocator = allocator)!]
     sphere: g.Surface#(Float64) = ..sphere(.frame = frame, .radius = 1.0)
     sphere_support ::= [
         _pool_add_surface(
@@ -636,8 +637,8 @@ test model_split_preserves_unrelated_analytic_face := (.system: System) -> !() {
         )!
     ]
     sphere_face: Face = (.first_loop = (.value = 2), .loop_count = 0, .genus = 0)
-    [push($&source._topology._faces, .value = sphere_face)!]
-    [push($&source._face_surfaces, .value = sphere_support)!]
+    [push($&source._topology._faces, .value = sphere_face, .allocator = allocator)!]
+    [push($&source._face_surfaces, .value = sphere_support, .allocator = allocator)!]
     split ::= [
         split_planar_face(
             &source
@@ -684,7 +685,7 @@ test model_split_preserves_unrelated_analytic_face := (.system: System) -> !() {
 }
 
 test model_split_nonfirst_face_and_repeated_edit := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_cube()
     source ::= [
         from_equal_length_faces(.points = view(&input.points), .faces = view(&input.faces))!
@@ -731,7 +732,7 @@ test model_split_nonfirst_face_and_repeated_edit := (.system: System) -> !() {
 }
 
 test model_split_preserves_admitted_coordinates_and_support := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_square()
     input.points[3].z = 0.0000005
     source ::= [
@@ -778,7 +779,7 @@ test model_split_preserves_admitted_coordinates_and_support := (.system: System)
 }
 
 test model_split_cut_direction_and_nonfinite_parameter := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_square()
     source ::= [
         from_equal_length_faces(
@@ -818,7 +819,7 @@ test model_split_cut_direction_and_nonfinite_parameter := (.system: System) -> !
 }
 
 test model_split_respects_halfedge_parameter_direction := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_cube()
     source ::= [
         from_equal_length_faces(.points = view(&input.points), .faces = view(&input.faces))!

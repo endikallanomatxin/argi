@@ -10,10 +10,10 @@ VectorScaling#(.Value: Type): Contract = (
     .scale   : (.self: &Value, .factor: Element) -> (.result: Result)
 )
 
-AllocatingVectorScaling#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingVectorScaling#(.Value: Type): Contract = (
     .Element : Type
     .Result  : Type
-    .scale   : (.self: &Value, .factor: Element, .allocator: $&Provider) -> (.result: Result)
+    .scale   : (.self: &Value, .factor: Element, .allocator: $&Virtual#(Allocator)) -> (.result: Result)
 )
 
 MatrixTransposition#(.Value: Type): Contract = (
@@ -21,9 +21,9 @@ MatrixTransposition#(.Value: Type): Contract = (
     .transpose : (.self: &Value) -> (.result: Result)
 )
 
-AllocatingMatrixTransposition#(.Value: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingMatrixTransposition#(.Value: Type): Contract = (
     .Result    : Type
-    .transpose : (.self: &Value, .allocator: $&Provider) -> (.result: Result)
+    .transpose : (.self: &Value, .allocator: $&Virtual#(Allocator)) -> (.result: Result)
 )
 
 MatrixAccess#(.Value: Type): Contract = (
@@ -64,8 +64,8 @@ implement#(.n: UIntNative, .t: Type: Scalar) DotProduct#(
     .dot    = _math_dot_fixed_vector
 )
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) AllocatingVectorScaling#(
-    DynamicVector#(.t: t), Provider
+implement#(.t: Type: Scalar) AllocatingVectorScaling#(
+    DynamicVector#(.t: t)
 ) (
     .Element : Type = t
     .Result  : Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
@@ -83,8 +83,8 @@ implement#(.t: Type: Scalar) VectorAccess#(DynamicVector#(.t: t)) (
     .get     = _math_get_dynamic_vector
 )
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) AllocatingMatrixTransposition#(
-    DynamicMatrix#(.t: t), Provider
+implement#(.t: Type: Scalar) AllocatingMatrixTransposition#(
+    DynamicMatrix#(.t: t)
 ) (
     .Result    : Type = Errable#(DynamicMatrix#(.t: t), (..out_of_memory))
     .transpose = _math_transpose_dynamic_matrix

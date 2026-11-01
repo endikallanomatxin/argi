@@ -4691,6 +4691,7 @@ pub const Infer = struct {
             aggregate = try self.mergeValueEffects(aggregate, value.*);
         }
         aggregate.fields = fields;
+        aggregate.explicit_dependency = false;
         aggregate.variants = &.{};
         aggregate.known_choice_variant = null;
         return self.rebaseFreshSources(aggregate, call_node);
@@ -4787,6 +4788,7 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = try fields.toOwnedSlice();
+        result.explicit_dependency = previous.explicit_dependency;
         return result;
     }
 
@@ -4860,6 +4862,10 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = output_fields;
+        // The explicit dependency belongs to the field that introduced it.
+        // Keep it there rather than making every sibling replacement retain
+        // the aggregate's flattened roots as intrinsic dependencies.
+        result.explicit_dependency = false;
         // A destructor creates a cleanup obligation, not necessarily a fresh
         // storage lifetime. Shape anchors and scalar owners must not introduce
         // extra roots that couple independently replaced backing allocations.
@@ -4891,6 +4897,7 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = output_fields orelse &.{};
+        result.explicit_dependency = false;
         return result;
     }
 
@@ -4903,7 +4910,9 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         const ty = self.graph.node(node_id).ty orelse return .{};
         if (!self.typeContainsPointer(ty)) return self.scalar_storage_effect(effect);
-        const input_paths = try self.inferInputPaths(function_id, pointer);
+        // A pointer held in a by-value Args field needs a dereference to load
+        // its referent rather than copying the field's reference-slot facts.
+        const input_paths = try self.inferPointeePaths(function_id, pointer);
         var pointee = effect;
         if (input_paths.len != 0) {
             pointee.input_dependencies = &.{};
@@ -6327,6 +6336,25 @@ test "storage observation conflicts preserve order and ended generations after r
     // generation; it does not impose disjointness from its own field.
     try infer.recordStorageObservation(.{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 1 } } }, &.{post});
     try std.testing.expectEqual(@as(usize, 2), conflicts.items.len);
+}
+
+test "projected summary writes retain only intrinsic explicit anchors on the parent" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const child: facts.ValueEffect = .{ .explicit_dependency = true, .fresh_dependencies = &.{7} };
+    const parent: facts.ValueEffect = .{};
+    const updated = try infer.storeEffectProjection(parent, &.{.{ .field = 0 }}, child);
+    try std.testing.expect(!updated.explicit_dependency);
+    try std.testing.expect(updated.fields[0].value.explicit_dependency);
+    const anchored = try infer.storeEffectProjection(.{ .explicit_dependency = true }, &.{.{ .field = 0 }}, child);
+    try std.testing.expect(anchored.explicit_dependency);
 }
 
 test "fresh storage availability preserves unchanged trees and marks nested consumption" {

@@ -22,7 +22,11 @@ _impl_put_Cell := (.self: &Cell, .storage: $&Allocation, .value: Tracked) -> () 
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drops :: Int32 = 0
     storage ::= unwrap_or_abort(allocate_bytes(allocator, .size = 1))
     cell ::= Cell()

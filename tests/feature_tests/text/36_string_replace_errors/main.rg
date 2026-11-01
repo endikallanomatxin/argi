@@ -3,12 +3,14 @@ FailingAllocator := (.attempts: UIntNative = 0)
 main := () -> (.status_code: Int32 = 0) {
 
     allocator :: FailingAllocator = (.attempts = 0)
-    match replace(.self = "abc", .pattern = "", .replacement = "x", .allocator = $&allocator) {
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    match replace(.self = "abc", .pattern = "", .replacement = "x", .allocator = $&allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..empty_pattern { abort } }
     }
     if allocator.attempts != 0 { abort }
-    match replace(.self = "abc", .pattern = "b", .replacement = "x", .allocator = $&allocator) {
+    match replace(.self = "abc", .pattern = "b", .replacement = "x", .allocator = $&allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }

@@ -1,6 +1,10 @@
 bad := (.system: System) -> (.result: $&GeneralPurposeAllocator) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     result = allocator
 }
 

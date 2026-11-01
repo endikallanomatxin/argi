@@ -1,19 +1,21 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
     defer deinit(.self = $&array)
     text ::= unwrap_or_abort(.value = String(.length = 1))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
-    pushed ::= push(.self = $&array, .value = ~text)
+    pushed ::= push(.self = $&array, .value = ~text, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) {
         status_code = 1
         return
     }
 
-    copied_result ::= copy(.self = &array, .allocator = $&allocator_storage)
+    copied_result ::= copy(.self = &array, .allocator = allocator)
     match copied_result {
         ..error _ { status_code = 2 }
         ..ok ~copied_payload {

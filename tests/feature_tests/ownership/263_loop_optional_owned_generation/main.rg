@@ -2,16 +2,16 @@ Holder := (
     .buffer : String
 )
 
-HolderInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
-    .allocator : $&AllocatorProvider
+HolderInitArgs: Type = (
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(
-    Holder, HolderInitArgs#(AllocatorProvider)
+implement Init#(
+    Holder, HolderInitArgs
 ) (
     .Result : Type = Holder
 
-    .init = HolderInitArgs#(AllocatorProvider) -> (.result: Result) {
+    .init = HolderInitArgs -> (.result: Result) {
 
         _init_allocator ::= ~allocator
 
@@ -29,8 +29,8 @@ implement Deinit#(Holder) (
     }
 )
 
-append := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&Holder, .allocator: $&AllocatorType
+append := (
+    .self: $&Holder, .allocator: $&Virtual#(Allocator)
 ) -> () {
 
     assume allocator
@@ -41,12 +41,14 @@ append := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
-    holder ::= Holder(.allocator = $&allocator_storage)
+    holder ::= Holder(.allocator = allocator)
     i :: UIntNative = 0
     while i < 1 {
-        append(.self = $&holder, .allocator = $&allocator_storage)
+        append(.self = $&holder, .allocator = allocator)
         i = i + 1
     }
 

@@ -21,8 +21,8 @@ _plane_ellipse_pcurve := #(.Scalar: Type: Float) (
     )
 }
 
-_oblique_cylinder := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .allocator      : $&Provider,
+_oblique_cylinder := #(.Scalar: Type: Float) (
+    .allocator      : $&Virtual#(Allocator),
     .height         : Scalar      = 3.0,
     .slope          : Scalar      = 0.25,
     .geometry_slope : Scalar      = 0.25
@@ -118,7 +118,7 @@ _oblique_cylinder := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 }
 
 test model_oblique_cylinder_shared_elliptic_boundaries := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _oblique_cylinder#(.Scalar: Float64)(.allocator = allocator)!
     counts ::= entity_counts(&model)
     [
@@ -203,7 +203,7 @@ test model_oblique_cylinder_shared_elliptic_boundaries := (.system: System) -> !
 }
 
 test model_oblique_cylinder_float32_and_rejections := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _oblique_cylinder#(.Scalar: Float32)(.allocator = allocator)!
     testing.expect(is_closed(&model).ok and entity_counts(&model).edges == 2)!
     [

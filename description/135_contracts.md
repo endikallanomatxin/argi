@@ -123,8 +123,8 @@ must be Target or an Errable containing Target. The fixed requirement is
 `.init: Args -> (.result: Result)`.
 
 `T(...)` fixes the target and infers the remaining participants from applicable
-input signatures and lexically assumed arguments. Implementation parameters, including
-static allocator types, must be determined by those participants. Several Init
+input signatures and lexically assumed arguments. Implementation parameters must be determined by those participants. Library
+allocator inputs are virtual capabilities rather than inferred type parameters. Several Init
 conformances may share a target. Different inferred argument types require
 qualification; specificity only compares conformances for the same complete tuple.
 Return types never select construction. Untyped call literals receive their
@@ -378,8 +378,8 @@ leaves only after participants select the evidence, without using a desired
 result to select an implementation.
 
 Collection indexing now follows this model: MutableIndexable requires Indexable
-and supplies only writable indexing. Resizable uses collection and allocation
-provider participants for growth, while its Removable dependency supplies
+and supplies only writable indexing. Resizable selects growth by collection
+and accepts a virtual allocator capability, while its Removable dependency supplies
 allocation-free removal under its own unary identity. Generic collection
 algorithms preserve their collection type and derive element constraints from
 selected Item evidence. Validation of newly selected evidence joins ordinary
@@ -406,7 +406,7 @@ The former grants duplication permission; the latter owns the explicit copy
 operation. Implicitly copyable types receive a generic infallible implementation.
 Ownership recognizes declared copy capabilities independently of global function
 names, so an explicit owning copy operation never grants implicit duplication.
-FalliblyCopyable now selects the value and allocator provider jointly. String,
+FalliblyCopyable selects the value type and receives a virtual allocator capability. String,
 Path and DynamicArray provide scoped operations; array copying has one generic
 implementation and preserves the element's associated reasons and any existing trace.
 Ownership queries these conformances rather than functions named copy.
@@ -505,7 +505,7 @@ below.
 Numeric limits use IntegerBounds evidence behind the unique integer_limits
 entry. Private IEEE encoding/replacement uses _FloatRepresentation; these
 operations remain representation-specific, not a public Float extension hook.
-StringFormatting selects value and allocator provider jointly; unique format and
+StringFormatting selects the value type and receives a virtual allocator; unique format and
 format_into entries reuse selected render/append operations. Concatenation
 provides the unique concat entry for borrowed strings and string views.
 
@@ -548,14 +548,14 @@ through structural fields or arbitrary generic type arguments, and references to
 foreign types alone grant no extension rights.
 
 The semver library supplies Viewable for borrowed VersionView, StringFormatting
-with the selected allocator Provider, and WriteValue by delegating to the stream's
+with a virtual allocator input, and WriteValue by delegating to the stream's
 StringView evidence. It exposes no separate format/view overloads. Writing a
 version preserves the stream's selected Result, including counts or fallible writes.
 
 Queue and QueueInsertion scope removal and insertion without ordinary overloads.
 Queue associates Item and its selected removal Result, preserving optional heap
-results and bounded-ring Errable results. QueueInsertion selects the allocation
-Provider separately and retains lexical allocator defaults. Generic functions
+results and bounded-ring Errable results. QueueInsertion selects the collection and accepts a virtual allocator through
+ordinary lexical allocator assumptions. Generic functions
 can forward the selected removal result without imposing one representation.
 
 Nominal input matching uses the declaration's compile-time parameter order for

@@ -1,7 +1,7 @@
 -- Check semantic references after rebuilding with different dimensions and
 -- declaration numbering. No source ID is compared across drawing domains.
 test sketch_extrusion_history_follows_opening_after_rebuild_and_renumbering := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     variants: [2]Bool = (false, true)
     for shifted in variants {
         builder ::= SketchBuilder#(.Scalar: Float64)(.plane = ..yz)!

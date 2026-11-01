@@ -4,9 +4,9 @@ FileWriting#(.PathValue: Type): Contract = (
     .write_file : (.self: &FileSystem, .path: PathValue, .text: &String) -> (.result: Result)
 )
 
-AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingFileWriting#(.PathValue: Type): Contract = (
     .Result     : Type
-    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: $&Provider) -> (
+    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: $&Virtual#(Allocator)) -> (
         .result : Result
     )
 )
@@ -95,8 +95,8 @@ _path_write_file_string := (.self: &FileSystem, .path: &String, .text: &String) 
     result = write_file(self, .path = c_path, .text = text)
 }
 
-_path_write_file_view := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Provider
+_path_write_file_view := (
+    .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         Void,
@@ -167,7 +167,7 @@ implement FileWriting#(&String) (
     .write_file = _path_write_file_string
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileWriting#(StringView, Provider) (
+implement AllocatingFileWriting#(StringView) (
     .Result : Type = Errable#(
         Void,
         (

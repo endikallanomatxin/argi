@@ -2,7 +2,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     assume ffi := system.ffi
     c_text ::= from_literal(.data = "hello")
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     text ::= unwrap_or_abort(.value = string_from_c_string(.text = c_text))
     view ::= view(&text)
 

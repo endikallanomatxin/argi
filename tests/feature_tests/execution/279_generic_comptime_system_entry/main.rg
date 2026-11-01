@@ -73,7 +73,11 @@ allocate_host := #(.n: Int32) () -> (.result: Int32) {
         tracer :: NoopErrorTracer = (.marker = 0)
         erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
 
-        assume allocator ::= $&CAllocator(.ffi = system.ffi)
+        allocator_concrete := $&CAllocator(.ffi = system.ffi)
+
+        virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+        assume allocator := $&virtual_allocator
         text ::= unwrap_or_abort(.value = String(.length = 3))
         value = n
     }
@@ -84,7 +88,11 @@ abort_host := #(.n: Int32) () -> (.result: Int32) {
         tracer :: NoopErrorTracer = (.marker = 0)
         erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
 
-        assume allocator ::= $&CAllocator(.ffi = system.ffi)
+        allocator_concrete := $&CAllocator(.ffi = system.ffi)
+
+        virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+        assume allocator := $&virtual_allocator
         text ::= unwrap_or_abort(.value = String(.length = 3))
         if n == 42 { abort }
         value = n

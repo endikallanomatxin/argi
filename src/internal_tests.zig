@@ -114,6 +114,7 @@ comptime {
     _ = @import("0_commands/execution_interrupt.zig");
     _ = @import("execution/host_output.zig");
     _ = @import("execution/host.zig");
+    _ = @import("execution/evaluate.zig");
     _ = @import("5_codegen/bytecode/numeric_layout.zig");
     _ = @import("5_codegen/allocation_metadata.zig");
     _ = @import("execution/storage.zig");

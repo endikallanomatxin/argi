@@ -22,16 +22,16 @@ TrimUse := #(.Scalar: Type: Float) (
 
 implement#(.Scalar: Type: Float) ImplicitlyCopyable#(TrimUse#(Scalar)) ()
 
-BrepBuilderInitArgs := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+BrepBuilderInitArgs := #(.Scalar: Type: Float) (
     .tolerance : Scalar     = 0.000001,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.Scalar: Type: Float, .Provider: Type: Allocator) Init#(
-    BrepBuilder#(Scalar), BrepBuilderInitArgs#(Scalar, Provider)
+implement#(.Scalar: Type: Float) Init#(
+    BrepBuilder#(Scalar), BrepBuilderInitArgs#(Scalar)
 ) (
     .Result : Type = Errable#(BrepBuilder#(Scalar), BrepErrors)
-    .init   = BrepBuilderInitArgs#(Scalar, Provider) -> (.result: Result) {
+    .init   = BrepBuilderInitArgs#(Scalar) -> (.result: Result) {
         if is_finite(tolerance).ok == false or tolerance <= 0.0 {
             result = ..error(.reason = ..invalid_tolerance)
             return
@@ -60,8 +60,8 @@ implement#(.Scalar: Type: Float, .Provider: Type: Allocator) Init#(
     }
 )
 
-declare_surface := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .builder: $&BrepBuilder#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Provider
+declare_surface := #(.Scalar: Type: Float) (
+    .builder: $&BrepBuilder#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(SurfaceId), BrepErrors)) {
     g.validate_surface(surface)!
     id ::= _pool_add_surface(
@@ -73,8 +73,8 @@ declare_surface := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     ).value
 }
 
-declare_curve := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .builder: $&BrepBuilder#(Scalar), .curve: Curve#(Scalar), .allocator: $&Provider
+declare_curve := #(.Scalar: Type: Float) (
+    .builder: $&BrepBuilder#(Scalar), .curve: Curve#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(CurveId), BrepErrors)) {
     curve_point(.curve = curve, .parameter = 0.0)!
     curve_point(.curve = curve, .parameter = 0.25)!
@@ -87,11 +87,11 @@ declare_curve := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 
 -- A vertexless closed edge uses one full period of its curve. The interval is
 -- explicit and independent of both the shared support and face-specific pcurves.
-declare_closed_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+declare_closed_edge := #(.Scalar: Type: Float) (
     .builder   : $&BrepBuilder#(Scalar),
     .curve     : idx.Index#(CurveId),
     .interval  : CurveInterval#(Scalar)  = (.start = 0.0, .end = 1.0),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BrepErrors)) {
     index ::= idx.resolve_index(.domain = &builder&._domain, .index = curve)!
     id ::= index | convert#(.to: CurveId)(_)
@@ -122,13 +122,14 @@ declare_closed_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     )
 }
 
-_append_brep_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_append_brep_edge := #(.Scalar: Type: Float) (
     .builder   : $&BrepBuilder#(Scalar),
     .curve     : CurveId,
     .interval  : CurveInterval#(Scalar),
     .vertices  : _BrepEdgeVertices,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BrepErrors)) {
+
     offset ::= length(&builder&._edges).count
     trim ::= length(&builder&._geometry.intervals).count
     maximum ::= integer_limits(.value = offset).maximum
@@ -153,8 +154,8 @@ _append_brep_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = ..ok idx.bind_index#(EdgeId)(.domain = &builder&._domain, .offset = offset).value
 }
 
-finish_brep := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .builder: BrepBuilder#(Scalar), .require_closed: Bool = true, .allocator: $&Provider
+finish_brep := #(.Scalar: Type: Float) (
+    .builder: BrepBuilder#(Scalar), .require_closed: Bool = true, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Model#(Scalar), BrepErrors)) {
     edge_count ::= length(&builder._edges).count
     if length(&builder._faces).count == 0 {

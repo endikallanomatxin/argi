@@ -7,11 +7,12 @@ implement#(.Kind: Type) ImplicitlyCopyable#(Index#(Kind)) ()
 
 IndexDomain := (._marker: DynamicArray#(UInt8))
 
-IndexDomainInitArgs := #(.Provider: Type: Allocator) (.allocator: $&Provider)
+IndexDomainInitArgs := (.allocator: $&Virtual#(Allocator))
 
-implement#(.Provider: Type: Allocator) Init#(IndexDomain, IndexDomainInitArgs#(Provider)) (
+implement Init#(IndexDomain, IndexDomainInitArgs) (
     .Result : Type = Errable#(IndexDomain, (..out_of_memory))
-    .init   = IndexDomainInitArgs#(Provider) -> (.result: Result) {
+    .init   = IndexDomainInitArgs -> (.result: Result) {
+
         marker ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = 1)!
         push($&marker, .value = 0, .allocator = allocator)!
         result = ..ok(._marker = ~marker)

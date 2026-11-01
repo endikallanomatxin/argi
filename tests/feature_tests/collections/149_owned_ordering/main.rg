@@ -24,7 +24,9 @@ main := () -> (.status_code: Int32 = 1) {
     assume ffi ::= $&ForeignFunctionInterface()
 
     storage ::= CAllocator(.ffi = ffi)
-    assume allocator ::= $&storage
+    allocator_concrete := $&storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     order ::= PairOrder()
     items ::= [DynamicArray#(.t: Pair)(.capacity = 3) | unwrap_or_abort(_)]
     push_assume_capacity(
@@ -83,6 +85,7 @@ main := () -> (.status_code: Int32 = 1) {
     deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
+    refusal_virtual ::= to_virtual#(Allocator)($&refusal)
     bounded ::= [
         PriorityQueue#(.t: Pair, .order: PairOrder)(
             .order = &order, .allocator = allocator, .capacity = 1
@@ -103,7 +106,7 @@ main := () -> (.status_code: Int32 = 1) {
             match push(
                 .self      = $&bounded
                 .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
-                .allocator = $&refusal
+                .allocator = $&refusal_virtual
             ) {
                 ..ok _ { abort }
                 ..error error {

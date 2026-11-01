@@ -1,12 +1,13 @@
 -- Validate geometry before allocating the model's connectivity buffers.
-_planar_face_planes := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_planar_face_planes := #(.Scalar: Type: Float) (
     .points           : ArrayView#(g.Point#(Scalar)),
     .vertex_indices   : ArrayView#(UIntNative),
     .contour_lengths  : ArrayView#(UIntNative),
     .face_loop_counts : ArrayView#(UIntNative),
     .tolerance        : Scalar,
-    .allocator        : $&Provider
+    .allocator        : $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(g.Plane#(Scalar)), BuildErrors)) {
+
     halfedges ::= length(&vertex_indices).count
     loops ::= length(&contour_lengths).count
     faces ::= length(&face_loop_counts).count
@@ -44,7 +45,7 @@ _planar_face_planes := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
         region_view ::= view(&lengths)
         contour_view ::= slice(&contour_lengths, .start = first, .count = n)!
         point_view ::= slice(&boundary_view, .start = start, .count = cursor - start)!
-        plane ::= g.planar_regions_plane#(.Scalar: Scalar, .Provider: Provider)(
+        plane ::= g.planar_regions_plane#(.Scalar: Scalar)(
             .points              = point_view
             .contour_lengths     = contour_view
             .region_lengths      = region_view

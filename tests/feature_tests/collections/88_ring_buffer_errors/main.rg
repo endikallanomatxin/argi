@@ -3,7 +3,9 @@ FailingAllocator := (.attempts: UIntNative = 0)
 main := () -> (.status_code: Int32 = 0) {
 
     allocator :: FailingAllocator = (.attempts = 0)
-    match RingBuffer#(.t: Int32)(.capacity = 0, .allocator = $&allocator) {
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    match RingBuffer#(.t: Int32)(.capacity = 0, .allocator = $&allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..invalid_capacity { abort } }
     }
@@ -13,16 +15,16 @@ main := () -> (.status_code: Int32 = 0) {
         maximum = maximum * 256 + 255
         index = index + 1
     }
-    match RingBuffer#(.t: Int32)(.capacity = maximum, .allocator = $&allocator) {
+    match RingBuffer#(.t: Int32)(.capacity = maximum, .allocator = $&allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
-    match DynamicArray#(.t: Int32)(.capacity = maximum, .allocator = $&allocator) {
+    match DynamicArray#(.t: Int32)(.capacity = maximum, .allocator = $&allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
     if allocator.attempts != 0 { abort }
-    match RingBuffer#(.t: Int32)(.capacity = 2, .allocator = $&allocator) {
+    match RingBuffer#(.t: Int32)(.capacity = 2, .allocator = $&allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }

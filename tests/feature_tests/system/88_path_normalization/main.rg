@@ -1,7 +1,7 @@
-check := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+check := (
     .input        : StringView,
     .expected     : StringView,
-    .allocator    : $&AllocatorType,
+    .allocator    : $&Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> (
     .result : Errable#(

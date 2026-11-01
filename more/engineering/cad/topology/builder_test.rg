@@ -1,5 +1,5 @@
 test model_builder_explicit_shared_edges := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder#(Float64)()!
     a ::= builder | add_vertex($&_, (0.0, 0.0, 0.0))!
     b ::= builder | add_vertex($&_, (1.0, 0.0, 0.0))!
@@ -60,7 +60,7 @@ _builder_plane := () -> (.surface: g.Surface#(Float64)) {
 }
 
 test model_builder_rejects_foreign_handles := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     first ::= ModelBuilder#(Float64)()!
     second ::= ModelBuilder#(Float64)()!
     a ::= first | add_vertex($&_, (0.0, 0.0, 0.0))!
@@ -86,7 +86,7 @@ test model_builder_rejects_foreign_handles := (.system: System) -> !() {
 }
 
 test model_builder_rejects_disconnected_boundary := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder#(Float64)()!
     a ::= builder | add_vertex($&_, (0.0, 0.0, 0.0))!
     b ::= builder | add_vertex($&_, (1.0, 0.0, 0.0))!
@@ -106,7 +106,7 @@ test model_builder_rejects_disconnected_boundary := (.system: System) -> !() {
 }
 
 test model_builder_rejects_unrelated_support := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder#(Float64)()!
     a ::= builder | add_vertex($&_, (0.0, 0.0, 1.0))!
     b ::= builder | add_vertex($&_, (1.0, 0.0, 1.0))!
@@ -126,7 +126,7 @@ test model_builder_rejects_unrelated_support := (.system: System) -> !() {
 }
 
 test model_builder_preserves_explicit_coincident_vertices := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder#(Float64)()!
     support ::= builder | add_surface($&_, .surface = _builder_plane().surface)!
     i :: UIntNative = 0
@@ -148,7 +148,7 @@ test model_builder_preserves_explicit_coincident_vertices := (.system: System) -
 }
 
 test model_builder_requires_closed := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder#(Float64)()!
     a ::= builder | add_vertex($&_, (0.0, 0.0, 0.0))!
     b ::= builder | add_vertex($&_, (1.0, 0.0, 0.0))!
@@ -168,7 +168,7 @@ test model_builder_requires_closed := (.system: System) -> !() {
 }
 
 test model_builder_float32 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder()!
     a ::= builder | add_vertex($&_, (0.0, 0.0, 0.0))!
     b ::= builder | add_vertex($&_, (1.0, 0.0, 0.0))!
@@ -193,7 +193,7 @@ test model_builder_float32 := (.system: System) -> !() {
 }
 
 test model_builder_closed_tetrahedron := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -245,7 +245,7 @@ test model_builder_closed_tetrahedron := (.system: System) -> !() {
 }
 
 test model_builder_defaults_to_float32 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= ModelBuilder()!
     vertex ::= builder | add_vertex($&_, (0.0, 0.0, 0.0))!
     point: g.Point#(Float32) = get(&builder._points, .index = 0)!

@@ -38,7 +38,7 @@ return an Errable scalar. Module qualification such as `math.dot(...)` restricts
 operation identities to that module; use the explicit contract operation when
 several identities remain applicable. Fixed scaling and transposition use
 VectorScaling and MatrixTransposition. Their allocating counterparts select
-Provider jointly with the dynamic representation. MatrixAccess and VectorAccess
+the dynamic representation and receive a virtual allocator capability. MatrixAccess and VectorAccess
 supply associated element context to checked coordinate operations. None of
 these operations retains an ordinary overload family.
 
@@ -53,8 +53,8 @@ the source view's length. Overflow or incompatible dimensions return
 Vectors expose `length`, checked `get`/`set`, `dot`, `+`, and `scale`. Matrices
 expose `shape`, checked `get`/`set`, `+`, `*`, and `transpose`. Dynamic
 shape incompatibilities return `dimension_mismatch`. Addition and multiplication
-infer their allocator provider in the selected operation's compile-time parameters.
-Its ordinary allocator input is explicit or supplied through lexical `assume`.
+receive an ordinary `$&Virtual#(Allocator)` input, explicitly or through lexical
+`assume allocator`.
 Other operations returning owners
 take `.allocator`; scalar reads, writes, and dot products do not allocate.
 Index errors return `out_of_bounds` without writing. No operation resizes an

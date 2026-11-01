@@ -36,21 +36,22 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         status_code = 4
     }
     refusing ::= RefusingAllocator()
-    match exists(.self = system.file_system, .path = text, .allocator = $&refusing) {
+    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
+    match exists(.self = system.file_system, .path = text, .allocator = $&refusing_virtual) {
         ..ok _ { status_code = 5 }
         ..error error { if error.reason != ..out_of_memory { status_code = 6 } }
     }
-    match remove(.self = system.file_system, .path = text, .allocator = $&refusing) {
+    match remove(.self = system.file_system, .path = text, .allocator = $&refusing_virtual) {
         ..ok _ { status_code = 7 }
         ..error error { if error.reason != ..out_of_memory { status_code = 8 } }
     }
-    match rename(.self = system.file_system, .from = text, .to = text, .allocator = $&refusing) {
+    match rename(.self = system.file_system, .from = text, .to = text, .allocator = $&refusing_virtual) {
         ..ok _ { status_code = 9 }
         ..error error { if error.reason != ..out_of_memory { status_code = 10 } }
     }
     content ::= unwrap_or_abort(.value = String(.allocator = allocator))
     match write_file(
-        .self = system.file_system, .path = text, .text = &content, .allocator = $&refusing
+        .self = system.file_system, .path = text, .text = &content, .allocator = $&refusing_virtual
     ) {
         ..ok _ { status_code = 11 }
         ..error error { if error.reason != ..out_of_memory { status_code = 12 } }

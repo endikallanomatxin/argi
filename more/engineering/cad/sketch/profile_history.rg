@@ -24,24 +24,24 @@ ProfileSelection := #(.Scalar: Type: Float) (
     ._contours : DynamicArray#(ProfileContourImage)
 )
 
-profile_with_history := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .sketch: &Sketch#(Scalar), .exterior: ContourRef, .allocator: $&Provider
+profile_with_history := #(.Scalar: Type: Float) (
+    .sketch: &Sketch#(Scalar), .exterior: ContourRef, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(ProfileSelection#(Scalar), t.BuildErrors)) {
     order ::= _profile_all_contours(sketch, .exterior = exterior, .allocator = allocator)!
     selection ::= _profile_selection(sketch, .order = view(&order), .allocator = allocator)!
     result = ..ok ~selection
 }
 
-profile_from_contours_with_history := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .sketch: &Sketch#(Scalar), .contours: ArrayView#(ContourRef), .allocator: $&Provider
+profile_from_contours_with_history := #(.Scalar: Type: Float) (
+    .sketch: &Sketch#(Scalar), .contours: ArrayView#(ContourRef), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(ProfileSelection#(Scalar), t.BuildErrors)) {
     order ::= _profile_explicit_contours(sketch, .contours = contours, .allocator = allocator)!
     selection ::= _profile_selection(sketch, .order = view(&order), .allocator = allocator)!
     result = ..ok ~selection
 }
 
-_profile_selection := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .sketch: &Sketch#(Scalar), .order: ArrayView#(UIntNative), .allocator: $&Provider
+_profile_selection := #(.Scalar: Type: Float) (
+    .sketch: &Sketch#(Scalar), .order: ArrayView#(UIntNative), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(ProfileSelection#(Scalar), t.BuildErrors)) {
     selected ::= _profile_from_order(sketch, .order = order, .allocator = allocator)!
     count ::= contour_count(sketch).count

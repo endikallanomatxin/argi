@@ -5,12 +5,12 @@ FileOpening#(.PathValue: Type): Contract = (
     )
 )
 
-AllocatingFileOpening#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingFileOpening#(.PathValue: Type): Contract = (
     .open_file : (
         .file_system : &FileSystem,
         .path        : PathValue,
         .mode        : FileOpenMode = ..read,
-        .allocator   : $&Provider
+        .allocator   : $&Virtual#(Allocator)
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory)))
 )
 
@@ -59,12 +59,12 @@ implement FileOpening#(&Path) (
     }
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileOpening#(StringView, Provider) (
+implement AllocatingFileOpening#(StringView) (
     .open_file = (
         .file_system : &FileSystem,
         .path        : StringView,
         .mode        : FileOpenMode = ..read,
-        .allocator   : $&Provider
+        .allocator   : $&Virtual#(Allocator)
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory))) {
 
         assume ffi := file_system&._ffi

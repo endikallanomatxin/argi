@@ -20,7 +20,9 @@ implement Deinit#(BorrowingOwner) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     external_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
@@ -52,8 +54,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                                     .allocation = $&external, .offset = 0
                                 ).reference
                             )
-                            first_push ::= push(.self = $&array, .value = ~first)
-                            second_push ::= push(.self = $&array, .value = ~second)
+                            first_push ::= push(.self = $&array, .value = ~first, .allocator = allocator)
+                            second_push ::= push(.self = $&array, .value = ~second, .allocator = allocator)
                             if [
                                 is(.value = first_push, .variant = ..error)
                                 or is(.value = second_push, .variant = ..error)

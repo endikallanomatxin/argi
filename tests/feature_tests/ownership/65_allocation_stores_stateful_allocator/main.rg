@@ -8,7 +8,9 @@ CountingAllocator := (
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match result {
         ..ok ~payload {

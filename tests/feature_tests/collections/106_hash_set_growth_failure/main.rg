@@ -8,30 +8,32 @@ RecordingAllocator := (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator :: RecordingAllocator = (.ffi = system.ffi)
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     set ::= unwrap_or_abort(
         .value = HashSet#(.key: UIntNative, .policy: StandardHashPolicy)(
-            .policy = StandardHashPolicy(), .allocator = $&allocator
+            .policy = StandardHashPolicy(), .allocator = $&allocator_virtual
         )
     )
     missing :: UIntNative = 4
     zero :: UIntNative = 0
     index :: UIntNative = 0
     while index < 4 {
-        unwrap_or_abort(.value = insert(.self = $&set, .key = index, .allocator = $&allocator))
+        unwrap_or_abort(.value = insert(.self = $&set, .key = index, .allocator = $&allocator_virtual))
         index = index + 1
     }
     allocator.fail = true
-    if unwrap_or_abort(.value = insert(.self = $&set, .key = zero, .allocator = $&allocator)) {
+    if unwrap_or_abort(.value = insert(.self = $&set, .key = zero, .allocator = $&allocator_virtual)) {
         abort
     }
-    match insert(.self = $&set, .key = missing, .allocator = $&allocator).result {
+    match insert(.self = $&set, .key = missing, .allocator = $&allocator_virtual).result {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
     if length(.self = &set).count != 4 or contains(.self = &set, .key = &missing).ok { abort }
     if contains(.self = &set, .key = &zero).ok == false { abort }
     allocator.fail = false
-    unwrap_or_abort(.value = insert(.self = $&set, .key = missing, .allocator = $&allocator))
+    unwrap_or_abort(.value = insert(.self = $&set, .key = missing, .allocator = $&allocator_virtual))
     deinit(.self = $&set)
     if allocator.allocations != 4 or allocator.deallocations != 4 { abort }
 }

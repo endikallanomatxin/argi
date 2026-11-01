@@ -2,7 +2,7 @@
 -- An endpoint consists of a halfedge and a parameter in its traversal direction.
 -- The result identifies both new faces and the newly inserted cut vertices.
 test usage_split_planar_face := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),

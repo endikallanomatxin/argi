@@ -7,7 +7,11 @@ _view_matches := (.actual: ?StringView, .expected: StringView) -> (.ok: Bool) {
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drive ::= path_with_view(.view = "C:\\file.txt") | unwrap_or_abort(_)
     if is_absolute(&drive).ok {
     } else {

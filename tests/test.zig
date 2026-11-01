@@ -304,7 +304,7 @@ test "argi init creates executable package" {
     try expectEqualStrings(
         "main := (.system: System) -> (.status_code: Int32 = 0) {\n" ++
             "    assume ffi ::= system.ffi\n" ++
-            "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
+            "    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_\n" ++
             "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++

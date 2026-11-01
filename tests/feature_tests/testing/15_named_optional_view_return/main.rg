@@ -2,10 +2,12 @@ test named_optional_view_return := (.system: System, .error_tracer: $&Virtual#(E
     assume error_tracer
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     path :: Path = unwrap_or_abort(
-        .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/file.txt")
+        .value = path_with_view(.allocator = allocator, .view = "/tmp/file.txt")
     )
     defer deinit(.self = $&path)
 

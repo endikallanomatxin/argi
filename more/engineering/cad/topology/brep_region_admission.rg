@@ -1,14 +1,14 @@
 -- Dispatch geometric certificates independently of topology construction.
 -- Planar segments and circular arcs share the chart-region validator;
 -- elliptic contours and periodic bands retain their analytic certificates.
-_admit_trimmed_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_admit_trimmed_region := #(.Scalar: Type: Float) (
     .pools     : &_GeometryPools#(Scalar),
     .support   : g.Surface#(Scalar),
     .uses      : &DynamicArray#(_ResolvedTrim#(Scalar)),
     .lengths   : ArrayView#(UIntNative),
     .reversed  : Bool,
     .tolerance : Scalar,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BrepErrors)) {
     loops ::= length(&lengths).count
     match support {

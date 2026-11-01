@@ -8,7 +8,11 @@ RecordingWriter := (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     base ::= RecordingWriter(.expected = "a\nb<>c\r\nd\nd=.!x")
     assume writer ::= $&base
 

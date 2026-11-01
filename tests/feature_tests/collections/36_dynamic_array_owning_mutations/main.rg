@@ -24,6 +24,7 @@ make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 
     assume allocator
 
+
     allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -37,7 +38,9 @@ make_tracked := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 4))
 
@@ -64,8 +67,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                                         .self = $&array, .value = ~third
                                     )
                                     inserted ::= insert(
-                                        .self = $&array, .index = 1, .value = ~second
-                                    )
+                                        .self = $&array, .index = 1, .value = ~second, .allocator = allocator)
                                     if is(.value = inserted, .variant = ..error) {
                                         status_code = 5
                                         return
@@ -76,7 +78,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                                         .self      = $&array
                                         .index     = one
                                         .value     = ~fourth
-                                        .allocator = $&allocator_storage
+                                        .allocator = allocator
                                     ).result
                                     if is(.value = replacement_result, .variant = ..error) {
                                         status_code = 5

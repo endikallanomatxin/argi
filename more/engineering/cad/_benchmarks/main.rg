@@ -6,7 +6,8 @@ _type_size := #(.T: Type) () -> (.bytes: UIntNative) { bytes = size_of(.type = T
 -- Build once with --release. Timings exclude fixture generation and printing.
 -- Independent tetrahedra keep all face sizes fixed as the dataset grows.
 _run := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+
     assume writer ::= $&system.terminal&.stdout
     sizes: [4]UIntNative = (1, 16, 256, 4096)
     base: [4][3]UIntNative = (
@@ -24,13 +25,13 @@ _run := (.system: System) -> !() {
         expected_checksum :: Float64 = 0.0
         while component < count {
             offset ::= component * 4
-            push($&points, .value = (x, 0.0, 0.0))!
-            push($&points, .value = (x + 1.0, 0.0, 0.0))!
-            push($&points, .value = (x, 1.0, 0.0))!
-            push($&points, .value = (x, 0.0, 1.0))!
+            push($&points, .value = (x, 0.0, 0.0), .allocator = allocator)!
+            push($&points, .value = (x + 1.0, 0.0, 0.0), .allocator = allocator)!
+            push($&points, .value = (x, 1.0, 0.0), .allocator = allocator)!
+            push($&points, .value = (x, 0.0, 1.0), .allocator = allocator)!
             for face in base {
                 row: [3]UIntNative = (offset + face[0], offset + face[1], offset + face[2])
-                push($&faces, .value = row)!
+                push($&faces, .value = row, .allocator = allocator)!
             }
             expected_checksum = expected_checksum + 12.0 * x + 9.0
             x = x + 3.0

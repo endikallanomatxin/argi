@@ -55,11 +55,11 @@ _valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
 -- Names exclude ASCII controls, spaces and '='. Defaults require value options.
-parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType)) (
+parse_cli := #(.t: Type: ArgumentSource#(t)) (
     .source    : &t,
     .specs     : ArrayView#(.t: CliSpec),
     .start     : UIntNative               = 0,
-    .allocator : $&AllocatorType
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(CliMatches, CliReasons)) {
 
     assume allocator
@@ -113,7 +113,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
             ..some argument {
                 match argument.value {
                     ..positional value {
-                        push(.self = $&positionals, .value = value)!
+                        push(.self = $&positionals, .value = value, .allocator = allocator)!
                     }
                     ..option option {
                         found ::= false
@@ -155,6 +155,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
                                 push(
                                     .self  = $&options
                                     .value = CliValue(.name = spec.name, .value = value)
+                                    .allocator = allocator
                                 )!
                                 break
                             }
@@ -191,6 +192,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Al
                     push(
                         .self  = $&options
                         .value = CliValue(.name = spec.name, .value = defaulted)
+                        .allocator = allocator
                     )!
                     found = true
                 } ..none {}

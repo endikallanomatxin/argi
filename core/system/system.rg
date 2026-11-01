@@ -1,7 +1,7 @@
 -- References to resources owned by the checked program entry scope.
 System := (
     .memory         : $&Memory
-    .page_allocator : $&PageAllocator
+    .page_allocator : $&Virtual#(Allocator)
     .terminal       : $&Terminal
     .args           : $&Arguments
     .env_vars       : $&EnvironmentVariables

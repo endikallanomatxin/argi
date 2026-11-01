@@ -1,10 +1,10 @@
 -- Centered shapes declare complete contours. Their returned references are
 -- optional for callers; declaration itself adds the geometry to the builder.
-circle := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+circle := #(.Scalar: Type: Float) (
     .builder   : $&SketchBuilder#(Scalar),
     .diameter  : Scalar,
     .center    : g.ContourPoint#(Scalar)   = (0.0, 0.0),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     if is_finite(diameter).ok == false or diameter <= 0.0 {
         result = ..error(.reason = ..invalid_surface)
@@ -18,12 +18,12 @@ circle := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = [builder | contour(_, .spans = view(&spans), .allocator = allocator)]
 }
 
-rectangle := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+rectangle := #(.Scalar: Type: Float) (
     .builder   : $&SketchBuilder#(Scalar),
     .width     : Scalar,
     .height    : Scalar,
     .center    : g.ContourPoint#(Scalar)   = (0.0, 0.0),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     if [
         is_finite(width).ok == false
@@ -49,13 +49,13 @@ rectangle := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = [builder | contour(_, .spans = view(&spans), .allocator = allocator)]
 }
 
-rounded_rectangle := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+rounded_rectangle := #(.Scalar: Type: Float) (
     .builder   : $&SketchBuilder#(Scalar),
     .width     : Scalar,
     .height    : Scalar,
     .radius    : Scalar,
     .center    : g.ContourPoint#(Scalar)   = (0.0, 0.0),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     if [
         is_finite(width).ok == false

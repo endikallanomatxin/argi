@@ -19,24 +19,26 @@ RecordingWriter := (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator ::= RecordingAllocator(.ffi = system.ffi)
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     version ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha+001")).result
     output ::= unwrap_or_abort(
-        .value = format(.value = &version, .allocator = $&allocator)
+        .value = format(.value = &version, .allocator = $&allocator_virtual)
     ).result
     if view(.self = &output).view != "1.2.3-alpha+001" { abort }
     if allocator.allocations != 1 or allocator.last_size != 16 { abort }
     deinit(.self = $&output)
     buffer ::= unwrap_or_abort(
-        .value = string_with_capacity(.capacity = 64, .allocator = $&allocator)
+        .value = string_with_capacity(.capacity = 64, .allocator = $&allocator_virtual)
     ).result
     allocator.fail = true
-    unwrap_or_abort(.value = push_view(.self = $&buffer, .view = "v", .allocator = $&allocator))
+    unwrap_or_abort(.value = push_view(.self = $&buffer, .view = "v", .allocator = $&allocator_virtual))
     unwrap_or_abort(
-        .value = format_into(.out = $&buffer, .value = &version, .allocator = $&allocator)
+        .value = format_into(.out = $&buffer, .value = &version, .allocator = $&allocator_virtual)
     )
     if view(.self = &buffer).view != "v1.2.3-alpha+001" { abort }
     if allocator.allocations != 2 { abort }
-    match format(.value = &version, .allocator = $&allocator) {
+    match format(.value = &version, .allocator = $&allocator_virtual) {
         ..error _ {} ..ok ~text {
             deinit(.self = $&text)
             abort

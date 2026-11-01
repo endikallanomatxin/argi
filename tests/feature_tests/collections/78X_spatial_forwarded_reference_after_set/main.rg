@@ -1,5 +1,5 @@
-replace := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .array: $&DynamicArray#(.t: UIntNative), .allocator: $&AllocatorType
+replace := (
+    .array: $&DynamicArray#(.t: UIntNative), .allocator: $&Virtual#(Allocator)
 ) -> () {
 
     replaced ::= replace#(.t: UIntNative)(

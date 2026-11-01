@@ -2189,8 +2189,8 @@ pub const SafetyChecker = struct {
         var storage: ?facts.Place = null;
         var symbolic: ?facts.ValueFacts = null;
         if (path.projections.len == 0 or path.projections[0] != .dereference) {
-            // A Virtual value retains its concrete receiver Place. Loading
-            // through the wrapper must reach that receiver's scalar facts.
+            // Load the referenced value, but stop at a virtual handle: its
+            // receiver identity is part of the value, not another load target.
             var visited = std.array_list.Managed(facts.Place).init(self.allocator);
             defer visited.deinit();
             while (value.referenced_place) |place| {
@@ -2206,7 +2206,7 @@ pub const SafetyChecker = struct {
                 value = try self.reconstructPlaceValue(state, place, stored);
                 // Aggregate provenance can retain a field's referent. It does
                 // not make the enclosing record another pointer to follow.
-                if (value.fields.len != 0 or value.variants.len != 0) break;
+                if (value.fields.len != 0 or value.variants.len != 0 or value.virtual_methods.len != 0 or value.domains.len != 0) break;
             }
         }
         if (storage == null and value.symbolic_pointees.len == 1) symbolic = value;
@@ -3795,14 +3795,16 @@ pub const SafetyChecker = struct {
             referenced_place = target;
             has_referent = true;
         }
+        // TODO: Captures of storage first initialized by this same call need
+        // post-state generation identities before snapshot instantiation.
         for (effect.input_captured_storages) |path| {
             if (path.input_index >= arguments.len) continue;
-            const input = try self.projectValueFacts(arguments[path.input_index], path.projections);
-            if (input.referenced_place) |storage| if (self.domainStorageType(storage)) |ty| {
+            const storage = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
+            if (self.domainStorageType(storage)) |ty| {
                 var visited = std.array_list.Managed(facts.Place).init(self.allocator);
                 defer visited.deinit();
                 try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
-            };
+            }
         }
         for (effect.input_generation_dependencies) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
@@ -10344,6 +10346,32 @@ test "child explicit anchors do not become intrinsic aggregate anchors" {
     const anchored = try checker.instantiateOutput(explicitly_anchored, &.{}, &state);
     try std.testing.expect(anchored.explicit_dependency);
     try std.testing.expect(anchored.fields[0].value.explicit_dependency);
+}
+
+test "a surviving sibling retains its explicit borrow after owner replacement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const old = try state.tracker.establish(.fresh);
+    const new = try state.tracker.establish(.fresh);
+    const owner = facts.ValueFacts{ .owned_roots = &.{old}, .dependencies = &.{.{ .root = old }} };
+    const sibling = facts.ValueFacts{ .explicit_dependency = true, .dependencies = &.{.{ .root = old }} };
+    const parent = facts.ValueFacts{ .owned_roots = &.{old}, .dependencies = &.{.{ .root = old }}, .fields = &.{
+        .{ .index = 0, .value = &owner }, .{ .index = 1, .value = &sibling },
+    } };
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try state.setPlace(try checker.project(storage, .{ .field = 0 }), .initialized, .{
+        .owned_roots = &.{new},
+        .dependencies = &.{.{ .root = new }},
+    });
+    state.tracker.end(old);
+    const refreshed = try checker.reconstructPlaceValue(&state, storage, parent);
+    try std.testing.expect(valueDependsOnDeadRoot(refreshed, &state));
+    try std.testing.expect(refreshed.fields[1].value.explicit_dependency);
 }
 
 test "Safety continuation capability namespaces isolate rejected candidates" {

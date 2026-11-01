@@ -10,9 +10,10 @@ expect_formatted := #(.t: Type: Float) (
     .allocator: $&RecordingAllocator, .value: t, .expected: StringView
 ) -> () {
 
+    handle ::= to_virtual#(Allocator)(allocator)
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
-    output ::= unwrap_or_abort(.value = format(.value = value, .allocator = allocator))
+    output ::= unwrap_or_abort(.value = format(.value = value, .allocator = $&handle))
     if view(.self = &output).view != expected { abort }
     if [
         allocator&.allocations != before + 1
@@ -28,6 +29,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     assume system
     allocator ::= RecordingAllocator(.ffi = system.ffi)
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     value16 :: Float16 = 0.1
     expect_formatted(.allocator = $&allocator, .value = value16, .expected = "0.1")
     value16 = 65504.0
@@ -56,23 +58,23 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     expect_formatted(.allocator = $&allocator, .value = value64, .expected = "nan")
 
     output ::= unwrap_or_abort(
-        .value = string_with_capacity(.capacity = 64, .allocator = $&allocator)
+        .value = string_with_capacity(.capacity = 64, .allocator = $&allocator_virtual)
     )
     before ::= allocator.allocations
     allocator.fail = true
     value64 = 1.7976931348623157e308
     unwrap_or_abort(
-        .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator)
+        .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator_virtual)
     )
     value64 = -5e-324
     unwrap_or_abort(
-        .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator)
+        .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator_virtual)
     )
     if view(.self = &output).view != "1.7976931348623157e308-5e-324" { abort }
     if allocator.allocations != before { abort }
     deinit(.self = $&output)
     value64 = 0.1
-    failed ::= format(.value = value64, .allocator = $&allocator)
+    failed ::= format(.value = value64, .allocator = $&allocator_virtual)
     if is(.value = failed, .variant = ..error) {
         if failed ..error.reason != ..out_of_memory { abort }
     } else {

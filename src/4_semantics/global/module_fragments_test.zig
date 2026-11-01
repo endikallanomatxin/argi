@@ -57,7 +57,7 @@ test "implicit copy permission queries propagate allocation failure" {
     var input = try build(a, "copy/main.rg",
         \\ImplicitlyCopyable#(.Value: Type): Contract = ()
         \\InfalliblyCopyable#(.Value: Type): Contract = ()
-        \\FalliblyCopyable#(.Value: Type, .Provider: Type): Contract = ()
+        \\FalliblyCopyable#(.Value: Type): Contract = ()
         \\Value := (.flag: Bool)
         \\implement ImplicitlyCopyable#(Value) ()
         \\main := () -> () {

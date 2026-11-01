@@ -67,7 +67,11 @@ escape := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result: 
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drops :: Int32 = 0
-    pair ::= escape(allocator, $&drops)
+    pair ::= escape(allocator_concrete, $&drops)
 }

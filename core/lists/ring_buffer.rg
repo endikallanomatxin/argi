@@ -16,17 +16,17 @@ RingBuffer := #(.t: Type) (
     ._shape      : _RingBufferShape
 )
 
-RingBufferInitArgs: Type = #(.t: Type, .Provider: Type: Allocator) (
+RingBufferInitArgs: Type = #(.t: Type) (
     .capacity  : UIntNative,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.t: Type, .Provider: Type: Allocator) Init#(
-    RingBuffer#(.t: t), RingBufferInitArgs#(t, Provider)
+implement#(.t: Type) Init#(
+    RingBuffer#(.t: t), RingBufferInitArgs#(t)
 ) (
     .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
 
-    .init = RingBufferInitArgs#(t, Provider) -> (.result: Result) {
+    .init = RingBufferInitArgs#(t) -> (.result: Result) {
 
         _init_capacity ::= capacity
         _init_allocator ::= allocator
@@ -97,8 +97,8 @@ _ring_buffer_occupied_pointer := #(.t: Type) (.self: &RingBuffer#(.t: t), .index
     ).reference
 }
 
-_queue_push_ring_buffer := #(.t: Type, .Provider: Type: Allocator) (
-    .self: $&RingBuffer#(.t: t), .value: t, .allocator: $&Provider
+_queue_push_ring_buffer := #(.t: Type) (
+    .self: $&RingBuffer#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..full))) {
 
     assume allocator
@@ -185,7 +185,7 @@ implement#(.t: Type) Queue#(RingBuffer#(.t: t)) (
     .pop    = _queue_pop_ring_buffer
 )
 
-implement#(.t: Type, .Provider: Type: Allocator) QueueInsertion#(RingBuffer#(.t: t), Provider) (
+implement#(.t: Type) QueueInsertion#(RingBuffer#(.t: t)) (
     .Result : Type = Errable#(Void, (..full))
     .push   = _queue_push_ring_buffer
 )

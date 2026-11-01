@@ -73,7 +73,11 @@ make_storage := (.allocator: $&GeneralPurposeAllocator) -> (.value: Allocation) 
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    storage ::= make_storage(allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
+    storage ::= make_storage(allocator_concrete)
     deinit($&storage)
 }

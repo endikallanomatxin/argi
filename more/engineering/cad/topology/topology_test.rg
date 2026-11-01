@@ -1,7 +1,8 @@
 -- Deliberately use a different order for face records and loop storage.
 -- Three triangular rings, one face with two loops, and no geometry.
 test model_topology_without_geometry := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+
     edges ::= DynamicArray#(Edge)()!
     halfedges ::= DynamicArray#(HalfEdge)()!
     loops ::= DynamicArray#(Loop)()!
@@ -23,16 +24,17 @@ test model_topology_without_geometry := (.system: System) -> !() {
                     .next   = next_id
                     .loop   = loop_id
                 )
+            .allocator = allocator
             )!
         ]
-        [push($&edges, .value = (.first = id, .second = ..none, .curve = ..none))!]
+        [push($&edges, .value = (.first = id, .second = ..none, .curve = ..none), .allocator = allocator)!]
         i = i + 1
     }
-    [push($&loops, .value = (.first = (.value = 0), .count = 3))!]
-    [push($&loops, .value = (.first = (.value = 3), .count = 3))!]
-    [push($&loops, .value = (.first = (.value = 6), .count = 3))!]
-    [push($&faces, .value = (.first_loop = (.value = 1), .loop_count = 2, .genus = 0))!]
-    [push($&faces, .value = (.first_loop = (.value = 0), .loop_count = 1, .genus = 0))!]
+    [push($&loops, .value = (.first = (.value = 0), .count = 3), .allocator = allocator)!]
+    [push($&loops, .value = (.first = (.value = 3), .count = 3), .allocator = allocator)!]
+    [push($&loops, .value = (.first = (.value = 6), .count = 3), .allocator = allocator)!]
+    [push($&faces, .value = (.first_loop = (.value = 1), .loop_count = 2, .genus = 0), .allocator = allocator)!]
+    [push($&faces, .value = (.first_loop = (.value = 0), .loop_count = 1, .genus = 0), .allocator = allocator)!]
     connectivity: Topology = (
         ._vertex_count = 9
         ._edges        = ~edges

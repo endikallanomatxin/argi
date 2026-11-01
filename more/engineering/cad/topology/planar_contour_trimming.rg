@@ -31,14 +31,14 @@ _planar_contour_span := #(.Scalar: Type: Float) (.pcurve: PCurve#(Scalar), .reve
     result = ..ok span
 }
 
-_admit_planar_contour_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_admit_planar_contour_region := #(.Scalar: Type: Float) (
     .pools     : &_GeometryPools#(Scalar),
     .plane     : g.Plane#(Scalar),
     .uses      : &DynamicArray#(_ResolvedTrim#(Scalar)),
     .lengths   : ArrayView#(UIntNative),
     .reversed  : Bool,
     .tolerance : Scalar,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BrepErrors)) {
     count ::= length(uses).count
     spans ::= DynamicArray#(g.ContourSpan#(Scalar))(.capacity = count, .allocator = allocator)!

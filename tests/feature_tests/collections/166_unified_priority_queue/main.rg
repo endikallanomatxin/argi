@@ -2,7 +2,9 @@ main := () -> (.status_code: Int32 = 1) {
     assume ffi ::= $&ForeignFunctionInterface()
 
     allocator_storage ::= CAllocator(.ffi = ffi)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     order ::= Int32OrderPolicy()
     queue ::= unwrap_or_abort(
         .value = PriorityQueue#(.t: Int32)(.order = &order, .capacity = 1)

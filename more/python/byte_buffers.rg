@@ -1,6 +1,6 @@
 -- Native copies write initialized binary storage; only text results are decoded.
-_native_byte_buffer := #(.Provider: Type: Allocator) (
-    .count: UIntNative, .allocator: $&Provider
+_native_byte_buffer := (
+    .count: UIntNative, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..out_of_memory))) {
 
     assume allocator
@@ -24,8 +24,8 @@ _native_buffer_address := (.bytes: MutableArrayView#(UInt8)) -> (.address: RawPo
 
 -- The native text-copy protocol promises strict UTF-8; invalid output is a
 -- violated native invariant, while allocation failure remains recoverable.
-_native_text := #(.Provider: Type: Allocator) (
-    .bytes: ArrayView#(UInt8), .allocator: $&Provider
+_native_text := (
+    .bytes: ArrayView#(UInt8), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator

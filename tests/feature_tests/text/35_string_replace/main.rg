@@ -1,9 +1,9 @@
-expect_replacement := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+expect_replacement := (
     .text         : StringView,
     .pattern      : StringView,
     .replacement  : StringView,
     .expected     : StringView,
-    .allocator    : $&AllocatorType,
+    .allocator    : $&Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> () {
     assume error_tracer

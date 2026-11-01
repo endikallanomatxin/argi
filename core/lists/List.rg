@@ -34,15 +34,16 @@ Removable#(.Collection: Type): Contract = (
     )
 )
 
--- Growth depends on both the collection and the allocation provider. The
--- provider participates in static selection rather than being implicitly erased.
-Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+-- Growth selects the collection's behavior independently of its allocator.
+Resizable#(.Collection: Type): Contract = (
     .Item : Type
     Removable#(.Collection: Collection, .Item: Item)
-    .push : (.self: $&Collection, .value: Item, .allocator: $&Provider) -> (
+    .push : (.self: $&Collection, .value: Item, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
-    .insert : (.self: $&Collection, .index: UIntNative, .value: Item, .allocator: $&Provider) -> (
+    .insert : (
+        .self: $&Collection, .index: UIntNative, .value: Item, .allocator: $&Virtual#(Allocator)
+    ) -> (
         .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
     )
 )

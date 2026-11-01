@@ -13,10 +13,10 @@ ExtrusionResult := #(.Scalar: Type: Float) (
     ._contour_offsets : DynamicArray#(UIntNative)
 )
 
-extrude_with_history := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+extrude_with_history := #(.Scalar: Type: Float) (
     .profile      : &PlanarProfile#(Scalar),
     .displacement : g.Displacement#(Scalar),
-    .allocator    : $&Provider
+    .allocator    : $&Virtual#(Allocator)
 ) -> (.result: Errable#(ExtrusionResult#(Scalar), t.BrepErrors)) {
     model ::= extrude(.profile = profile, .displacement = displacement, .allocator = allocator)!
     regions ::= length(&profile&._region_lengths).count

@@ -32,6 +32,29 @@ A zero-size allocation provides no accessible bytes. An allocator may reserve
 internal padding for it, but that padding does not authorize a nonzero-size
 slot. The allocation may still be released normally.
 
+## Allocator capabilities in library APIs
+
+General allocating APIs receive `$&Virtual#(Allocator)`. Allocators do not add
+participants to collection, formatting, concatenation or copying contracts.
+`FalliblyCopyable#(Value)` retains the selected value implementation's associated
+failure reasons. Constructors use virtual allocator fields in their Args records.
+
+Convert once at the capability boundary and use ordinary lexical assumptions:
+
+```rg
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+items ::= DynamicArray#(Int32)(.capacity = 16)!
+push($&items, .value = 42)!
+```
+
+`System.page_allocator` supplies a virtual capability backed by a concrete
+PageAllocator owned by the checked entry scope. ArenaAllocator and
+GeneralPurposeAllocator take the same virtual capability as their backing input.
+`Allocation` keeps its own virtual deallocator and lifetime dependencies, so a
+collection may use another allocator for later growth without retaining one
+allocator in its type or representation. Low-level `allocate_bytes` and
+`allocate#(T)` remain generic and accept concrete or virtual providers.
+
 ## Raw storage and typed slots
 
 `Allocation.data` is a non-dereferenceable `RawPointer#(UInt8)`. An

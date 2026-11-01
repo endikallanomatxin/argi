@@ -18,7 +18,9 @@ alloc_one := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&A
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage :: PageAllocator = PageAllocator(.memory = system.memory)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     allocated ::= alloc_one(.allocator = $&allocator_storage)
     if is(.value = allocated, .variant = ..error) {
         status_code = 2

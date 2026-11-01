@@ -438,8 +438,8 @@ _authority_valid := (.text: StringView) -> (.ok: Bool = false) {
 
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
-build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .value: UriView, .allocator: $&AllocatorType
+build := (
+    .value: UriView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) {
 
     if [
@@ -540,8 +540,8 @@ build := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok ~output
 }
 
-encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text: StringView, .allocator: $&AllocatorType
+encode_component := (
+    .text: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
@@ -583,9 +583,10 @@ encode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok ~output
 }
 
-decode_component := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text: StringView, .allocator: $&AllocatorType
+decode_component := (
+    .text: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) {
+
 
     output ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0

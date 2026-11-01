@@ -1,7 +1,7 @@
 count_text := (
     .self      : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .text      : StringView,
-    .allocator : $&PageAllocator
+    .allocator : $&Virtual#(Allocator)
 ) -> !Void = ..ok Void() {
     assume allocator
 
@@ -24,7 +24,7 @@ count_directory := (
     .limit        : UIntNative,
     .buffer       : MutableArrayView#(.t: UInt8),
     .file_system  : $&FileSystem,
-    .allocator    : $&PageAllocator,
+    .allocator    : $&Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> !!Void = ..ok Void() {
     assume error_tracer

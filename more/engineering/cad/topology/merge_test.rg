@@ -1,5 +1,5 @@
 test model_merge_two_triangles := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -34,7 +34,7 @@ test model_merge_two_triangles := (.system: System) -> !() {
 }
 
 test model_merge_concave_boundary := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [6]g.Point#(Float32) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),
@@ -69,7 +69,7 @@ test model_merge_concave_boundary := (.system: System) -> !() {
 }
 
 test model_merge_preserves_hole := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     original ::= _planar_annulus()
     points: [10]g.Point#(Float64) = (
         original.points[0],
@@ -112,7 +112,7 @@ test model_merge_preserves_hole := (.system: System) -> !() {
 }
 
 test model_merge_fills_hole_and_removes_vertices := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     original ::= _planar_annulus()
     vertices: [12]UIntNative = (0, 1, 2, 3, 4, 5, 6, 7, 4, 7, 6, 5)
     lengths: [3]UIntNative = (4, 4, 4)
@@ -167,7 +167,7 @@ test model_merge_fills_hole_and_removes_vertices := (.system: System) -> !() {
 }
 
 test model_merge_rejects_same_or_invalid_face := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _triangle()
     faces: [1][3]UIntNative = ((0, 1, 2))
     source ::= [
@@ -194,7 +194,7 @@ test model_merge_rejects_same_or_invalid_face := (.system: System) -> !() {
 }
 
 test model_merge_rejects_nonadjacent_faces := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -223,7 +223,7 @@ test model_merge_rejects_nonadjacent_faces := (.system: System) -> !() {
 }
 
 test model_merge_closed_cube_face := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [8]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -302,7 +302,7 @@ test model_merge_closed_cube_face := (.system: System) -> !() {
     ]
 }
 
-_merge_owned_patch := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> (
+_merge_owned_patch := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(Model#(Float64), MergeErrors)
 ) {
     points: [4]g.Point#(Float64) = (
@@ -328,7 +328,7 @@ _merge_owned_patch := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> 
 }
 
 test model_merge_result_owns_geometry := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _merge_owned_patch(.allocator = allocator)!
     testing.expect(entity_counts(&model).faces == 1)!
     testing.expect([point(&model, .vertex = (.value = 2))!].x == 1.0)!
@@ -338,7 +338,8 @@ test model_merge_result_owns_geometry := (.system: System) -> !() {
 }
 
 test model_merge_preserves_unrelated_analytic_geometry := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -381,11 +382,11 @@ test model_merge_preserves_unrelated_analytic_geometry := (.system: System) -> !
     )
     disk_loop: Loop = (.first = (.value = 6), .count = 1)
     disk_face: Face = (.first_loop = (.value = 2), .loop_count = 1, .genus = 0)
-    [push($&source._topology._edges, .value = disk_edge)!]
-    [push($&source._topology._halfedges, .value = disk_use)!]
-    [push($&source._topology._loops, .value = disk_loop)!]
-    [push($&source._topology._faces, .value = disk_face)!]
-    [push($&source._face_surfaces, .value = disk_support)!]
+    [push($&source._topology._edges, .value = disk_edge, .allocator = allocator)!]
+    [push($&source._topology._halfedges, .value = disk_use, .allocator = allocator)!]
+    [push($&source._topology._loops, .value = disk_loop, .allocator = allocator)!]
+    [push($&source._topology._faces, .value = disk_face, .allocator = allocator)!]
+    [push($&source._face_surfaces, .value = disk_support, .allocator = allocator)!]
     sphere: g.Surface#(Float64) = ..sphere(.frame = frame, .radius = 1.0)
     sphere_support ::= [
         _pool_add_surface(
@@ -393,8 +394,8 @@ test model_merge_preserves_unrelated_analytic_geometry := (.system: System) -> !
         )!
     ]
     sphere_face: Face = (.first_loop = (.value = 3), .loop_count = 0, .genus = 0)
-    [push($&source._topology._faces, .value = sphere_face)!]
-    [push($&source._face_surfaces, .value = sphere_support)!]
+    [push($&source._topology._faces, .value = sphere_face, .allocator = allocator)!]
+    [push($&source._face_surfaces, .value = sphere_support, .allocator = allocator)!]
     merged ::= merge_coplanar_faces(&source, .first = (.value = 0), .second = (.value = 1))!
     testing.expect(entity_counts(&merged.model).faces == 3)!
     disk_id ::= mapped_face(&merged, .source_face = (.value = 2))!
@@ -447,7 +448,7 @@ test model_merge_preserves_unrelated_analytic_geometry := (.system: System) -> !
 }
 
 test model_merge_handle_history_checks_domains := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -499,7 +500,7 @@ test model_merge_handle_history_checks_domains := (.system: System) -> !() {
 }
 
 test model_merge_creates_hole_from_two_exteriors := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     original ::= _planar_annulus()
     vertices: [12]UIntNative = (0, 1, 7, 4, 5, 6, 2, 3, 1, 2, 6, 7)
     lengths: [2]UIntNative = (8, 4)
@@ -536,7 +537,7 @@ test model_merge_creates_hole_from_two_exteriors := (.system: System) -> !() {
 }
 
 test model_merge_removes_shared_chain_vertex := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),
@@ -566,7 +567,7 @@ test model_merge_removes_shared_chain_vertex := (.system: System) -> !() {
 }
 
 test model_merge_rejects_oppositely_oriented_sheets := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _triangle()
     faces: [2][3]UIntNative = (
         (0, 1, 2),
@@ -584,7 +585,7 @@ test model_merge_rejects_oppositely_oriented_sheets := (.system: System) -> !() 
 }
 
 test model_merge_preserves_coordinates_within_tolerance := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points :: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

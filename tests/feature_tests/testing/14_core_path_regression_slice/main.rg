@@ -2,10 +2,12 @@ test core_path_regression_slice := (.system: System, .error_tracer: $&Virtual#(E
     assume error_tracer
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     full :: Path = unwrap_or_abort(
-        .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/demo/file.txt")
+        .value = path_with_view(.allocator = allocator, .view = "/tmp/demo/file.txt")
     )
     defer deinit(.self = $&full)
 

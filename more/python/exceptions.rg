@@ -65,8 +65,8 @@ capture := #(.t: Type) (.self: &Python, .value: Errable#(t, (..python_error))) -
     }
 }
 
-_exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .part: Int32, .allocator: $&AllocatorType
+_exception_text := (
+    .self: &Exception, .part: Int32, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume ffi := self&._ffi
@@ -87,22 +87,22 @@ _exception_text := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
     result = _native_text(.bytes = view(&text), .allocator = allocator)
 }
 
-exception_type := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType
+exception_type := (
+    .self: &Exception, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
 
-exception_message := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType
+exception_message := (
+    .self: &Exception, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
 
-exception_traceback := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &Exception, .allocator: $&AllocatorType
+exception_traceback := (
+    .self: &Exception, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     result = _exception_text(.self = self, .part = 2, .allocator = allocator)

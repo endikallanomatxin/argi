@@ -7,11 +7,11 @@ main := (.system: System) -> () {
         i :: UIntNative = 0
         while i < 3 {
             if i == 1 {
-                unwrap_or_abort(.value = push(.self = $&field, .value = 65))
+                unwrap_or_abort(.value = push(.self = $&field, .value = 65, .allocator = allocator))
                 i = i + 1
                 continue
             }
-            unwrap_or_abort(.value = push(.self = $&field, .value = 65))
+            unwrap_or_abort(.value = push(.self = $&field, .value = 65, .allocator = allocator))
             i = i + 1
         }
         text ::= unwrap_or_abort(.value = string_from_bytes(.bytes = view(&field)))

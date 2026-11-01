@@ -46,8 +46,8 @@ text, including build metadata; equal precedence does not imply exact equality.
 `Errable#(String, (..out_of_memory))`. It copies the exact validated spelling,
 including metadata. `format_into(.out = $&text, .value = &version,
 .allocator = allocator)` appends that spelling; reserved capacity avoids further
-allocation. Both use the shared StringFormatting contract with a static allocator
-Provider. They are the ordinary core functions, not semver-local overloads.
+allocation. Both use the shared StringFormatting contract with a virtual allocator
+capability. They are the ordinary core functions, not semver-local overloads.
 
 `write(.self = writer, .value = &version)` uses WriteValue and the destination's
 selected StringView result. A Writer reports the existing stream_write_failed or

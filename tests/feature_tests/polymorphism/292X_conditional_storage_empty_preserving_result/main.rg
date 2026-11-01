@@ -77,7 +77,11 @@ make_slot := (.allocator: $&GeneralPurposeAllocator) -> (.value: Slot) {
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    implementation ::= make_slot(allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
+    implementation ::= make_slot(allocator_concrete)
     deinit($&implementation.storage)
 }

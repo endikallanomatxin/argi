@@ -416,8 +416,8 @@ next := (.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) {
 }
 
 -- Decode exactly one JSON string into independent UTF-8 storage.
-decode_string := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .text: StringView, .allocator: $&AllocatorType
+decode_string := (
+    .text: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String, (..invalid_json, ..json_depth_exceeded, ..invalid_utf8, ..out_of_memory)

@@ -356,14 +356,14 @@ implement Equal#(&VersionView, &VersionView) (
     }
 )
 
-implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
-    .render = (.value: &VersionView, .allocator: $&Provider) -> (
+implement StringFormatting#(&VersionView) (
+    .render = (.value: &VersionView, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
 
         result = ~format(.value = view(.self = value).view, .allocator = allocator)
     }
-    .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (
+    .append = (.out: $&String, .value: &VersionView, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) {
 

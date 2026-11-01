@@ -39,7 +39,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
             .allocator = system.page_allocator
         )
     ).result
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     other ::= unwrap_or_abort(
         .value = math.transpose(.self = &dynamic, .allocator = system.page_allocator)
     ).result
@@ -123,10 +123,12 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     refusing :: RefusingAllocator = (.attempts = 0)
     match math.DynamicMatrix(
-        .rows = 3, .cols = 3, .values = view(.self = &values), .allocator = $&refusing
+        .rows = 3, .cols = 3, .values = view(.self = &values), .allocator = allocator
     ) { ..error _ {} ..ok _ { abort } }
     if refusing.attempts != 0 { abort }
-    assume allocator ::= $&refusing
+    allocator_concrete := $&refusing
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     match [&dynamic * &other] {
         ..error item { if item.reason != ..out_of_memory { abort } } ..ok _ { abort }
     }

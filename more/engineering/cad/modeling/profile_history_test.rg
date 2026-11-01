@@ -1,5 +1,5 @@
 test extrusion_profile_history_tracks_directed_arcs_and_holes := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     frame ::= [
         g.frame#(Float64)(.origin = (3.0, 4.0, 5.0), .axis = (0.0, -1.0, 0.0))!
     ]
@@ -79,7 +79,7 @@ test extrusion_profile_history_tracks_directed_arcs_and_holes := (.system: Syste
     ]
 }
 
-_history_without_source := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> (
+_history_without_source := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(ProfilePublication#(Float32), t.BrepErrors)
 ) {
     points: [6]g.Point#(Float32) = (
@@ -103,7 +103,7 @@ _history_without_source := #(.Provider: Type: Allocator) (.allocator: $&Provider
 }
 
 test extrusion_profile_history_owns_disconnected_float32_images := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     publication ::= _history_without_source(.allocator = allocator)!
     region :: UIntNative = 0
     while region < 2 {

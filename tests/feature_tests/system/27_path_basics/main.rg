@@ -1,10 +1,12 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     full :: Path = unwrap_or_abort(
-        .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/demo/file.txt")
+        .value = path_with_view(.allocator = allocator, .view = "/tmp/demo/file.txt")
     )
 
     if is_absolute(.self = &full).ok {
@@ -54,13 +56,13 @@ main := (.system: System) -> (.status_code: Int32) {
     }
 
     base :: Path = unwrap_or_abort(
-        .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/demo")
+        .value = path_with_view(.allocator = allocator, .view = "/tmp/demo")
     )
     child :: Path = unwrap_or_abort(
-        .value = path_with_view(.allocator = $&allocator_storage, .view = "child.txt")
+        .value = path_with_view(.allocator = allocator, .view = "child.txt")
     )
 
-    joined_result ::= join(.left = &base, .right = &child, .allocator = $&allocator_storage)
+    joined_result ::= join(.left = &base, .right = &child, .allocator = allocator)
     match joined_result {
         ..ok ~payload {
             joined ::= ~payload

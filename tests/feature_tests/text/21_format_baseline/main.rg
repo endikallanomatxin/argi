@@ -1,9 +1,11 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
-    out_result ::= string_with_capacity(.allocator = $&allocator_storage, .capacity = 0)
+    out_result ::= string_with_capacity(.allocator = allocator, .capacity = 0)
     match out_result {
         ..error _ {
             status_code = 1
@@ -13,14 +15,14 @@ main := (.system: System) -> (.status_code: Int32) {
             out ::= ~output_payload
 
             step_1 ::= format_into(
-                .out = $&out, .value = "answer=", .allocator = $&allocator_storage
+                .out = $&out, .value = "answer=", .allocator = allocator
             )
-            step_2 ::= format_into(.out = $&out, .value = 42, .allocator = $&allocator_storage)
+            step_2 ::= format_into(.out = $&out, .value = 42, .allocator = allocator)
             step_3 ::= format_into(
-                .out = $&out, .value = ", ok=", .allocator = $&allocator_storage
+                .out = $&out, .value = ", ok=", .allocator = allocator
             )
             step_4 ::= format_into(
-                .out = $&out, .value = true, .allocator = $&allocator_storage
+                .out = $&out, .value = true, .allocator = allocator
             )
             if [
                 is(.value = step_1, .variant = ..ok)
@@ -46,7 +48,7 @@ main := (.system: System) -> (.status_code: Int32) {
         }
     }
 
-    number_result ::= format(.value = -105, .allocator = $&allocator_storage)
+    number_result ::= format(.value = -105, .allocator = allocator)
     match number_result {
         ..error _ {
             status_code = 3
@@ -66,7 +68,7 @@ main := (.system: System) -> (.status_code: Int32) {
     }
 
     demo ::= "demo"
-    view_result ::= format(.value = demo, .allocator = $&allocator_storage)
+    view_result ::= format(.value = demo, .allocator = allocator)
     match view_result {
         ..error _ {
             status_code = 5

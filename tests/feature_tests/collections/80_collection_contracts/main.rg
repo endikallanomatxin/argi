@@ -19,10 +19,9 @@ write := #(.Collection: Type: MutableIndexable#(.Item: Int32)) (.items: $&Collec
     pointer&= 9
 }
 
-resize := #(
-    .Provider   : Type: Allocator#(Provider),
-    .Collection : Type: Resizable#(.Collection: Collection, .Provider: Provider, .Item: Int32)
-) (.items: $&Collection, .allocator: $&Provider) -> (.value: Int32) {
+resize := #(.Collection: Type: Resizable#(.Item: Int32)) (
+    .items: $&Collection, .allocator: $&Virtual#(Allocator)
+) -> (.value: Int32) {
 
     unwrap_or_abort(.value = push(.self = items, .value = 3, .allocator = allocator))
     unwrap_or_abort(
@@ -36,10 +35,12 @@ resize := #(
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&storage
+    allocator_concrete := $&storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     dynamic ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
     if resize(.items = $&dynamic, .allocator = allocator).value != 7 { abort }
-    unwrap_or_abort(.value = push(.self = $&dynamic, .value = 2))
+    unwrap_or_abort(.value = push(.self = $&dynamic, .value = 2, .allocator = allocator))
     write(.items = $&dynamic)
     if read(.items = &dynamic, .index = 0).value != 9 { abort }
     if borrow(.items = &dynamic).value != 9 { abort }

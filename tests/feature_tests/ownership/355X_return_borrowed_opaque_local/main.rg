@@ -6,7 +6,11 @@ escape := (.array: $&DynamicArray#(&Int32)) -> (.result: $&DynamicArray#(&Int32)
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
     escaped ::= escape($&array)
 }

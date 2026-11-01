@@ -1,5 +1,5 @@
 test sketch_profile_rounded_plate_with_holes_reaches_brep := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= SketchBuilder#(.Scalar: Float64)()!
     exterior ::= [builder | rounded_rectangle($&_, .width = 8.0, .height = 6.0, .radius = 0.5)!]
     positions: [2]g.ContourPoint#(Float64) = (
@@ -80,7 +80,7 @@ test sketch_profile_rounded_plate_with_holes_reaches_brep := (.system: System) -
 }
 
 test sketch_profile_float32_plane_and_nested_selection_errors := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= SketchBuilder#(.Scalar: Float32)(.plane = ..xz)!
     builder | circle($&_, .diameter = 0.5)!
     exterior ::= builder | rectangle($&_, .width = 4.0, .height = 3.0)!
@@ -101,7 +101,7 @@ test sketch_profile_float32_plane_and_nested_selection_errors := (.system: Syste
 }
 
 test sketch_profile_rejects_outside_hole_without_consuming_drawing := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= SketchBuilder#(.Scalar: Float64)()!
     exterior ::= builder | rectangle($&_, .width = 4.0, .height = 3.0)!
     builder | circle($&_, .center = (3.0, 0.0), .diameter = 0.5)!
@@ -117,8 +117,8 @@ test sketch_profile_rejects_outside_hole_without_consuming_drawing := (.system: 
     testing.expect(Indexable#(ArrayView#(g.ContourSpan#(Float64))).length(&spans).count == 4)!
 }
 
-_arc_profile := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .quarters : Bool = false, .rotate: Bool = false, .allocator: $&Provider
+_arc_profile := #(.Scalar: Type: Float) (
+    .quarters : Bool = false, .rotate: Bool = false, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(t.Model#(Scalar), t.BrepErrors)) {
     builder ::= SketchBuilder#(.Scalar: Scalar)(.tolerance = 0.00001, .allocator = allocator)!
     points: [4]g.ContourPoint#(Scalar) = (
@@ -165,7 +165,7 @@ _arc_profile := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 }
 
 test sketch_arc_only_profile_subdivision_rotation_and_inversion := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     halves ::= _arc_profile#(.Scalar: Float64)()!
     quarters ::= _arc_profile#(.Scalar: Float64)(.quarters = true, .rotate = true)!
     inverse ::= t.reverse_orientation(&halves)!
@@ -217,7 +217,7 @@ test sketch_arc_only_profile_subdivision_rotation_and_inversion := (.system: Sys
 }
 
 test sketch_circular_profile_preserves_boundary_tolerance := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= SketchBuilder#(.Scalar: Float64)()!
     exterior ::= builder | circle($&_, .diameter = 2.0)!
     drawing ::= builder | finish_sketch(~_)!
@@ -248,7 +248,7 @@ test sketch_circular_profile_preserves_boundary_tolerance := (.system: System) -
 }
 
 test sketch_arc_only_profile_with_distinct_circle_centers := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= SketchBuilder#(.Scalar: Float64)()!
     square: Float64 = 3.0
     height ::= sqrt(square).result

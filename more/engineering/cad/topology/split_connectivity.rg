@@ -1,12 +1,13 @@
 -- Rebuild incidence by edge ID, without sorting endpoint pairs or welding.
-_split_pair_edges := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_split_pair_edges := #(.Scalar: Type: Float) (
     .model      : &Model#(Scalar),
     .halfedges  : &DynamicArray#(HalfEdge),
     .first      : _SplitEndpoint#(Scalar),
     .second     : _SplitEndpoint#(Scalar),
     .edge_count : UIntNative,
-    .allocator  : $&Provider
+    .allocator  : $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(Edge), SplitErrors)) {
+
     count ::= length(halfedges).count
     sentinel ::= count | convert#(.to: HalfEdgeId)(_)
     old_count ::= entity_counts(model).edges

@@ -1,15 +1,17 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
-    text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 2))
+    text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 2))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 79))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 75))
 
     strings ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
     defer deinit(.self = $&strings)
-    push(.self = $&strings, .value = ~text, .allocator = $&allocator_storage)
+    push(.self = $&strings, .value = ~text, .allocator = allocator)
 
     first_ptr_result ::= get_reference(.self = &strings, .index = 0).result
     if is(.value = first_ptr_result, .variant = ..error) {

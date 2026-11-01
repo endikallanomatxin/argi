@@ -197,8 +197,8 @@ implement Init#(Directory, DirectoryInitArgs) (
     }
 )
 
-_next_directory := #(.Provider: Type: Allocator#(Provider)) (
-    .self: $&Directory, .allocator: $&Provider
+_next_directory := (
+    .self: $&Directory, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)) {
 
     assume ffi := self&._filesystem&._ffi
@@ -327,19 +327,19 @@ _fs_temp_cleanup(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_fs_temp_
 
 TemporaryDirectory := (._filesystem: &FileSystem, ._handle: UIntNative, ._path: String)
 
-TemporaryDirectoryInitArgs: Type = #(.Provider: Type: Allocator) (
+TemporaryDirectoryInitArgs: Type = (
     .self      : &FileSystem,
     .parent    : StringView,
     .prefix    : StringView   = "argi-",
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.Provider: Type: Allocator) Init#(
-    TemporaryDirectory, TemporaryDirectoryInitArgs#(Provider)
+implement Init#(
+    TemporaryDirectory, TemporaryDirectoryInitArgs
 ) (
     .Result : Type = Errable#(TemporaryDirectory, _FilesystemReasons)
 
-    .init = TemporaryDirectoryInitArgs#(Provider) -> (.result: Result) {
+    .init = TemporaryDirectoryInitArgs -> (.result: Result) {
 
         _init_self ::= self
         _init_parent ::= parent

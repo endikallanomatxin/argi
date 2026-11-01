@@ -1,7 +1,9 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     path ::= from_literal(
         .data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt"
@@ -16,7 +18,7 @@ main := (.system: System) -> (.status_code: Int32) {
         }
     }
 
-    text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 4))
+    text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 4))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))

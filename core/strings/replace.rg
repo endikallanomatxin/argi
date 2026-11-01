@@ -1,8 +1,8 @@
-replace := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
+replace := (
     .self        : StringView,
     .pattern     : StringView,
     .replacement : StringView,
-    .allocator   : $&AllocatorType
+    .allocator   : $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))) {
 
     if pattern._length == 0 {

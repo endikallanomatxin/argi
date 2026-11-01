@@ -12,8 +12,7 @@ EntryStorage := (
     .rand_gen       : RandomNumberGenerator
 )
 
-initialize_system := (.storage: $&EntryStorage) -> (.system: System) {
-
+initialize_storage := (.storage: $&EntryStorage) -> () {
     storage&.ffi = ForeignFunctionInterface()
     assume ffi ::= $&storage&.ffi
     storage&.memory = Memory()
@@ -26,25 +25,26 @@ initialize_system := (.storage: $&EntryStorage) -> (.system: System) {
     storage&.proc_man = ProcessManager()
     storage&.clock = Clock()
     storage&.rand_gen = RandomNumberGenerator()
-    system = (
-        .ffi            = $&storage&.ffi
-        .memory         = $&storage&.memory
-        .page_allocator = $&storage&.page_allocator
-        .terminal       = $&storage&.terminal
-        .args           = $&storage&.args
-        .env_vars       = $&storage&.env_vars
-        .file_system    = $&storage&.file_system
-        .network        = $&storage&.network
-        .proc_man       = $&storage&.proc_man
-        .clock          = $&storage&.clock
-        .rand_gen       = $&storage&.rand_gen
-    )
 }
 
 main := () -> (.status_code: Int32) {
-
     storage :: EntryStorage
-    system ::= initialize_system(.storage = $&storage)
-    if system.page_allocator&.page_size == 0 { abort }
+    initialize_storage(.storage = $&storage)
+    page_virtual ::= to_virtual#(Allocator)($&storage.page_allocator)
+    system :: System
+    system = (
+        .ffi            = $&storage.ffi
+        .memory         = $&storage.memory
+        .page_allocator = $&page_virtual
+        .terminal       = $&storage.terminal
+        .args           = $&storage.args
+        .env_vars       = $&storage.env_vars
+        .file_system    = $&storage.file_system
+        .network        = $&storage.network
+        .proc_man       = $&storage.proc_man
+        .clock          = $&storage.clock
+        .rand_gen       = $&storage.rand_gen
+    )
+    if storage.page_allocator.page_size == 0 { abort }
     status_code = 42
 }

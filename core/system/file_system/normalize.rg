@@ -2,8 +2,8 @@
 -- never follows links or queries FileSystem; a normalized path is not a
 -- containment proof. Relative leading parents remain, rooted parents clamp
 -- at the root, and Windows drive-relative prefixes retain their meaning.
-normalize_path := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .view: StringView, .allocator: $&AllocatorType
+normalize_path := (
+    .view: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Path, (..invalid_path, ..out_of_memory))) {
 
     assume allocator
@@ -91,7 +91,7 @@ normalize_path := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
             if text._length > 0 {
                 if [
                     unwrap_or_abort(
-                        .value = bytes_get(.view = &view(&text), .index = text._length - 1)
+                        .value = bytes_get(.view = &text, .index = text._length - 1)
                     )
                     != 47
                 ] {

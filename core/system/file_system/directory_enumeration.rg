@@ -1,18 +1,18 @@
 -- Enumeration copies each native name before advancing its directory handle.
-DirectoryEnumeration#(.State: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+DirectoryEnumeration#(.State: Type): Contract = (
     .Item   : Type
     .Result : Type
-    .next   : (.self: $&State, .allocator: $&Provider) -> (.result: Result)
+    .next   : (.self: $&State, .allocator: $&Virtual#(Allocator)) -> (.result: Result)
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) DirectoryEnumeration#(Directory, Provider) (
+implement DirectoryEnumeration#(Directory) (
     .Item   : Type = DirectoryEntry
     .Result : Type = Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)
     .next   = _next_directory
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) DirectoryEnumeration#(
-    DirectoryWalker, Provider
+implement DirectoryEnumeration#(
+    DirectoryWalker
 ) (
     .Item   : Type = WalkEntry
     .Result : Type = Errable#(?WalkEntry, _FilesystemReasons)

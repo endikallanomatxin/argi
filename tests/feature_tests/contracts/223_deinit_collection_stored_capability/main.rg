@@ -12,7 +12,7 @@ observe := (.self: $&Owner) -> () {
 
 implement Deinit#(Owner) (.deinit = observe)
 
-create := (.counter: $&Counter, .allocator: $&PageAllocator) -> () {
+create := (.counter: $&Counter, .allocator: $&Virtual#(Allocator)) -> () {
 
     assume counter
     assume allocator

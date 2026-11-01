@@ -21,14 +21,15 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     refusal ::= RefusingAllocator()
+    refusal_virtual ::= to_virtual#(Allocator)($&refusal)
     array ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 1)!!!
     push(.self = $&array, .value = _pair(.id = 1).value, .allocator = allocator)!!!
-    match push(.self = $&array, .value = _pair(.id = 2).value, .allocator = $&refusal) {
+    match push(.self = $&array, .value = _pair(.id = 2).value, .allocator = $&refusal_virtual) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 2 { abort }
     match insert(
-        .self = $&array, .index = 0, .value = _pair(.id = 3).value, .allocator = $&refusal
+        .self = $&array, .index = 0, .value = _pair(.id = 3).value, .allocator = $&refusal_virtual
     ) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
@@ -66,11 +67,11 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if drops != 20 { abort }
     deque ::= Deque#(.t: Pair)(.capacity = 1, .allocator = allocator)!!!
     push_back(.self = $&deque, .value = _pair(.id = 11).value, .allocator = allocator)!!!
-    match push_front(.self = $&deque, .value = _pair(.id = 12).value, .allocator = $&refusal) {
+    match push_front(.self = $&deque, .value = _pair(.id = 12).value, .allocator = $&refusal_virtual) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 22 { abort }
-    match push_back(.self = $&deque, .value = _pair(.id = 13).value, .allocator = $&refusal) {
+    match push_back(.self = $&deque, .value = _pair(.id = 13).value, .allocator = $&refusal_virtual) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 24 { abort }
@@ -87,7 +88,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         )!!!
         index = index + 1
     }
-    match put(.self = $&map, .key = 4, .value = _pair(.id = 14).value, .allocator = $&refusal) {
+    match put(.self = $&map, .key = 4, .value = _pair(.id = 14).value, .allocator = $&refusal_virtual) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 28 or length(.self = &map).count != 4 { abort }

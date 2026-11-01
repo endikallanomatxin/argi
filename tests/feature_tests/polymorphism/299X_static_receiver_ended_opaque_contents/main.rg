@@ -53,7 +53,11 @@ static_drain := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType, 
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
     receiver ::= $&implementation
 

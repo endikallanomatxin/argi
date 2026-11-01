@@ -14,7 +14,6 @@ _impl_make_Cell := (.self: &Cell) -> (.value: Errable#(Allocation, (..out_of_mem
 
 main := (.system: System) -> () {
 
-    backing ::= to_virtual#(Allocator)(system.page_allocator)
-    cell ::= Cell($&backing)
+    cell ::= Cell(system.page_allocator)
     factory ::= to_virtual#(Factory)(&cell)
 }

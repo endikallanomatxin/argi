@@ -40,9 +40,10 @@ _MergeSelection := (
     .removed  : DynamicArray#(Bool)
 )
 
-_merge_selection := #(.Provider: Type: Allocator) (
-    .topology: &Topology, .first: FaceId, .second: FaceId, .allocator: $&Provider
+_merge_selection := (
+    .topology: &Topology, .first: FaceId, .second: FaceId, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(_MergeSelection, MergeErrors)) {
+
     count ::= _topology_entity_counts(topology).halfedges
     selected ::= DynamicArray#(Bool)(.allocator = allocator, .capacity = count)!
     removed ::= DynamicArray#(Bool)(.allocator = allocator, .capacity = count)!
@@ -110,9 +111,10 @@ _merge_selection := #(.Provider: Type: Allocator) (
     result = ..ok(.selected = ~selected, .removed = ~removed)
 }
 
-_merge_plane := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: $&Provider
+_merge_plane := #(.Scalar: Type: Float) (
+    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(g.Plane#(Scalar), MergeErrors)) {
+
     first_plane ::= face_plane(model, .face = first)!
     second_plane ::= face_plane(model, .face = second)!
     _merge_polygonal_boundary(.model = model, .face = first)!
@@ -185,12 +187,13 @@ _merge_plane := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = ..ok plane
 }
 
-_merge_cycles := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_merge_cycles := #(.Scalar: Type: Float) (
     .model     : &Model#(Scalar),
     .selection : &_MergeSelection,
     .plane     : g.Plane#(Scalar),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(_MergeLoop), MergeErrors)) {
+
     count ::= entity_counts(model).halfedges
     visited ::= DynamicArray#(Bool)(.allocator = allocator, .capacity = count)!
     cycles ::= DynamicArray#(_MergeLoop)(.allocator = allocator)!

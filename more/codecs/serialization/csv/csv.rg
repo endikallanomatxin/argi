@@ -50,9 +50,10 @@ implement Init#(CsvReader, CsvReaderInitArgs) (
 )
 
 -- Errors are terminal, and no partially decoded record escapes.
-next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&CsvReader, .allocator: $&AllocatorType
+next := (
+    .self: $&CsvReader, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
+
 
     assume allocator
 
@@ -101,7 +102,7 @@ next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
                                 result = ..error(.reason = ..size_limit_exceeded)
                                 return
                             }
-                            push(.self = $&field, .value = 34)!
+                            push(.self = $&field, .value = 34, .allocator = allocator)!
                             position = position + 1
                             continue
                         }
@@ -120,7 +121,7 @@ next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
                 result = ..error(.reason = ..size_limit_exceeded)
                 return
             }
-            push(.self = $&field, .value = byte)!
+            push(.self = $&field, .value = byte, .allocator = allocator)!
             position = position + 1
         }
         if quoted and closed == false {
@@ -128,7 +129,7 @@ next := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
             return
         }
         text ::= string_from_bytes(.bytes = view(&field))!
-        push(.self = $&record.fields, .value = ~text)!
+        push(.self = $&record.fields, .value = ~text, .allocator = allocator)!
         if position == byte_length(&self&._text).count { break }
         separator ::= unwrap_or_abort(
             .value = bytes_get(.view = &self&._text, .index = position)

@@ -35,7 +35,9 @@ main := () -> (.status_code: Int32 = 1) {
     assume ffi ::= $&ForeignFunctionInterface()
 
     allocator_storage ::= CAllocator(.ffi = ffi)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     simple ::= unwrap_or_abort(.value = HashSet#(.key: Int32)())
     unwrap_or_abort(.value = insert($&simple, .key = 3))
     if unwrap_or_abort(.value = insert($&simple, .key = 3)) { abort }
@@ -62,10 +64,11 @@ main := () -> (.status_code: Int32 = 1) {
     }
     if drops != 2 { abort }
     refusal ::= Refusal()
+    refusal_virtual ::= to_virtual#(Allocator)($&refusal)
     match insert(
         $&custom
         .key       = Key(.first = Tracked(.id = 9), .second = Tracked(.id = 90))
-        .allocator = $&refusal
+        .allocator = $&refusal_virtual
     ) {
         ..ok _ { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }

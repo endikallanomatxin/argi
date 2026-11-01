@@ -1,4 +1,4 @@
-copy_local := (.allocator: $&PageAllocator) -> (
+copy_local := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(String, (..invalid_utf8, ..out_of_memory))
 ) {
 

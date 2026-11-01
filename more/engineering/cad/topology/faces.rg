@@ -58,12 +58,12 @@ implement IndexableValue#(_EqualLengths) (
 -- Builds an oriented polyhedral surface, with n vertices in every face.
 -- Only the face width is static: the view may have a runtime face count.
 from_equal_length_faces := #(
-    .Scalar: Type: Float, .vertices_per_face: UIntNative, .Provider: Type: Allocator
+    .Scalar: Type: Float, .vertices_per_face: UIntNative
 ) (
     .points         : ArrayView#(g.Point#(Scalar)),
     .faces          : ArrayView#(Array#(.n = vertices_per_face, .t: UIntNative)),
     .tolerance      : Scalar      = 0.000001,
-    .allocator      : $&Provider,
+    .allocator      : $&Virtual#(Allocator),
     .require_closed : Bool        = true
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     if vertices_per_face < 3 {
@@ -85,7 +85,6 @@ from_equal_length_faces := #(
     supplied ::= DynamicArray#(g.Plane#(Scalar))(.allocator = allocator)!
     result = _build_faces#(
         .Scalar    : Scalar,
-        .Provider  : Provider,
         .Indices   : _EqualIndices#(.n = vertices_per_face),
         .Lengths   : _EqualLengths,
         .FaceLoops : _EqualLengths
@@ -103,12 +102,12 @@ from_equal_length_faces := #(
 }
 
 -- Each length consumes that many consecutive indices. Lengths may be equal.
-from_any_length_faces := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+from_any_length_faces := #(.Scalar: Type: Float) (
     .points         : ArrayView#(g.Point#(Scalar)),
     .vertex_indices : ArrayView#(UIntNative),
     .face_lengths   : ArrayView#(UIntNative),
     .tolerance      : Scalar                  = 0.000001,
-    .allocator      : $&Provider,
+    .allocator      : $&Virtual#(Allocator),
     .require_closed : Bool                    = true
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     face_loops: _EqualLengths = (
@@ -118,7 +117,6 @@ from_any_length_faces := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     supplied ::= DynamicArray#(g.Plane#(Scalar))(.allocator = allocator)!
     result = _build_faces#(
         .Scalar    : Scalar,
-        .Provider  : Provider,
         .Indices   : ArrayView#(UIntNative),
         .Lengths   : ArrayView#(UIntNative),
         .FaceLoops : _EqualLengths
@@ -136,13 +134,13 @@ from_any_length_faces := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 }
 
 -- General planar faces: each face starts with an exterior contour, then holes.
-from_planar_faces := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+from_planar_faces := #(.Scalar: Type: Float) (
     .points           : ArrayView#(g.Point#(Scalar)),
     .vertex_indices   : ArrayView#(UIntNative),
     .contour_lengths  : ArrayView#(UIntNative),
     .face_loop_counts : ArrayView#(UIntNative),
     .tolerance        : Scalar                  = 0.000001,
-    .allocator        : $&Provider,
+    .allocator        : $&Virtual#(Allocator),
     .require_closed   : Bool                    = true
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     planes ::= _planar_face_planes(
@@ -155,7 +153,6 @@ from_planar_faces := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     )!
     built ::= _build_faces#(
         .Scalar    : Scalar,
-        .Provider  : Provider,
         .Indices   : ArrayView#(UIntNative),
         .Lengths   : ArrayView#(UIntNative),
         .FaceLoops : ArrayView#(UIntNative)

@@ -6,19 +6,19 @@ PriorityQueue := #(.t: Type, .order: Type: OrderPolicy#(order, t)) (
 )
 
 PriorityQueueInitArgs: Type = #(
-    .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
+    .t: Type, .order: Type: OrderPolicy#(order, t)
 ) (
     .order     : &order,
-    .allocator : $&Provider,
+    .allocator : $&Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
-implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
-    PriorityQueue#(.t: t, .order: order), PriorityQueueInitArgs#(t, order, Provider)
+implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) Init#(
+    PriorityQueue#(.t: t, .order: order), PriorityQueueInitArgs#(t, order)
 ) (
     .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
 
-    .init = PriorityQueueInitArgs#(t, order, Provider) -> (.result: Result) {
+    .init = PriorityQueueInitArgs#(t, order) -> (.result: Result) {
 
         _init_order ::= order
         _init_allocator ::= allocator
@@ -50,8 +50,8 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) CollectionLength#(
 )
 
 _queue_push_priority_queue := #(
-    .t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator
-) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Provider) -> (
+    .t: Type, .order: Type: OrderPolicy#(order, t)
+) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
 ) {
 
@@ -136,8 +136,8 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) Queue#(
     .pop    = _queue_pop_priority_queue
 )
 
-implement#(.t: Type, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) QueueInsertion#(
-    PriorityQueue#(.t: t, .order: order), Provider
+implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) QueueInsertion#(
+    PriorityQueue#(.t: t, .order: order)
 ) (
     .Result : Type = Errable#(Void, (..out_of_memory))
     .push   = _queue_push_priority_queue

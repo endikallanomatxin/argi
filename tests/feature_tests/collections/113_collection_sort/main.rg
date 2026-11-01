@@ -26,7 +26,7 @@ check_sorted := #(
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     order ::= Int32OrderPolicy()
     descending ::= Descending()
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 8))

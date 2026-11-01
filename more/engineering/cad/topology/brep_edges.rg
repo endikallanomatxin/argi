@@ -1,7 +1,8 @@
 -- Vertices are declared identities: equal coordinates do not weld them.
-declare_vertex := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .builder: $&BrepBuilder#(Scalar), .point: g.Point#(Scalar), .allocator: $&Provider
+declare_vertex := #(.Scalar: Type: Float) (
+    .builder: $&BrepBuilder#(Scalar), .point: g.Point#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(VertexId), BrepErrors)) {
+
     if g.finite_point(point).ok == false {
         result = ..error(.reason = ..invalid_coordinate)
         return
@@ -14,13 +15,13 @@ declare_vertex := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 -- A proper interval of a shared circular or elliptic support.
 -- Endpoint identities are explicit and are never welded by coordinates.
 -- Canonical direction is increasing support parameter; uses may reverse it.
-declare_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+declare_edge := #(.Scalar: Type: Float) (
     .builder   : $&BrepBuilder#(Scalar),
     .curve     : idx.Index#(CurveId),
     .interval  : CurveInterval#(Scalar),
     .start     : idx.Index#(VertexId),
     .end       : idx.Index#(VertexId),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BrepErrors)) {
     a ::= idx.resolve_index(.domain = &builder&._domain, .index = start)!
     b ::= idx.resolve_index(.domain = &builder&._domain, .index = end)!

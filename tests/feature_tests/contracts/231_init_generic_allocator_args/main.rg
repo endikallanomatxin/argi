@@ -21,9 +21,10 @@ implement Deinit#(Owner) (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator := system.page_allocator
+    page :: PageAllocator = PageAllocator(.memory = system.memory)
+    assume allocator := $&page
     first ::= unwrap_or_abort(Owner(.allocator = allocator, .length = 8))
     second ::= unwrap_or_abort(Owner())
-    storage ::= GeneralPurposeAllocator(.allocator = allocator)
+    storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     third ::= unwrap_or_abort(Owner(.allocator = $&storage, .length = 16))
 }

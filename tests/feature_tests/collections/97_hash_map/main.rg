@@ -2,7 +2,9 @@ main := () -> (.status_code: Int32 = 0) {
     assume ffi ::= $&ForeignFunctionInterface()
 
     allocator_storage ::= CAllocator(.ffi = ffi)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
             .policy = StandardHashPolicy(), .allocator = allocator

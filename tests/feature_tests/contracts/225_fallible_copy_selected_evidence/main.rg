@@ -6,9 +6,9 @@ Owner := (.value: Int32)
 
 implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () { record_drop() })
 
-implement#(.Provider: Type: Allocator) FalliblyCopyable#(Owner, Provider) (
+implement FalliblyCopyable#(Owner) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &Owner, .allocator: $&Provider) -> (.result: Errable#(Owner, reasons)) {
+    .copy    = (.self: &Owner, .allocator: $&Virtual#(Allocator)) -> (.result: Errable#(Owner, reasons)) {
 
         if self&.value == 13 {
             result = ..error(.reason = ..copy_failed)
@@ -18,7 +18,7 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(Owner, Provider) (
     }
 )
 
-check_failure := (.allocator: $&PageAllocator) -> () {
+check_failure := (.allocator: $&Virtual#(Allocator)) -> () {
 
     assume allocator
     source ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 2))
@@ -27,7 +27,7 @@ check_failure := (.allocator: $&PageAllocator) -> () {
     push_assume_capacity#(Owner)($&source, .value = ~first)
     push_assume_capacity#(Owner)($&source, .value = ~second)
     copied ::= FalliblyCopyable#(
-        DynamicArray#(Owner), PageAllocator
+        DynamicArray#(Owner)
     ).copy(&source, .allocator = allocator)
     match copied {
         ..ok ~value { abort }
@@ -42,14 +42,14 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
     value :: Int32 = 42
     copied ::= unwrap_or_abort(
-        FalliblyCopyable#(Int32, PageAllocator).copy(&value, .allocator = allocator)
+        FalliblyCopyable#(Int32).copy(&value, .allocator = allocator)
     )
     if copied != 42 { abort }
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
     push_assume_capacity#(Int32)($&source, .value = 42)
     output ::= unwrap_or_abort(
         FalliblyCopyable#(
-            DynamicArray#(Int32), PageAllocator
+            DynamicArray#(Int32)
         ).copy(&source, .allocator = allocator)
     )
     read ::= unwrap_or_abort(get_reference(&output, .index = 0))
@@ -58,7 +58,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     push_assume_capacity#(DynamicArray#(Int32))($&nested, .value = ~source)
     copied_nested ::= unwrap_or_abort(
         FalliblyCopyable#(
-            DynamicArray#(DynamicArray#(Int32)), PageAllocator
+            DynamicArray#(DynamicArray#(Int32))
         ).copy(&nested, .allocator = allocator)
     )
     inner ::= unwrap_or_abort(get_reference(&copied_nested, .index = 0))

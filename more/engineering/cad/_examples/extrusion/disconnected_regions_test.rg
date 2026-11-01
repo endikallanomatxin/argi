@@ -2,7 +2,7 @@
 -- Here each triangle is one contour and one region. One extrusion produces
 -- both disconnected closed components in the same immutable model.
 test usage_extruded_disconnected_regions := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

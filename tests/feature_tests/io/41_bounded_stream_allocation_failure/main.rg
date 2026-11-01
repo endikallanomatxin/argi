@@ -37,13 +37,14 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 
     assume writer ::= $&system.terminal&.stderr
     allocator :: RecordingAllocator = (.ffi = system.ffi, .fail_at = 1)
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     source :: FaultReader = FaultReader()
     scratch :: [2]UInt8 = (0, 0)
     match read_all_limited(
         .self      = $&source
         .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = $&allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -57,7 +58,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         .self      = $&source
         .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = $&allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -81,7 +82,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         .self      = $&source
         .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = $&allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -97,7 +98,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         .self      = $&source
         .buffer    = view(.self = $&scratch)
         .limit     = 2
-        .allocator = $&allocator
+        .allocator = $&allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -115,7 +116,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         index = index + 1
     }
     unbounded ::= read_all_limited(
-        .self = $&source, .buffer = view($&scratch), .limit = maximum, .allocator = $&allocator
+        .self = $&source, .buffer = view($&scratch), .limit = maximum, .allocator = $&allocator_virtual
     )!!!
     if length(&unbounded).count != 8 { abort }
     deinit(.self = $&unbounded)
@@ -124,7 +125,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         .self      = $&source
         .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = $&allocator_virtual
     )!!!
     if length(&owned).count != 8 or capacity(.self = &owned).count > 8 { abort }
     deinit(.self = $&owned)

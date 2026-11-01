@@ -18,7 +18,9 @@ restrict_twice := #(.t: Type) (.input: t, .first: &Any, .second: &Any) -> (.refe
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     source_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)

@@ -1,6 +1,6 @@
 Owner := (.first: DynamicArray#(UIntNative), .second: DynamicArray#(UIntNative))
 
-make_owner := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> (
+make_owner := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(Owner, (..out_of_memory))
 ) {
 
@@ -13,9 +13,13 @@ consume := (.owner: Owner) -> () {}
 
 main := (.system: System) -> (.status_code: Int32) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     owner ::= unwrap_or_abort(.value = make_owner()).result
-    unwrap_or_abort(.value = push($&owner.second, .value = 1))
+    unwrap_or_abort(.value = push($&owner.second, .value = 1, .allocator = allocator))
     consume(.owner = ~owner)
     status_code = 0
 }

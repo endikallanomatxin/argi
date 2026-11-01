@@ -1,8 +1,9 @@
 -- Edge manifoldness is insufficient: all outgoing halfedges at a vertex must
 -- form one cycle (interior) or one chain (boundary), never disconnected fans.
-_validate_vertices := #(.Provider: Type: Allocator) (
-    .topology: &Topology, .allocator: $&Provider
+_validate_vertices := (
+    .topology: &Topology, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BuildErrors)) {
+
     vertex_count ::= topology&._vertex_count
     halfedge_count ::= length(&topology&._halfedges).count
     predecessors ::= _topology_predecessors(.topology = topology, .allocator = allocator)!

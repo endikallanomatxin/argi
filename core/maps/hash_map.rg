@@ -29,8 +29,8 @@ HashMap := #(
     ._shape  : _HashShape
 )
 
-_hash_slots := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .capacity: UIntNative, .allocator: $&AllocatorType
+_hash_slots := (
+    .capacity: UIntNative, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(.t: _HashSlot), (..out_of_memory))) {
 
     slots ::= DynamicArray#(.t: _HashSlot)(.capacity = capacity, .allocator = allocator)!
@@ -47,9 +47,8 @@ _hash_slots := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 _init_hash_map := #(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator
-) (.policy: policy, .allocator: $&Provider, .capacity: UIntNative) -> (
+    .policy   : Type: HashPolicy#(policy, key)
+) (.policy: policy, .allocator: $&Virtual#(Allocator), .capacity: UIntNative) -> (
     .result : Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))
 ) {
 
@@ -76,28 +75,26 @@ _init_hash_map := #(
 HashMapInitArgs: Type = #(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator
+    .policy   : Type: HashPolicy#(policy, key)
 ) (
     .policy    : policy,
-    .allocator : $&Provider,
+    .allocator : $&Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
 implement#(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator
+    .policy   : Type: HashPolicy#(policy, key)
 ) Init#(
     HashMap#(.key: key, .value: value, .policy: policy),
-    HashMapInitArgs#(key, value, policy, Provider)
+    HashMapInitArgs#(key, value, policy)
 ) (
     .Result : Type = Errable#(
         HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory)
     )
 
-    .init = HashMapInitArgs#(key, value, policy, Provider) -> (.result: Result) {
+    .init = HashMapInitArgs#(key, value, policy) -> (.result: Result) {
 
         constructed ::= _init_hash_map#(.key: key, .value: value)(
             .policy = ~policy, .allocator = allocator, .capacity = capacity
@@ -107,21 +104,21 @@ implement#(
 )
 
 StandardHashMapInitArgs: Type = #(
-    .key: Type: _StandardHashKey#(key), .value: Type, .Provider: Type: Allocator
+    .key: Type: _StandardHashKey#(key), .value: Type
 ) (
-    .allocator : $&Provider,
+    .allocator : $&Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
-implement#(.key: Type: _StandardHashKey#(key), .value: Type, .Provider: Type: Allocator) Init#(
+implement#(.key: Type: _StandardHashKey#(key), .value: Type) Init#(
     HashMap#(.key: key, .value: value, .policy: StandardHashPolicy),
-    StandardHashMapInitArgs#(key, value, Provider)
+    StandardHashMapInitArgs#(key, value)
 ) (
     .Result : Type = Errable#(
         HashMap#(.key: key, .value: value, .policy: StandardHashPolicy), (..out_of_memory)
     )
 
-    .init = StandardHashMapInitArgs#(key, value, Provider) -> (.result: Result) {
+    .init = StandardHashMapInitArgs#(key, value) -> (.result: Result) {
 
         constructed ::= _init_hash_map#(.key: key, .value: value)(
             .policy = StandardHashPolicy(), .allocator = allocator, .capacity = capacity
@@ -237,12 +234,11 @@ _hash_vacancy := (.slots: &DynamicArray#(.t: _HashSlot), .hash: UIntNative) -> (
 _map_reserve_hash_map := #(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .policy   : Type: HashPolicy#(policy, key)
 ) (
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
     .capacity  : UIntNative,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -299,13 +295,12 @@ _map_reserve_hash_map := #(
 _map_put_hash_map := #(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .policy   : Type: HashPolicy#(policy, key)
 ) (
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
     .key       : key,
     .value     : value,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -439,12 +434,11 @@ _map_extract_hash_map := #(.key: Type, .value: Type, .policy: Type: HashPolicy#(
 _map_remove_hash_map := #(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .policy   : Type: HashPolicy#(policy, key)
 ) (
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
     .key       : HashPolicy#(policy, key).Query,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.removed: Bool) {
     assume allocator
 

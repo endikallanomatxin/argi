@@ -46,47 +46,39 @@ _trusted_dynamic_array_mark_empty := #(.t: Type) (.self: $&DynamicArray#(.t: t))
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
 
-DynamicArrayInitArgs: Type = #(.t: Type, .A: Type: Allocator) (
-    .allocator : $&A,
+DynamicArrayInitArgs: Type = #(.t: Type) (
+    .allocator : $&Virtual#(Allocator),
     .capacity  : UIntNative = 0
 )
 
-implement#(.t: Type, .A: Type: Allocator) Init#(DynamicArray#(t), DynamicArrayInitArgs#(t, A)) (
+implement#(.t: Type) Init#(DynamicArray#(t), DynamicArrayInitArgs#(t)) (
     .Result : Type = Errable#(DynamicArray#(t), (..out_of_memory))
 
-    .init = DynamicArrayInitArgs#(t, A) -> (.result: Result) {
-
-        _init_allocator ::= allocator
-        _init_capacity ::= capacity
-
-        constructed :: DynamicArray#(.t: t)
-
-        assume allocator := _init_allocator
-
-        actual_capacity ::= _init_capacity
-
-        if actual_capacity == 0 {
-            actual_capacity = 1
-        }
-
-        allocated ::= allocate#(.t: t)(_init_allocator, .count = actual_capacity)
-
-        match allocated {
-            ..ok ~payload {
-                constructed = (
-                    ._allocation = ~payload
-                    ._length     = 0
-                    ._capacity   = actual_capacity
-                    ._shape      = (.marker = 0)
-                )
-                result = ..ok ~constructed
-            }
-            ..error ~error {
-                result = ..error ~error
-            }
-        }
+    .init = DynamicArrayInitArgs#(t) -> (.result: Result) {
+        result = _init_dynamic_array#(t)(.allocator = allocator, .capacity = capacity)
     }
 )
+
+-- The returned receipt retains the allocator capability's lifetime.
+_init_dynamic_array := #(.t: Type) (
+    .allocator: $&Virtual#(Allocator), .capacity: UIntNative
+) -> (.result: Errable#(DynamicArray#(t), (..out_of_memory))) {
+    actual_capacity ::= capacity
+    if actual_capacity == 0 { actual_capacity = 1 }
+
+    allocated ::= allocate#(t)(allocator, .count = actual_capacity)
+    match allocated {
+        ..ok ~payload {
+            result = ..ok(
+                ._allocation = ~payload
+                ._length     = 0
+                ._capacity   = actual_capacity
+                ._shape      = (.marker = 0)
+            )
+        }
+        ..error ~error { result = ..error ~error }
+    }
+}
 
 implement#(.t: Type) Deinit#(DynamicArray#(.t: t)) (
     .deinit = (.self: $&DynamicArray#(.t: t)) -> () {
@@ -110,12 +102,12 @@ implement#(.t: Type) Deinit#(DynamicArray#(.t: t)) (
 )
 
 implement#(
-    .Provider: Type: Allocator, .t: Type: FalliblyCopyable#(.Value: t, .Provider: Provider)
-) FalliblyCopyable#(DynamicArray#(t), Provider) (
+    .t: Type: FalliblyCopyable#(.Value: t)
+) FalliblyCopyable#(DynamicArray#(t)) (
     .reasons : Type = choice_union#(
-        .a: FalliblyCopyable#(t, Provider).reasons, .b: (..out_of_memory)
+        .a: FalliblyCopyable#(t).reasons, .b: (..out_of_memory)
     )
-    .copy = (.self: &DynamicArray#(t), .allocator: $&Provider) -> (
+    .copy = (.self: &DynamicArray#(t), .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(DynamicArray#(t), reasons)
     ) {
 
@@ -126,7 +118,7 @@ implement#(
             ptr ::= _trusted_dynamic_array_element_reference#(t)(
                 .array = self, .offset = i
             ).pointer
-            copied ::= FalliblyCopyable#(t, Provider).copy(ptr, .allocator = allocator)!
+            copied ::= FalliblyCopyable#(t).copy(ptr, .allocator = allocator)!
             push_assume_capacity#(t)($&out, .value = ~copied)
             i = i + 1
         }
@@ -167,8 +159,8 @@ _trusted_dynamic_array_element_mutable_reference := #(.t: Type) (
 -- Ensures space for at least `capacity` elements without changing length.
 -- Callers that must commit an external resource after a successful capacity
 -- check can follow this with `push_assume_capacity` without another OOM point.
-ensure_capacity := #(.t: Type, .Provider: Type: Allocator) (
-    .allocator: $&Provider, .self: $&DynamicArray#(.t: t), .capacity: UIntNative
+ensure_capacity := #(.t: Type) (
+    .allocator: $&Virtual#(Allocator), .self: $&DynamicArray#(.t: t), .capacity: UIntNative
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -183,8 +175,8 @@ ensure_capacity := #(.t: Type, .Provider: Type: Allocator) (
     )
 }
 
-_grow_dynamic_array := #(.t: Type, .Provider: Type: Allocator) (
-    .allocator: $&Provider, .array: $&DynamicArray#(.t: t), .min_capacity: UIntNative
+_grow_dynamic_array := #(.t: Type) (
+    .allocator: $&Virtual#(Allocator), .array: $&DynamicArray#(.t: t), .min_capacity: UIntNative
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -266,8 +258,8 @@ push_assume_capacity := #(.t: Type) (.self: $&DynamicArray#(.t: t), .value: t) -
     self&._length = offset + 1
 }
 
-insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .allocator: $&AllocatorType, .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
+insert_growing := #(.t: Type) (
+    .allocator: $&Virtual#(Allocator), .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) {
 
     assume allocator
@@ -322,8 +314,8 @@ insert_growing := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
     result = ..ok Void()
 }
 
-replace := #(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&AllocatorType
+replace := #(.t: Type) (
+    .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
 
     assume allocator
@@ -415,12 +407,10 @@ implement#(.t: Type) Indexable#(DynamicArray#(.t: t)) (
     }
 )
 
-implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
-    DynamicArray#(.t: t), Provider
-) (
+implement#(.t: Type) Resizable#(DynamicArray#(.t: t)) (
     .Item : Type = t
 
-    .push = (.self: $&DynamicArray#(.t: t), .value: t, .allocator: $&Provider) -> (
+    .push = (.self: $&DynamicArray#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) {
 
@@ -446,7 +436,7 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
     }
 
     .insert = (
-        .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&Provider
+        .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&Virtual#(Allocator)
     ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) {
 
         assume allocator

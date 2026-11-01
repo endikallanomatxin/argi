@@ -37,7 +37,9 @@ implement Reader#(DummyInput) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     stdout_storage :: DummyOutput = DummyOutput()
     assume writer ::= $&stdout_storage
@@ -81,7 +83,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     )
     assume reader ::= $&stdin_storage
     buffer ::= unwrap_or_abort(
-        .value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 4)
+        .value = string_with_capacity(.allocator = allocator, .capacity = 4)
     )
     into_buffer ::= read_line_into_buffer($&buffer)
     if is(.value = into_buffer, .variant = ..ok) {

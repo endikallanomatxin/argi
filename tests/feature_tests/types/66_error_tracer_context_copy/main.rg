@@ -5,7 +5,7 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
     result = ..error(.reason = ..copy_test_failure)
 }
 
-context_failure := (.allocator: $&PageAllocator, .error_tracer: $&Virtual#(ErrorTracer)) -> (
+context_failure := (.allocator: $&Virtual#(Allocator), .error_tracer: $&Virtual#(ErrorTracer)) -> (
     .result : Errable#(
         .t          : Void,
         .reasons    : (..copy_test_failure),

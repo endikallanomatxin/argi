@@ -64,12 +64,12 @@ copy_stream_limited := #(
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
 read_all_limited := #(
-    .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
+    .SelfType: Type: BlockReader#(SelfType)
 ) (
     .self      : $&SelfType,
     .buffer    : MutableArrayView#(.t: UInt8),
     .limit     : UIntNative,
-    .allocator : $&AllocatorType
+    .allocator : $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         DynamicArray#(UInt8),

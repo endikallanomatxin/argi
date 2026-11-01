@@ -1,6 +1,6 @@
--- Whole-file reading selects the path representation and allocation provider.
-FileReading#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
-    .read_file : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider) -> (
+-- Whole-file reading selects the path representation and uses a virtual allocator.
+FileReading#(.PathValue: Type): Contract = (
+    .read_file : (.self: &FileSystem, .path: PathValue, .allocator: $&Virtual#(Allocator)) -> (
         .result : Errable#(
             String,
             (
@@ -14,18 +14,18 @@ FileReading#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract 
     )
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) FileReading#(&CChar, Provider) (
+implement FileReading#(&CChar) (
     .read_file = _read_c_file
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) FileReading#(&String, Provider) (
+implement FileReading#(&String) (
     .read_file = _read_string_file
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) FileReading#(StringView, Provider) (
+implement FileReading#(StringView) (
     .read_file = _read_view_file
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) FileReading#(&Path, Provider) (
+implement FileReading#(&Path) (
     .read_file = _read_path_file
 )

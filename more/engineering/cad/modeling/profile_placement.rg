@@ -2,8 +2,8 @@
 -- Local spans, tolerance and region/contour/span positions remain unchanged.
 -- This is rigid placement, not scaling, reflection, live attachment or B-rep
 -- identity preservation. The result owns its arrays and does not borrow source.
-profile_on_frame := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .profile: &PlanarProfile#(Scalar), .frame: g.Frame#(Scalar), .allocator: $&Provider
+profile_on_frame := #(.Scalar: Type: Float) (
+    .profile: &PlanarProfile#(Scalar), .frame: g.Frame#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
     g.validate_frame(frame)!
     spans ::= _copy_profile_values(&profile&._spans, .allocator = allocator)!
@@ -18,8 +18,8 @@ profile_on_frame := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     )
 }
 
-_copy_profile_values := #(.Value: Type: ImplicitlyCopyable, .Provider: Type: Allocator) (
-    .source: &DynamicArray#(Value), .allocator: $&Provider
+_copy_profile_values := #(.Value: Type: ImplicitlyCopyable) (
+    .source: &DynamicArray#(Value), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(Value), (..out_of_memory))) {
     count ::= length(source).count
     values ::= DynamicArray#(Value)(.capacity = count, .allocator = allocator)!

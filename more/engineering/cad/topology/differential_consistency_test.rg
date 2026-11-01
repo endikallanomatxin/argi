@@ -81,8 +81,8 @@ _check_boundary_chain_rule := #(.Scalar: Type: Float) (.model: &Model#(Scalar)) 
     result = ..ok Void()
 }
 
-_check_reversed_boundary_differentials := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .model: &Model#(Scalar), .allocator: $&Provider
+_check_reversed_boundary_differentials := #(.Scalar: Type: Float) (
+    .model: &Model#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> !Void {
 
     inverse ::= reverse_orientation(model, .allocator = allocator)!
@@ -127,7 +127,7 @@ _check_reversed_boundary_differentials := #(.Scalar: Type: Float, .Provider: Typ
 }
 
 test model_differentials_mixed_planar_boundaries_float64 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= [
         _mixed_planar_face#(.Scalar: Float64)(
             .allocator = allocator, .rotate = true, .renumber = true
@@ -137,49 +137,49 @@ test model_differentials_mixed_planar_boundaries_float64 := (.system: System) ->
 }
 
 test model_differentials_mixed_planar_boundaries_float32 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _mixed_planar_face#(.Scalar: Float32)(.allocator = allocator)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_sphere_shared_circular_boundary_float64 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _brep_hemisphere#(.Scalar: Float64)(.allocator = allocator)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_sphere_shared_circular_boundary_float32 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _brep_hemisphere#(.Scalar: Float32)(.allocator = allocator, .north = false)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_partitioned_oblique_cylinder_float64 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _partitioned_oblique_cylinder#(.Scalar: Float64)(.allocator = allocator)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_partitioned_oblique_cylinder_float32 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _partitioned_oblique_cylinder#(.Scalar: Float32)(.allocator = allocator)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_torus_band_crossing_periods_float64 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _torus_band#(.Scalar: Float64)(.allocator = allocator)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_torus_band_crossing_periods_float32 := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _torus_band#(.Scalar: Float32)(.allocator = allocator)!
     [_check_reversed_boundary_differentials(.model = &model, .allocator = allocator)!]
 }
 
 test model_differentials_reject_missing_pcurves_and_invalid_use_queries := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     model ::= _brep_hemisphere#(.Scalar: Float64)(.allocator = allocator)!
     [
         testing.expect_error(
@@ -237,7 +237,7 @@ test model_differentials_reject_missing_pcurves_and_invalid_use_queries := (.sys
 }
 
 test model_differentials_segment_subinterval_uses_its_own_parameter := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     builder ::= BrepBuilder#(Float64)()!
     a ::= builder | declare_vertex($&_, .point = (1.0, 0.0, 0.0))!
     b ::= builder | declare_vertex($&_, .point = (3.0, 0.0, 0.0))!

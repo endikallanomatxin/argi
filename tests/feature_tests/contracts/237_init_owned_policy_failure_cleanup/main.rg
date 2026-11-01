@@ -29,7 +29,7 @@ implement Allocator#(FailAllocator) (
     }
 )
 
-failed := (.allocator: $&FailAllocator) -> () {
+failed := (.allocator: $&Virtual#(Allocator)) -> () {
 
     policy ::= Policy(1)
     outcome ::= HashMap#(.key: Int32, .value: Int32, .policy: Policy)(
@@ -39,7 +39,7 @@ failed := (.allocator: $&FailAllocator) -> () {
     if drops != 1 { abort }
 }
 
-successful := (.allocator: $&PageAllocator) -> () {
+successful := (.allocator: $&Virtual#(Allocator)) -> () {
 
     policy ::= Policy(2)
     map ::= unwrap_or_abort(
@@ -55,7 +55,8 @@ successful := (.allocator: $&PageAllocator) -> () {
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     failing ::= FailAllocator()
-    failed($&failing)
+    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failed($&failing_virtual)
     if drops != 1 { abort }
     successful(system.page_allocator)
     if drops != 2 { abort }

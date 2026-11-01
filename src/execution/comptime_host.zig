@@ -3,7 +3,7 @@ const host = @import("host.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
 // Bootstrap only. These adapters expose no filesystem, environment, input,
-// network, process or entropy reads. Unregistered operations fail before run.
+// network, process or entropy reads. Unavailable operations are denied if execution reaches them.
 // Each evaluation owns its endpoint adapter; no host handle enters frozen output.
 pub const Environment = struct {
     output: @import("host_output.zig").Output,

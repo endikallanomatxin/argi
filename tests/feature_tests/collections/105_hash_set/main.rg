@@ -14,7 +14,7 @@ implement HashPolicy#(CollisionPolicy, Int32) (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     set ::= unwrap_or_abort(
         .value = HashSet#(.key: Int32, .policy: CollisionPolicy)(
             .policy = CollisionPolicy(), .allocator = allocator

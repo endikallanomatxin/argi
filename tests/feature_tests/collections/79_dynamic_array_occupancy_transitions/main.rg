@@ -10,7 +10,7 @@ implement Deinit#(Tracked) (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Tracked)(.capacity = 4))
     first ::= Tracked(.id = 1)
     second ::= Tracked(.id = 2)

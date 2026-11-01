@@ -2,16 +2,16 @@ DummyWriter := (
     .bytes : String
 )
 
-DummyWriterInitArgs: Type = #(.AllocatorProvider: Type: Allocator) (
-    .allocator : $&AllocatorProvider
+DummyWriterInitArgs: Type = (
+    .allocator : $&Virtual#(Allocator)
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(
-    DummyWriter, DummyWriterInitArgs#(AllocatorProvider)
+implement Init#(
+    DummyWriter, DummyWriterInitArgs
 ) (
     .Result : Type = DummyWriter
 
-    .init = DummyWriterInitArgs#(AllocatorProvider) -> (.result: Result) {
+    .init = DummyWriterInitArgs -> (.result: Result) {
 
         _init_allocator ::= ~allocator
 
@@ -29,8 +29,8 @@ implement Deinit#(DummyWriter) (
     }
 )
 
-append_test_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: $&DummyWriter, .byte: UInt8, .allocator: $&AllocatorType
+append_test_byte := (
+    .self: $&DummyWriter, .byte: UInt8, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
 
     assume allocator
@@ -46,10 +46,12 @@ append_test_byte := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     buffer ::= unwrap_or_abort(
-        .value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 16)
+        .value = string_with_capacity(.allocator = allocator, .capacity = 16)
     )
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {
@@ -65,17 +67,17 @@ main := (.system: System) -> (.status_code: Int32) {
         return
     }
 
-    writer ::= DummyWriter(.allocator = $&allocator_storage)
+    writer ::= DummyWriter(.allocator = allocator)
     i :: UIntNative = 0
     while i < byte_length(&buffer).count {
         append_test_byte(
             .self      = $&writer
             .byte      = unwrap_or_abort(.value = bytes_get(.view = &buffer, .index = i))
-            .allocator = $&allocator_storage
+            .allocator = allocator
         )
         i = i + 1
     }
-    append_test_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
+    append_test_byte(.self = $&writer, .byte = 10, .allocator = allocator)
 
     if byte_length(&writer.bytes).count != 3 {
         status_code = 2

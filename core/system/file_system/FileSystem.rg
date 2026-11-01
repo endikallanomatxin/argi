@@ -19,8 +19,8 @@ implement Init#(FileSystem, FileSystemInitArgs) (
     .init = _acquire_file_system
 )
 
-_read_c_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .path: &CChar, .allocator: $&Provider
+_read_c_file := (
+    .self: &FileSystem, .path: &CChar, .allocator: $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
@@ -100,8 +100,8 @@ _read_c_file := #(.Provider: Type: Allocator#(Provider)) (
     result = ..ok ~text
 }
 
-_read_string_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .path: &String, .allocator: $&Provider
+_read_string_file := (
+    .self: &FileSystem, .path: &String, .allocator: $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
@@ -123,8 +123,8 @@ _read_string_file := #(.Provider: Type: Allocator#(Provider)) (
     result = read_file(self, .path = c_path, .allocator = allocator)
 }
 
-_read_view_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .path: StringView, .allocator: $&Provider
+_read_view_file := (
+    .self: &FileSystem, .path: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
@@ -151,8 +151,8 @@ _read_view_file := #(.Provider: Type: Allocator#(Provider)) (
     }
 }
 
-_read_path_file := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &FileSystem, .path: &Path, .allocator: $&Provider
+_read_path_file := (
+    .self: &FileSystem, .path: &Path, .allocator: $&Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,

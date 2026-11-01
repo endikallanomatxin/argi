@@ -7,8 +7,8 @@ HashSet := #(.key: Type, .policy: Type: HashPolicy#(policy, key) = StandardHashP
 )
 
 _init_hash_set := #(
-    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator
-) (.policy: policy, .allocator: $&Provider, .capacity: UIntNative) -> (
+    .key: Type, .policy: Type: HashPolicy#(policy, key)
+) (.policy: policy, .allocator: $&Virtual#(Allocator), .capacity: UIntNative) -> (
     .result : Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
 ) {
 
@@ -19,19 +19,19 @@ _init_hash_set := #(
 }
 
 HashSetInitArgs: Type = #(
-    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator
+    .key: Type, .policy: Type: HashPolicy#(policy, key)
 ) (
     .policy    : policy,
-    .allocator : $&Provider,
+    .allocator : $&Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
-implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator) Init#(
-    HashSet#(.key: key, .policy: policy), HashSetInitArgs#(key, policy, Provider)
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) Init#(
+    HashSet#(.key: key, .policy: policy), HashSetInitArgs#(key, policy)
 ) (
     .Result : Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
 
-    .init = HashSetInitArgs#(key, policy, Provider) -> (.result: Result) {
+    .init = HashSetInitArgs#(key, policy) -> (.result: Result) {
 
         constructed ::= _init_hash_set#(.key: key)(
             .policy = ~policy, .allocator = allocator, .capacity = capacity
@@ -41,20 +41,20 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type:
 )
 
 StandardHashSetInitArgs: Type = #(
-    .key: Type: _StandardHashKey#(key), .Provider: Type: Allocator
+    .key: Type: _StandardHashKey#(key)
 ) (
-    .allocator : $&Provider,
+    .allocator : $&Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
-implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#(
-    HashSet#(.key: key, .policy: StandardHashPolicy), StandardHashSetInitArgs#(key, Provider)
+implement#(.key: Type: _StandardHashKey#(key)) Init#(
+    HashSet#(.key: key, .policy: StandardHashPolicy), StandardHashSetInitArgs#(key)
 ) (
     .Result : Type = Errable#(
         HashSet#(.key: key, .policy: StandardHashPolicy), (..out_of_memory)
     )
 
-    .init = StandardHashSetInitArgs#(key, Provider) -> (.result: Result) {
+    .init = StandardHashSetInitArgs#(key) -> (.result: Result) {
 
         constructed ::= _init_hash_set#(.key: key)(
             .policy = StandardHashPolicy(), .allocator = allocator, .capacity = capacity
@@ -64,8 +64,8 @@ implement#(.key: Type: _StandardHashKey#(key), .Provider: Type: Allocator) Init#
 )
 
 _map_insert_hash_set := #(
-    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
+    .key: Type, .policy: Type: HashPolicy#(policy, key)
+) (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(Bool, (..out_of_memory))
 ) {
 
@@ -89,11 +89,11 @@ _map_contains_hash_set := #(.key: Type, .policy: Type: HashPolicy#(policy, key))
 ) -> (.ok: Bool) { ok = contains(&self&._map, .key = key).ok }
 
 _map_remove_hash_set := #(
-    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+    .key: Type, .policy: Type: HashPolicy#(policy, key)
 ) (
     .self      : $&HashSet#(.key: key, .policy: policy),
     .key       : HashPolicy#(policy, key).Query,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.removed: Bool) {
     removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed
 }
@@ -133,8 +133,8 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) CollectionCapaci
 )
 
 _map_reserve_hash_set := #(
-    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) (.self: $&HashSet#(.key: key, .policy: policy), .capacity: UIntNative, .allocator: $&Provider) -> (
+    .key: Type, .policy: Type: HashPolicy#(policy, key)
+) (.self: $&HashSet#(.key: key, .policy: policy), .capacity: UIntNative, .allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(Void, (..out_of_memory))
 ) {
 

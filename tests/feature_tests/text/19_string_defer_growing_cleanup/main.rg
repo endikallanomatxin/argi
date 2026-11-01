@@ -1,4 +1,4 @@
-helper := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&AllocatorType) -> (
+helper := (.allocator: $&Virtual#(Allocator)) -> (
     .ok : Bool
 ) {
 
@@ -29,7 +29,8 @@ helper := #(.AllocatorType: Type: Allocator#(AllocatorType)) (.allocator: $&Allo
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    if helper(.allocator = $&allocator_storage).ok {
+    assume allocator ::= to_virtual#(Allocator)($&allocator_storage) | $&_
+    if helper(.allocator = allocator).ok {
         status_code = 0
     } else {
         status_code = 1

@@ -9,11 +9,12 @@ _ExtrusionBuffers := #(.Scalar: Type: Float) (
 )
 
 -- Every connected profile region produces a separate closed volume.
-_extrusion_buffers := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_extrusion_buffers := #(.Scalar: Type: Float) (
     .profile      : &PlanarProfile#(Scalar),
     .displacement : g.Displacement#(Scalar),
-    .allocator    : $&Provider
+    .allocator    : $&Virtual#(Allocator)
 ) -> (.result: Errable#(_ExtrusionBuffers#(Scalar), t.BrepErrors)) {
+
     tolerance ::= profile&._tolerance
     if [
         is_finite(displacement.x).ok == false
@@ -139,10 +140,10 @@ _extrusion_buffers := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 
 -- Face order is original caps by region, translated caps by region, then
 -- walls by directed profile span. Optional operation history uses this order.
-extrude := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+extrude := #(.Scalar: Type: Float) (
     .profile      : &PlanarProfile#(Scalar),
     .displacement : g.Displacement#(Scalar),
-    .allocator    : $&Provider
+    .allocator    : $&Virtual#(Allocator)
 ) -> (.result: Errable#(t.Model#(Scalar), t.BrepErrors)) {
     buffers ::= _extrusion_buffers(
         .profile = profile, .displacement = displacement, .allocator = allocator

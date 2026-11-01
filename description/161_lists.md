@@ -146,9 +146,9 @@ The `_allocation`, `_length`, and `_capacity` fields are module-private. Code in
 those fields or fill them with a struct literal; `init` maintains their shared
 invariant.
 
-`DynamicArray` implements `FalliblyCopyable#(DynamicArray#(T), Provider)` when
-its elements satisfy `FalliblyCopyable#(T, Provider)`. Its single copy algorithm
-obtains the element's associated reasons from that tuple and combines them with
+`DynamicArray` implements `FalliblyCopyable#(DynamicArray#(T))` when
+its elements satisfy `FalliblyCopyable#(T)`. Its single copy algorithm
+obtains the element's associated reasons from its selected evidence and combines them with
 `..out_of_memory`. Infallibly copyable elements use the standard infallible adapter. Each element is copied independently; a fallible copy
 rolls back the completed prefix before releasing the new backing allocation.
 
@@ -209,8 +209,9 @@ Deque preserve element order without allocating or copying elements.
   associated `Item` is implicitly copyable.
 - `Removable#(Collection)` requires mutable indexing and supplies `pop` and
   `remove` without an allocator.
-- `Resizable#(Collection, Provider)` requires `Removable` and adds `push` and
-  `insert` using an allocator provider.
+- `Resizable#(Collection)` requires `Removable` and adds `push` and `insert`
+  using a `$&Virtual#(Allocator)` capability. The allocator does not participate
+  in selecting collection behavior.
 
 These contracts associate the element type as `Item`; the participant is the
 collection type, not its element type. Public positions use `.index`:
@@ -232,7 +233,7 @@ built-in `[]`; pass an initialized array view to capability-based algorithms.
 
 Collection algorithms can accept the named capabilities `Indexable#(Collection)`,
 `MutableIndexable#(Collection)`, `IndexableValue#(Collection)`, and
-`Resizable#(Collection, Provider)`. Public indexed
+`Resizable#(Collection)`. Public indexed
 operations return an `Errable` with `out_of_bounds`; value reads require
 implicitly copyable elements. Borrowed reads support owning elements without
 copying them.

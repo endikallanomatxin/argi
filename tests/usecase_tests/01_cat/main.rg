@@ -50,7 +50,7 @@ copy_input_file := #(.Output: Type: Writer#(Output)) (
     .path         : StringView,
     .output       : $&Output,
     .file_system  : $&FileSystem,
-    .allocator    : $&PageAllocator,
+    .allocator    : $&Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> !!Void = ..ok Void() {
     assume error_tracer

@@ -38,7 +38,6 @@ implement OrderPolicy#(_ByEndpoints, _Candidate) (
 -- Shared construction reads borrowed index and length sources directly.
 _build_faces := #(
     .Scalar    : Type: Float,
-    .Provider  : Type: Allocator,
     .Indices   : Type: IndexableValue#(.Item: UIntNative),
     .Lengths   : Type: IndexableValue#(.Item: UIntNative),
     .FaceLoops : Type: IndexableValue#(.Item: UIntNative)
@@ -50,9 +49,10 @@ _build_faces := #(
     .planar_regions   : Bool,
     .supplied_planes  : &DynamicArray#(g.Plane#(Scalar)),
     .tolerance        : Scalar,
-    .allocator        : $&Provider,
+    .allocator        : $&Virtual#(Allocator),
     .require_closed   : Bool        = false
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
+
     if is_finite(tolerance).ok == false or tolerance <= 0.0 {
         result = ..error(.reason = ..invalid_tolerance)
         return

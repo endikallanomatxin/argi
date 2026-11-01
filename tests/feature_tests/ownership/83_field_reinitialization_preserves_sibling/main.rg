@@ -10,7 +10,9 @@ initialize_left := (.p: $&Allocation, .value: Allocation) -> () {
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     left_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match left_result {

@@ -13,9 +13,11 @@ test collections_text_format_slice := (.system: System, .error_tracer: $&Virtual
     assume error_tracer
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
-    text_result ::= format(.value = 7, .allocator = $&allocator_storage)
+    text_result ::= format(.value = 7, .allocator = allocator)
     match text_result {
         ..ok ~format_payload {
             text ::= ~format_payload

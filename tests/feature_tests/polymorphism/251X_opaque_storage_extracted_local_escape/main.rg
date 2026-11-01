@@ -49,7 +49,11 @@ forward_take := (.slots: &Virtual#(SlotProtocol), .storage: $&Allocation, .slot:
 
 escape := (.system: System) -> (.result: Tracked) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drops :: Int32 = 0
     implementation ::= Slots()
     slots ::= to_virtual#(SlotProtocol)(&implementation)

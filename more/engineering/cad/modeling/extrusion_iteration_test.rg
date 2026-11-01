@@ -1,5 +1,5 @@
 test extrusion_contour_walls_partition_source_spans_and_repeat := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [11]g.Point#(Float64) = (
         (-3.0, -2.0, 0.0),
         (3.0, -2.0, 0.0),

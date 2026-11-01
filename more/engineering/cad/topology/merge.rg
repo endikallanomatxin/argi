@@ -29,7 +29,7 @@ _MergeConnectivity := (
     .halfedge_map : DynamicArray#(UIntNative)
 )
 
-_merge_emit_loop := #(.Provider: Type: Allocator) (
+_merge_emit_loop := (
     .source      : &Topology,
     .removed     : &DynamicArray#(Bool),
     .vertices    : &DynamicArray#(UIntNative),
@@ -37,8 +37,9 @@ _merge_emit_loop := #(.Provider: Type: Allocator) (
     .destination : $&_MergeConnectivity,
     .cycle       : _MergeLoop,
     .merged      : Bool,
-    .allocator   : $&Provider
+    .allocator   : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, MergeErrors)) {
+
     first ::= length(&destination&.halfedges).count
     loop_index ::= length(&destination&.loops).count
     loop_id ::= loop_index | convert#(.to: LoopId)(_)
@@ -84,9 +85,10 @@ _merge_emit_loop := #(.Provider: Type: Allocator) (
     result = ..ok Void()
 }
 
-merge_coplanar_faces := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: $&Provider
+merge_coplanar_faces := #(.Scalar: Type: Float) (
+    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(FaceMerge#(Scalar), MergeErrors)) {
+
     face_info(model, .face = first)!
     face_info(model, .face = second)!
     if first == second {

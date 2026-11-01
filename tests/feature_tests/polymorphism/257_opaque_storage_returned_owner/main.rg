@@ -64,11 +64,15 @@ make_storage := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drops :: Int32 = 0
 
     {
-        storage ::= make_storage(allocator, $&drops)
+        storage ::= make_storage(allocator_concrete, $&drops)
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
         ).reference

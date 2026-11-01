@@ -5,8 +5,8 @@ idx := import ("../storage")
 -- Faces follow region order, loops follow contour order, and each loop's first
 -- halfedge corresponds to its first span. History relies on these semantic
 -- ordering guarantees, not the physical layout or numeric IDs of halfedges.
-profile_brep := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
-    .profile: &PlanarProfile#(Scalar), .allocator: $&Provider
+profile_brep := #(.Scalar: Type: Float) (
+    .profile: &PlanarProfile#(Scalar), .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(t.Model#(Scalar), t.BrepErrors)) {
     builder ::= t.BrepBuilder#(Scalar)(.tolerance = profile&._tolerance, .allocator = allocator)!
     plane: g.Plane#(Scalar) = (.origin = profile&._frame.origin, .normal = profile&._frame.z)
@@ -104,7 +104,7 @@ _chart_point := #(.Scalar: Type: Float) (.chart: g.Frame#(Scalar), .point: g.Poi
     )
 }
 
-_profile_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_profile_edge := #(.Scalar: Type: Float) (
     .builder   : $&t.BrepBuilder#(Scalar),
     .frame     : g.Frame#(Scalar),
     .chart     : g.Frame#(Scalar),
@@ -113,7 +113,7 @@ _profile_edge := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     .index     : UIntNative,
     .count     : UIntNative,
     .full      : Bool,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(t.TrimUse#(Scalar), t.BrepErrors)) {
     start ::= _profile_world_point(.frame = frame, .point = span.start).value
     end ::= _profile_world_point(.frame = frame, .point = span.end).value

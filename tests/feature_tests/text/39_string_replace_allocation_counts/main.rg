@@ -8,9 +8,11 @@ RecordingAllocator := (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator :: RecordingAllocator = (.ffi = system.ffi)
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     output ::= unwrap_or_abort(
         .value = replace(
-            .self = "aba", .pattern = "a", .replacement = "xyz", .allocator = $&allocator
+            .self = "aba", .pattern = "a", .replacement = "xyz", .allocator = $&allocator_virtual
         )
     )
     if allocator.allocations != 1 or allocator.last_size != 8 { abort }
@@ -19,7 +21,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     if allocator.deallocations != 1 { abort }
     empty ::= unwrap_or_abort(
         .value = replace(
-            .self = "aa", .pattern = "a", .replacement = "", .allocator = $&allocator
+            .self = "aa", .pattern = "a", .replacement = "", .allocator = $&allocator_virtual
         )
     )
     if allocator.allocations != 2 or allocator.last_size != 1 { abort }

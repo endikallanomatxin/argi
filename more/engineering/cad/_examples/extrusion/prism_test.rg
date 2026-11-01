@@ -2,7 +2,7 @@
 -- The X component makes the prism oblique. Both caps and the side faces
 -- are created by the operation; their winding gives outward cap normals.
 test usage_extruded_prism := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     profile: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),

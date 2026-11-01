@@ -53,8 +53,12 @@ extract := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result:
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     drops :: Int32 = 0
-    value ::= extract(allocator, $&drops)
+    value ::= extract(allocator_concrete, $&drops)
     if value.drops&!= 0 { status_code = 1 }
 }

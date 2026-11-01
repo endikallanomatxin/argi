@@ -1,7 +1,7 @@
 -- Shared fixture for the advanced editing examples.
 -- Face 0 is the planar top annulus. Four outer sides meet at z=-2;
 -- four pocket sides meet at z=-1. Both boundaries share that same top face.
-_closed_pocket := #(.Provider: Type: Allocator) (.allocator: $&Provider) -> (
+_closed_pocket := (.allocator: $&Virtual#(Allocator)) -> (
     .result : Errable#(t.Model#(Float64), t.BuildErrors)
 ) {
     points: [10]g.Point#(Float64) = (

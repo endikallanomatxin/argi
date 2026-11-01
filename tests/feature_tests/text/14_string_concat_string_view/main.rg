@@ -1,10 +1,12 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     left :: String = unwrap_or_abort(
-        .value = String(.allocator = $&allocator_storage, .length = 5)
+        .value = String(.allocator = allocator, .length = 5)
     )
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 0, .byte = 104))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 1, .byte = 101))
@@ -13,7 +15,7 @@ main := (.system: System) -> (.status_code: Int32) {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 4, .byte = 111))
 
     right :: String = unwrap_or_abort(
-        .value = String(.allocator = $&allocator_storage, .length = 6)
+        .value = String(.allocator = allocator, .length = 6)
     )
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&right, .index = 0, .byte = 32))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&right, .index = 1, .byte = 119))

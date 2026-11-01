@@ -14,7 +14,7 @@ expect_bounds := #(.Text: Type: TextBytes#(Text)) (.text: &Text) -> () {
 
 main := (.system: System) -> () {
 
-    assume allocator ::= system.page_allocator
+    assume allocator := system.page_allocator
     text ::= unwrap_or_abort(.value = String(.length = 3))
     _ ::= unwrap_or_abort(.value = set_ascii($&text, .index = 0, .byte = 65))
     _ ::= unwrap_or_abort(.value = set_ascii($&text, .index = 2, .byte = 90))

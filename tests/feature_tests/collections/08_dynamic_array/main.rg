@@ -1,7 +1,9 @@
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     initial_capacity :: UIntNative = 2
     first_offset :: UIntNative = 0
     second_offset :: UIntNative = 1
@@ -13,10 +15,10 @@ main := (.system: System) -> (.status_code: Int32) {
     )
     defer deinit(.self = $&arr)
 
-    push(.self = $&arr, .value = 10)
-    push(.self = $&arr, .value = 20)
-    insert(.self = $&arr, .index = insert_offset, .value = 15)
-    push(.self = $&arr, .value = 30)
+    push(.self = $&arr, .value = 10, .allocator = allocator)
+    push(.self = $&arr, .value = 20, .allocator = allocator)
+    insert(.self = $&arr, .index = insert_offset, .value = 15, .allocator = allocator)
+    push(.self = $&arr, .value = 30, .allocator = allocator)
 
     if length(.self = &arr).count != 4 {
         status_code = 1

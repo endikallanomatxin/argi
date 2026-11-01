@@ -12,10 +12,14 @@ transfer_if := (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
 
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
-    unwrap_or_abort(push(.self = $&source, .value = 42))
+    unwrap_or_abort(push(.self = $&source, .value = 42, .allocator = allocator))
     destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
     deinit(.self = $&destination)
     result ::= transfer_if($&source, $&destination, true)
@@ -35,7 +39,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     if true {
         next_source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
-        unwrap_or_abort(push(.self = $&next_source, .value = 43))
+        unwrap_or_abort(push(.self = $&next_source, .value = 43, .allocator = allocator))
         next_destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
         deinit(.self = $&next_destination)
         transfer_if($&next_source, $&next_destination, true)
@@ -43,7 +47,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     if true {
         next_source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
-        unwrap_or_abort(push(.self = $&next_source, .value = 44))
+        unwrap_or_abort(push(.self = $&next_source, .value = 44, .allocator = allocator))
         next_destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
         deinit(.self = $&next_destination)
         transfer_if($&next_source, $&next_destination, false)

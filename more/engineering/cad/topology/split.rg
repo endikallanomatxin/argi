@@ -33,15 +33,16 @@ _SplitConnectivity := (
     .surfaces  : DynamicArray#(SurfaceId)
 )
 
-_split_emit_loop := #(.Provider: Type: Allocator) (
+_split_emit_loop := (
     .destination : $&_SplitConnectivity,
     .uses        : &DynamicArray#(_BoundaryUse),
     .range       : _BoundaryRange,
     .offset      : UIntNative,
     .count       : UIntNative,
     .chord       : ?_BoundaryUse,
-    .allocator   : $&Provider
+    .allocator   : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
+
     first ::= length(&destination&.halfedges).count
     loop_index ::= length(&destination&.loops).count
     loop_id ::= loop_index | convert#(.to: LoopId)(_)
@@ -77,13 +78,14 @@ _split_emit_loop := #(.Provider: Type: Allocator) (
     result = ..ok Void()
 }
 
-split_planar_face := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+split_planar_face := #(.Scalar: Type: Float) (
     .model     : &Model#(Scalar),
     .face      : FaceId,
     .start     : BoundaryPoint#(Scalar),
     .end       : BoundaryPoint#(Scalar),
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(FaceSplit#(Scalar), SplitErrors)) {
+
     original ::= face_info(model, .face = face)!
     plane ::= face_plane(model, .face = face)!
     if original.loop_count == 0 or original.genus != 0 {

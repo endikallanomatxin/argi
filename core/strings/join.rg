@@ -12,8 +12,8 @@ _string_copy_view_into := (.output: $&String, .offset: UIntNative, .source: Stri
     }
 }
 
-join := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .parts: ArrayView#(.t: StringView), .separator: StringView, .allocator: $&AllocatorType
+join := (
+    .parts: ArrayView#(.t: StringView), .separator: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) {
 
     limit ::= _string_max_result_length().length

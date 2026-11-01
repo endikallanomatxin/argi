@@ -5,18 +5,20 @@ sum_pair := (.a: Int32, .b: Int32) -> (.sum: Int32) {
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     arr ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 1))
     defer deinit(.self = $&arr)
 
-    arr | push(.self = $&_, .value = 40)
-    arr | push(.self = $&_, .value = 2)
+    arr | push(.self = $&_, .value = 40, .allocator = allocator)
+    arr | push(.self = $&_, .value = 2, .allocator = allocator)
     first_result ::= get(.self = &arr, .index = 0).result
     if is(.value = first_result, .variant = ..error) {
         status_code = 3
         return
     }
-    inserted ::= arr | insert(.self = $&_, .index = 1, .value = first_result ..ok)
+    inserted ::= arr | insert(.self = $&_, .index = 1, .value = first_result ..ok, .allocator = allocator)
     if is(.value = inserted, .variant = ..error) {
         status_code = 4
         return

@@ -11,7 +11,9 @@ main := (.system: System) -> (.status_code: Int32) {
         .alloc_count   = 0
         .dealloc_count = 0
     )
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     literal ::= from_literal(.data = "abc")
     data ::= trusted_reinterpret_reference#(.from: CChar, .to: UInt8)(.base = literal).reference
@@ -19,7 +21,7 @@ main := (.system: System) -> (.status_code: Int32) {
     if 1 == 1 {
         borrowed_view: StringView = "abc"
         borrowed_result ::= copy_c_string(
-            .self = borrowed_view, .allocator = $&allocator_storage
+            .self = borrowed_view, .allocator = allocator
         )
         match borrowed_result {
             ..error _ { status_code = 7 }
@@ -43,7 +45,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     if 1 == 1 {
         copied_view: StringView = "ab"
-        copied_result ::= copy_c_string(.self = copied_view, .allocator = $&allocator_storage)
+        copied_result ::= copy_c_string(.self = copied_view, .allocator = allocator)
         match copied_result {
             ..error _ { status_code = 8 }
             ..ok ~copied {

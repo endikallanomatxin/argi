@@ -6,14 +6,14 @@ implement Deinit#(Borrowing) (
     }
 )
 
-exercise := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .counter: $&Int32, .allocator: $&AllocatorType
+exercise := (
+    .counter: $&Int32, .allocator: $&Virtual#(Allocator)
 ) -> () {
 
     assume allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Borrowing)(.capacity = 1))
     element ::= Borrowing(.counter = counter)
-    pushed ::= push(.self = $&array, .value = ~element)
+    pushed ::= push(.self = $&array, .value = ~element, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) { abort }
     counter&= element.counter&
 }

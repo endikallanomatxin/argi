@@ -1,5 +1,5 @@
 test model_merge_retains_bridge_after_split := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     source ::= _bridge_owned(.allocator = allocator)!
     bottom ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 0))!
     top ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 2))!
@@ -82,7 +82,7 @@ test model_merge_retains_bridge_after_split := (.system: System) -> !() {
 }
 
 test model_merge_multiple_bridges_float32_reverse_arguments := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_two_holes#(Float32)()
     source ::= [
         from_planar_faces(
@@ -151,7 +151,7 @@ test model_merge_multiple_bridges_float32_reverse_arguments := (.system: System)
 }
 
 test model_merge_bridge_and_unjoined_hole := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _split_two_holes#(Float64)()
     source ::= [
         from_planar_faces(
@@ -205,7 +205,7 @@ test model_merge_bridge_and_unjoined_hole := (.system: System) -> !() {
 }
 
 test model_merge_fills_hole_and_retains_internal_bridge := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     input ::= _planar_annulus()
     vertices: [12]UIntNative = (0, 1, 2, 3, 4, 5, 6, 7, 4, 7, 6, 5)
     lengths: [3]UIntNative = (4, 4, 4)
@@ -262,7 +262,7 @@ test model_merge_fills_hole_and_retains_internal_bridge := (.system: System) -> 
 }
 
 test model_merge_refined_bridge_on_hole_and_reedit := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     source ::= _bridge_owned(.allocator = allocator)!
     bridge ::= edge_info(&source, .edge = (.value = 8))!
     top ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 2))!

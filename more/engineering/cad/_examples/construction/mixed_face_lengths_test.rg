@@ -2,7 +2,7 @@
 -- Flatten the vertex indices and supply one length per face, in the same order.
 -- The constructor computes offsets; callers do not need to store them.
 test usage_any_length_pyramid := (.system: System) -> !() {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
     points: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

@@ -52,7 +52,11 @@ forward_drain := (.slot: $&Virtual#(SlotProtocol), .empty: Bool) -> (.result: ?I
 
 main := (.system: System) -> () {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)
 

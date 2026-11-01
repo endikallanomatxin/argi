@@ -1,5 +1,5 @@
 BackingAllocator := (
-    .page : $&PageAllocator
+    .page : $&Virtual#(Allocator)
 )
 
 implement Deinit#(BackingAllocator) (
@@ -34,7 +34,9 @@ end_backing := (.backing: $&BackingAllocator) -> () {
 main := (.system: System) -> (.status_code: Int32) {
 
     backing ::= BackingAllocator(.page = system.page_allocator)
-    allocator ::= GeneralPurposeAllocator(.allocator = $&backing)
+
+    backing_virtual ::= to_virtual#(Allocator)($&backing)
+    allocator ::= GeneralPurposeAllocator(.allocator = $&backing_virtual)
     end_backing(.backing = $&backing)
     result ::= allocate_bytes(.self = $&allocator, .size = 8)
     status_code = 0

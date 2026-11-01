@@ -4,9 +4,12 @@ answer ::= #run (.system: System) -> (.value: Int32) {
 
     assume writer ::= $&system.terminal&.stdout
     assume ffi ::= system.ffi
-    assume allocator ::= $&CAllocator(.ffi = ffi)
+    allocator_concrete := $&CAllocator(.ffi = ffi)
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
     text ::= unwrap_or_abort(.value = String(.length = 5))
-    if system.page_allocator&.page_size == 0 { abort }
+    page :: PageAllocator = PageAllocator(.memory = system.memory)
+    if page.page_size == 0 { abort }
     print("compile-time host\n")
     value = 42
 }

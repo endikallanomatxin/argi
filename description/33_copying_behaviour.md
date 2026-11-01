@@ -58,9 +58,9 @@ InfalliblyCopyable#(.Value: Type): Contract = (
     .copy: (.self: &Value) -> (.value: Value)
 )
 
-FalliblyCopyable#(.Value: Type, .Provider: Type: Allocator): Contract = (
+FalliblyCopyable#(.Value: Type): Contract = (
     .reasons: Type
-    .copy: (.self: &Value, .allocator: $&Provider)
+    .copy: (.self: &Value, .allocator: $&Virtual#(Allocator))
         -> (.result: Errable#(Value, reasons))
 )
 
@@ -77,12 +77,13 @@ FalliblyCopyable   => never copied implicitly
 
 An infallible but expensive type can implement `InfalliblyCopyable` while
 requiring explicit `copy(&value)`. A fallible type such as `String` can
-implement `FalliblyCopyable#(String, Provider)` with `.reasons = (..out_of_memory)`; its failure remains
+implement `FalliblyCopyable#(String)` with `.reasons = (..out_of_memory)`; its failure remains
 part of `copy`, not a differently named operation.
 
-The allocator provider participates in fallible-copy selection. Associated
-reasons belong to that complete tuple. Qualify calls when necessary:
-`FalliblyCopyable#(String, PageAllocator).copy(&original, .allocator = allocator)`.
+The value type selects fallible-copy behavior and its associated reasons.
+The allocator is an ordinary virtual capability, supplied explicitly or through
+`assume allocator`. Qualify calls when necessary:
+`FalliblyCopyable#(String).copy(&original, .allocator = allocator)`.
 A function merely named `copy` establishes no copy capability and does not
 change implicit-copy permission.
 

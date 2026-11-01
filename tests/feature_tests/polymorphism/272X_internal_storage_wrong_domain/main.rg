@@ -69,7 +69,11 @@ _impl_take_right_Slot := (.self: $&Slot) -> (.value: Tracked) {
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     left_drops :: Int32 = 0
     implementation ::= Slot(
         unwrap_or_abort(allocate#(Tracked)(allocator))

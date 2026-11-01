@@ -12,12 +12,16 @@ transfer_if := (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := $&virtual_allocator
     escaped :: &Int32
 
     {
         source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
-        unwrap_or_abort(push(.self = $&source, .value = 42))
+        unwrap_or_abort(push(.self = $&source, .value = 42, .allocator = allocator))
         destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
         deinit(.self = $&destination)
         offset :: UIntNative = 0

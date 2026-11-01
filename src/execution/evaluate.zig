@@ -79,8 +79,9 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     var errors = std.Io.File.stderr().writerStreaming(io, &.{});
     var environment: @import("comptime_host.zig").Environment = .{ .output = .{ .writer = &output.interface, .error_writer = &errors.interface } };
     const bindings = environment.bindings();
+    const evaluation_bindings = try completeHostBindings(temporary, program.host_functions, &bindings);
     var executor = if (host_entry)
-        try Vm.initWithHost(allocator, program, budget.*, &bindings)
+        try Vm.initWithHost(allocator, program, budget.*, evaluation_bindings)
     else
         try Vm.init(allocator, program, budget.*);
     defer executor.deinit();
@@ -113,6 +114,33 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
         out.* = try freeze(allocator, graph, field.ty, value, source);
     }
     return result;
+}
+
+// A virtual table can retain operations that this evaluation never invokes.
+// Give unavailable operations explicit denial adapters rather than requiring
+// their host privileges just to construct the table. Calling one still fails.
+fn completeHostBindings(allocator: std.mem.Allocator, descriptors: []const bytecode.HostFunction, available: []const @import("host.zig").Binding) ![]const @import("host.zig").Binding {
+    const host = @import("host.zig");
+    var bindings: std.ArrayList(host.Binding) = .empty;
+    try bindings.appendSlice(allocator, available);
+    for (descriptors) |descriptor| {
+        var found = false;
+        for (available) |binding| if (std.mem.eql(u8, binding.symbol, descriptor.symbol)) {
+            found = true;
+            break;
+        };
+        if (!found) try bindings.append(allocator, .{
+            .symbol = descriptor.symbol,
+            .inputs = descriptor.inputs,
+            .outputs = descriptor.outputs,
+            .call = denyHostOperation,
+        });
+    }
+    return bindings.toOwnedSlice(allocator);
+}
+
+fn denyHostOperation(_: ?*anyopaque, _: []const i128, _: []i128) anyerror!void {
+    return error.MissingHostBinding;
 }
 
 fn freezable(graph: *const g.GlobalSemanticGraph, owners: []const bool, ty: g.GlobalTypeId, depth: usize) bool {
@@ -222,4 +250,21 @@ pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemantic
         graph.node_refs.items.len = reference_start;
     }
     return freeze(allocator, graph, ty, result[0], node.source);
+}
+
+test "unused virtual host operations receive denial adapters without granting execution" {
+    const a = std.testing.allocator;
+    const native = comptime p.integerRangeForWidth(@bitSizeOf(usize), false);
+    const descriptors = [_]bytecode.HostFunction{.{
+        .function = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
+        .symbol = "unavailable",
+        .inputs = &.{native},
+        .outputs = &.{native},
+    }};
+    const bindings = try completeHostBindings(a, &descriptors, &.{});
+    defer a.free(bindings);
+    try std.testing.expectEqual(@as(usize, 1), bindings.len);
+    var outputs: [1]i128 = undefined;
+    try std.testing.expectError(error.MissingHostBinding, bindings[0].call(null, &.{1}, &outputs));
 }

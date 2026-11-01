@@ -1,11 +1,12 @@
 -- Geometric contours are a temporary admission view. The emitted loops still
 -- contain both uses of every surviving bridge and preserve its correspondence.
-_merge_validate_contours := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_merge_validate_contours := #(.Scalar: Type: Float) (
     .contours  : &_BoundaryContours#(Scalar),
     .plane     : g.Plane#(Scalar),
     .tolerance : Scalar,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, MergeErrors)) {
+
     count ::= length(&contours&.lengths).count
     ranges ::= DynamicArray#(_BoundaryRange)(.allocator = allocator, .capacity = count)!
     points ::= view(&contours&.points)

@@ -10,9 +10,10 @@ expect_formatted := #(.t: Type: Int) (
     .allocator: $&RecordingAllocator, .value: t, .expected: StringView
 ) -> () {
 
+    handle ::= to_virtual#(Allocator)(allocator)
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
-    output ::= unwrap_or_abort(.value = format(.value = value, .allocator = allocator))
+    output ::= unwrap_or_abort(.value = format(.value = value, .allocator = $&handle))
     if view(.self = &output).view != expected { abort }
     if [
         allocator&.allocations != before + 1
@@ -27,6 +28,8 @@ expect_formatted := #(.t: Type: Int) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator ::= RecordingAllocator(.ffi = system.ffi)
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     int80: Int8 = -128
     expect_formatted(.allocator = $&allocator, .value = int80, .expected = "-128")
     int81: Int8 = 0
@@ -81,23 +84,23 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     )
     -- Reserved output must remain appendable even when allocations fail.
     output ::= unwrap_or_abort(
-        .value = string_with_capacity(.capacity = 64, .allocator = $&allocator)
+        .value = string_with_capacity(.capacity = 64, .allocator = $&allocator_virtual)
     )
     before ::= allocator.allocations
     allocator.fail = true
     minimum: Int64 = -9223372036854775808
     maximum: UInt64 = 18446744073709551615
     unwrap_or_abort(
-        .value = format_into(.out = $&output, .value = minimum, .allocator = $&allocator)
+        .value = format_into(.out = $&output, .value = minimum, .allocator = $&allocator_virtual)
     )
     unwrap_or_abort(
-        .value = format_into(.out = $&output, .value = maximum, .allocator = $&allocator)
+        .value = format_into(.out = $&output, .value = maximum, .allocator = $&allocator_virtual)
     )
     if view(.self = &output).view != "-922337203685477580818446744073709551615" { abort }
     if allocator.allocations != before { abort }
     deinit(.self = $&output)
 
-    failed ::= format(.value = 12345, .allocator = $&allocator)
+    failed ::= format(.value = 12345, .allocator = $&allocator_virtual)
     if is(.value = failed, .variant = ..error) {
         if failed ..error.reason != ..out_of_memory { abort }
     } else {

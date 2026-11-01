@@ -40,7 +40,9 @@ implement Init#(FailFourthAllocator, FailFourthAllocatorInitArgs) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := $&virtual_allocator
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 3))
     defer deinit(.self = $&source)
@@ -56,7 +58,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     failing ::= FailFourthAllocator(.ffi = system.ffi)
-    copied ::= copy(.self = &source, .allocator = $&failing)
+    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    copied ::= copy(.self = &source, .allocator = $&failing_virtual)
     if is(.value = copied, .variant = ..ok) {
         status_code = 1
         return

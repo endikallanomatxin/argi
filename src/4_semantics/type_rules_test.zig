@@ -1,6 +1,54 @@
 const checkSyntaxSource = @import("source_test_support.zig").checkSyntaxSource;
 const checkSource = @import("source_test_support.zig").checkSource;
 
+test "virtual handles can be converted again to the same contract" {
+    try checkSource("virtual_reborrow",
+        \\Counter#(.T: Type): Contract = (.read: (.self: &T) -> (.value: Int32) where {})
+        \\Box := (.value: Int32)
+        \\read_box := (.self: &Box) -> (.value: Int32) { value = self&.value }
+        \\implement Counter#(Box) (.read = read_box)
+        \\wrap := #(.T: Type: Counter) (.value: &T) -> (.result: Virtual#(Counter)) {
+        \\    result = to_virtual#(Counter)(value)
+        \\}
+        \\main := () -> () {
+        \\    box :: Box = (.value = 7)
+        \\    first ::= to_virtual#(Counter)(&box)
+        \\    second ::= wrap(&first).result
+        \\    value ::= Counter#().read(&second).value
+        \\}
+    , null, null, true);
+}
+
+test "virtual handles cannot be converted to a different contract" {
+    try checkSource("virtual_reborrow_mismatch",
+        \\A#(.T: Type): Contract = (.read: (.self: &T) -> (.value: Int32) where {})
+        \\B#(.T: Type): Contract = (.read: (.self: &T) -> (.value: Int32) where {})
+        \\Box := (.value: Int32)
+        \\read_box := (.self: &Box) -> (.value: Int32) { value = self&.value }
+        \\implement A#(Box) (.read = read_box)
+        \\main := () -> () {
+        \\    box :: Box = (.value = 7)
+        \\    first ::= to_virtual#(A)(&box)
+        \\    second ::= to_virtual#(B)(&first)
+        \\}
+    , null, "no selected conformance", false);
+}
+
+test "virtual handle reconversion preserves mutable receiver requirements" {
+    try checkSource("virtual_reborrow_readonly",
+        \\Counter#(.T: Type): Contract = (.bump: (.self: $&T) -> () where {})
+        \\Box := (.value: Int32)
+        \\implement Counter#(Box) (
+        \\    .bump = (.self: $&Box) -> () { self&.value = 1 }
+        \\)
+        \\main := () -> () {
+        \\    box :: Box = (.value = 7)
+        \\    first ::= to_virtual#(Counter)($&box)
+        \\    second ::= to_virtual#(Counter)(&first)
+        \\}
+    , null, "a mutable participant receiver requires a mutable concrete reference", false);
+}
+
 test "generic input defaults constrain omitted arguments rather than infer them" {
     try checkSource("defaulted_integer_pattern",
         \\Box := #(.T: Type, .n: UIntNative = 4) (.items: [n]T)

@@ -1,12 +1,13 @@
 -- Extract geometric hole contours once for all unjoined stored walks. A walk
 -- may contain internal bridge pieces after fusion; those pieces stay stored.
-_split_hole_contours := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_split_hole_contours := #(.Scalar: Type: Float) (
     .face       : Face,
     .boundary   : &_SplitBoundary,
     .points     : &DynamicArray#(g.Point#(Scalar)),
     .edge_count : UIntNative,
-    .allocator  : $&Provider
+    .allocator  : $&Virtual#(Allocator)
 ) -> (.result: Errable#(_BoundaryContours#(Scalar), SplitErrors)) {
+
     count ::= face.loop_count - 1
     if count == 0 {
         coordinates ::= DynamicArray#(g.Point#(Scalar))(.allocator = allocator)!
@@ -47,14 +48,15 @@ _split_hole_contours := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
 
 -- One boolean per stored hole walk, in source order. Choose a representative
 -- from its geometric contours, never from a canceled internal bridge tip.
-_split_partition_holes := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_split_partition_holes := #(.Scalar: Type: Float) (
     .holes      : &_BoundaryContours#(Scalar),
     .hole_count : UIntNative,
     .exterior   : ArrayView#(g.Point#(Scalar)),
     .plane      : g.Plane#(Scalar),
     .tolerance  : Scalar,
-    .allocator  : $&Provider
+    .allocator  : $&Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(Bool), SplitErrors)) {
+
     owners ::= DynamicArray#(Bool)(.allocator = allocator, .capacity = hole_count)!
     seen ::= DynamicArray#(Bool)(.allocator = allocator, .capacity = hole_count)!
     i :: UIntNative = 0
@@ -100,14 +102,15 @@ _split_partition_holes := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
     result = ..ok ~owners
 }
 
-_split_validate_region := #(.Scalar: Type: Float, .Provider: Type: Allocator) (
+_split_validate_region := #(.Scalar: Type: Float) (
     .holes     : &_BoundaryContours#(Scalar),
     .exterior  : &_PlanarContours#(Scalar),
     .owners    : &DynamicArray#(Bool),
     .first     : Bool,
     .tolerance : Scalar,
-    .allocator : $&Provider
+    .allocator : $&Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
+
     count ::= length(&holes&.lengths).count
     if count == 0 {
         result = ..ok Void()

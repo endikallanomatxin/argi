@@ -31,8 +31,8 @@ environment_variables_get_c_string := (.key: &CChar, .ffi: $&ForeignFunctionInte
     result = ..ok ..some(.value = _trusted_c_string_view(.text = raw_ptr))
 }
 
-lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
-    .self: &EnvironmentVariables, .key: StringView, .allocator: $&Provider
+lookup_environment := (
+    .self: &EnvironmentVariables, .key: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(?StringView, (..out_of_memory, ..invalid_utf8))) {
 
     assume ffi := self&._ffi
@@ -48,8 +48,8 @@ lookup_environment := #(.Provider: Type: Allocator#(Provider)) (
     }
 }
 
-has := #(.AllocatorType: Type: Allocator#(AllocatorType)) (
-    .self: &EnvironmentVariables, .key: StringView, .allocator: $&AllocatorType
+has := (
+    .self: &EnvironmentVariables, .key: StringView, .allocator: $&Virtual#(Allocator)
 ) -> (.result: Errable#(Bool, (..out_of_memory, ..invalid_utf8))) {
 
     assume ffi := self&._ffi
