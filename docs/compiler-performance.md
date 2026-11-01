@@ -181,6 +181,17 @@ the broader ReleaseSafe fixture runner exceeded its 3 GiB cgroup limit, includin
 a narrower retry; those runner invocations did not complete. Direct fixture
 checks and CAD used separate 2 GiB limits without increasing the memory budget.
 
+Follow-up runner validation completed under the original 3 GiB limit with swap
+disabled. The narrower `storage_capability`/`loop_owned_generation` selection
+rebuilt both Argi and the ReleaseSafe runner, passed 25 tests and peaked at
+2.5 GiB for the process group. The broader `storage_capability`, `cleanup`,
+`loop`, `match` and `292_test_equality_specialization` selection then rebuilt
+its runner and passed all 188 tests, with no skips, failures, leaks or error
+logs. Its process-group peak was 2,199,388,160 bytes (about 2.05 GiB).
+Both runs used `-j1 -Dtest-jobs=1`. The earlier OOM did not reproduce; these
+results close the missing focused fixture validation, not a full-suite or
+multiplatform gate. No runner change or increased memory allowance was needed.
+
 
 ## Interactive latency windows
 
