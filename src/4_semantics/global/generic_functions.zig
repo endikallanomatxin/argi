@@ -3544,6 +3544,18 @@ pub const Resolver = struct {
                     break;
                 }
             }
+            // A projected store supplies the context for a choice literal on
+            // its right-hand side, just as a direct binding assignment does.
+            if (value.kind == .pointer_store and local_operands.len == 2) {
+                const pointer = try self.instantiateNode(local_operands[0]);
+                const pointer_ty = self.resolver.graph.node(pointer).ty orelse return error.ParameterizedDereferenceUntyped;
+                const child = switch (self.resolver.graph.types.items[@intFromEnum(pointer_ty)]) {
+                    .pointer => |ty| ty.child,
+                    else => return error.ParameterizedDereferenceNonPointer,
+                };
+                try operands.append(pointer);
+                try operands.append(try self.instantiateNodeWithExpected(local_operands[1], child));
+            }
             if (operands.items.len == 0) for (local_operands) |operand|
                 try operands.append(try self.instantiateNode(operand));
 
