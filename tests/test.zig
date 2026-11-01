@@ -237,12 +237,7 @@ test "installed argi test resolves core from its installation prefix outside rep
 
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
-        .data =
-        \\test installed_prefix := () -> !() {
-        \\    testing.expect(.condition = true)!
-        \\}
-        \\
-        ,
+        .data = @embedFile("../.github/scripts/release_smoke_test.rg"),
     });
 
     const tmp_root = try tmpDirRootPath(&tmp);
@@ -273,6 +268,7 @@ test "installed argi test resolves core from its installation prefix outside rep
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "/installed_prefix\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "/installed_trace\n") != null);
 }
 
 test "argi init creates executable package" {

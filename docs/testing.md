@@ -23,6 +23,11 @@ not Argi programs or build outputs. Shared helpers live in `tests/support.zig`.
 Additional compile-time imports or embedded files must also be included in the
 generated tree; runtime fixture paths continue to refer to the source checkout.
 
+The installed-prefix test and the distribution smoke script share
+`.github/scripts/release_smoke_test.rg`. It exercises plain and traced assertions
+against installed core, so ordinary program tests also validate that release
+source instead of maintaining a separate generated copy.
+
 Terminal editing and interruption probes live in `tests/terminal_probe.zig`.
 They use native pseudo-terminals on Linux and macOS, without a Python runner;
 Windows skips these POSIX terminal probes.

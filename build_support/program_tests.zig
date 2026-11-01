@@ -55,6 +55,7 @@ pub fn discover(b: *std.Build) !std.Build.LazyPath {
     }
 
     const files = b.addWriteFiles();
+    _ = files.addCopyFile(b.path(".github/scripts/release_smoke_test.rg"), ".github/scripts/release_smoke_test.rg");
     _ = files.addCopyFile(b.path("tests/test.zig"), "tests/test.zig");
     _ = files.addCopyFile(b.path("tests/support.zig"), "tests/support.zig");
     _ = files.addCopyFile(b.path("tests/frontend_context.zig"), "tests/frontend_context.zig");
