@@ -1,14 +1,17 @@
 -- Diagonal storage keeps only the N diagonal values.
-Diagonal#(.n: UIntNative, .t: Type: Scalar): Type = (.values: Array#(.n = n, .t: t))
+Diagonal := #(.n: UIntNative, .t: Type: Scalar) (.values: Array#(.n = n, .t: t))
 
 implement#(.n: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(Diagonal#(.n = n, .t: t)) ()
 
+DiagonalInitArgs: Type = #(.n: UIntNative, .t: Type: Scalar) (.values: Array#(.n = n, .t: t))
+
 implement#(.n: UIntNative, .t: Type: Scalar) Init#(
-    Diagonal#(.n = n, .t: t), (.values: Array#(.n = n, .t: t))
+    Diagonal#(.n = n, .t: t), DiagonalInitArgs#(n, t)
 ) (
     .Result : Type = Diagonal#(.n = n, .t: t)
-    .init   = (.args: (.values: Array#(.n = n, .t: t))) -> (.result: Result) {
-        result = (.values = args.values)
+
+    .init = DiagonalInitArgs#(n, t) -> (.result: Result) {
+        result = (.values = values)
     }
 )
 
@@ -26,18 +29,17 @@ implement#(.n: UIntNative, .t: Type: Scalar) MatrixShape#(Diagonal#(.n = n, .t: 
 )
 
 implement#(.n: UIntNative, .t: Type: Scalar) MatrixProduct#(
-    Diagonal#(.n = n, .t: t),
-    Diagonal#(.n = n, .t: t),
-    (.left: &Diagonal#(.n = n, .t: t), .right: &Diagonal#(.n = n, .t: t))
+    Diagonal#(.n = n, .t: t), Diagonal#(.n = n, .t: t)
 ) (
+    .Args     : Type = MatrixProductArgs#(Diagonal#(.n = n, .t: t), Diagonal#(.n = n, .t: t))
     .Result   : Type = Diagonal#(.n = n, .t: t)
-    .multiply = (.args: (.left: &Diagonal#(.n = n, .t: t), .right: &Diagonal#(.n = n, .t: t))) -> (
+    .multiply = MatrixProductArgs#(Diagonal#(.n = n, .t: t), Diagonal#(.n = n, .t: t)) -> (
         .result : Result
     ) {
         result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
         i :: UIntNative = 0
         while i < n {
-            result.values[i] = args.left&.values[i] * args.right&.values[i]
+            result.values[i] = left&.values[i] * right&.values[i]
             i = i + 1
         }
     }
@@ -48,13 +50,11 @@ implement#(
     .columns : UIntNative,
     .t       : Type: Scalar,
     .Right   : Type: MatrixShape#(.Value: Right, .Rows = n, .Columns = columns, .Element: t)
-) Multiply#(Diagonal#(.n = n, .t: t), Right, (.left: &Diagonal#(.n = n, .t: t), .right: &Right)) (
-    .Result : Type = MatrixProduct#(
-        Diagonal#(.n = n, .t: t), Right, (.left: &Diagonal#(.n = n, .t: t), .right: &Right)
-    ).Result
-    .multiply = (.args: (.left: &Diagonal#(.n = n, .t: t), .right: &Right)) -> (.result: Result) {
+) Multiply#(&Diagonal#(.n = n, .t: t), &Right) (
+    .Result   : Type = MatrixProduct#(Diagonal#(.n = n, .t: t), Right).Result
+    .multiply = MatrixProductArgs#(Diagonal#(.n = n, .t: t), Right) -> (.result: Result) {
         result = ~MatrixProduct#(
-            Diagonal#(.n = n, .t: t), Right, (.left: &Diagonal#(.n = n, .t: t), .right: &Right)
-        ).multiply(args)
+            Diagonal#(.n = n, .t: t), Right
+        ).multiply(.left = left, .right = right)
     }
 )

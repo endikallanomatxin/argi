@@ -1,13 +1,15 @@
-CAllocator: Type = (
+CAllocator := (
     .ffi : $&ForeignFunctionInterface
 )
 
-implement Init#(CAllocator, (.ffi: $&ForeignFunctionInterface)) (
+CAllocatorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+
+implement Init#(CAllocator, CAllocatorInitArgs) (
     .Result : Type = CAllocator
 
-    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        ffi ::= args.ffi
-        result.ffi = ffi
+    .init = CAllocatorInitArgs -> (.result: Result) {
+        _init_ffi ::= ffi
+        result.ffi = _init_ffi
     }
 )
 
@@ -15,6 +17,7 @@ implement Allocator#(CAllocator) (
     .allocate = (.self: $&CAllocator, .size: UIntNative, .alignment: UIntNative) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) {
+
         acquired ::= acquire_heap_storage(
             .size = size, .alignment = alignment, .ffi = self&.ffi
         )
@@ -22,9 +25,9 @@ implement Allocator#(CAllocator) (
         match acquired {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~storage {
-                deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(
-                    .contract : Deallocator
-                )(.value = self)
+                deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+                    .value = self
+                )
                 allocation ::= establish_allocation(
                     .storage     = ~storage
                     .size        = size

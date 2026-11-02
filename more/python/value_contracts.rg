@@ -4,8 +4,9 @@ PythonValue#(.Value: Type): Contract = (
     )
 )
 
-to_object#(.Value: Type: PythonValue#(Value)) := (.self: &Python, .value: Value) -> (
+to_object := #(.Value: Type: PythonValue#(Value)) (.self: &Python, .value: Value) -> (
     .result : Errable#(Object, (..python_error))
 ) {
+
     result = ~PythonValue#(Value).convert_value(.self = self, .value = ~value)
 }

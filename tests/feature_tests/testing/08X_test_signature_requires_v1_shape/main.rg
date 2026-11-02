@@ -1,2 +1,0 @@
-test wrong_signature() -> !() := {
-}

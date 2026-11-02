@@ -1,6 +1,9 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     assume ffi := system.ffi
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
     assume writer ::= $&system.terminal&.stdout
 
     number := format(123) | unwrap_or_abort(_)

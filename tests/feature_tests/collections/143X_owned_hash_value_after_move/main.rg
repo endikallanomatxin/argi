@@ -1,16 +1,13 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
-    assume allocator := system.page_allocator
-    map ::= OwnedHashMap#(.key: Int32, .value: String, .policy: Int32HashPolicy)(
-        .policy    = Int32HashPolicy()
-        .allocator = allocator
-    )!
-    text ::= format(.value = "owned", .allocator = allocator)!
-    put(.self = $&map, .key = 1, .value = ~text, .allocator = allocator)!
-    query :: Int32 = 1
-    as_view(.self = &text)
-}
+main := (.system: System) -> (.status_code: Int32 = 1) {
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
+    assume writer ::= $&system.terminal&.stderr
+    assume allocator := system.page_allocator
+    map ::= HashMap#(.key: Int32, .value: String, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
+    )!!!
+    text ::= format(.value = "owned", .allocator = allocator)!!!
+    put(.self = $&map, .key = 1, .value = ~text, .allocator = allocator)!!!
+    query :: Int32 = 1
+    view(.self = &text)
     status_code = 0
 }

@@ -1,5 +1,5 @@
-Value : Type = (
-    .number: Int32
+Value := (
+    .number : Int32
 )
 
 implement Deinit#(Value) (
@@ -8,13 +8,13 @@ implement Deinit#(Value) (
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     source :: Value = (.number = 7)
     a ::= $&source
     b ::= $&source
 
     deinit(.self = a)
-    b& = (.number = 9)
+    b&= (.number = 9)
 
     if b&.number != 9 {
         status_code = 1

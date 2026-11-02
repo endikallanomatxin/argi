@@ -1,4 +1,4 @@
-RecordingAllocator: Type = (
+RecordingAllocator := (
     .ffi           : $&ForeignFunctionInterface
     .fail_at       : UIntNative                 = 0
     .attempts      : UIntNative                 = 0
@@ -6,15 +6,17 @@ RecordingAllocator: Type = (
     .deallocations : UIntNative                 = 0
 )
 
-FaultReader: Type = (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_at: UIntNative = 0)
+FaultReader := (
+    .position : UIntNative = 0,
+    .calls    : UIntNative = 0,
+    .fail_at  : UIntNative = 0
+)
 
 implement BlockReader#(FaultReader) (
-    .read_block = (
-            .self   : $&FaultReader,
-            .buffer : ArrayView#(.t: UInt8)
-        ) -> (
-            .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
-        ) {
+    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+    ) {
+
         self&.calls = self&.calls + 1
         if self&.calls == self&.fail_at {
             result = ..error(.reason = ..stream_read_failed)
@@ -24,22 +26,25 @@ implement BlockReader#(FaultReader) (
             result = ..ok 0
             return
         }
-        slot ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))
+        slot ::= unwrap_or_abort(.value = get_mutable_reference(.self = $&buffer, .index = 0))
         slot&= 65
         self&.position = self&.position + 1
         result = ..ok 1
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+
+    assume writer ::= $&system.terminal&.stderr
     allocator :: RecordingAllocator = (.ffi = system.ffi, .fail_at = 1)
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     source :: FaultReader = FaultReader()
     scratch :: [2]UInt8 = (0, 0)
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -51,9 +56,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     allocator.fail_at = allocator.attempts + 2
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -62,7 +67,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
     -- The initial chunk remains the only consumed data when growth fails.
-    if source.calls != 1 or source.position != 1 or allocator.allocations != allocator.deallocations {
+    if [
+        source.calls != 1
+        or source.position != 1
+        or allocator.allocations != allocator.deallocations
+    ] {
         abort
     }
     source.calls = 0
@@ -71,9 +80,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     allocator.fail_at = 0
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
+        .allocator = allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -87,9 +96,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source.fail_at = 0
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 2
-        .allocator = $&allocator
+        .allocator = allocator_virtual
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -106,77 +115,58 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         maximum = maximum * 256 + 255
         index = index + 1
     }
-    attempts ::= allocator.attempts
-    calls ::= source.calls
-    match read_all_limited(
-        .self      = $&source
-        .buffer    = view(.array = $&scratch)
-        .limit     = maximum
-        .allocator = $&allocator
-    ) {
-        ..ok ~owner {
-            deinit(.self = $&owner)
-            abort
-        }
-        ..error error { if error.reason != ..size_overflow { abort } }
-    }
-    if allocator.attempts != attempts or source.calls != calls { abort }
+    unbounded ::= read_all_limited(
+        .self = $&source, .buffer = view($&scratch), .limit = maximum, .allocator = allocator_virtual
+    )!!!
+    if length(&unbounded).count != 8 { abort }
+    deinit(.self = $&unbounded)
+    source.position = 0
     owned ::= read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
-        .allocator = $&allocator
-    )!
-    if owned.length != 8 or capacity(.self = &owned).value > 8 { abort }
+        .allocator = allocator_virtual
+    )!!!
+    if length(&owned).count != 8 or capacity(.self = &owned).count > 8 { abort }
     deinit(.self = $&owned)
     if allocator.allocations != allocator.deallocations { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }
 
-implement Allocator#(RecordingAllocator)(
-    .allocate = (
-                .self      : $&RecordingAllocator,
-                .size      : UIntNative,
-                .alignment : UIntNative            = 1
-            ) -> (
-                .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-            ) {
-            self&.attempts = self&.attempts + 1
-            if self&.attempts == self&.fail_at {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            self&.allocations = self&.allocations + 1
-            storage ::= malloc(.size = size, .ffi = self&.ffi)
-            if storage | convert#(.to: UIntNative)(_) == 0 {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
-                .value = self
-            )
-            allocation ::= trusted_establish_allocation(
-                .storage     = storage
-                .size        = size
-                .alignment   = alignment
-                .deallocator = deallocator
-            )
-            result = ..ok ~allocation
+implement Allocator#(RecordingAllocator) (
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
+
+        self&.attempts = self&.attempts + 1
+        if self&.attempts == self&.fail_at {
+            result = ..error(.reason = ..out_of_memory)
+            return
         }
+        self&.allocations = self&.allocations + 1
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        if storage | convert#(.to: UIntNative)(_) == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+            .value = self
+        )
+        allocation ::= trusted_establish_allocation(
+            .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
+        )
+        result = ..ok ~allocation
+    }
 )
 
-implement Deallocator#(RecordingAllocator)(
+implement Deallocator#(RecordingAllocator) (
     .deallocate = (
-                .self      : $&RecordingAllocator,
-                .data      : RawPointer#(.t: UInt8),
-                .size      : UIntNative,
-                .alignment : UIntNative
-            ) -> () {
-            self&.deallocations = self&.deallocations + 1
-            free(.address = data.address, .ffi = self&.ffi)
-        }
+        .self      : $&RecordingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
+        self&.deallocations = self&.deallocations + 1
+        free(.address = data.address, .ffi = self&.ffi)
+    }
 )

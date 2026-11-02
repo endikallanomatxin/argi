@@ -1,15 +1,14 @@
-make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
-        .allocator : $&AllocatorType,
-    ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
-    ) := {
+make_text := (.allocator: Virtual#(Allocator)) -> (
+    .result : Errable#(.t: String, .reasons: (..out_of_memory))
+) {
+
     assume allocator
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = 4)
     match created {
         ..ok ~created_payload {
             text ::= ~created_payload
-            pushed ::= push_byte(.self = $&text, .byte = 65, .allocator = allocator)
+            pushed ::= push_ascii(.self = $&text, .byte = 65, .allocator = allocator)
             if is(.value = pushed, .variant = ..error) {
                 deinit(.self = $&text)
                 result = ..error(.reason = ..out_of_memory)
@@ -23,15 +22,18 @@ make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32) {
 
-    made ::= make_text(.allocator = $&allocator_storage)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+
+    made ::= make_text(.allocator = allocator)
     match made {
         ..ok ~payload {
             text ::= ~payload
-            view ::= as_view(.self = &text)
+            view ::= view(.self = &text)
             if view == "A" {
                 deinit(.self = $&text)
                 status_code = 0

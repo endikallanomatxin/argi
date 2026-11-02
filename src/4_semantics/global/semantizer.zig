@@ -13,7 +13,6 @@ const module_linker = @import("module_linker.zig");
 const global_verify = @import("verify.zig");
 const core_mod = @import("core.zig");
 const expression_mod = @import("expressions.zig");
-const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
@@ -23,15 +22,36 @@ const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reachability_mod = @import("reachability.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
+
+pub const RootSelection = enum { program, requests_only };
 
 pub const Options = struct {
+    cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     target: @import("../../1_base/target.zig").Config = .{},
     selected_test_name: ?[]const u8 = null,
+    root_selection: RootSelection = .program,
     exhaustive_function_bodies: bool = true,
+    // Editor units check this module's bodies and their ordinary dependencies.
+    // Imported declarations remain visible without becoming body roots.
+    body_module_dir: ?[]const u8 = null,
     diagnostics: ?*diagnostics_mod.Diagnostics = null,
     profile_io: ?std.Io = null,
 };
+
+fn bodyRoots(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, options: Options) !reachability_mod.FunctionSet {
+    if (options.body_module_dir) |path| return reachability_mod.moduleRoots(allocator, graph, path);
+    return reachability_mod.executionRoots(allocator, graph, options.selected_test_name);
+}
+
+fn expandBodyRoots(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, functions: *reachability_mod.FunctionSet, options: *const Options) !bool {
+    const added = if (options.root_selection == .program and options.body_module_dir != null)
+        try reachability_mod.includeModuleRoots(graph, options.body_module_dir.?, functions)
+    else
+        false;
+    const expanded = try reachability_mod.expand(allocator, graph, functions);
+    return added or expanded;
+}
 
 pub const SetupStage = enum { external_types, conformance_registration, associated_types, known_types, sugar_types, worklists, conformance_validation, roots };
 const setup_stage_count = @typeInfo(SetupStage).@"enum".fields.len;
@@ -58,8 +78,7 @@ pub const Stats = struct {
         string_literal_types_ns: u64 = 0,
         binding_types_ns: u64 = 0,
         assignment_values_ns: u64 = 0,
-        dereferences_ns: u64 = 0,
-        addresses_ns: u64 = 0,
+        reference_types_ns: u64 = 0,
         known_generic_types_ns: u64 = 0,
         field_access_types_ns: u64 = 0,
         sugar_types_ns: u64 = 0,
@@ -113,6 +132,15 @@ pub const Stats = struct {
 pub const Result = struct {
     graph: global_sg.GlobalSemanticGraph,
     stats: Stats,
+    // Compilation selection owns IDs only. Materialized bodies and semantic
+    // evidence remain in the graph independently of this unit's roots.
+    unit: ?reachability_mod.FunctionSet = null,
+
+    pub fn deinit(self: *Result, allocator: std.mem.Allocator) void {
+        if (self.unit) |*unit| unit.deinit();
+        self.graph.deinit(allocator);
+        self.* = undefined;
+    }
 };
 
 fn profileTimestamp(io: ?std.Io) i96 {
@@ -217,17 +245,33 @@ const PendingWorklists = struct {
     control_and_contracts: std.ArrayList(PendingWorkItem) = .empty,
     errors: std.ArrayList(PendingWorkItem) = .empty,
     ownership: std.ArrayList(PendingWorkItem) = .empty,
+    module_count: usize = 0,
+    operation_count: u32 = 0,
 
     fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !PendingWorklists {
         var result: PendingWorklists = .{};
         errdefer result.deinit(allocator);
-        var flat: u32 = 0;
-        for (modules, 0..) |*module, module_index| {
+        try result.appendModules(allocator, modules, offsets);
+        return result;
+    }
+
+    // Append only the new module suffix. Compaction of resolved queues never
+    // changes flat operation identities used by diagnostics and status tables.
+    fn appendModules(self: *PendingWorklists, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
+        if (modules.len < self.module_count or offsets.len != modules.len) return error.InvalidPendingModulePrefix;
+        var lengths: [pending_phases.len]usize = undefined;
+        for (pending_phases, &lengths) |phase, *length| length.* = self.forPhase(phase).items.len;
+        const saved_operations = self.operation_count;
+        errdefer {
+            for (pending_phases, lengths) |phase, length| self.forPhase(phase).shrinkRetainingCapacity(length);
+            self.operation_count = saved_operations;
+        }
+        for (modules[self.module_count..], self.module_count..) |*module, module_index| {
             for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
-                try result.forPhase(pendingPhase(operation)).append(allocator, .{
+                try self.forPhase(pendingPhase(operation)).append(allocator, .{
                     .module_index = @intCast(module_index),
                     .operation_index = @intCast(operation_index),
-                    .flat_index = flat,
+                    .flat_index = self.operation_count,
                     .owner_function = if (operation_index < module.semantic.pending_owner_functions.items.len)
                         if (module.semantic.pending_owner_functions.items[operation_index]) |owner|
                             globalizer.globalFunction(offsets[module_index], owner)
@@ -236,10 +280,10 @@ const PendingWorklists = struct {
                     else
                         null,
                 });
-                flat = std.math.add(u32, flat, 1) catch return error.TooManyPendingOperations;
+                self.operation_count = std.math.add(u32, self.operation_count, 1) catch return error.TooManyPendingOperations;
             }
         }
-        return result;
+        self.module_count = modules.len;
     }
 
     fn deinit(self: *PendingWorklists, allocator: std.mem.Allocator) void {
@@ -279,6 +323,132 @@ const PendingWorklists = struct {
     }
 };
 
+// Resolution state outlives individual fixed-point passes. Dense status tables
+// use the same append-only operation identities as the phase queues.
+const ResolutionState = struct {
+    const SavedWork = struct { item: PendingWorkItem, resolved: bool, invalid: bool };
+    const Checkpoint = struct {
+        queues: [pending_phases.len][]SavedWork = @splat(&.{}),
+        resolved: usize,
+        invalid: usize,
+        modules: usize,
+        operations: u32,
+        finalized: usize,
+        progress: ResolutionProgress,
+        stats: PendingResolutionStats,
+
+        fn deinit(self: *Checkpoint, allocator: std.mem.Allocator) void {
+            for (self.queues) |queue| allocator.free(queue);
+            self.* = undefined;
+        }
+    };
+
+    worklists: PendingWorklists = .{},
+    resolved: std.ArrayList(bool) = .empty,
+    invalid: std.ArrayList(bool) = .empty,
+    finalized_functions: std.AutoHashMap(global_sg.GlobalFunctionId, void),
+    finalized_rewrites: std.ArrayList(global_sg.GlobalFunctionId) = .empty,
+    transaction_active: bool = false,
+    progress: ResolutionProgress = .{},
+    pending_stats: PendingResolutionStats = .{},
+
+    fn init(allocator: std.mem.Allocator) ResolutionState {
+        return .{ .finalized_functions = .init(allocator) };
+    }
+
+    /// Copy only pending scheduling work, never completed semantic entities or
+    /// the accumulated function table. Queue compaction is local to each pass.
+    fn checkpoint(self: *ResolutionState, allocator: std.mem.Allocator) !Checkpoint {
+        std.debug.assert(!self.transaction_active);
+        var saved: Checkpoint = .{ .resolved = self.resolved.items.len, .invalid = self.invalid.items.len, .modules = self.worklists.module_count, .operations = self.worklists.operation_count, .finalized = self.finalized_rewrites.items.len, .progress = self.progress, .stats = self.pending_stats };
+        errdefer saved.deinit(allocator);
+        for (pending_phases, 0..) |phase, index| {
+            const queue = self.worklists.forPhaseConst(phase).items;
+            const retained = try allocator.alloc(SavedWork, queue.len);
+            saved.queues[index] = retained;
+            for (queue, retained) |item, *out| out.* = .{ .item = item, .resolved = self.resolved.items[item.flat_index], .invalid = self.invalid.items[item.flat_index] };
+        }
+        self.transaction_active = true;
+        return saved;
+    }
+
+    fn rollback(self: *ResolutionState, saved: *const Checkpoint) void {
+        std.debug.assert(self.transaction_active);
+        for (pending_phases, saved.queues) |phase, queue| {
+            const destination = self.worklists.forPhase(phase);
+            std.debug.assert(destination.capacity >= queue.len);
+            destination.clearRetainingCapacity();
+            for (queue) |entry| {
+                destination.appendAssumeCapacity(entry.item);
+                self.resolved.items[entry.item.flat_index] = entry.resolved;
+                self.invalid.items[entry.item.flat_index] = entry.invalid;
+            }
+        }
+        self.resolved.shrinkRetainingCapacity(saved.resolved);
+        self.invalid.shrinkRetainingCapacity(saved.invalid);
+        self.worklists.module_count = saved.modules;
+        self.worklists.operation_count = saved.operations;
+        while (self.finalized_rewrites.items.len > saved.finalized)
+            std.debug.assert(self.finalized_functions.remove(self.finalized_rewrites.pop().?));
+        self.progress = saved.progress;
+        self.pending_stats = saved.stats;
+        self.transaction_active = false;
+    }
+
+    fn markFinalized(self: *ResolutionState, allocator: std.mem.Allocator, id: global_sg.GlobalFunctionId) !void {
+        if (self.finalized_functions.contains(id)) return;
+        if (self.transaction_active) try self.finalized_rewrites.ensureUnusedCapacity(allocator, 1);
+        try self.finalized_functions.put(id, {});
+        if (self.transaction_active) self.finalized_rewrites.appendAssumeCapacity(id);
+    }
+
+    fn commitCompletions(self: *ResolutionState, allocator: std.mem.Allocator) void {
+        std.debug.assert(!self.transaction_active);
+        self.finalized_rewrites.deinit(allocator);
+        self.finalized_rewrites = .empty;
+    }
+
+    fn clone(self: *const ResolutionState, allocator: std.mem.Allocator) !ResolutionState {
+        var result = ResolutionState.init(allocator);
+        errdefer result.deinit(allocator);
+        result.progress = self.progress;
+        result.pending_stats = self.pending_stats;
+        result.worklists.module_count = self.worklists.module_count;
+        result.worklists.operation_count = self.worklists.operation_count;
+        for (pending_phases) |phase| {
+            try result.worklists.forPhase(phase).appendSlice(allocator, self.worklists.forPhaseConst(phase).items);
+        }
+        try result.resolved.appendSlice(allocator, self.resolved.items);
+        try result.invalid.appendSlice(allocator, self.invalid.items);
+        result.finalized_functions = try self.finalized_functions.cloneWithAllocator(allocator);
+        return result;
+    }
+
+    fn appendModules(self: *ResolutionState, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
+        const total = totalPending(modules);
+        // Reserve before publishing queues so failure preserves all logical state.
+        try self.resolved.ensureTotalCapacity(allocator, total);
+        try self.invalid.ensureTotalCapacity(allocator, total);
+        try self.worklists.appendModules(allocator, modules, offsets);
+        const previous = self.resolved.items.len;
+        self.resolved.expandToCapacity();
+        self.resolved.shrinkRetainingCapacity(total);
+        self.invalid.expandToCapacity();
+        self.invalid.shrinkRetainingCapacity(total);
+        @memset(self.resolved.items[previous..], false);
+        @memset(self.invalid.items[previous..], false);
+    }
+
+    fn deinit(self: *ResolutionState, allocator: std.mem.Allocator) void {
+        self.worklists.deinit(allocator);
+        self.resolved.deinit(allocator);
+        self.invalid.deinit(allocator);
+        self.finalized_functions.deinit();
+        self.finalized_rewrites.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn semantize(
     allocator: std.mem.Allocator,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -291,616 +461,1095 @@ pub fn semantizeWithOptions(
     modules: []const module_sg.ModuleSemanticGraph,
     options: Options,
 ) !Result {
-    const profile_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
-    relocation.graph.target = options.target;
-    errdefer relocation.deinit(allocator);
-    try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
-    const profile_relocated = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+    var session: Session = undefined;
+    try session.init(allocator, modules, options);
+    defer session.deinit();
+    try session.advance();
+    return session.finish();
+}
 
-    // The globalizer preallocates stable GlobalTypeId slots. Record which of
-    // those slots are genuinely unresolved before any resolver can inspect
-    // them; unresolved is construction state, not the language type `Any`.
-    try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
+/// Retained semantic construction state, separate from graph publication.
+/// Initialize in final storage. Module descriptors are owned; their immutable
+/// source/semantic buffers and optional diagnostics must outlive the session.
+/// Failed advancement requires transaction rollback or session disposal.
+/// One-shot publication transfers the graph to Result.
+pub const Session = struct {
+    allocator: std.mem.Allocator,
+    modules: []const module_sg.ModuleSemanticGraph,
+    module_views: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
+    transaction_active: bool = false,
+    options: Options,
+    relocation: globalizer.Relocation = .{ .graph = .{} },
+    resolvers: @import("resolver_context.zig").Context = undefined,
+    resolvers_initialized: bool = false,
+    resolution: ResolutionState,
+    reachable: ?reachability_mod.FunctionSet = null,
+    phase: enum { preparing, ready, quiescent, published, failed } = .preparing,
+    setup_stages: [setup_stage_count]i96 = @splat(0),
+    profile_start: i96 = 0,
+    profile_relocated: i96 = 0,
+    profile_preloop: i96 = 0,
+    profile_postloop: i96 = 0,
+    fixed_point_ns: i96 = 0,
 
-    try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
+    pub const Transaction = struct {
+        owner: *Session,
+        graph: global_sg.GlobalSemanticGraph.Transaction,
+        resolution: ResolutionState.Checkpoint,
+        resolvers: @import("resolver_context.zig").Context.StateCheckpoint,
+        modules: usize,
+        offsets: usize,
+        previous_unit: ?reachability_mod.FunctionSet,
+        options: Options,
+        timings: struct {
+            setup: [setup_stage_count]i96,
+            start: i96,
+            relocated: i96,
+            preloop: i96,
+            postloop: i96,
+            fixed_point: i96,
+        },
+        active: bool = true,
 
-    var core = core_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .profile_io = options.profile_io,
-    };
-    defer core.deinitReachedCalls();
-    if (try resolveQualifiedChoiceOptions(&core, options.diagnostics)) return error.Reported;
-    var expressions = expression_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-    };
-    var constructors = constructor_mod.Resolver{
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .diagnostics = options.diagnostics,
-    };
-    var control = control_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-    };
-    var generics = generic_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .profile_io = options.profile_io,
-    };
-    defer generics.deinit();
-    var generic_functions = generic_functions_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .generics = &generics,
-        .profile_io = options.profile_io,
-    };
-    var contracts = contract_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .generics = &generics,
-        .profile_implementation_scans = options.profile_io != null,
-        .profile_io = options.profile_io,
-    };
-    generics.projection_context = &contracts;
-    generics.projection_resolver = contract_mod.Resolver.resolveAssociatedType;
-    generics.constant_projection_resolver = contract_mod.Resolver.resolveAssociatedInt;
-    constructors.contracts = &contracts;
-    control.generic_functions = &generic_functions;
-    control.contracts = &contracts;
-    defer contracts.deinit();
-    contracts.function_context = &generic_functions;
-    contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
-    contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
-    generic_functions.nested_call_context = &contracts;
-    generic_functions.nested_call_resolver = contract_mod.Resolver.resolveNestedCall;
-    generic_functions.nested_constructor_context = &constructors;
-    generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;
-    // These resolvers call back into one another while materializing generic
-    // bodies, so wire their stable stack-owned instances after both exist.
-    constructors.generics = &generics;
-    constructors.generic_functions = &generic_functions;
-    var errors = error_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-    };
-    defer errors.deinit();
-    var dispatch = dispatch_mod.Resolver{
-        .core = &core,
-        .generic_functions = &generic_functions,
-        .constructors = &constructors,
-        .contracts = &contracts,
-        .control = &control,
-        .errors = &errors,
-        .profile_io = options.profile_io,
-    };
-    var ownership = ownership_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .dispatch = &dispatch,
-        .profile_io = options.profile_io,
-    };
-    defer ownership.deinit();
-    generic_functions.ownership_context = &ownership;
-    generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
-    generic_functions.ownership_checkpoint = ownership_mod.Resolver.parameterizedCheckpoint;
-    generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
+        pub fn rollback(self: *Transaction) void {
+            if (!self.active) return;
+            const owner = self.owner;
+            self.graph.rollback();
+            owner.relocation.offsets.shrinkRetainingCapacity(self.offsets);
+            owner.module_views.shrinkRetainingCapacity(self.modules);
+            owner.modules = owner.module_views.items;
+            owner.resolvers.rebindModuleViews(owner.modules, owner.relocation.offsets.items);
+            owner.resolvers.rollbackState(self.resolvers);
+            owner.resolution.rollback(&self.resolution);
+            self.resolution.deinit(owner.allocator);
+            if (owner.reachable) |*unit| unit.deinit();
+            owner.reachable = self.previous_unit;
+            self.previous_unit = null;
+            owner.options = self.options;
+            owner.setup_stages = self.timings.setup;
+            owner.profile_start = self.timings.start;
+            owner.profile_relocated = self.timings.relocated;
+            owner.profile_preloop = self.timings.preloop;
+            owner.profile_postloop = self.timings.postloop;
+            owner.fixed_point_ns = self.timings.fixed_point;
+            owner.phase = .quiescent;
+            owner.transaction_active = false;
+            self.active = false;
+        }
 
-    var setup_stages: [setup_stage_count]i96 = @splat(0);
-    var setup_start = profileTimestamp(options.profile_io);
-    try core.resolveExternalTypes();
-    try generics.resolveExternalTypes();
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    // Generic record fields can contain associated projections. Publish tuple
-    // associations before materializing either their records or operation types.
-    try contracts.prepareParticipantConformances();
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
-    setup_start = profileTimestamp(options.profile_io);
-    contracts.resolveAssociatedTypes() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        pub fn commit(self: *Transaction) void {
+            if (!self.active) return;
+            const owner = self.owner;
+            std.debug.assert(owner.phase == .quiescent);
+            self.graph.commit();
+            owner.resolution.transaction_active = false;
+            self.resolution.deinit(owner.allocator);
+            if (self.previous_unit) |*unit| unit.deinit();
+            self.previous_unit = null;
+            owner.transaction_active = false;
+            owner.commitCompletions();
+            self.active = false;
+        }
+
+        pub fn deinit(self: *Transaction) void {
+            self.rollback();
+        }
+    };
+
+    /// Start one unpublished unit directly in the retained graph. Only pending
+    /// scheduling work is copied; semantic pools and resolver tables stay put.
+    pub fn beginTransaction(self: *Session) !Transaction {
+        if (self.transaction_active) return error.ActiveSemanticTransaction;
+        if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        const measurement = if (self.resolvers.core.scan_profile) |profile| profile.begin(.checkpoint) else null;
+        const saved_resolution = saved: {
+            defer if (measurement) |m| m.finish(false);
+            if (measurement) |m| for (pending_phases) |phase| m.visit(self.resolution.worklists.forPhaseConst(phase).items.len);
+            break :saved try self.resolution.checkpoint(self.allocator);
+        };
+        var transaction: Transaction = .{
+            .owner = self,
+            .graph = self.relocation.graph.beginPropagationTransaction(self.allocator),
+            .resolution = saved_resolution,
+            .resolvers = self.resolvers.checkpointState(),
+            .modules = self.modules.len,
+            .offsets = self.relocation.offsets.items.len,
+            .previous_unit = self.reachable,
+            .options = self.options,
+            .timings = .{ .setup = self.setup_stages, .start = self.profile_start, .relocated = self.profile_relocated, .preloop = self.profile_preloop, .postloop = self.profile_postloop, .fixed_point = self.fixed_point_ns },
+        };
+        self.transaction_active = true;
+        self.reachable = null;
+        errdefer transaction.rollback();
+        try self.beginUnit();
+        return transaction;
+    }
+
+    pub fn init(self: *Session, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: Options) !void {
+        self.* = .{ .allocator = allocator, .modules = &.{}, .options = options, .resolution = ResolutionState.init(allocator) };
+        errdefer self.deinit();
+        try self.module_views.appendSlice(allocator, modules);
+        self.modules = self.module_views.items;
+        self.profile_start = profileTimestamp(options.profile_io);
+        self.relocation = try globalizer.relocate(allocator, modules, .allow_holes);
+        const relocation = &self.relocation;
+        relocation.graph.target = options.target;
+        try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
+        self.profile_relocated = profileTimestamp(options.profile_io);
+
+        // The globalizer preallocates stable GlobalTypeId slots. Record which of
+        // those slots are genuinely unresolved before any resolver can inspect
+        // them; unresolved is construction state, not the language type `Any`.
+        try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
+
+        try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
+
+        const resolvers = &self.resolvers;
+        resolvers.init(allocator, &relocation.graph, self.modules, relocation.offsets.items, options.diagnostics, options.profile_io);
+        self.resolvers_initialized = true;
+        const core = &resolvers.core;
+        const control = &resolvers.control;
+        const generics = &resolvers.generics;
+        const contracts = &resolvers.contracts;
+        if (try resolveQualifiedChoiceOptions(core, options.diagnostics)) return error.Reported;
+
+        const setup_stages = &self.setup_stages;
+        var setup_start = profileTimestamp(options.profile_io);
+        try core.resolveExternalTypes();
+        try generics.resolveExternalTypes();
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        // Generic record fields can contain associated projections. Publish tuple
+        // associations before materializing either their records or operation types.
+        try contracts.prepareParticipantConformances();
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    _ = generics.materializeKnownTypes() catch |err| {
-        try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.known_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    _ = try control.materializeSugarTypes();
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
+        setup_start = profileTimestamp(options.profile_io);
+        contracts.resolveAssociatedTypes() catch |err| {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        var argument_failure: ?generic_mod.Resolver.ArgumentFailure = null;
+        _ = generics.materializeKnownTypes(&argument_failure) catch |err| {
+            try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics, argument_failure);
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.known_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        _ = try control.materializeSugarTypes();
 
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.sugar_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    if (options.diagnostics) |diagnostics| {
-        for (relocation.graph.functions.items) |function| {
-            for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
-                const contract_use = contracts.typeContractUse(field.ty) orelse continue;
-                const declaration = relocation.graph.declaration(function.declaration);
-                try diagnostics.add(
-                    diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
-                    .semantic,
-                    "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
-                    .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
-                );
-                return error.Reported;
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.sugar_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        if (options.diagnostics) |diagnostics| {
+            for (relocation.graph.functions.items) |function| {
+                for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                    const contract_use = contracts.typeContractUse(field.ty) orelse continue;
+                    const declaration = relocation.graph.declaration(function.declaration);
+                    try diagnostics.add(
+                        diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
+                        .semantic,
+                        "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
+                        .{ relocation.graph.text(declaration.name), relocation.graph.familyDefinitionName(contract_use.declaration) },
+                    );
+                    return error.Reported;
+                }
+            }
+        }
+
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+
+        const resolution_state = &self.resolution;
+        try resolution_state.appendModules(allocator, modules, relocation.offsets.items);
+        const pending_resolution_stats = &resolution_state.pending_stats;
+        if (options.profile_io != null) {
+            for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
+                pending_resolution_stats.initial(operation);
+            };
+        }
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.worklists)]);
+        setup_start = profileTimestamp(options.profile_io);
+        // Validate declarations independently of executable use. Body proofs follow
+        // selected operations, or all materialized bodies in exhaustive mode.
+        contracts.validateParticipantConformances() catch |err| {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
+        setup_start = profileTimestamp(options.profile_io);
+        if (options.root_selection == .requests_only) {
+            self.reachable = reachability_mod.FunctionSet.init(allocator);
+        } else if (!options.exhaustive_function_bodies) {
+            self.reachable = try bodyRoots(allocator, &relocation.graph, options);
+        }
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
+        self.phase = .ready;
+    }
+
+    /// Build an independent candidate without rerunning accepted source.
+    /// Both sessions borrow the same immutable ModuleSG prefix. Initialize the
+    /// candidate in its final storage; reject it by deinitializing it. Accepting
+    /// a candidate exchanges owner pointers, never moves these callback targets.
+    pub fn fork(self: *const Session, candidate: *Session, allocator: std.mem.Allocator, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+        if (self == candidate or self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        var options = self.options;
+        options.diagnostics = diagnostics;
+        candidate.* = .{ .allocator = allocator, .modules = &.{}, .options = options, .resolution = ResolutionState.init(allocator) };
+        errdefer candidate.deinit();
+        try candidate.module_views.appendSlice(allocator, self.modules);
+        candidate.modules = candidate.module_views.items;
+        candidate.relocation.graph = try self.relocation.graph.clone(allocator);
+        candidate.relocation.offsets = try self.relocation.offsets.clone(allocator);
+        try candidate.resolvers.cloneFrom(&self.resolvers, allocator, &candidate.relocation.graph, candidate.relocation.offsets.items, diagnostics);
+        candidate.resolvers_initialized = true;
+        candidate.resolvers.rebindModuleViews(candidate.modules, candidate.relocation.offsets.items);
+        candidate.resolution = try self.resolution.clone(allocator);
+        if (self.reachable) |*set| candidate.reachable = try set.clone(allocator);
+        candidate.setup_stages = self.setup_stages;
+        candidate.profile_start = self.profile_start;
+        candidate.profile_relocated = self.profile_relocated;
+        candidate.profile_preloop = self.profile_preloop;
+        candidate.profile_postloop = self.profile_postloop;
+        candidate.fixed_point_ns = self.fixed_point_ns;
+        candidate.phase = .quiescent;
+    }
+
+    /// A unit selects execution dependencies; previous roots are not semantic
+    /// declarations or proofs. Keep materialized bodies and resolver state.
+    pub fn beginUnit(self: *Session) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        const next: ?reachability_mod.FunctionSet = if (self.options.root_selection == .requests_only)
+            reachability_mod.FunctionSet.init(self.allocator)
+        else if (!self.options.exhaustive_function_bodies)
+            try bodyRoots(self.allocator, &self.relocation.graph, self.options)
+        else
+            null;
+        if (self.reachable) |*previous| previous.deinit();
+        self.reachable = next;
+        self.phase = .ready;
+    }
+
+    fn reachableSet(self: *Session) ?*reachability_mod.FunctionSet {
+        return if (self.reachable) |*set| set else null;
+    }
+
+    /// Add the new suffix from a complete borrowed module view.
+    /// This construction API poisons the session on a preparation failure.
+    /// Interactive publication must add a transaction around this operation.
+    pub fn appendModules(self: *Session, modules: []const module_sg.ModuleSemanticGraph) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (modules.len < self.modules.len) return error.InvalidSemanticModuleViews;
+        return self.appendNewModules(modules[self.modules.len..]);
+    }
+
+    /// Add only new borrowed module descriptors; the session retains the prefix.
+    pub fn appendNewModules(self: *Session, suffix: []const module_sg.ModuleSemanticGraph) !void {
+        return self.appendModuleSuffix(suffix, null);
+    }
+
+    /// Extend one logical module without moving existing declaration/file
+    /// ranges. The caller retains the immutable fragment with borrowed ModuleSGs.
+    pub fn appendModuleFragment(self: *Session, modules: []const module_sg.ModuleSemanticGraph, owner: global_sg.GlobalModuleId) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (modules.len < self.modules.len) return error.InvalidSemanticModuleViews;
+        return self.appendModuleSuffix(modules[self.modules.len..], owner);
+    }
+
+    /// Extend an existing namespace with one new borrowed fragment.
+    pub fn appendNewModuleFragment(self: *Session, fragment: module_sg.ModuleSemanticGraph, owner: global_sg.GlobalModuleId) !void {
+        return self.appendModuleSuffix(&.{fragment}, owner);
+    }
+
+    fn appendModuleSuffix(self: *Session, suffix: []const module_sg.ModuleSemanticGraph, fragment_owner: ?global_sg.GlobalModuleId) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        const previous = self.modules.len;
+        const namespace = if (fragment_owner) |owner| blk: {
+            if (@intFromEnum(owner) >= previous or suffix.len != 1) return error.InvalidModuleFragment;
+            const original = self.relocation.graph.modules.items[@intFromEnum(owner)];
+            const fragment = &suffix[0];
+            if (!std.mem.eql(u8, self.relocation.graph.text(original.dir), fragment.module_dir) or original.is_bundled_core != fragment.is_bundled_core)
+                return error.InvalidModuleFragment;
+            break :blk self.relocation.graph.moduleNamespace(owner);
+        } else null;
+        if (suffix.len == 0) return;
+        errdefer self.phase = .failed;
+        const allocator = self.allocator;
+        try self.module_views.appendSlice(allocator, suffix);
+        self.modules = self.module_views.items;
+        try self.relocation.append(allocator, self.modules[previous..], .allow_holes);
+        if (namespace) |owner| {
+            self.relocation.graph.modules.items[previous].namespace = owner;
+            try self.validateFragmentFunctions(@enumFromInt(previous));
+        }
+        try self.resolvers.extendModuleViews(self.modules, self.relocation.offsets.items);
+        try module_linker.append(allocator, &self.relocation.graph, self.modules, self.relocation.offsets.items, previous);
+        try markUnresolvedTypeSlots(allocator, &self.relocation.graph, self.modules[previous..], self.relocation.offsets.items[previous..]);
+        try c_abi.prepareForeignCapabilities(allocator, &self.relocation.graph);
+        const core = &self.resolvers.core;
+        const generics = &self.resolvers.generics;
+        const contracts = &self.resolvers.contracts;
+        if (try resolveQualifiedChoiceOptions(core, self.options.diagnostics)) return error.Reported;
+        try core.resolveExternalTypesFrom(previous);
+        try generics.resolveExternalTypesFrom(previous);
+        try contracts.prepareParticipantConformances();
+        try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
+        try contracts.resolveAssociatedTypes();
+        _ = try generics.materializeKnownTypes(null);
+        _ = try self.resolvers.control.materializeSugarTypes();
+        try self.resolution.appendModules(allocator, self.modules, self.relocation.offsets.items);
+        if (self.options.profile_io != null) {
+            for (self.modules[previous..]) |module| for (module.semantic.pending_operations.items) |operation| {
+                self.resolution.pending_stats.initial(operation);
+            };
+        }
+        try contracts.validateParticipantConformances();
+        try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
+        if (self.reachable) |*set| if (self.options.root_selection == .program) {
+            var roots = try bodyRoots(allocator, &self.relocation.graph, self.options);
+            defer roots.deinit();
+            // Root selection includes newly added entry and test declarations;
+            // retain the existing closure through the ordinary expansion pass.
+            var iterator = roots.values.keyIterator();
+            while (iterator.next()) |id| _ = try set.include(id.*);
+        };
+        self.phase = .ready;
+    }
+
+    fn validateFragmentFunctions(self: *Session, fragment: global_sg.GlobalModuleId) !void {
+        const graph = &self.relocation.graph;
+        const range = graph.modules.items[@intFromEnum(fragment)].declarations;
+        for (graph.declarations.items[range.start..][0..range.len], range.start..) |declaration, index| {
+            if (declaration.kind != .function) continue;
+            const name = graph.text(declaration.name);
+            // Generated implementation identities have no source identifier.
+            if (std.mem.indexOfScalar(u8, name, '$') != null) continue;
+            for (try graph.declarationsNamed(self.allocator, name)) |other| {
+                if (@intFromEnum(other) == index or graph.declaration(other).kind != .function) continue;
+                const owner = graph.moduleForDeclaration(other) orelse continue;
+                if (!graph.sameModuleNamespace(owner, fragment)) continue;
+                if (self.options.diagnostics) |diagnostics| {
+                    try diagnostics.add(diagnosticLocation(graph, diagnostics, declaration.source), .semantic, "ordinary function '{s}' has more than one declaration; provide specialized behavior through a contract implementation", .{name});
+                    return error.Reported;
+                }
+                return error.DuplicateOrdinaryFunction;
             }
         }
     }
 
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+    /// Keep an explicitly selected command executable through lazy resolution
+    /// and publication. It uses the same reachability closure as program roots.
+    /// Designate a command before ownership finalization. Direct declarations
+    /// survive command completion; their selected cleanup remains available for
+    /// explicit session exit. Nested scopes keep ordinary destruction rules.
+    pub fn prepareContinuationScope(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;
+        const target = self.relocation.graph.function(function);
+        if (target.input.len != 0 or target.output.len != 0 or (self.resolution.finalized_functions.contains(function) and self.resolvers.ownership.continuation_function != function))
+            return error.InvalidSafetyContinuation;
+        _ = try self.resolvers.core.builtin(.Bool);
+        try self.includeExecutionRoot(function);
+        self.resolvers.ownership.continuation_function = function;
+        const visible = self.resolvers.expressions.session_bindings.items;
+        const retained = &self.resolvers.ownership.continuation_bindings;
+        if (retained.items.len > visible.len or !std.mem.eql(global_sg.GlobalBindingId, retained.items, visible[0..retained.items.len]))
+            return error.InvalidSafetyContinuation;
+        try retained.appendSlice(self.allocator, visible[retained.items.len..]);
+        self.resolvers.expressions.continuation_function = function;
+        try self.inheritContinuationAssumptions(function);
+    }
 
-    const total = totalPending(modules);
-    const resolved = try allocator.alloc(bool, total);
-    defer allocator.free(resolved);
-    @memset(resolved, false);
-    const invalid = try allocator.alloc(bool, total);
-    defer allocator.free(invalid);
-    @memset(invalid, false);
-    var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
-    defer worklists.deinit(allocator);
-    var pending_resolution_stats: PendingResolutionStats = .{};
-    if (options.profile_io != null) {
-        for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
-            pending_resolution_stats.initial(operation);
+    /// Seed only this command's lexical call sites. Ordinary function bodies
+    /// retain their own capability inputs; nested blocks can shadow this evidence.
+    fn inheritContinuationAssumptions(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        const namespace = self.resolvers.core.session_namespace orelse return;
+        if (namespace.assumptions.items.len == 0) return;
+        for (self.modules, self.relocation.offsets.items) |module, offsets| {
+            for (module.semantic.pending_operations.items, module.semantic.pending_owner_functions.items) |operation, owner| {
+                const local_owner = owner orelse continue;
+                if (globalizer.globalFunction(offsets, local_owner) != function) continue;
+                const input = switch (operation) {
+                    .resolve_call => |call| call.input,
+                    .resolve_binary => |call| call.assumed_arguments orelse continue,
+                    .resolve_comparison => |call| call.assumed_arguments orelse continue,
+                    else => continue,
+                };
+                const visible_range = switch (operation) {
+                    .resolve_call => |call| call.visible_bindings,
+                    .resolve_binary => |call| call.visible_bindings,
+                    .resolve_comparison => |call| call.visible_bindings,
+                    else => unreachable,
+                };
+                const start = offsets.binding_ref_base + visible_range.start;
+                const visible = self.relocation.graph.binding_refs.items[start..][0..visible_range.len];
+                try self.inheritAssumedInput(globalizer.globalNode(offsets, input), namespace.assumptions.items, visible);
+            }
+        }
+    }
+
+    fn inheritAssumedInput(self: *Session, input: global_sg.GlobalNodeId, assumptions: []const global_sg.GlobalBindingId, visible: []const global_sg.GlobalBindingId) !void {
+        const node = self.relocation.graph.node(input);
+        if (node.content != .struct_value_literal) return error.InvalidSafetyContinuation;
+        const fields = try self.resolvers.ownership.inheritAssumedFields(node.source, node.content.struct_value_literal.assumed_fields, assumptions, visible);
+        var updated = node;
+        updated.content.struct_value_literal.assumed_fields = fields;
+        try self.relocation.graph.setNode(self.allocator, input, updated);
+    }
+
+    /// Fill an empty checked command with the retained selected cleanup list.
+    /// No source body is overwritten and no ordinary function gains implicit
+    /// destruction semantics. The exit is checked as a temporal continuation.
+    pub fn retainContinuationBindings(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        if (self.phase != .quiescent or self.resolvers.expressions.continuation_function != function) return error.InvalidSafetyContinuation;
+        const body = self.relocation.graph.function(function).body orelse return error.InvalidSafetyContinuation;
+        const block = self.relocation.graph.blocks.items[@intFromEnum(body)];
+        const retained = &self.resolvers.expressions.session_bindings;
+        for (self.relocation.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
+            const content = self.relocation.graph.node(node).content;
+            if (content != .binding_declaration) continue;
+            const binding = content.binding_declaration;
+            if (std.mem.indexOfScalar(global_sg.GlobalBindingId, retained.items, binding) != null) continue;
+            const name = self.relocation.graph.text(self.relocation.graph.binding(binding).name);
+            // Internal temporaries retain storage by binding identity, not a
+            // source name. Their reserved names may repeat across commands.
+            if (!std.mem.startsWith(u8, name, "#")) {
+                for (retained.items) |previous| if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.binding(previous).name), name)) return error.DuplicateSessionBinding;
+                if (self.resolvers.core.session_namespace) |namespace| for (namespace.declarations.items) |declaration| {
+                    if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.declaration(declaration).name), name)) return error.DuplicateSessionDeclaration;
+                };
+            }
+            try retained.append(self.allocator, binding);
+        }
+        const namespace = try self.resolvers.core.sessionNamespace();
+        for (self.relocation.graph.block_assumptions.items) |evidence| {
+            if (evidence.block != body) continue;
+            for (self.relocation.graph.binding_refs.items[evidence.bindings.start..][0..evidence.bindings.len]) |binding| {
+                if (std.mem.indexOfScalar(global_sg.GlobalBindingId, namespace.assumptions.items, binding) == null)
+                    try namespace.assumptions.append(self.allocator, binding);
+            }
+        }
+    }
+
+    pub fn prepareExitScope(self: *Session, function: global_sg.GlobalFunctionId, bindings: []const global_sg.GlobalBindingId) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (@intFromEnum(function) >= self.relocation.graph.functions.items.len or self.resolution.finalized_functions.contains(function))
+            return error.InvalidSafetyContinuation;
+        const target = self.relocation.graph.function(function);
+        const body = target.body orelse return error.InvalidSafetyContinuation;
+        if (target.input.len != 0 or target.output.len != 0 or self.relocation.graph.blocks.items[@intFromEnum(body)].nodes.len != 0)
+            return error.InvalidSafetyContinuation;
+        const nodes = try self.resolvers.ownership.selectedSessionCleanup(self.allocator, bindings);
+        defer self.allocator.free(nodes);
+        const start = std.math.cast(u32, self.relocation.graph.node_refs.items.len) orelse return error.SemanticGraphTooLarge;
+        const count = std.math.cast(u32, nodes.len) orelse return error.SemanticGraphTooLarge;
+        _ = std.math.add(u32, start, count) catch return error.SemanticGraphTooLarge;
+        try self.relocation.graph.node_refs.appendSlice(self.allocator, nodes);
+        {
+            var updated = self.relocation.graph.blocks.items[@intFromEnum(body)];
+            updated.nodes = .{ .start = start, .len = count };
+            try self.relocation.graph.setBlock(self.allocator, body, updated);
+        }
+        try self.prepareContinuationScope(function);
+    }
+
+    pub fn includeExecutionRoot(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;
+        if (self.reachable) |*set| {
+            _ = try set.include(function);
+            try reachability_mod.includeRuntimeSupport(&self.relocation.graph, set);
+        }
+        self.phase = .ready;
+    }
+
+    /// Request a closed module condition through the ordinary staged scheduler.
+    /// Null means semantic dependencies remain pending; callers can append the
+    /// required modules before retrying. No runtime/session value is captured.
+    pub fn evaluateModuleCondition(self: *Session, module_index: usize, expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId) !?bool {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (module_index >= self.modules.len or @intFromEnum(expression) >= self.modules[module_index].semantic.parameterized_storage.ir.nodes.items.len)
+            return error.InvalidModuleCondition;
+        const Scheduler = @import("comptime_execution.zig").Scheduler;
+        const bindings = @import("generics.zig").Resolver.Bindings{ .types = &.{}, .ints = &.{} };
+        return Scheduler.boolean(&self.resolvers.staged_execution, module_index, expression, &bindings) catch |err| switch (err) {
+            error.ComptimeExecutionPending => blk: {
+                try self.advance();
+                break :blk Scheduler.boolean(&self.resolvers.staged_execution, module_index, expression, &bindings) catch |retry| switch (retry) {
+                    error.ComptimeExecutionPending => null,
+                    else => return retry,
+                };
+            },
+            else => return err,
         };
     }
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.worklists)]);
-    setup_start = profileTimestamp(options.profile_io);
-    // Validate declarations independently of executable use. Body proofs follow
-    // selected operations, or all materialized bodies in exhaustive mode.
-    contracts.validateParticipantConformances() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
-    setup_start = profileTimestamp(options.profile_io);
-    var reachable_storage: reachability_mod.FunctionSet = undefined;
-    var reachable: ?*reachability_mod.FunctionSet = null;
-    if (!options.exhaustive_function_bodies) {
-        reachable_storage = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
-        reachable = &reachable_storage;
-    }
-    defer if (reachable) |set| set.deinit();
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
-    var pending_attempts: u64 = 0;
-    const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    var profile_rounds: usize = 0;
-    var profile_pending_ns: i96 = 0;
-    var profile_string_literal_types_ns: i96 = 0;
-    var profile_binding_types_ns: i96 = 0;
-    var profile_assignment_values_ns: i96 = 0;
-    var profile_dereferences_ns: i96 = 0;
-    var profile_addresses_ns: i96 = 0;
-    var profile_known_generic_types_ns: i96 = 0;
-    var profile_field_access_types_ns: i96 = 0;
-    var profile_sugar_types_ns: i96 = 0;
-    var profile_errors_ns: i96 = 0;
-    var profile_error_summary_ns: i96 = 0;
-    var profile_error_refresh_ns: i96 = 0;
-    var profile_finalize_ns: i96 = 0;
-    var profile_finalize_count: usize = 0;
 
+    pub fn advance(self: *Session) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        errdefer self.phase = .failed;
+        const start = profileTimestamp(self.options.profile_io);
+        if (self.phase == .ready) self.profile_preloop = start;
+        try advanceResolution(&self.options, &self.resolvers, &self.resolution, self.reachableSet());
+        self.profile_postloop = profileTimestamp(self.options.profile_io);
+        self.fixed_point_ns += self.profile_postloop - start;
+        self.phase = .quiescent;
+        self.relocation.graph.certifyPropagation();
+    }
+
+    /// Re-establish the propagation boundary after completion and compile-time
+    /// execution, before safety consumes the checked graph.
+    pub fn stabilizePropagation(self: *Session) !void {
+        if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        errdefer self.phase = .failed;
+        while (true) {
+            try self.options.cancellation.check();
+            var changed = try self.resolvers.core.materializeBindingTypes();
+            if (try self.resolvers.core.materializeReferenceTypes()) changed = true;
+            if (!changed) break;
+        }
+        self.relocation.graph.certifyPropagation();
+    }
+
+    /// Complete and validate this unit without consuming the shared graph or
+    /// its pending-slot metadata. Callers may extend resolution afterwards.
+    pub fn completeUnit(self: *Session) !Stats {
+        const measurement = if (self.resolvers.core.scan_profile) |profile| profile.begin(.completion) else null;
+        defer if (measurement) |m| m.finish(false);
+        if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        errdefer self.phase = .failed;
+        try self.options.cancellation.check();
+        const allocator = self.allocator;
+        const modules = self.modules;
+        const options = self.options;
+        const relocation = &self.relocation;
+        const resolvers = &self.resolvers;
+        const resolution_state = &self.resolution;
+        const total = resolution_state.resolved.items.len;
+        const resolved = resolution_state.resolved.items;
+        const worklists = &resolution_state.worklists;
+        const pending_resolution_stats = &resolution_state.pending_stats;
+        const progress = &resolution_state.progress;
+        const reachable = self.reachableSet();
+        const setup_stages = self.setup_stages;
+        const profile_start = self.profile_start;
+        const profile_relocated = self.profile_relocated;
+        const profile_preloop = self.profile_preloop;
+        const profile_postloop = self.profile_postloop;
+        const core = &resolvers.core;
+        const expressions = &resolvers.expressions;
+        const control = &resolvers.control;
+        const generics = &resolvers.generics;
+        const generic_functions = &resolvers.generic_functions;
+        const contracts = &resolvers.contracts;
+        const errors = &resolvers.errors;
+        const dispatch = &resolvers.dispatch;
+        const ownership = &resolvers.ownership;
+        const staged_execution = &resolvers.staged_execution;
+        {
+            const annotations = if (core.scan_profile) |profile| profile.begin(.choice_annotations) else null;
+            defer if (annotations) |m| m.finish(false);
+            try control.annotateChoiceTests();
+        }
+
+        if (control.for_each_failure) |failure| {
+            if (options.diagnostics) |diagnostics| {
+                try diagnostics.add(
+                    diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                    .semantic,
+                    "for expects a type implementing contract '{s}', got '{s}'",
+                    .{ failure.contract_name, failure.actual_name },
+                );
+                return error.Reported;
+            }
+            return error.InvalidForEach;
+        }
+
+        if (contracts.virtual_signature_failure) |failure| {
+            if (options.diagnostics) |diagnostics| {
+                const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
+                if (failure.static_contract) {
+                    try diagnostics.add(location, .semantic, "invalid safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
+                } else {
+                    try diagnostics.add(location, .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
+                }
+                return error.Reported;
+            }
+            return error.InvalidVirtualSignature;
+        }
+
+        {
+            const diagnostics_profile = if (core.scan_profile) |profile| profile.begin(.completion_input_diagnostics) else null;
+            defer if (diagnostics_profile) |m| m.finish(false);
+            if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+                return error.Reported;
+
+            if (options.diagnostics) |diagnostics| {
+                if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
+                    return error.Reported;
+                if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
+                    return error.Reported;
+            }
+        }
+
+        const remaining = worklists.remaining(reachable);
+        var resolved_count: usize = 0;
+        for (resolved) |done| if (done) {
+            resolved_count += 1;
+        };
+        if (remaining != 0) {
+            if (options.diagnostics) |diagnostics| {
+                if (try diagnoseUnresolvedAssignments(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseTypeAliasCycles(allocator, &relocation.graph, modules, relocation.offsets.items, core, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, false))
+                    return error.Reported;
+                if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                // A denied copy may already be represented in the graph so Safety
+                // can prefer a preceding move error. If another operation remains
+                // unresolved, report that definite copy failure before unrelated
+                // call-resolution diagnostics prevent Safety from running.
+                if (try diagnoseDeniedCopy(allocator, &relocation.graph, reachable, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnknownNames(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, core, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedFunctionSignatures(&relocation.graph, modules, resolved, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
+                    return error.Reported;
+            }
+            // An untyped aggregate can leave its field users pending as well.
+            // Report the missing source type instead of an internal resolution failure.
+            if (options.diagnostics) |diagnostics|
+                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics, true))
+                    return error.Reported;
+            contracts.diagnoseUnresolvedParticipants();
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
+            return error.UnsupportedGlobalSemantic;
+        }
+        if (staged_execution.diagnosePending()) {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            return error.UnresolvedCompileTimeExecution;
+        }
+        if (relocation.graph.hasUnresolvedTypes()) {
+            if (options.diagnostics) |diagnostics|
+                if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+            std.debug.print("global sema unresolved global type slots remain\n", .{});
+            return error.UnsupportedGlobalSemantic;
+        }
+        if (hasSelectedUnresolvedBindingTypes(&relocation.graph, reachable)) {
+            if (options.diagnostics) |diagnostics|
+                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, reachable, diagnostics, false))
+                    return error.Reported;
+            std.debug.print("global sema unresolved binding types remain\n", .{});
+            return error.UnsupportedGlobalSemantic;
+        }
+
+        {
+            const diagnostics_profile = if (core.scan_profile) |profile| profile.begin(.completion_value_diagnostics) else null;
+            defer if (diagnostics_profile) |m| m.finish(false);
+            if (try diagnoseInvalidMatchPayloadCopies(
+                allocator,
+                &relocation.graph,
+                ownership,
+                reachable,
+                options.diagnostics,
+            ))
+                return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
+
+            try @import("record_literals.zig").checkRequiredFields(&relocation.graph, reachable, options.diagnostics);
+
+            if (try diagnoseInvalidValueAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+                return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
+
+            if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
+                return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
+
+            if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
+                return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
+        }
+
+        if (options.diagnostics) |diagnostics|
+            if (try contracts.findGenericTypeConstraintFailure()) |failure| {
+                var actual_name = std.array_list.Managed(u8).init(allocator);
+                defer actual_name.deinit();
+                try appendTypeName(&actual_name, &relocation.graph, failure.actual);
+                try diagnostics.add(
+                    diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                    .semantic,
+                    "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
+                    .{
+                        actual_name.items,
+                        relocation.graph.familyDefinitionName(failure.contract_decl),
+                        failure.parameter_name,
+                        relocation.graph.familyDefinitionName(failure.generic_decl),
+                    },
+                );
+                return error.Reported;
+            };
+
+        try contracts.closeVirtualMethodRegistries();
+
+        contracts.validateParticipantConformances() catch |err| {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        var generic_bodies_built: u64 = 0;
+        var generic_bodies_unreachable: u64 = 0;
+        if (options.profile_io != null) {
+            for (relocation.graph.functions.items) |function| {
+                if (function.flags.is_generic_instantiation and function.body != null)
+                    generic_bodies_built += 1;
+            }
+        }
+        if (options.profile_io != null) if (reachable) |set| {
+            for (relocation.graph.functions.items, 0..) |function, raw| {
+                if (function.flags.is_generic_instantiation and function.body != null and !set.contains(@enumFromInt(raw)))
+                    generic_bodies_unreachable += 1;
+            }
+        };
+
+        var stats = Stats{
+            .core = core.stats,
+            .expressions = expressions.stats,
+            .control = control.stats,
+            .generics = generics.stats,
+            .generic_functions = generic_functions.stats,
+            .generic_selection = generic_functions.selection_profile,
+            .contracts = contracts.stats,
+            .errors = errors.stats,
+            .ownership = ownership.stats,
+            .pending_call_stages = dispatch.pending_call_stages,
+            .pending_total = @intCast(total),
+            .pending_resolved = @intCast(resolved_count),
+            .pending_attempts = progress.pending_attempts,
+            .pending_by_owner = pending_resolution_stats.owners,
+            .pending_by_operation = pending_resolution_stats.operations,
+            .remaining = 0,
+            .rounds = @intCast(progress.profile_rounds),
+            .cleanup_attempts = @intCast(progress.profile_finalize_count),
+            .destructor_lookups = @intCast(ownership.profile_destructor_calls),
+            .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
+            .generic_existing_instances = generic_functions.profile_instantiate_existing,
+            .generic_bodies_built = generic_bodies_built,
+            .generic_bodies_unreachable = generic_bodies_unreachable,
+            .generic_reachability_tracked = reachable != null,
+        };
+
+        const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        {
+            const verification = if (core.scan_profile) |profile| profile.begin(.unit_verification) else null;
+            defer if (verification) |m| m.finish(false);
+            try global_verify.verifyUnit(&relocation.graph, reachable);
+        }
+        const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        stats.remaining = 0;
+        var setup_stage_times: [setup_stage_count]u64 = undefined;
+        for (setup_stages, &setup_stage_times) |elapsed, *time| time.* = @intCast(elapsed);
+        if (options.profile_io != null) stats.timings = .{
+            .relocation_ns = @intCast(profile_relocated - profile_start),
+            .setup_ns = @intCast(profile_preloop - profile_relocated),
+            .setup_stages_ns = setup_stage_times,
+            .fixed_point_ns = @intCast(self.fixed_point_ns),
+            .pending_ns = @intCast(progress.profile_pending_ns),
+            .string_literal_types_ns = @intCast(progress.profile_string_literal_types_ns),
+            .binding_types_ns = @intCast(progress.profile_binding_types_ns),
+            .assignment_values_ns = @intCast(progress.profile_assignment_values_ns),
+            .reference_types_ns = @intCast(progress.profile_reference_types_ns),
+            .known_generic_types_ns = @intCast(progress.profile_known_generic_types_ns),
+            .field_access_types_ns = @intCast(progress.profile_field_access_types_ns),
+            .sugar_types_ns = @intCast(progress.profile_sugar_types_ns),
+            .error_inference_ns = @intCast(progress.profile_errors_ns),
+            .error_summary_ns = @intCast(progress.profile_error_summary_ns),
+            .error_refresh_ns = @intCast(progress.profile_error_refresh_ns),
+            .cleanup_ns = @intCast(progress.profile_finalize_ns),
+            .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
+            .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
+            .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
+            .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
+            .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
+            .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
+            .generic_instance_context_init_ns = @intCast(generic_functions.profile_instance_context_init_ns),
+            .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
+            .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
+            .verify_ns = @intCast(profile_end - profile_preverify),
+        };
+        return stats;
+    }
+
+    /// Transfer ownership for one-shot consumers. Incremental owners use
+    /// completeUnit and keep their graph and construction metadata in place.
+    pub fn finish(self: *Session) !Result {
+        if (self.transaction_active) return error.ActiveSemanticTransaction;
+        const stats = try self.completeUnit();
+        errdefer self.phase = .failed;
+        try self.relocation.graph.finishTypeResolution(self.allocator);
+        if (!self.relocation.graph.hasUnresolvedBindingTypes())
+            try self.relocation.graph.finishBindingTypeResolution(self.allocator);
+        self.commitCompletions();
+        self.phase = .published;
+        const unit = self.reachable;
+        self.reachable = null;
+        return .{ .graph = self.relocation.takeGraph(self.allocator), .stats = stats, .unit = unit };
+    }
+
+    /// Close construction histories at semantic ownership transfer or accepted
+    /// incremental publication. Earlier checkpoints are no longer valid.
+    pub fn commitCompletions(self: *Session) void {
+        self.relocation.graph.commitCompletions(self.allocator);
+        self.resolvers.generics.commitCaches();
+        self.resolvers.contracts.commitCaches();
+        self.resolvers.staged_execution.commitState();
+        self.resolution.commitCompletions(self.allocator);
+    }
+
+    pub fn deinit(self: *Session) void {
+        if (self.reachable) |*set| set.deinit();
+        self.resolution.deinit(self.allocator);
+        if (self.resolvers_initialized) self.resolvers.deinit();
+        self.relocation.deinit(self.allocator);
+        self.module_views.deinit(self.allocator);
+        self.* = undefined;
+    }
+};
+
+const ResolutionProgress = struct {
+    pending_attempts: u64 = 0,
+    profile_rounds: usize = 0,
+    profile_pending_ns: i96 = 0,
+    profile_string_literal_types_ns: i96 = 0,
+    profile_binding_types_ns: i96 = 0,
+    profile_assignment_values_ns: i96 = 0,
+    profile_reference_types_ns: i96 = 0,
+    profile_known_generic_types_ns: i96 = 0,
+    profile_field_access_types_ns: i96 = 0,
+    profile_sugar_types_ns: i96 = 0,
+    profile_errors_ns: i96 = 0,
+    profile_error_summary_ns: i96 = 0,
+    profile_error_refresh_ns: i96 = 0,
+    profile_finalize_ns: i96 = 0,
+    profile_finalize_count: usize = 0,
+};
+
+// Advance to quiescence without sealing construction metadata or diagnosing
+// unresolved work. A coordinator can retain this state and resume after adding
+// semantic inputs; only the final publication path seals the graph.
+fn advanceResolution(
+    options: *const Options,
+    resolvers: *@import("resolver_context.zig").Context,
+    state: *ResolutionState,
+    reachable: ?*reachability_mod.FunctionSet,
+) !void {
+    const measurement = if (resolvers.core.scan_profile) |profile| profile.begin(.resolution) else null;
+    defer if (measurement) |m| m.finish(false);
+    const progress = &state.progress;
+    const pending_resolution_stats = &state.pending_stats;
+    const graph = resolvers.core.graph;
+    const allocator = resolvers.core.allocator;
+    const modules = resolvers.core.modules;
+    const offsets = resolvers.core.offsets;
+    const core = &resolvers.core;
+    const expressions = &resolvers.expressions;
+    const control = &resolvers.control;
+    const generics = &resolvers.generics;
+    const generic_functions = &resolvers.generic_functions;
+    const contracts = &resolvers.contracts;
+    const errors = &resolvers.errors;
+    const dispatch = &resolvers.dispatch;
+    const ownership = &resolvers.ownership;
+    const staged_execution = &resolvers.staged_execution;
+    const resolved = state.resolved.items;
+    const invalid = state.invalid.items;
+    const worklists = &state.worklists;
     // GlobalSema is staged by semantic domain. Ownership finalization can add
     // cleanup calls to functions absent from the source call graph. Each newly
     // reachable body gets another resolution pass before its cleanup is built.
-    var finalized_functions = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
-    defer finalized_functions.deinit();
+    const finalized_functions = &state.finalized_functions;
+    // Local to this resolution call: failure discards the work alongside the
+    // enclosing semantic transaction. Old unresolved slots remain candidates.
+    var pending_types: @import("generics.zig").Resolver.PendingTypes = .{};
+    defer pending_types.deinit(allocator);
     var changed = true;
     while (true) {
         while (changed) {
-            profile_rounds += 1;
+            try options.cancellation.check();
+            staged_execution.stable_type_count = graph.types.items.len;
+            staged_execution.stable_declaration_count = graph.declarations.items.len;
+            staged_execution.stable_type_definition_count = graph.type_definitions.items.len;
+            staged_execution.stable_family_definition_count = graph.family_definitions.items.len;
+            staged_execution.stable_node_count = graph.nodes.items.len;
+            progress.profile_rounds += 1;
+            if (core.scan_profile) |profile| profile.rounds += 1;
             changed = false;
             // Published operation signatures do not make their bodies roots.
             // Complete selected bodies before resolving their pending uses.
             if (generic_functions.materializePublishedBodies(reachable) catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             }) changed = true;
             if (reachable) |set| {
-                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+                const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
+                const expanded = try expandBodyRoots(allocator, graph, set, options);
+                if (reach_profile) |m| m.finish(expanded);
+                if (expanded) changed = true;
             }
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
                 if (resolvePendingPhase(
-                    &core,
-                    &expressions,
-                    &dispatch,
-                    &control,
-                    &generics,
-                    &contracts,
-                    &errors,
-                    &ownership,
+                    core,
+                    expressions,
+                    dispatch,
+                    control,
+                    generics,
+                    contracts,
+                    errors,
+                    ownership,
                     modules,
-                    relocation.offsets.items,
+                    offsets,
                     resolved,
                     invalid,
                     worklists.forPhase(phase),
                     reachable,
-                    &pending_attempts,
-                    if (options.profile_io != null) &pending_resolution_stats else null,
+                    &progress.pending_attempts,
+                    if (options.profile_io != null) pending_resolution_stats else null,
                     options.profile_io,
                     options.diagnostics,
                 ) catch |err| {
-                    try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                    try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                    try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
                     return err;
                 }) changed = true;
             }
-            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-            if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
+            try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+            if (options.profile_io) |io| progress.profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             var sweep_start = profileTimestamp(options.profile_io);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeStringLiteralTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_string_literal_types_ns);
+            if (try core.materializeTextLiteralTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_string_literal_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeBindingTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_binding_types_ns);
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_binding_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeAssignmentValues()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_assignment_values_ns);
+            // Propagated operand types can complete nested lists in writes or
+            // independently typed literals. A parent's type does not certify
+            // its value shape; later materialization may need another sweep.
+            if (try core.materializeAssignmentValuesForUnit(reachable)) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_assignment_values_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeDereferences()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_dereferences_ns);
+            if (try core.materializeReferenceTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_reference_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (try core.materializeAddresses()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (generics.materializeKnownTypes() catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            var argument_failure: ?generic_mod.Resolver.ArgumentFailure = null;
+            if (generics.materializePendingTypes(&pending_types, &argument_failure) catch |err| {
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                try reportGenericArgumentFailure(graph, options.diagnostics, generics, argument_failure);
+                try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             }) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_known_generic_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try contracts.materializeFieldAccessTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_field_access_types_ns);
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_field_access_types_ns);
             // Generic instantiation can intern nullable or inferred Errable
             // types during this pass. Their materialization must schedule a
             // further pass so pending uses can observe the final choice shape.
             sweep_start = profileTimestamp(options.profile_io);
             if (try control.materializeSugarTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_sugar_types_ns);
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_sugar_types_ns);
             const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             if (try errors.inferFunctionErrorReasons(reachable)) changed = true;
-            profileAccumulate(options.profile_io, errors_start, &profile_error_summary_ns);
+            profileAccumulate(options.profile_io, errors_start, &progress.profile_error_summary_ns);
             const refresh_start = profileTimestamp(options.profile_io);
-            if (errors.refreshPropagationResults()) changed = true;
-            profileAccumulate(options.profile_io, refresh_start, &profile_error_refresh_ns);
-            if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
-            if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
+            if (try errors.refreshPropagationResults()) changed = true;
+            profileAccumulate(options.profile_io, refresh_start, &progress.profile_error_refresh_ns);
+            if (options.profile_io) |io| progress.profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
             // Evidence selected by newly specialized bodies belongs to this
             // fixed point. Its operation bodies must become reachable and have
             // their cleanup finalized before construction metadata is retired.
-            const evidence_functions = relocation.graph.functions.items.len;
-            const evidence_types = relocation.graph.types.items.len;
-            const evidence_conformances = relocation.graph.contract_conformances.items.len;
+            const evidence_functions = graph.functions.items.len;
+            const evidence_types = graph.types.items.len;
+            const evidence_conformances = graph.contract_conformances.items.len;
             contracts.validateParticipantConformances() catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             };
-            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-            if (evidence_functions != relocation.graph.functions.items.len or
-                evidence_types != relocation.graph.types.items.len or
-                evidence_conformances != relocation.graph.contract_conformances.items.len) changed = true;
+            try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+            if (evidence_functions != graph.functions.items.len or
+                evidence_types != graph.types.items.len or
+                evidence_conformances != graph.contract_conformances.items.len) changed = true;
+            if (try staged_execution.materialize()) changed = true;
             if (reachable) |set| {
-                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+                const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
+                const expanded = try expandBodyRoots(allocator, graph, set, options);
+                if (reach_profile) |m| m.finish(expanded);
+                if (expanded) changed = true;
             }
         }
         var finalized_any = false;
-        const finalization_count = relocation.graph.functions.items.len;
+        const finalization_count = graph.functions.items.len;
         var raw: usize = 0;
         while (raw < finalization_count) : (raw += 1) {
+            try options.cancellation.check();
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (finalized_functions.contains(id)) continue;
             if (reachable) |set| {
                 if (!set.contains(id)) continue;
             }
-            if (relocation.graph.functions.items[raw].body == null) continue;
+            if (graph.functions.items[raw].body == null) continue;
             const finalize_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             const did_finalize = try ownership.finalizeFunctionBody(id);
-            if (options.profile_io) |io| profile_finalize_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - finalize_start;
-            profile_finalize_count += 1;
+            if (options.profile_io) |io| progress.profile_finalize_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - finalize_start;
+            progress.profile_finalize_count += 1;
             if (!did_finalize) continue;
-            try finalized_functions.put(id, {});
+            try state.markFinalized(allocator, id);
             finalized_any = true;
         }
+        const reach_profile = if (core.scan_profile) |profile| profile.begin(.reachability) else null;
         const reached_cleanup = if (reachable) |set|
-            try reachability_mod.expand(allocator, &relocation.graph, set)
+            try expandBodyRoots(allocator, graph, set, options)
         else
             false;
-        if (!finalized_any and !reached_cleanup) break;
+        if (reach_profile) |m| m.finish(reached_cleanup);
+        var pending_bodies = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
+        defer pending_bodies.deinit();
+        if (staged_execution.requests.items.len != 0) {
+            for (pending_phases) |phase| for (worklists.forPhase(phase).items) |item| {
+                if (item.owner_function) |owner| try pending_bodies.put(owner, {});
+            };
+        }
+        const evaluated = staged_execution.evaluateReady(contracts, options.diagnostics, finalized_functions, &pending_bodies) catch |err| {
+            try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+            return err;
+        };
+        if (evaluated) try contracts.resolveAssociatedTypes();
+        if (!finalized_any and !reached_cleanup and !evaluated) break;
         changed = true;
     }
-    const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-
-    try contracts.validateGenericFunctionInstances();
-    control.annotateChoiceTests();
-
-    if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
-
-    if (control.for_each_failure) |failure| {
-        if (options.diagnostics) |diagnostics| {
-            var actual_name = std.array_list.Managed(u8).init(allocator);
-            defer actual_name.deinit();
-            try appendTypeName(&actual_name, &relocation.graph, failure.actual);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
-                .semantic,
-                "for expects a type implementing contract '{s}', got '{s}'",
-                .{ failure.contract_name, actual_name.items },
-            );
-            return error.Reported;
-        }
-        return error.InvalidForEach;
-    }
-
-    if (contracts.virtual_signature_failure) |failure| {
-        if (options.diagnostics) |diagnostics| {
-            const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
-            if (failure.static_contract) {
-                try diagnostics.add(location, .semantic, "invalid safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
-            } else {
-                try diagnostics.add(location, .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
-            }
-            return error.Reported;
-        }
-        return error.InvalidVirtualSignature;
-    }
-
-    if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
-        return error.Reported;
-
-    if (options.diagnostics) |diagnostics| {
-        if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-            return error.Reported;
-        if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
-            return error.Reported;
-        if (try diagnoseContractRuntimeBindings(&relocation.graph, &contracts, diagnostics))
-            return error.Reported;
-        if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
-            return error.Reported;
-    }
-
-    const remaining = worklists.remaining(reachable);
-    var resolved_count: usize = 0;
-    for (resolved) |done| if (done) {
-        resolved_count += 1;
-    };
-    if (remaining != 0) {
-        if (options.diagnostics) |diagnostics| {
-            if (try diagnoseUnresolvedAssignments(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, false))
-                return error.Reported;
-            if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            // A denied copy may already be represented in the graph so Safety
-            // can prefer a preceding move error. If another operation remains
-            // unresolved, report that definite copy failure before unrelated
-            // call-resolution diagnostics prevent Safety from running.
-            if (ownership.denied_copy) |denied| {
-                var type_name = std.array_list.Managed(u8).init(allocator);
-                defer type_name.deinit();
-                try appendTypeName(&type_name, &relocation.graph, denied.ty);
-                try diagnostics.add(
-                    diagnosticLocation(&relocation.graph, diagnostics, denied.source),
-                    .semantic,
-                    "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
-                    .{type_name.items},
-                );
-                return error.Reported;
-            }
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &contracts, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
-                return error.Reported;
-        }
-        dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
-        return error.UnsupportedGlobalSemantic;
-    }
-    if (relocation.graph.hasUnresolvedTypes()) {
-        if (options.diagnostics) |diagnostics|
-            if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-                return error.Reported;
-        std.debug.print("global sema unresolved global type slots remain\n", .{});
-        return error.UnsupportedGlobalSemantic;
-    }
-    if (relocation.graph.hasUnresolvedBindingTypes()) {
-        if (options.diagnostics) |diagnostics|
-            if (try diagnoseUnresolvedBindingTypes(&relocation.graph, diagnostics))
-                return error.Reported;
-        std.debug.print("global sema unresolved binding types remain\n", .{});
-        return error.UnsupportedGlobalSemantic;
-    }
-
-    if (try diagnoseInvalidMatchPayloadCopies(
-        allocator,
-        &relocation.graph,
-        &ownership,
-        reachable,
-        options.diagnostics,
-    ))
-        return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
-
-    if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
-        return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
-
-    if (try diagnoseInvalidComparisons(allocator, &core, reachable, options.diagnostics))
-        return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
-
-    if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
-        return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
-
-    if (options.diagnostics) |diagnostics|
-        if (try contracts.findGenericTypeConstraintFailure()) |failure| {
-            var actual_name = std.array_list.Managed(u8).init(allocator);
-            defer actual_name.deinit();
-            try appendTypeName(&actual_name, &relocation.graph, failure.actual);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
-                .semantic,
-                "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
-                .{
-                    actual_name.items,
-                    relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
-                    failure.parameter_name,
-                    relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
-                },
-            );
-            return error.Reported;
-        };
-
-    try contracts.closeVirtualMethodRegistries();
-
-    // Construction-only resolution metadata must disappear before the graph is
-    // exposed to Safety, Codegen or editor consumers.
-    try relocation.graph.finishTypeResolution(allocator);
-    contracts.validateParticipantConformances() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-    try relocation.graph.finishBindingTypeResolution(allocator);
-
-    var generic_bodies_built: u64 = 0;
-    var generic_bodies_unreachable: u64 = 0;
-    if (options.profile_io != null) {
-        for (relocation.graph.functions.items) |function| {
-            if (function.flags.is_generic_instantiation and function.body != null)
-                generic_bodies_built += 1;
-        }
-    }
-    if (reachable) |set| {
-        for (relocation.graph.contract_safety_conformances.items) |*proof| {
-            const conformance = relocation.graph.contract_conformances.items[proof.selection.conformance];
-            const cleanup = set.cleanup_functions.contains(proof.method) and
-                @import("standard_contracts.zig").standardDeclaration(&relocation.graph, "Deinit") == conformance.declaration;
-            proof.safety_required = cleanup or set.operations.contains(proof.selection);
-        }
-        for (relocation.graph.virtualizes.items, 0..) |*value, raw| {
-            value.safety_required = set.virtualizes.contains(@enumFromInt(raw));
-        }
-        for (relocation.graph.functions.items, 0..) |*function, raw| {
-            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {
-                if (!set.contains(id)) generic_bodies_unreachable += 1;
-            }
-            if (!set.contains(id)) function.body = null;
-        }
-    }
-
-    var stats = Stats{
-        .core = core.stats,
-        .expressions = expressions.stats,
-        .control = control.stats,
-        .generics = generics.stats,
-        .generic_functions = generic_functions.stats,
-        .generic_selection = generic_functions.selection_profile,
-        .contracts = contracts.stats,
-        .errors = errors.stats,
-        .ownership = ownership.stats,
-        .pending_call_stages = dispatch.pending_call_stages,
-        .pending_total = @intCast(total),
-        .pending_resolved = @intCast(resolved_count),
-        .pending_attempts = pending_attempts,
-        .pending_by_owner = pending_resolution_stats.owners,
-        .pending_by_operation = pending_resolution_stats.operations,
-        .remaining = 0,
-        .rounds = @intCast(profile_rounds),
-        .cleanup_attempts = @intCast(profile_finalize_count),
-        .destructor_lookups = @intCast(ownership.profile_destructor_calls),
-        .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
-        .generic_existing_instances = generic_functions.profile_instantiate_existing,
-        .generic_bodies_built = generic_bodies_built,
-        .generic_bodies_unreachable = generic_bodies_unreachable,
-        .generic_reachability_tracked = reachable != null,
-    };
-
-    const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    try global_verify.verifyGlobal(&relocation.graph);
-    const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    stats.remaining = 0;
-    var setup_stage_times: [setup_stage_count]u64 = undefined;
-    for (setup_stages, &setup_stage_times) |elapsed, *time| time.* = @intCast(elapsed);
-    if (options.profile_io != null) stats.timings = .{
-        .relocation_ns = @intCast(profile_relocated - profile_start),
-        .setup_ns = @intCast(profile_preloop - profile_relocated),
-        .setup_stages_ns = setup_stage_times,
-        .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
-        .pending_ns = @intCast(profile_pending_ns),
-        .string_literal_types_ns = @intCast(profile_string_literal_types_ns),
-        .binding_types_ns = @intCast(profile_binding_types_ns),
-        .assignment_values_ns = @intCast(profile_assignment_values_ns),
-        .dereferences_ns = @intCast(profile_dereferences_ns),
-        .addresses_ns = @intCast(profile_addresses_ns),
-        .known_generic_types_ns = @intCast(profile_known_generic_types_ns),
-        .field_access_types_ns = @intCast(profile_field_access_types_ns),
-        .sugar_types_ns = @intCast(profile_sugar_types_ns),
-        .error_inference_ns = @intCast(profile_errors_ns),
-        .error_summary_ns = @intCast(profile_error_summary_ns),
-        .error_refresh_ns = @intCast(profile_error_refresh_ns),
-        .cleanup_ns = @intCast(profile_finalize_ns),
-        .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
-        .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
-        .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
-        .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
-        .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
-        .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
-        .generic_instance_context_init_ns = @intCast(generic_functions.profile_instance_context_init_ns),
-        .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
-        .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
-        .verify_ns = @intCast(profile_end - profile_preverify),
-    };
-    return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
 }
 
 fn diagnoseInvalidMatchPayloadCopies(
@@ -916,7 +1565,7 @@ fn diagnoseInvalidMatchPayloadCopies(
         if (reachable) |set| if (!set.containsBinding(binding_id)) continue;
         const binding = graph.binding(binding_id);
         if (std.mem.eql(u8, graph.text(binding.name), "_")) continue;
-        if (graph.isTypeUnresolved(binding.ty) or ownership.canImplicitlyCopy(binding.ty)) continue;
+        if (graph.isTypeUnresolved(binding.ty) or try ownership.canImplicitlyCopy(binding.ty)) continue;
         if (diagnostics) |sink| {
             var type_name = std.array_list.Managed(u8).init(allocator);
             defer type_name.deinit();
@@ -1110,6 +1759,10 @@ fn diagnoseArrayAssignments(
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .binding_declaration, .assignment, .array_store, .pointer_assignment, .struct_value_literal, .array_literal => {},
+            else => continue,
+        }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(id)) continue;
         const value, const expected = switch (node.content) {
@@ -1144,16 +1797,20 @@ fn diagnoseArrayAssignments(
     return false;
 }
 
-// Literal contextualization has already finished. Typed numeric values must
+// Literal contextualization has already finished. Typed nominal and numeric values must
 // agree with their destination; changing their node type would conceal a
 // conversion that codegen has no corresponding instruction to perform.
-fn diagnoseInvalidNumericAssignments(
+fn diagnoseInvalidValueAssignments(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
     reachable: ?*const reachability_mod.FunctionSet,
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .binding_declaration, .struct_value_literal, .array_literal, .assignment, .array_store, .pointer_assignment => {},
+            else => continue,
+        }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(id)) continue;
         const value, const expected = switch (node.content) {
@@ -1161,7 +1818,7 @@ fn diagnoseInvalidNumericAssignments(
                 graph.binding(binding).initialization orelse continue,
                 graph.binding(binding).ty,
             },
-            .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
+            .struct_value_literal, .array_literal => findAggregateValueMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
             .array_store => |store| .{ store.value, store.element_type },
             .pointer_assignment => |assignment| blk: {
@@ -1176,7 +1833,7 @@ fn diagnoseInvalidNumericAssignments(
         };
         // Literal range failures have a more precise Safety diagnostics_mod. Their
         // default type is not evidence of an implicit variable conversion.
-        if (graph.node(value).content == .int_literal and switch (graph.semanticType(expected)) {
+        if (graph.node(value).content == .int_literal and switch (global_types.representation(graph, expected) orelse continue) {
             .builtin => |builtin| switch (builtin) {
                 .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
                 else => false,
@@ -1199,7 +1856,9 @@ fn diagnoseInvalidNumericAssignments(
                 }
             }
         }
-        if (!isNumericType(graph, actual) or !isNumericType(graph, expected)) continue;
+        const unicode_mismatch = isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected);
+        const nominal_mismatch = global_types.hasNominalIdentity(graph, actual) or global_types.hasNominalIdentity(graph, expected);
+        if (!unicode_mismatch and !nominal_mismatch and (!isNumericType(graph, actual) or !isNumericType(graph, expected))) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {
             var actual_name = std.array_list.Managed(u8).init(allocator);
@@ -1208,12 +1867,28 @@ fn diagnoseInvalidNumericAssignments(
             defer expected_name.deinit();
             try appendTypeName(&actual_name, graph, actual);
             try appendTypeName(&expected_name, graph, expected);
-            try sink.add(
-                diagnosticLocation(graph, sink, node.source),
-                .semantic,
-                "cannot assign numeric value of type '{s}' to destination of type '{s}'; implicit numeric conversion is not supported",
-                .{ actual_name.items, expected_name.items },
-            );
+            if (unicode_mismatch) {
+                try sink.add(
+                    diagnosticLocation(graph, sink, node.source),
+                    .semantic,
+                    "cannot assign value of type '{s}' to destination of type '{s}'; Unicode scalars and bytes require explicit conversion",
+                    .{ actual_name.items, expected_name.items },
+                );
+            } else if (nominal_mismatch) {
+                try sink.add(
+                    diagnosticLocation(graph, sink, node.source),
+                    .semantic,
+                    "cannot assign value of type '{s}' to destination of type '{s}'; distinct nominal types require explicit conversion",
+                    .{ actual_name.items, expected_name.items },
+                );
+            } else {
+                try sink.add(
+                    diagnosticLocation(graph, sink, node.source),
+                    .semantic,
+                    "cannot assign numeric value of type '{s}' to destination of type '{s}'; implicit numeric conversion is not supported",
+                    .{ actual_name.items, expected_name.items },
+                );
+            }
         }
         return true;
     }
@@ -1221,8 +1896,8 @@ fn diagnoseInvalidNumericAssignments(
 }
 
 // Aggregate types alone do not prove that each child has the representation
-// expected by LLVM. Check typed numeric children after contextualization.
-fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
+// expected by LLVM. Check typed nominal and numeric children after contextualization.
+fn findAggregateValueMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
     const node = graph.node(id);
     const ty = node.ty orelse return null;
     switch (node.content) {
@@ -1238,12 +1913,12 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
                         }
                     }
                 } else if (offset < fields.len) expected = graph.fields.items[fields.start + offset].ty;
-                if (expected) |target| if (numericChildMismatch(graph, field.value, target)) return .{ field.value, target };
+                if (expected) |target| if (typedChildMismatch(graph, field.value, target)) return .{ field.value, target };
             }
         },
         .array_literal => |literal| {
             for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| {
-                if (numericChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
+                if (typedChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
             }
         },
         else => {},
@@ -1251,17 +1926,32 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
     return null;
 }
 
-fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+fn typedChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
     const node = graph.node(child);
     const actual = node.ty orelse return false;
+    if (isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected))
+        return !global_types.equal(graph, actual, expected);
     // Integer range errors retain the dedicated safety diagnostics_mod.
-    if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
-        !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
+    if (node.content == .int_literal) {
+        const represented = global_types.representation(graph, expected) orelse return false;
+        if (represented == .builtin and primitives.integerRange(represented.builtin, graph.target.stdTarget()) != null) return false;
+    }
+    if (global_types.hasNominalIdentity(graph, actual) or global_types.hasNominalIdentity(graph, expected)) return !global_types.equal(graph, actual, expected);
     return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
 }
 
+fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
+    const declaration = switch (graph.semanticType(ty)) {
+        .nominal => |id| graph.typeDefinition(id).declaration orelse return false,
+        else => return false,
+    };
+    const owner = graph.moduleForDeclaration(declaration) orelse return false;
+    return graph.modules.items[@intFromEnum(owner)].is_bundled_core and
+        std.mem.eql(u8, graph.text(graph.declaration(declaration).name), "UnicodeScalar");
+}
+
 fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
-    return switch (graph.semanticType(ty)) {
+    return switch (global_types.representation(graph, ty) orelse return false) {
         .builtin => |builtin| switch (builtin) {
             .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64 => true,
             else => false,
@@ -1278,6 +1968,10 @@ fn diagnoseInvalidComparisons(
 ) !bool {
     const graph = core.graph;
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .comparison => {},
+            else => continue,
+        }
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(id)) continue;
         const comparison = switch (node.content) {
@@ -1330,6 +2024,10 @@ fn diagnoseInvalidPointerOperations(
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.nodes.items, 0..) |node, raw| {
+        switch (node.content) {
+            .pointer_assignment, .array_index, .array_store => {},
+            else => continue,
+        }
         const node_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
         if (reachable) |set| if (!set.containsNode(node_id)) continue;
         switch (node.content) {
@@ -1415,7 +2113,6 @@ fn diagnoseInvalidPointerOperations(
     }
     for (graph.bindings.items, 0..) |destination, raw| {
         const destination_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-        if (reachable) |set| if (!set.containsBinding(destination_id)) continue;
         const initialization = destination.initialization orelse continue;
         const node = graph.node(initialization);
         const child = switch (node.content) {
@@ -1428,6 +2125,7 @@ fn diagnoseInvalidPointerOperations(
             else => continue,
         };
         if (pointer.mutability != .read_write) continue;
+        if (reachable) |set| if (!set.containsBinding(destination_id)) continue;
         const binding = switch (graph.node(child).content) {
             .binding_use => |value| value,
             else => continue,
@@ -1479,104 +2177,6 @@ fn diagnoseConstantArrayIndex(
     return true;
 }
 
-fn diagnoseUnresolvedPropagatedReach(
-    allocator: std.mem.Allocator,
-    graph: *const global_sg.GlobalSemanticGraph,
-    modules: []const module_sg.ModuleSemanticGraph,
-    offsets: []const globalizer.Offsets,
-    diagnostics: *diagnostics_mod.Diagnostics,
-) !bool {
-    for (modules, offsets) |*module, offset| {
-        for (module.semantic.pending_operations.items) |operation| {
-            const call = switch (operation) {
-                .resolve_call => |value| value,
-                else => continue,
-            };
-            const node = graph.node(globalizer.globalNode(offset, call.node));
-            const resolved = switch (node.content) {
-                .function_call => |value| value,
-                else => continue,
-            };
-            const input = switch (graph.node(resolved.input).content) {
-                .struct_value_literal => |value| value,
-                else => continue,
-            };
-            const function = graph.functions.items[@intFromEnum(resolved.callee)];
-            if (input.fields.len >= function.input.len) continue;
-            const field = graph.fields.items[function.input.start + input.fields.len];
-            const fallback = field.default_value orelse continue;
-            const reach_id = switch (graph.node(fallback).content) {
-                .reach_directive => |value| value,
-                else => continue,
-            };
-            const reach = graph.reaches.items[@intFromEnum(reach_id)];
-            var message = std.array_list.Managed(u8).init(allocator);
-            defer message.deinit();
-            try message.print("cannot resolve reached argument '.{s}' with alternatives [", .{graph.text(field.name)});
-            for (graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
-                if (index != 0) try message.appendSlice(", ");
-                for (graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, segment_index| {
-                    if (segment_index != 0) try message.append('.');
-                    try message.appendSlice(graph.text(segment));
-                }
-            }
-            try message.appendSlice("] expected as '");
-            try appendTypeName(&message, graph, field.ty);
-            try message.append('\'');
-            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
-            const source = globalSource(offset, reference.source);
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, .{ .file_index = source.file_index, .offset = source.offset + @as(u32, @intCast(module.text(reference.name).len)) }),
-                .semantic,
-                "{s}",
-                .{message.items},
-            );
-            return true;
-        }
-    }
-    return false;
-}
-
-fn completePropagatedReachCalls(
-    core: *core_mod.Resolver,
-    modules: []const module_sg.ModuleSemanticGraph,
-    offsets: []const globalizer.Offsets,
-) !bool {
-    // A callee can acquire reached inputs after its callers have resolved.
-    // Rebuild those call inputs until their shape follows the final signature.
-    var changed = try core.completeTrackedReachedCalls();
-    for (modules, offsets) |*module, offset| {
-        for (module.semantic.pending_operations.items) |operation| {
-            const call = switch (operation) {
-                .resolve_call => |value| value,
-                else => continue,
-            };
-            const node = core.graph.nodes.items[@intFromEnum(globalizer.globalNode(offset, call.node))];
-            const callee = switch (node.content) {
-                .function_call => |value| value.callee,
-
-                else => continue,
-            };
-            const input_id = switch (node.content) {
-                .function_call => |value| value.input,
-
-                else => unreachable,
-            };
-            const input = core.graph.nodes.items[@intFromEnum(input_id)];
-            const literal = switch (input.content) {
-                .struct_value_literal => |value| value,
-                else => continue,
-            };
-            const fields = core.graph.function(callee).input;
-
-            if (literal.fields.len == fields.len) continue;
-            const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
-            if (try core.completeCallInputFieldsWithReach(fields, input_id, context)) changed = true;
-        }
-    }
-    return changed;
-}
-
 fn resolvePendingPhase(
     core: *core_mod.Resolver,
     expressions: *expression_mod.Resolver,
@@ -1597,7 +2197,9 @@ fn resolvePendingPhase(
     profile_io: ?std.Io,
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
+    const measurement = if (core.scan_profile) |profile| profile.begin(.pending_operations) else null;
     var changed = false;
+    defer if (measurement) |m| m.finish(changed);
     var write: usize = 0;
     const original_len = work.items.len;
     for (work.items[0..original_len]) |item| {
@@ -1631,7 +2233,13 @@ fn resolvePendingPhase(
             module,
             offsets[module_index],
             operation,
+            item.owner_function,
         ) catch |err| {
+            if (err == error.ComptimeExecutionPending) {
+                work.items[write] = item;
+                write += 1;
+                continue;
+            }
             if (err == error.ConflictingGenericArgument and operation == .resolve_call) {
                 if (diagnostics) |bag| {
                     const reference = module.semantic.external_refs.items[@intFromEnum(operation.resolve_call.callee)];
@@ -1665,29 +2273,29 @@ fn isActive(item: PendingWorkItem, reachable: ?*const reachability_mod.FunctionS
     return set.contains(owner);
 }
 
-/// ModuleSG owns relocatable storage for every lowered body. Selective
-/// semantizing publishes only the reachable bodies, so provisional binding
-/// types in the remaining dormant storage must not keep GlobalSG in its
-/// construction state. Any is used solely as a valid inert payload for those
-/// unreachable records; no published body can observe it.
-fn retireDormantBindingResolution(
-    graph: *global_sg.GlobalSemanticGraph,
-    reachable: *const reachability_mod.FunctionSet,
-    dormant_type: global_sg.GlobalTypeId,
-) !void {
+/// A unit requires concrete binding types only in its selected dependency
+/// closure. Pending slots in dormant bodies remain available for later work.
+fn hasSelectedUnresolvedBindingTypes(
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+) bool {
     for (0..graph.bindings.items.len) |raw| {
-        const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
+        const binding: global_sg.GlobalBindingId = @enumFromInt(raw);
         if (!graph.isBindingTypeUnresolved(binding)) continue;
-        if (reachable.containsBinding(binding)) continue;
-        try graph.resolveBindingType(binding, dormant_type);
+        if (reachable) |set| if (!set.containsBinding(binding)) continue;
+        return true;
     }
+    return false;
 }
 
 fn pendingOwnerTag(tag: PendingTag) PendingOwner {
     return switch (tag) {
-        .resolve_type => .types,
-        .resolve_call, .resolve_local_reach => .calls,
+        .resolve_type, .resolve_entity_value => .types,
+        .resolve_call, .resolve_function_signature => .calls,
         .resolve_index => .indexing,
+        .resolve_aggregate_literal,
+        .resolve_entry_call,
+        .resolve_value_type,
         .resolve_field,
         .resolve_binary,
         .resolve_comparison,
@@ -1753,6 +2361,7 @@ fn resolveTypeOperation(
 ) !resolution.Result {
     const value = switch (operation) {
         .resolve_type => |value| value,
+        .resolve_entity_value => return ownedResult(try generics.tryResolve(module_index, module, o, operation)),
         else => unreachable,
     };
     const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
@@ -1776,11 +2385,12 @@ fn resolvePendingOperation(
     module: *const module_sg.ModuleSemanticGraph,
     o: globalizer.Offsets,
     operation: module_entities.PendingOperation,
+    owner: ?global_sg.GlobalFunctionId,
 ) !resolution.Result {
     return switch (pendingOwner(operation)) {
         .types => resolveTypeOperation(core, generics, module_index, module, o, operation),
-        .calls => if (operation == .resolve_local_reach)
-            dispatch.resolveLocalReach(module, o, operation.resolve_local_reach)
+        .calls => if (operation == .resolve_function_signature)
+            ownedResult(try dispatch.generic_functions.tryResolve(module_index, module, o, operation))
         else
             dispatch.resolveCall(module_index, module, o, operation),
         .indexing => blk: {
@@ -1789,17 +2399,17 @@ fn resolvePendingOperation(
         },
         .core => blk: {
             if (operation == .resolve_binary) {
-                const contract_result = try dispatch.generic_functions.resolveContractArithmetic(module_index, module, o, operation.resolve_binary);
+                const contract_result = try dispatch.generic_functions.resolveContractArithmetic(module_index, o, operation.resolve_binary);
                 break :blk ownedResult(contract_result);
             }
             const core_result = try core.tryResolve(module_index, module, o, operation);
             if (core_result != .resolved and operation == .resolve_comparison) {
-                const contract_result = try dispatch.generic_functions.resolveContractComparison(module_index, module, o, operation.resolve_comparison);
+                const contract_result = try dispatch.generic_functions.resolveContractComparison(module_index, o, operation.resolve_comparison);
                 if (contract_result == .resolved) break :blk contract_result;
             }
             break :blk ownedResult(core_result);
         },
-        .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
+        .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation, owner)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
         .contracts => ownedResult(try contracts.tryResolve(module_index, module, o, operation)),
         .errors => ownedResult(try errors.tryResolve(module_index, module, o, operation)),
@@ -1822,6 +2432,49 @@ fn markUnresolvedTypeSlots(
             }
         }
     }
+}
+
+fn diagnoseTypeAliasCycles(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    core: *core_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    const edges = try allocator.alloc(?global_sg.GlobalTypeId, graph.types.items.len);
+    defer allocator.free(edges);
+    @memset(edges, null);
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            const pending = switch (operation) {
+                .resolve_type => |value| value,
+                else => continue,
+            };
+            const destination = globalizer.globalType(offsets[module_index], pending.destination);
+            if (!graph.isTypeUnresolved(destination)) continue;
+            const reference = module.semantic.external_refs.items[@intFromEnum(pending.external)];
+            if (reference.generic_arguments != null or reference.computed_type != null or reference.projection_base != null) continue;
+            edges[@intFromEnum(destination)] = try core.resolveTypeValue(module_index, reference);
+        }
+    }
+    for (edges, 0..) |edge, raw| {
+        var current = edge orelse continue;
+        for (0..edges.len) |_| {
+            if (@intFromEnum(current) == raw) {
+                // The diagnostic walk runs only after resolution stalls. No
+                // dependency index or cycle state survives publication.
+                for (graph.nodes.items) |node| {
+                    if (node.content != .type_literal or @intFromEnum(node.content.type_literal) != raw) continue;
+                    try diagnostics.add(diagnosticLocation(graph, diagnostics, node.source), .semantic, "cyclic type alias", .{});
+                    return true;
+                }
+                break;
+            }
+            current = edges[@intFromEnum(current)] orelse break;
+        }
+    }
+    return false;
 }
 
 fn diagnoseUnresolvedQualifiedTypes(
@@ -1879,7 +2532,7 @@ fn diagnoseUnresolvedQualifiedTypes(
 
 fn resolveQualifiedChoiceOptions(core: *core_mod.Resolver, diagnostics: ?*diagnostics_mod.Diagnostics) !bool {
     const graph = core.graph;
-    for (graph.variants.items) |*variant| {
+    for (graph.variants.items, 0..) |variant, index| {
         const qualifier = variant.qualifier orelse continue;
         const source = variant.source;
         if (source.file_index >= graph.files.items.len) return error.InvalidChoiceOptionSource;
@@ -1905,8 +2558,10 @@ fn resolveQualifiedChoiceOptions(core: *core_mod.Resolver, diagnostics: ?*diagno
                 return true;
             }
         }
-        variant.option_decl = found orelse return error.UnknownChoiceOption;
-        variant.qualifier = null;
+        var resolved = variant;
+        resolved.option_decl = found orelse return error.UnknownChoiceOption;
+        resolved.qualifier = null;
+        try graph.setVariant(core.allocator, @enumFromInt(index), resolved);
     }
     return false;
 }
@@ -1941,7 +2596,9 @@ fn diagnosePrivateFields(
             const field = global_types.findField(graph, value_ty, name) orelse continue;
             if (field.field.source.file_index >= graph.files.items.len) continue;
             const owner_module = graph.files.items[field.field.source.file_index].module;
-            if (@intFromEnum(owner_module) == module_index) continue;
+            if (graph.sameModuleNamespace(owner_module, @enumFromInt(module_index))) continue;
+            if (graph.modules.items[module_index].is_bundled_core and
+                graph.modules.items[@intFromEnum(owner_module)].is_bundled_core) continue;
             try diagnostics.add(
                 diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], access.source)),
                 .semantic,
@@ -1951,31 +2608,46 @@ fn diagnosePrivateFields(
             return true;
         }
     }
-    // A contextual struct literal can initialize a field without producing a
-    // field-access operation. Check its resolved type after construction has
-    // filled the literal, including when it was passed through an assignment.
+    // Check contextual construction against destination fields, including
+    // lists whose shape cannot be materialized as the requested record.
+    for (graph.bindings.items) |binding| {
+        const initialization = binding.initialization orelse continue;
+        const node = graph.node(initialization);
+        if (node.content != .list_literal and node.content != .struct_value_literal) continue;
+        if (try diagnosePrivateConstruction(graph, binding.ty, node.source, diagnostics)) return true;
+    }
     for (graph.nodes.items) |node| {
-        const literal = switch (node.content) {
-            .struct_value_literal => |value| value,
-            else => continue,
-        };
-        const ty = node.ty orelse continue;
-        if (node.source.file_index >= graph.files.items.len) continue;
-        const caller_module = graph.files.items[node.source.file_index].module;
-        for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
-            const name = graph.text(value_field.name);
-            if (!std.mem.startsWith(u8, name, "_")) continue;
-            const field = global_types.findField(graph, ty, name) orelse continue;
-            if (field.field.source.file_index >= graph.files.items.len) continue;
-            if (graph.files.items[field.field.source.file_index].module == caller_module) continue;
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, node.source),
-                .semantic,
-                "field '{s}' is private to its module",
-                .{name},
-            );
-            return true;
-        }
+        if (node.content != .struct_value_literal) continue;
+        if (try diagnosePrivateConstruction(graph, node.ty orelse continue, node.source, diagnostics)) return true;
+    }
+    return false;
+}
+
+fn diagnosePrivateConstruction(
+    graph: *const global_sg.GlobalSemanticGraph,
+    ty: global_sg.GlobalTypeId,
+    source: primitives.SourceRef,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    if (@intFromEnum(ty) >= graph.types.items.len) return false;
+    const fields = global_types.fields(graph, ty) orelse return false;
+    if (source.file_index >= graph.files.items.len) return false;
+    const caller_module = graph.files.items[source.file_index].module;
+    for (graph.fields.items[fields.start..][0..fields.len]) |field| {
+        const name = graph.text(field.name);
+        if (!std.mem.startsWith(u8, name, "_")) continue;
+        if (field.source.file_index >= graph.files.items.len) continue;
+        const owner_module = graph.files.items[field.source.file_index].module;
+        if (graph.sameModuleNamespace(owner_module, caller_module)) continue;
+        if (graph.modules.items[@intFromEnum(caller_module)].is_bundled_core and
+            graph.modules.items[@intFromEnum(owner_module)].is_bundled_core) continue;
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, source),
+            .semantic,
+            "field '{s}' is private to its module",
+            .{name},
+        );
+        return true;
     }
     return false;
 }
@@ -2010,9 +2682,15 @@ fn diagnoseMissingArrayTypeContext(graph: *const global_sg.GlobalSemanticGraph, 
     return false;
 }
 
-fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !bool {
+fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, reachable: ?*const reachability_mod.FunctionSet, diagnostics: *diagnostics_mod.Diagnostics, aggregates_only: bool) !bool {
     for (graph.bindings.items, 0..) |binding, raw| {
-        if (!graph.isBindingTypeUnresolved(@enumFromInt(raw))) continue;
+        const id: global_sg.GlobalBindingId = @enumFromInt(raw);
+        if (!graph.isBindingTypeUnresolved(id)) continue;
+        if (reachable) |set| if (!set.containsBinding(id)) continue;
+        if (aggregates_only) {
+            const initializer = binding.initialization orelse continue;
+            if (graph.node(initializer).content != .struct_value_literal) continue;
+        }
         if (binding.name.len == 0 or binding.deferred_initialization) {
             try diagnostics.add(diagnosticLocation(graph, diagnostics, binding.source), .semantic, "cannot infer the type of this value; add an explicit type annotation", .{});
         } else {
@@ -2031,14 +2709,58 @@ fn diagnoseContractRuntimeBindings(
     for (graph.bindings.items, 0..) |binding, raw| {
         const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
         const contract_use = contracts.runtimeBindingContract(binding_id) orelse continue;
-        const name = graph.text(graph.declarations.items[@intFromEnum(contract_use.declaration)].name);
+        const name = graph.familyDefinitionName(contract_use.declaration);
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
-            "contract '{s}' has no runtime representation; use a concrete type or Virtual#(.contract: {s})",
+            "contract '{s}' has no runtime representation; use a concrete type or Virtual#({s})",
             .{ name, name },
         );
         return true;
+    }
+    return false;
+}
+
+fn diagnoseUnknownNames(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    core: *const core_mod.Resolver,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        operations: for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const value = switch (operation) {
+                .resolve_name_use => |item| item,
+                else => continue,
+            };
+            if (value.module_path != null or resolved[flat]) continue;
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |item| globalizer.globalFunction(offsets[module_index], item) else null
+            else
+                null;
+            if (reachable != null and owner != null and !reachable.?.contains(owner.?)) continue;
+            const name = module.text(value.name);
+            // A visible declaration can still be waiting for its type or a
+            // selector. Preserve its more specific diagnostic rather than
+            // misreporting a declared name as absent.
+            for (graph.declarations.items, 0..) |declaration, raw| {
+                if (std.mem.eql(u8, graph.text(declaration.name), name) and
+                    core.declarationVisible(module_index, @enumFromInt(@as(u32, @intCast(raw))), null)) continue :operations;
+            }
+            for (graph.types.items) |ty| switch (ty) {
+                .builtin => |builtin| if (std.mem.eql(u8, @tagName(builtin), name)) {
+                    continue :operations;
+                },
+                else => {},
+            };
+            try diagnostics.add(diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], value.source)), .semantic, "unknown name '{s}' in this scope", .{name});
+            return true;
+        }
     }
     return false;
 }
@@ -2182,33 +2904,18 @@ fn declarationNameExistsInModule(
     return false;
 }
 
-fn functionDeclarationVisibleForDiagnostic(
-    graph: *const global_sg.GlobalSemanticGraph,
-    current_module: usize,
-    declaration: global_sg.GlobalDeclId,
-    qualified_module: ?global_sg.GlobalModuleId,
-) bool {
-    const owner = graph.moduleForDeclaration(declaration) orelse return false;
-    const own_module = @intFromEnum(owner) == current_module;
-    const name = graph.text(graph.declarations.items[@intFromEnum(declaration)].name);
-    const core_peer = graph.modules.items[current_module].is_bundled_core and
-        graph.modules.items[@intFromEnum(owner)].is_bundled_core;
-    if (!own_module and !core_peer and std.mem.startsWith(u8, name, "_")) return false;
-    if (qualified_module) |wanted| return owner == wanted;
-    return own_module or graph.modules.items[@intFromEnum(owner)].is_bundled_core;
-}
-
 fn visibleFunctionNameExists(
-    graph: *const global_sg.GlobalSemanticGraph,
+    core: *const core_mod.Resolver,
     current_module: usize,
     qualified_module: ?global_sg.GlobalModuleId,
     name: []const u8,
 ) bool {
+    const graph = core.graph;
     for (graph.declarations.items, 0..) |declaration, raw| {
         if (declaration.kind != .function and declaration.kind != .test_function) continue;
         if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-        if (functionDeclarationVisibleForDiagnostic(graph, current_module, id, qualified_module)) return true;
+        if (core.declarationVisible(current_module, id, qualified_module)) return true;
     }
     return false;
 }
@@ -2469,6 +3176,30 @@ fn diagnoseUnresolvedIndex(
     return false;
 }
 
+fn diagnoseDeniedCopy(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.nodes.items, 0..) |node, raw| {
+        if (node.content != .denied_implicit_copy) continue;
+        if (reachable) |set| if (!set.containsNode(@enumFromInt(raw))) continue;
+        const ty = node.ty orelse continue;
+        var type_name = std.array_list.Managed(u8).init(allocator);
+        defer type_name.deinit();
+        try appendTypeName(&type_name, graph, ty);
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, node.source),
+            .semantic,
+            "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+            .{type_name.items},
+        );
+        return true;
+    }
+    return false;
+}
+
 fn diagnoseUnresolvedCopy(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
@@ -2532,6 +3263,41 @@ fn appendAmbiguousCallPrefix(
         try message.appendSlice("' for arguments ");
 }
 
+fn diagnoseUnresolvedFunctionSignatures(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items) |operation| {
+            defer flat += 1;
+            if (resolved[flat]) continue;
+            const signature = switch (operation) {
+                .resolve_function_signature => |value| value,
+                else => continue,
+            };
+            const function = graph.function(globalizer.globalFunction(offsets[module_index], signature.function));
+            for ([_]?global_sg.GlobalTypeId{ function.input_type, function.output_type }, 0..) |maybe_type, index| {
+                const ty = maybe_type orelse continue;
+                if (global_types.fields(graph, ty) != null) continue;
+                const represented = global_types.representation(graph, ty) orelse continue;
+                if (represented == .generic and global_types.genericInstance(graph, ty) == null) continue;
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, graph.declaration(function.declaration).source),
+                    .semantic,
+                    "function {s} signature must be a record type",
+                    .{if (index == 0) "input" else "output"},
+                );
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 fn diagnoseUnresolvedCall(
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -2580,13 +3346,13 @@ fn diagnoseUnresolvedCall(
                     try diagnostics.add(location, .semantic, "cannot call binding '{s}': expected a CFunctionPointer value", .{name});
                 } else {
                     const declaration = switch (graph.resolvedSemanticType(ty).?) {
-                        .declared => |id| graph.declaration(id),
+                        .nominal => |id| graph.typeDefinition(id),
                         else => unreachable,
                     };
                     const signature = graph.function(declaration.function_id.?);
                     const input = globalizer.globalNode(offsets[module_index], call.input);
                     if (generic_functions.core.matchCallInput(signature.input, input) == .applicable) {
-                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': .ffi uses reach [ffi] and requires a ForeignFunctionInterface capability", .{name});
+                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': requires an explicit or lexically assumed ForeignFunctionInterface capability", .{name});
                     } else {
                         try diagnostics.add(location, .semantic, "arguments do not match the C callback signature of '{s}'", .{name});
                     }
@@ -2613,7 +3379,8 @@ fn diagnoseUnresolvedCall(
             }
             for (try graph.declarationsNamed(allocator, name)) |id| {
                 const declaration = graph.declaration(id);
-                if (declaration.struct_layout != .c_incomplete or !functionDeclarationVisibleForDiagnostic(graph, module_index, id, qualified_module)) continue;
+                const ty = declaration.type_id orelse continue;
+                if (global_types.incompleteDeclaration(graph, ty) == null or !generic_functions.core.declarationVisible(module_index, id, qualified_module)) continue;
                 try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
                 return true;
             }
@@ -2641,7 +3408,7 @@ fn diagnoseUnresolvedCall(
                     );
                     return true;
                 }
-            } else if (!visibleFunctionNameExists(graph, module_index, null, name)) {
+            } else if (!visibleFunctionNameExists(generic_functions.core, module_index, null, name)) {
                 try diagnostics.add(location, .semantic, "no function named '{s}' exists", .{name});
                 return true;
             }
@@ -2656,7 +3423,7 @@ fn diagnoseUnresolvedCall(
             for (graph.functions.items, 0..) |function, raw| {
                 const declaration = graph.declaration(function.declaration);
                 if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
-                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
+                if (!generic_functions.core.declarationVisible(module_index, function.declaration, qualified_module)) continue;
                 try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
             }
             var input_complete = true;
@@ -2688,35 +3455,33 @@ fn diagnoseUnresolvedCall(
                 if (contextual_matches < 2) continue;
             }
 
-            var constraint_failures: std.ArrayList(generic_functions_mod.ConstraintFailure) = .empty;
-            defer constraint_failures.deinit(allocator);
-            var constraint_actual_name = std.array_list.Managed(u8).init(allocator);
-            defer constraint_actual_name.deinit();
-            try generic_functions.collectGenericConstraintFailures(
+            var call_failure = try generic_functions.probeGenericCallFailure(
                 module_index,
                 module,
                 reference,
                 input_id,
-                reach_context.Context.fromModule(module, offsets[module_index], call.visible_bindings, call.owner_function),
-                &constraint_failures,
-                &constraint_actual_name,
-                appendTypeName,
+                call_context.Context.fromModule(offsets[module_index], call.owner_function),
             );
-            if (constraint_failures.items.len != 0) {
-                const failure = constraint_failures.items[0];
+            defer call_failure.deinit(allocator);
+            if (call_failure.constraint) |failure| {
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, source),
                     .semantic,
                     "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
-                        constraint_actual_name.items,
-                        graph.text(graph.declaration(failure.contract_decl).name),
+                        failure.actual_name,
+                        graph.familyDefinitionName(failure.contract_decl),
                         failure.parameter_name,
                         graph.text(graph.declaration(failure.function).name),
                     },
                 );
                 return true;
             }
+
+            if (!call_failure.conflicting_missing_inputs) if (call_failure.missing_input) |missing| {
+                try diagnostics.add(location, .semantic, "call to '{s}' is missing required argument '.{s}'; supply it explicitly or through a lexical 'assume'", .{ name, missing });
+                return true;
+            };
 
             // Materialized specializations must not hide the intrinsic's useful
             // rejection diagnostic for an incompatible explicit type argument.
@@ -2780,10 +3545,18 @@ fn diagnoseUnresolvedCall(
             };
             var applicable_functions: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer applicable_functions.deinit(allocator);
+            var missing_input: ?primitives.StringRange = null;
+            var conflicting_missing_inputs = false;
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
                 if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
-                switch (diagnostic_core.matchCallInput(function.input, input_id)) {
+                const inspection = diagnostic_core.inspectRecordFields(function.input, input);
+                if (inspection.missing) |missing| {
+                    if (missing_input) |previous| {
+                        if (!std.mem.eql(u8, graph.text(previous), graph.text(missing))) conflicting_missing_inputs = true;
+                    } else missing_input = missing;
+                }
+                switch (inspection.status) {
                     .applicable => {},
                     .no_match, .deferred => continue,
                 }
@@ -2847,12 +3620,17 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
+            if (applicable_functions.items.len == 0 and !conflicting_missing_inputs) if (missing_input) |missing| {
+                try diagnostics.add(location, .semantic, "call to '{s}' is missing required argument '.{s}'; supply it explicitly or through a lexical 'assume'", .{ name, graph.text(missing) });
+                return true;
+            };
+
+            if (candidates.items.len == 1 and diagnostic_core.recordFieldNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];
                 var missing_contract: ?struct {
                     actual: global_sg.GlobalTypeId,
                     contract_type: global_sg.GlobalTypeId,
-                    declaration: global_sg.GlobalDeclId,
+                    declaration: global_sg.GlobalFamilyDefinitionId,
                     field: global_sg.Field,
                     source: primitives.SourceRef,
                 } = null;
@@ -2874,7 +3652,7 @@ fn diagnoseUnresolvedCall(
                         other_mismatch = true;
                         continue;
                     };
-                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
+                    if (global_types.equal(graph, actual, field.ty) or diagnostic_core.valueTypesCompatible(actual, field.ty)) continue;
 
                     var expected_contract_type = field.ty;
                     var actual_concrete = actual;
@@ -2897,11 +3675,11 @@ fn diagnoseUnresolvedCall(
                         else => {},
                     }
 
-                    const declaration = contracts.contractDeclarationForType(expected_contract_type) orelse {
+                    const declaration = contracts.contractDefinitionForType(expected_contract_type) orelse {
                         other_mismatch = true;
                         continue;
                     };
-                    if (contracts.concreteImplements(actual_concrete, expected_contract_type)) {
+                    if (try contracts.concreteImplements(actual_concrete, expected_contract_type)) {
                         other_mismatch = true;
                         continue;
                     }
@@ -2929,7 +3707,7 @@ fn diagnoseUnresolvedCall(
                         "type '{s}' does not implement contract '{s}' required by parameter '.{s}' of '{s}'",
                         .{
                             actual_name.items,
-                            graph.text(graph.declaration(missing.declaration).name),
+                            graph.familyDefinitionName(missing.declaration),
                             graph.text(missing.field.name),
                             name,
                         },
@@ -2947,27 +3725,6 @@ fn diagnoseUnresolvedCall(
                     );
                     return true;
                 };
-            }
-
-            var reach_details = std.array_list.Managed(u8).init(allocator);
-            defer reach_details.deinit();
-            var reach_candidate_count: usize = 0;
-            for (candidates.items) |candidate| {
-                const function = graph.functions.items[@intFromEnum(candidate)];
-                if (diagnostic_core.matchCallInput(function.input, input_id) != .applicable) continue;
-                if (try appendOmittedReachDefaults(&reach_details, graph, name, function, input))
-                    reach_candidate_count += 1;
-            }
-            if (reach_candidate_count != 0) {
-                var message = std.array_list.Managed(u8).init(allocator);
-                defer message.deinit();
-                try message.print("function '{s}' exists, but its arguments do not match.\nCandidates with omitted reach defaults:\n", .{name});
-                try message.appendSlice(reach_details.items);
-                if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
-                    try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
-                try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
-                try diagnostics.add(location, .semantic, "{s}", .{message.items});
-                return true;
             }
 
             var message = std.array_list.Managed(u8).init(allocator);
@@ -3032,177 +3789,7 @@ fn appendFieldShape(buffer: *std.array_list.Managed(u8), graph: *const global_sg
     try buffer.append(')');
 }
 
-fn appendOmittedReachDefaults(
-    buffer: *std.array_list.Managed(u8),
-    graph: *const global_sg.GlobalSemanticGraph,
-    name: []const u8,
-    function: global_sg.Function,
-    input: anytype,
-) !bool {
-    var omitted_count: usize = 0;
-    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
-        if (callInputSuppliesField(graph, input, field, field_index)) continue;
-        const fallback = field.default_value orelse continue;
-        if (graph.node(fallback).content == .reach_directive) omitted_count += 1;
-    }
-    if (omitted_count == 0) return false;
-
-    if (buffer.items.len != 0) try buffer.append('\n');
-    try buffer.appendSlice("  - ");
-    try buffer.appendSlice(name);
-    try buffer.append('(');
-    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
-        if (index != 0) try buffer.appendSlice(", ");
-        try buffer.append('.');
-        try buffer.appendSlice(graph.text(field.name));
-        try buffer.appendSlice(": ");
-        try appendTypeName(buffer, graph, field.ty);
-        const fallback = field.default_value orelse continue;
-        const reach_id = switch (graph.node(fallback).content) {
-            .reach_directive => |value| value,
-            else => continue,
-        };
-        try buffer.appendSlice(" = reach ");
-        try appendReachAlternatives(buffer, graph, reach_id);
-    }
-    try buffer.appendSlice(") -> ");
-    try appendFieldShape(buffer, graph, function.output);
-    try buffer.appendSlice("\n    omitted reach defaults:");
-
-    for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, field_index| {
-        if (callInputSuppliesField(graph, input, field, field_index)) continue;
-        const fallback = field.default_value orelse continue;
-        const reach_id = switch (graph.node(fallback).content) {
-            .reach_directive => |value| value,
-            else => continue,
-        };
-        try buffer.appendSlice("\n      - .");
-        try buffer.appendSlice(graph.text(field.name));
-        try buffer.appendSlice(" uses reach [");
-        try appendReachAlternatives(buffer, graph, reach_id);
-        try buffer.appendSlice("] expected as '");
-        try appendTypeName(buffer, graph, field.ty);
-        try buffer.append('\'');
-    }
-    return true;
-}
-
-fn callInputSuppliesField(
-    graph: *const global_sg.GlobalSemanticGraph,
-    input: anytype,
-    field: global_sg.Field,
-    field_index: usize,
-) bool {
-    for (graph.value_fields.items[input.fields.start..][0..input.fields.len], 0..) |supplied, supplied_index| {
-        if (supplied_index < input.dispatch_prefix_positional_count or graph.text(supplied.name).len == 0) {
-            if (supplied_index == field_index) return true;
-        } else if (std.mem.eql(u8, graph.text(supplied.name), graph.text(field.name))) return true;
-    }
-    return false;
-}
-
-fn appendReachAlternatives(
-    buffer: *std.array_list.Managed(u8),
-    graph: *const global_sg.GlobalSemanticGraph,
-    reach_id: global_sg.GlobalReachId,
-) !void {
-    const reach = graph.reaches.items[@intFromEnum(reach_id)];
-    for (graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len], 0..) |alternative, index| {
-        if (index != 0) try buffer.appendSlice(", ");
-        for (graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len], 0..) |segment, segment_index| {
-            if (segment_index != 0) try buffer.append('.');
-            try buffer.appendSlice(graph.text(segment));
-        }
-    }
-}
-
-fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
-    // Candidate signatures may still contain unresolved slots while reporting
-    // a failed call. Their poison payload is not a declaration to inspect.
-    if (graph.isTypeUnresolved(ty)) {
-        try buffer.appendSlice("<unresolved>");
-        return;
-    }
-    if (global_types.arrayLength(graph, ty)) |length| {
-        const element = global_types.arrayElement(graph, ty) orelse return error.InvalidArrayType;
-        try buffer.append('[');
-        var storage: [32]u8 = undefined;
-        try buffer.appendSlice(try std.fmt.bufPrint(&storage, "{d}", .{length}));
-        try buffer.append(']');
-        try appendTypeName(buffer, graph, element);
-        return;
-    }
-    switch (graph.semanticType(ty)) {
-        .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
-        .declared => |declaration| try buffer.appendSlice(graph.text(graph.declaration(declaration).name)),
-        .generic => |generic| {
-            const base_name = graph.text(graph.declaration(generic.base).name);
-            if (std.mem.eql(u8, base_name, "Nullable")) {
-                for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| switch (argument.value) {
-                    .type => |value| {
-                        try buffer.append('?');
-                        try appendTypeName(buffer, graph, value);
-                        return;
-                    },
-                    else => {},
-                };
-            }
-            try buffer.appendSlice(base_name);
-            try buffer.appendSlice("#(");
-            for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
-                if (index != 0) try buffer.appendSlice(", ");
-                const name = graph.text(argument.name);
-                if (name.len != 0) {
-                    try buffer.append('.');
-                    try buffer.appendSlice(name);
-                }
-                switch (argument.value) {
-                    .type => |value| {
-                        if (name.len != 0) try buffer.appendSlice(": ");
-                        try appendTypeName(buffer, graph, value);
-                    },
-                    .comptime_int => |value| {
-                        if (name.len != 0) try buffer.appendSlice(" = ");
-                        var storage: [32]u8 = undefined;
-                        try buffer.appendSlice(try std.fmt.bufPrint(&storage, "{d}", .{value}));
-                    },
-                }
-            }
-            try buffer.append(')');
-        },
-        .pointer => |pointer| {
-            try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
-            try appendTypeName(buffer, graph, pointer.child);
-        },
-        .nullable => |child| {
-            try buffer.append('?');
-            try appendTypeName(buffer, graph, child);
-        },
-        .structural_choice => |choice| try appendChoiceTypeName(buffer, graph, choice.variants),
-        .inferred_choice => |choice| try appendChoiceTypeName(buffer, graph, choice.variants),
-        .array => unreachable,
-        .structural => try buffer.appendSlice("{...}"),
-        else => try buffer.appendSlice("<type>"),
-    }
-}
-
-fn appendChoiceTypeName(
-    buffer: *std.array_list.Managed(u8),
-    graph: *const global_sg.GlobalSemanticGraph,
-    variants: global_sg.VariantRange,
-) anyerror!void {
-    try buffer.append('(');
-    for (graph.variants.items[variants.start..][0..variants.len], 0..) |variant, index| {
-        if (index != 0) try buffer.appendSlice(", ");
-        try buffer.appendSlice("..");
-        try buffer.appendSlice(graph.text(variant.name));
-        if (variant.payload_type) |payload| {
-            try buffer.appendSlice(": ");
-            try appendTypeName(buffer, graph, payload);
-        }
-    }
-    try buffer.append(')');
-}
+pub const appendTypeName = @import("type_names.zig").appendTypeName;
 
 fn argumentFieldLocation(
     graph: *const global_sg.GlobalSemanticGraph,
@@ -3211,6 +3798,7 @@ fn argumentFieldLocation(
     field_name: []const u8,
 ) tok.Location {
     const value_location = diagnosticLocation(graph, diagnostics, value_source);
+    if (@intFromEnum(value_location.file) >= diagnostics.source_db.files.len) return value_location;
     const file = diagnostics.source_db.get(value_location.file);
     const end = @min(@as(usize, value_location.offset), file.source.len);
     var line_start = end;
@@ -3231,17 +3819,7 @@ fn argumentFieldLocation(
 }
 
 fn diagnosticLocation(graph: *const global_sg.GlobalSemanticGraph, diagnostics: *const diagnostics_mod.Diagnostics, source: @import("../primitives/schema.zig").SourceRef) tok.Location {
-    if (source.file_index < graph.files.items.len) {
-        const graph_file = graph.files.items[source.file_index];
-        const wanted_name = graph.text(graph_file.path);
-        const wanted_dir = graph.text(graph.modules.items[@intFromEnum(graph_file.module)].dir);
-        for (diagnostics.source_files, 0..) |file, index| {
-            if (std.mem.eql(u8, std.fs.path.basename(file.path), wanted_name) and
-                std.mem.eql(u8, std.fs.path.dirname(file.path) orelse ".", wanted_dir))
-                return .{ .file = @enumFromInt(@as(u32, @intCast(index))), .offset = source.offset };
-        }
-    }
-    return .{ .file = @enumFromInt(0), .offset = source.offset };
+    return @import("source_location.zig").location(graph, diagnostics, source);
 }
 
 fn dumpUnresolved(
@@ -3298,6 +3876,10 @@ fn dumpUnresolved(
                         "global sema unresolved: module={d} dir={s} op=resolve_field name={s} node={d}\n",
                         .{ module_index, module.module_dir, module.text(field.field_name), @intFromEnum(field.node) },
                     ),
+                    .resolve_type => |value| {
+                        const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
+                        std.debug.print("global sema unresolved: module={d} dir={s} op=resolve_type name={s} source={d} computed={} projection={}\n", .{ module_index, module.module_dir, module.text(reference.name), reference.source.offset, reference.computed_type != null, reference.projection_base != null });
+                    },
                     else => std.debug.print(
                         "global sema unresolved: module={d} dir={s} op={s}\n",
                         .{ module_index, module.module_dir, @tagName(operation) },
@@ -3332,7 +3914,7 @@ test "pending operation ownership is explicit" {
 test "global semantizer accepts an empty program" {
     const allocator = std.testing.allocator;
     var result = try semantize(allocator, &.{});
-    defer result.graph.deinit(allocator);
+    defer result.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
@@ -3354,15 +3936,21 @@ test "call diagnostic type names tolerate unresolved slots" {
 fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
     const failure = generics.comptime_failure orelse return;
     if (diagnostics) |bag| {
-        try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
+        if (failure.unknown_name) |name| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "unknown name '{s}' in this scope", .{name});
+        } else if (failure.call_name) |name| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s} in call to '{s}'", .{ failure.reason, name });
+        } else if (failure.materialization_error) |err| {
+            try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}: {s}", .{ failure.reason, @errorName(err) });
+        } else try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
         return error.Reported;
     }
 }
 
-fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
+fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver, optional: ?generic_mod.Resolver.ArgumentFailure) !void {
     const sink = diagnostics orelse return;
-    const failure = generics.argument_failure orelse return;
-    const declaration = graph.declaration(failure.declaration);
+    const failure = optional orelse return;
+    const declaration = graph.familyDefinition(failure.declaration);
     var source = declaration.source;
     // External type holes retain the application's location in ModuleSG.
     // Recover it only on failure, without adding source maps to hot type tables.
@@ -3377,7 +3965,7 @@ fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, dia
         }
         break;
     }
-    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
+    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.familyDefinitionName(failure.declaration) });
 }
 
 fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?contract_mod.ParticipantConformanceFailure) !void {
@@ -3405,4 +3993,384 @@ fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *con
         return error.Reported;
     }
     return error.InvalidParticipantConformance;
+}
+
+test "pending worklists retain operation identities across module extension" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.semantic.deinit(a);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.semantic.deinit(a);
+    const operation: module_entities.PendingOperation = .{ .resolve_name_use = .{ .node = @enumFromInt(0), .name = .{ .start = 0, .len = 0 } } };
+    try first.semantic.pending_operations.append(a, operation);
+    try second.semantic.pending_operations.append(a, operation);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var pending = try PendingWorklists.init(a, modules[0..1], offsets[0..1]);
+    defer pending.deinit(a);
+    const queue = pending.forPhase(pendingPhase(operation));
+    try std.testing.expectEqual(@as(u32, 0), queue.items[0].flat_index);
+    queue.clearRetainingCapacity();
+    try pending.appendModules(a, &modules, &offsets);
+    try std.testing.expectEqual(@as(usize, 1), queue.items.len);
+    try std.testing.expectEqual(@as(u32, 1), queue.items[0].flat_index);
+    try std.testing.expectEqual(@as(u32, 1), queue.items[0].module_index);
+    try pending.appendModules(a, &modules, &offsets);
+    try std.testing.expectEqual(@as(usize, 1), queue.items.len);
+    try std.testing.expectError(error.InvalidPendingModulePrefix, pending.appendModules(a, modules[0..1], offsets[0..1]));
+}
+
+test "resolution state preserves statuses and rolls back failed module extension" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.semantic.deinit(a);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.semantic.deinit(a);
+    const operation: module_entities.PendingOperation = .{ .resolve_name_use = .{ .node = @enumFromInt(0), .name = .{ .start = 0, .len = 0 } } };
+    try first.semantic.pending_operations.append(a, operation);
+    try second.semantic.pending_operations.append(a, operation);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var state = ResolutionState.init(a);
+    defer state.deinit(a);
+    try state.appendModules(a, modules[0..1], offsets[0..1]);
+    try state.finalized_functions.put(@enumFromInt(7), {});
+    state.resolved.items[0] = true;
+    state.invalid.items[0] = true;
+    state.worklists.operation_count = std.math.maxInt(u32);
+    try std.testing.expectError(error.TooManyPendingOperations, state.appendModules(a, &modules, &offsets));
+    try std.testing.expectEqual(@as(usize, 1), state.resolved.items.len);
+    try std.testing.expectEqual(@as(usize, 1), state.worklists.module_count);
+    try std.testing.expectEqual(@as(usize, 1), state.worklists.forPhase(pendingPhase(operation)).items.len);
+    state.worklists.operation_count = 1;
+    try state.appendModules(a, &modules, &offsets);
+    try std.testing.expect(state.finalized_functions.contains(@enumFromInt(7)));
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, state.resolved.items);
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, state.invalid.items);
+    try state.appendModules(a, &modules, &offsets);
+    try std.testing.expectEqual(@as(usize, 2), state.resolved.items.len);
+}
+
+fn extendResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const fixture_allocator = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.semantic.deinit(fixture_allocator);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.semantic.deinit(fixture_allocator);
+    const operation: module_entities.PendingOperation = .{ .resolve_name_use = .{ .node = @enumFromInt(0), .name = .{ .start = 0, .len = 0 } } };
+    try first.semantic.pending_operations.append(fixture_allocator, operation);
+    try second.semantic.pending_operations.appendNTimes(fixture_allocator, operation, 32);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var state = ResolutionState.init(allocator);
+    defer state.deinit(allocator);
+    try state.appendModules(allocator, modules[0..1], offsets[0..1]);
+    state.resolved.items[0] = true;
+    state.appendModules(allocator, &modules, &offsets) catch |err| {
+        try std.testing.expectEqualSlices(bool, &.{true}, state.resolved.items);
+        try std.testing.expectEqualSlices(bool, &.{false}, state.invalid.items);
+        try std.testing.expectEqual(@as(usize, 1), state.worklists.module_count);
+        try std.testing.expectEqual(@as(u32, 1), state.worklists.operation_count);
+        try std.testing.expectEqual(@as(usize, 1), state.worklists.forPhase(pendingPhase(operation)).items.len);
+        return err;
+    };
+}
+
+test "resolution state preserves published work on allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, extendResolutionWithAllocationFailures, .{});
+}
+
+test "semantic session retains construction state until explicit publication" {
+    const a = std.testing.allocator;
+    var session: Session = undefined;
+    try session.init(a, &.{}, .{});
+    defer session.deinit();
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+    try session.relocation.graph.types.append(a, .{ .builtin = .Any });
+    const id: global_sg.GlobalTypeId = @enumFromInt(0);
+    try session.relocation.graph.markTypeUnresolved(a, id);
+    try session.advance();
+    try std.testing.expect(session.relocation.graph.isTypeUnresolved(id));
+    try std.testing.expect(session.resolvers.core.graph == &session.relocation.graph);
+    const rounds = session.resolution.progress.profile_rounds;
+    try session.relocation.graph.resolveType(a, id, .{ .builtin = .Int32 });
+    try session.advance();
+    try std.testing.expect(session.resolution.progress.profile_rounds > rounds);
+    var result = try session.finish();
+    defer result.deinit(a);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.types.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
+    try std.testing.expectEqual(@as(usize, 0), session.relocation.graph.types.items.len);
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.advance());
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+}
+
+fn initializeSemanticSessionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try std.testing.allocator.dupe(u8, "session") };
+    defer module.deinit(std.testing.allocator);
+    var session: Session = undefined;
+    try session.init(allocator, &.{module}, .{});
+    defer session.deinit();
+    try session.advance();
+    var result = try session.finish();
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.modules.items.len);
+}
+
+test "semantic session releases partially initialized state on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, initializeSemanticSessionWithAllocationFailures, .{});
+}
+
+test "semantic session forbids reuse after publication fails" {
+    const a = std.testing.allocator;
+    var session: Session = undefined;
+    try session.init(a, &.{}, .{});
+    defer session.deinit();
+    try session.relocation.graph.types.append(a, .{ .builtin = .Any });
+    try session.relocation.graph.markTypeUnresolved(a, @enumFromInt(0));
+    try session.advance();
+    try std.testing.expectError(error.UnsupportedGlobalSemantic, session.finish());
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.advance());
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+}
+
+test "semantic session appends modules and resumes with stable type identities" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .UInt8 } });
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    var session: Session = undefined;
+    try session.init(a, modules[0..1], .{ .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try session.advance();
+    const first_id = globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0));
+    try session.appendModules(&modules);
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+    try std.testing.expectEqual(@as(usize, 2), session.resolvers.core.modules.len);
+    try std.testing.expectEqual(first_id, globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0)));
+    const checkpoint = session.relocation.graph.checkpoint();
+    try session.appendModules(&modules);
+    try std.testing.expectEqualDeep(checkpoint, session.relocation.graph.checkpoint());
+    try session.advance();
+    const second_id = globalizer.globalType(session.relocation.offsets.items[1], @enumFromInt(0));
+    var result = try session.finish();
+    defer result.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[@intFromEnum(first_id)].builtin);
+    try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[@intFromEnum(second_id)].builtin);
+}
+
+test "semantic session invalidates propagation certificate after quiescent mutation" {
+    const a = std.testing.allocator;
+    var session: Session = undefined;
+    try session.init(a, &.{}, .{});
+    defer session.deinit();
+    const graph = &session.relocation.graph;
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const first: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .UInt8 } });
+    const second: global_sg.GlobalTypeId = @enumFromInt(@intFromEnum(first) + 1);
+    const literal: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(graph.nodes.items.len)));
+    const moved: global_sg.GlobalNodeId = @enumFromInt(@intFromEnum(literal) + 1);
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = first, .content = .{ .int_literal = 1 } },
+        .{ .source = source, .ty = first, .content = .{ .move_value = literal } },
+    });
+    try session.advance();
+    try graph.setNodeType(a, literal, second);
+    var transaction = try session.beginTransaction();
+    defer transaction.deinit();
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+    try std.testing.expect(try session.resolvers.core.materializeBindingTypes());
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, second), graph.node(moved).ty);
+}
+
+test "semantic session rolls back a new module suffix" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .UInt8 } });
+    var session: Session = undefined;
+    try session.init(a, &.{first}, .{});
+    defer session.deinit();
+    try session.advance();
+    const checkpoint = session.relocation.graph.checkpoint();
+    const first_id = globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0));
+    var transaction = try session.beginTransaction();
+    defer transaction.deinit();
+    try session.appendNewModules(&.{second});
+    try session.advance();
+    transaction.rollback();
+    try std.testing.expectEqualDeep(checkpoint, session.relocation.graph.checkpoint());
+    try std.testing.expectEqual(@as(usize, 1), session.resolvers.core.modules.len);
+    try std.testing.expectEqual(first_id, globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0)));
+    try session.appendNewModules(&.{second});
+    try session.advance();
+    try std.testing.expectEqual(@as(usize, 2), session.resolvers.core.modules.len);
+}
+
+test "semantic session appends a fragment to its owner's namespace" {
+    const a = std.testing.allocator;
+    var original: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "module") };
+    defer original.deinit(a);
+    var fragment: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "module") };
+    defer fragment.deinit(a);
+    var wrong: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "other") };
+    defer wrong.deinit(a);
+    var session: Session = undefined;
+    try session.init(a, &.{original}, .{});
+    defer session.deinit();
+    try session.advance();
+    try std.testing.expectError(error.InvalidModuleFragment, session.appendNewModuleFragment(wrong, @enumFromInt(0)));
+    try session.appendNewModuleFragment(fragment, @enumFromInt(0));
+    try std.testing.expectEqual(session.relocation.graph.moduleNamespace(@enumFromInt(0)), session.relocation.graph.moduleNamespace(@enumFromInt(1)));
+}
+
+fn cloneResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var source = ResolutionState.init(a);
+    defer source.deinit(a);
+    source.worklists.module_count = 1;
+    source.worklists.operation_count = 1;
+    try source.worklists.types_and_generics.append(a, .{ .module_index = 0, .operation_index = 0, .flat_index = 0, .owner_function = null });
+    try source.resolved.append(a, false);
+    try source.invalid.append(a, false);
+    try source.finalized_functions.put(@enumFromInt(3), {});
+    source.progress.profile_rounds = 7;
+    var candidate = try source.clone(allocator);
+    defer candidate.deinit(allocator);
+    candidate.resolved.items[0] = true;
+    candidate.invalid.items[0] = true;
+    candidate.worklists.types_and_generics.clearRetainingCapacity();
+    _ = candidate.finalized_functions.remove(@enumFromInt(3));
+    candidate.progress.profile_rounds += 1;
+    try std.testing.expect(!source.resolved.items[0]);
+    try std.testing.expect(!source.invalid.items[0]);
+    try std.testing.expectEqual(@as(usize, 1), source.worklists.types_and_generics.items.len);
+    try std.testing.expect(source.finalized_functions.contains(@enumFromInt(3)));
+    try std.testing.expectEqual(@as(usize, 7), source.progress.profile_rounds);
+    try std.testing.expectEqual(@as(usize, 8), candidate.progress.profile_rounds);
+}
+
+test "resolution state clones isolate pending work and finalization" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneResolutionWithAllocationFailures, .{});
+}
+
+fn forkSemanticSession(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "accepted") };
+    defer module.deinit(a);
+    try module.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var accepted: Session = undefined;
+    try accepted.init(a, &.{module}, .{ .exhaustive_function_bodies = false });
+    defer accepted.deinit();
+    try accepted.advance();
+    const saved = accepted.relocation.graph.checkpoint();
+    const saved_rounds = accepted.resolution.progress.profile_rounds;
+    var candidate: Session = undefined;
+    try accepted.fork(&candidate, allocator, null);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.resolvers.core.graph == &candidate.relocation.graph);
+    try std.testing.expect(candidate.resolvers.generics.core == &candidate.resolvers.core);
+    try candidate.relocation.graph.types.append(allocator, .{ .builtin = .Any });
+    try candidate.relocation.graph.markTypeUnresolved(allocator, @enumFromInt(1));
+    try candidate.advance();
+    try std.testing.expectError(error.UnsupportedGlobalSemantic, candidate.finish());
+    try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
+    try std.testing.expectEqual(saved_rounds, accepted.resolution.progress.profile_rounds);
+    try accepted.advance();
+    var result = try accepted.finish();
+    defer result.deinit(a);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.types.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
+}
+
+test "semantic session forks reject candidate edits without changing accepted state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, forkSemanticSession, .{});
+}
+
+test "semantic session forks prepare independent module additions" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "retained") };
+    defer first.deinit(a);
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "submission") };
+    defer second.deinit(a);
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .UInt8 } });
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    var accepted: Session = undefined;
+    try accepted.init(a, modules[0..1], .{});
+    defer accepted.deinit();
+    try std.testing.expectError(error.InvalidSemanticSessionState, accepted.fork(&accepted, a, null));
+    try accepted.advance();
+    const saved = accepted.relocation.graph.checkpoint();
+    var candidate: Session = undefined;
+    try accepted.fork(&candidate, a, null);
+    defer candidate.deinit();
+    try candidate.appendModules(&modules);
+    try candidate.advance();
+    try std.testing.expectEqual(@as(usize, 2), candidate.resolvers.core.modules.len);
+    try std.testing.expectEqual(@as(usize, 1), accepted.resolvers.core.modules.len);
+    try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
+    var result = try candidate.finish();
+    defer result.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
+    try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[1].builtin);
+    try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
+}
+
+test "argument diagnostics tolerate absent source metadata" {
+    const a = std.testing.allocator;
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    const graph: global_sg.GlobalSemanticGraph = .{};
+    const location = argumentFieldLocation(&graph, &diagnostics, .{ .file_index = 0, .offset = 12 }, "value");
+    try std.testing.expectEqual(@import("../../1_base/source_db.zig").FileId.unknown, location.file);
+    try std.testing.expectEqual(@as(u32, 12), location.offset);
+}
+
+test "array diagnostics validate selected typed literals without assignments" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "values");
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 2 } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(1), .source = source });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(0), @enumFromInt(0) });
+    try graph.value_fields.append(a, .{ .name = name, .value = @enumFromInt(1) });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .list_literal = .{ .elements = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .array_literal = .{ .elements = .{ .start = 0, .len = 1 }, .element_type = @enumFromInt(0), .length = 2 } } },
+    });
+    var unit = reachability_mod.FunctionSet.init(a);
+    defer unit.deinit();
+    try std.testing.expect(!try diagnoseArrayAssignments(a, &graph, &unit, null));
+    // Neither literal is attached to a binding or assignment. Selecting only
+    // the record must still check its contextually typed list recursively.
+    try unit.nodes.put(@enumFromInt(2), {});
+    try std.testing.expect(try diagnoseArrayAssignments(a, &graph, &unit, null));
+    unit.nodes.clearRetainingCapacity();
+    try unit.nodes.put(@enumFromInt(3), {});
+    try std.testing.expect(try diagnoseArrayAssignments(a, &graph, &unit, null));
+    // The same selected literals are accepted once their dimensions agree.
+    graph.nodes.items[1].content.list_literal.elements.len = 2;
+    graph.nodes.items[3].content.array_literal.elements.len = 2;
+    try unit.nodes.put(@enumFromInt(2), {});
+    try std.testing.expect(!try diagnoseArrayAssignments(a, &graph, &unit, null));
+    try std.testing.expect(!try diagnoseArrayAssignments(a, &graph, null, null));
 }

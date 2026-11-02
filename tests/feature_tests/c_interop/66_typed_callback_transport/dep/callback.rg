@@ -1,7 +1,9 @@
-Comparator(.left: CInt, .right: CInt) -> (.result: CInt) : CFunctionPointer
-Entry : CStruct = (.callback: Comparator, .bias: CInt)
+Comparator(.left: CInt, .right: CInt) -> (.result: CInt): CFunctionPointer
+
+Entry: CStruct = (.callback: Comparator, .bias: CInt)
+
 implement ImplicitlyCopyable#(Entry) ()
 
-difference(.left: CInt, .right: CInt) -> (.result: CInt) : CFunction := {
+difference(.left: CInt, .right: CInt) -> (.result: CInt): CFunction := {
     result = left - right
 }

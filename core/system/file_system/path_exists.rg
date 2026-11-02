@@ -4,14 +4,12 @@ PathExistence#(.PathValue: Type): Contract = (
     .exists : (.self: &FileSystem, .path: PathValue) -> (.ok: Result)
 )
 
-AllocatingPathExistence#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingPathExistence#(.PathValue: Type): Contract = (
     .Result : Type
-    .exists : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider = reach allocator) -> (
-        .result : Result
-    )
+    .exists : (.self: &FileSystem, .path: PathValue, .allocator: Virtual#(Allocator)) -> (.result: Result)
 )
 
-_path_exists_c := (.self: &FileSystem, .path: &Char) -> (.ok: Bool) {
+_path_exists_c := (.self: &FileSystem, .path: &CChar) -> (.ok: Bool) {
     assume ffi := self&._ffi
     ok = access(.path = path, .mode = 0).status == 0
 }
@@ -22,9 +20,10 @@ _path_exists_string := (.self: &FileSystem, .path: &String) -> (.ok: Bool) {
     ok = exists(self, .path = c_path).ok
 }
 
-_path_exists_view#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: StringView, .allocator: $&Provider
+_path_exists_view := (
+    .self: &FileSystem, .path: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Bool, (..out_of_memory))) {
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -41,7 +40,7 @@ _path_exists_owned := (.self: &FileSystem, .path: &Path) -> (.ok: Bool) {
     ok = exists(self, .path = &path&.text).ok
 }
 
-implement PathExistence#(&Char) (
+implement PathExistence#(&CChar) (
     .Result : Type = Bool
     .exists = _path_exists_c
 )
@@ -51,7 +50,7 @@ implement PathExistence#(&String) (
     .exists = _path_exists_string
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) AllocatingPathExistence#(StringView, Provider) (
+implement AllocatingPathExistence#(StringView) (
     .Result : Type = Errable#(Bool, (..out_of_memory))
     .exists = _path_exists_view
 )

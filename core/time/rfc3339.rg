@@ -2,14 +2,15 @@
 
 -- UTC RFC 3339 profile: YYYY-MM-DDTHH:MM:SS[.1..9 digits]Z. Numeric
 -- timezone offsets and leap seconds require a separate timezone policy.
-_date_digits(.text: StringView, .start: UIntNative, .count: UIntNative) -> (
+_date_digits := (.text: StringView, .start: UIntNative, .count: UIntNative) -> (
     .result : Errable#(UInt32, (..invalid_datetime))
-) := {
+) {
+
     value :: UInt32 = 0
     index :: UIntNative = 0
 
     while index < count {
-        byte ::= bytes_get(.view = &text, .index = start + index).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = start + index))
         if byte < 48 or byte > 57 {
             result = ..error(.reason = ..invalid_datetime)
             return
@@ -21,19 +22,20 @@ _date_digits(.text: StringView, .start: UIntNative, .count: UIntNative) -> (
     result = ..ok value
 }
 
-parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) := {
-    if text.length < 20 or text.length > 30 {
+parse_utc := (.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) {
+
+    if text._length < 20 or text._length > 30 {
         result = ..error(.reason = ..invalid_datetime)
         return
     }
 
     if [
-        bytes_get(.view = &text, .index = 4).byte != 45
-        or bytes_get(.view = &text, .index = 7).byte != 45
-        or bytes_get(.view = &text, .index = 10).byte != 84
-        or bytes_get(.view = &text, .index = 13).byte != 58
-        or bytes_get(.view = &text, .index = 16).byte != 58
-        or bytes_get(.view = &text, .index = text.length - 1).byte != 90
+        unwrap_or_abort(.value = bytes_get(.view = &text, .index = 4)) != 45
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 7)) != 45
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 10)) != 84
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 13)) != 58
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 16)) != 58
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = text._length - 1)) != 90
     ] {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -41,12 +43,15 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
 
     fraction :: UInt32 = 0
 
-    if text.length != 20 {
-        if text.length < 22 or bytes_get(.view = &text, .index = 19).byte != 46 {
+    if text._length != 20 {
+        if [
+            text._length < 22
+            or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 19)) != 46
+        ] {
             result = ..error(.reason = ..invalid_datetime)
             return
         }
-        digits ::= text.length - 21
+        digits ::= text._length - 21
         fraction = _date_digits(.text = text, .start = 20, .count = digits)!
         while digits < 9 {
             fraction = fraction * 10
@@ -77,15 +82,21 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
     result = ..ok date
 }
 
-_write_date_digits(
-    .buffer: ArrayView#(.t: UInt8), .start: UIntNative, .count: UIntNative, .value: UInt32
-) -> () := {
+_write_date_digits := (
+    .buffer : MutableArrayView#(.t: UInt8),
+    .start  : UIntNative,
+    .count  : UIntNative,
+    .value  : UInt32
+) -> () {
+
     index ::= count
     remaining ::= value
 
     while index > 0 {
         index = index - 1
-        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = start + index))
+        target ::= unwrap_or_abort(
+            .value = get_mutable_reference($&buffer, .index = [start + index])
+        )
         target&= unwrap_or_abort(.value = [remaining % 10 + 48] | convert#(.to: UInt8)(_))
         remaining = remaining / 10
     }
@@ -93,9 +104,10 @@ _write_date_digits(
 
 -- Validate date and complete capacity before writing. Nonzero fractions use
 -- nine digits, preserving every nanosecond without allocation or truncation.
-format_utc_into(.date: UtcDateTime, .buffer: ArrayView#(.t: UInt8)) -> (
+format_utc_into := (.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))
-) := {
+) {
+
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -113,12 +125,12 @@ format_utc_into(.date: UtcDateTime, .buffer: ArrayView#(.t: UInt8)) -> (
     index :: UIntNative = 0
 
     while index < count {
-        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = index))
-        target&= bytes_get(.view = &skeleton, .index = index).byte
+        target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = index))
+        target&= unwrap_or_abort(.value = bytes_get(.view = &skeleton, .index = index))
         index = index + 1
     }
 
-    target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = count - 1))
+    target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = count - 1))
     target&= 90
     _write_date_digits(
         .buffer = buffer

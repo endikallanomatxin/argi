@@ -1,12 +1,12 @@
 Factory#(.Participant: Type): Contract = (
-    .make: (.self: &Participant) -> (.value: Owned) where owns(value)
+    .make : (.self: &Participant) -> (.value: Owned) where owns(value)
 )
 
-Cell: Type = (.unused: Int32)
+Cell := (.unused: Int32)
 
 implement Factory#(Cell) (.make = _impl_make_Cell)
 
-Owned: Type = (.value: Int32)
+Owned := (.value: Int32)
 
 implement Deinit#(Owned) (
     .deinit = (.self: $&Owned) -> () {
@@ -16,15 +16,15 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-_impl_make_Cell := (.self: &Cell) -> (.value: Owned)  {
+_impl_make_Cell := (.self: &Cell) -> (.value: Owned) {
     value = Owned(42)
 }
 
-create(.factory: &Virtual#(Factory)) -> (.value: Owned) := {
+create := (.factory: &Virtual#(Factory)) -> (.value: Owned) {
     value = make(factory)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     factory ::= to_virtual#(Factory)(&cell)
     value ::= create(&factory)

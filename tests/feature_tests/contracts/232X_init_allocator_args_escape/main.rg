@@ -1,16 +1,33 @@
-Owner: Type = (.allocation: Allocation)
-implement#(.A: Type: Allocator) Init#(Owner, (.allocator: $&A = reach allocator, .length: UIntNative = 4)) (
-    .Result: Type = Errable#(Owner, (..out_of_memory))
-    .init = (.args: (.allocator: $&A = reach allocator, .length: UIntNative = 4)) -> (.result: Result) {
-        allocation ::= Allocator#(A).allocate(.self = args.allocator, .size = args.length, .alignment = 1)!
+Owner := (.allocation: Allocation)
+
+OwnerInitArgs: Type = #(.A: Type: Allocator) (
+    .allocator : $&A,
+    .length    : UIntNative = 4
+)
+
+implement#(.A: Type: Allocator) Init#(Owner, OwnerInitArgs#(A)) (
+    .Result : Type = Errable#(Owner, (..out_of_memory))
+
+    .init = OwnerInitArgs#(A) -> (.result: Result) {
+
+        allocation ::= Allocator#(A).allocate(.self = allocator, .size = length, .alignment = 1)!
         result = ..ok(.allocation = ~allocation)
     }
 )
+
 implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () { deinit(.self = $&self&.allocation) }
 )
+
 escape := (.allocator: $&PageAllocator) -> (.result: Owner) {
-    storage ::= GeneralPurposeAllocator(.allocator = allocator)
+
+    page_virtual ::= to_virtual#(Allocator)(allocator)
+    storage ::= GeneralPurposeAllocator(.allocator = page_virtual)
     result = ~unwrap_or_abort(Owner(.allocator = $&storage))
 }
-main := (.system: System) -> () { owner ::= escape(system.page_allocator) }
+
+main := (.system: System) -> () {
+
+    page :: PageAllocator = PageAllocator(.memory = system.memory)
+    owner ::= escape($&page)
+}

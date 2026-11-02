@@ -1,22 +1,29 @@
-test equality_helpers(.system: System) -> !() := {
-    testing.expect(.condition = true, .message = "successful checks stay silent")!
-    testing.expect_equal(.expected = true, .actual = true)!
-    testing.expect_equal(.expected = 1, .actual = 1)!
-    testing.expect_equal(.expected = 1.5, .actual = 1.5)!
-    testing.expect_equal(.expected = "abc", .actual = "abc")!
-    testing.expect_equal_strings(.expected = "", .actual = "")!
+test equality_helpers := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
+    assume error_tracer
+
+    testing.expect_with_trace(.condition = true, .message = "successful checks stay silent")!
+    testing.expect_equal_with_trace(.expected = true, .actual = true)!
+    testing.expect_equal_with_trace(.expected = 1, .actual = 1)!
+    testing.expect_equal_with_trace(.expected = 1.5, .actual = 1.5)!
+    testing.expect_equal_with_trace(.expected = "abc", .actual = "abc")!
+    testing.expect_equal_strings_with_trace(.expected = "", .actual = "")!
     bytes :: [3]UInt8 = (65, 0, 90)
-    text :: StringView = (.data = &bytes[0], .length = 3)
-    testing.expect_equal_strings(.expected = text, .actual = text)!
+    text_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    text ::= view(&text_storage)
+    testing.expect_equal_strings_with_trace(.expected = text, .actual = text)!
     values :: [3]Int32 = (1, 2, 3)
-    testing.expect_equal_views(
-        .expected = view(.array = &values)
-        .actual   = view(.array = &values)
+    testing.expect_equal_views_with_trace(
+        .expected = view(.self = &values), .actual = view(.self = &values)
     )!
-    testing.expect_equal_bytes(.expected = view(.array = &bytes), .actual = view(.array = &bytes))!
-    empty ::= empty_array_view_ro#(.t: UInt8)()
-    testing.expect_equal_bytes(.expected = empty, .actual = empty)!
+    testing.expect_equal_bytes_with_trace(.expected = view(.self = &bytes), .actual = view(.self = &bytes))!
+    empty ::= empty_array_view#(.t: UInt8)()
+    testing.expect_equal_bytes_with_trace(.expected = empty, .actual = empty)!
     assume allocator := system.page_allocator
-    owner ::= format(.value = "abc", .allocator = allocator)!
-    testing.expect_equal_strings(.expected = &owner, .actual = &owner)!
+    owner ::= format(.value = "abc", .allocator = allocator)!! "preparing equality test text"
+    testing.expect_equal_strings_with_trace(.expected = &owner, .actual = &owner)!
 }

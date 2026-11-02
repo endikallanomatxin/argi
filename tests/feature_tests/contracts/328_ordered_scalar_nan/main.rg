@@ -1,4 +1,4 @@
-less#(.T: Type)(.a: T, .b: T) -> (.ok: Bool) := { ok = a < b }
+less := #(.T: Type) (.a: T, .b: T) -> (.ok: Bool) { ok = a < b }
 
 main := () -> (.status_code: Int32 = 0) {
     narrow: UInt8 = 7
@@ -27,4 +27,4 @@ main := () -> (.status_code: Int32 = 0) {
 
 }
 
-requires_total#(.T: Type: TotalOrder#(T, T)) := (.value: T) -> () {}
+requires_total := #(.T: Type: TotalOrder#(T, T)) (.value: T) -> () {}

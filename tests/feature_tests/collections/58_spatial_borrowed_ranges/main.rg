@@ -1,13 +1,21 @@
-window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (.result: Errable#(.t: ArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))) := {
-    borrowed_view ::= view(.array = array)
+window := (.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (
+    .result : Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))
+) {
+
+    borrowed_view ::= view(.self = array)
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
-exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.status: Int32 = 0) := {
-    array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8))
-    empty ::= view(.array = $&array)
+exercise := (.allocator: Virtual#(Allocator)) -> (
+    .status : Int32 = 0
+) {
+
+    array ::= unwrap_or_abort(
+        .value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8)
+    )
+    empty ::= view(.self = $&array)
     if length(.self = &empty).count != 0 { status = 1 }
-    absent ::= get_ro_ref(.self = &empty, .index = 0).result
+    absent ::= get_reference(.self = &empty, .index = 0).result
     if is(.value = absent, .variant = ..error) == false { status = 2 }
     i :: UIntNative = 0
     while i < 4 {
@@ -16,17 +24,25 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     }
     borrowed_view ::= unwrap_or_abort(.value = window(.array = $&array, .start = 1, .count = 2))
     if length(.self = &borrowed_view).count != 2 { status = 3 }
-    unwrap_or_abort(.value = set#(.t: UIntNative)(.self = $&borrowed_view, .index = 1, .value = 99).result)
-    nested ::= unwrap_or_abort(.value = slice(.self = &borrowed_view, .start = 1, .count = 1).result)
+    unwrap_or_abort(
+        .value = set#(.t: UIntNative)(.self = $&borrowed_view, .index = 1, .value = 99).result
+    )
+    nested ::= unwrap_or_abort(
+        .value = slice(.self = &borrowed_view, .start = 1, .count = 1).result
+    )
     observed ::= unwrap_or_abort(.value = get(.self = &nested, .index = 0).result)
     if observed != 99 { status = 4 }
-    readonly ::= view(.array = &array)
-    ro_window ::= unwrap_or_abort(.value = slice(.self = &readonly, .start = 2, .count = 1).result)
-    ro_element ::= unwrap_or_abort(.value = get_ro_ref(.self = &ro_window, .index = 0).result)
-    if ro_element& != 99 { status = 5 }
+    readonly ::= view(.self = &array)
+    ro_window ::= unwrap_or_abort(
+        .value = slice(.self = &readonly, .start = 2, .count = 1).result
+    )
+    ro_element ::= unwrap_or_abort(
+        .value = get_reference(.self = &ro_window, .index = 0).result
+    )
+    if ro_element&!= 99 { status = 5 }
     at_end ::= unwrap_or_abort(.value = slice(.self = &readonly, .start = 4, .count = 0).result)
     if length(.self = &at_end).count != 0 { status = 6 }
-    spare ::= get_ro_ref(.self = &readonly, .index = 4).result
+    spare ::= get_reference(.self = &readonly, .index = 4).result
     if is(.value = spare, .variant = ..error) == false { status = 7 }
     invalid_start ::= slice(.self = &readonly, .start = 5, .count = 0).result
     if is(.value = invalid_start, .variant = ..error) == false { status = 8 }
@@ -37,18 +53,20 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     invalid_huge_start ::= slice(.self = &borrowed_view, .start = huge, .count = 1).result
     if is(.value = invalid_huge_start, .variant = ..error) == false { status = 10 }
     removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
-    fresh ::= view(.array = $&array)
+    fresh ::= view(.self = $&array)
     if length(.self = &fresh).count != 3 { status = 11 }
     if unwrap_or_abort(.value = get(.self = &fresh, .index = 2).result) != 99 { status = 12 }
-    deinit( .self = $&array)
+    deinit(.self = $&array)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     direct ::= exercise(.allocator = system.page_allocator).status
     if direct != 0 { status_code = direct }
     arena :: ArenaAllocator
     arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
-    regional ::= exercise(.allocator = $&arena).status
+    arena_virtual ::= to_virtual#(Allocator)($&arena)
+    regional ::= exercise(.allocator = arena_virtual).status
     if regional != 0 { status_code = regional }
     reset(.self = $&arena)
     deinit(.self = $&arena)

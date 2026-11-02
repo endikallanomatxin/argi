@@ -1,8 +1,8 @@
 # Errors
 
-Errors have nominal reasons, explicit propagation, and a trace of the places
-where they were propagated. The trace policy is supplied as a capability.
-Propagation is infallible; its memory and I/O costs depend on that policy.
+Errors have nominal reasons and explicit propagation. Fallibility does not
+require tracing: a diagnostic boundary can explicitly add context using a
+caller-provided tracer. Both forms use the same result and cleanup rules.
 
 ## Choice options
 
@@ -39,170 +39,68 @@ A `choice` can be:
 
 The `choices` used for errors are closed and finite.
 
-## Error values
-
-An error carries its reason and a small handle to its trace. Trace entries are
-held by the configured tracer, not embedded in each error value.
+## Error values and results
 
 ```rg
-Error#(.reasons: Choice) : Type = (
+Error := #(.reasons: Type) (.reason: reasons)
+
+ErrorWithTrace := #(.reasons: Type) (
     .reason: reasons
-    .tracer: $&Virtual#(.contract: ErrorTracer)
+    .tracer: $&Virtual#(ErrorTracer) = capture_error_tracer(.location = error_location_id())
 )
-```
 
-`.reason` must be a `choice` without payloads. The `.tracer` field retains a reference
-to the original virtual `ErrorTracer`. The bundled policies use a shared log,
-so the reference itself is the complete handle.
-Creating an error records its origin through that tracer. The tracer must
-outlive errors referring to it; clearing its retained context does not end
-the lifetime of the error or change its reason.
-
-## Error unions
-
-`Errable` is defined over a set of reasons:
-
-```rg
-Errable#(.t: Type, .reasons: Choice) : Type = (
+Errable := #(.t: Type, .reasons: Type, .error_type: Type = Error#(reasons)) (
     ..ok t
-    ..error Error#(.reasons = reasons)
+    ..error error_type
 )
 ```
 
-Consequences:
-- A function declares the set of reasons it can return.
-- `!` can propagate a subset into a compatible superset.
-- The compiler/codegen remaps tags between different sets.
+An `Error` contains only a reason from a finite payloadless choice. It has no
+tracer, allocation or borrowed diagnostic storage. `ErrorWithTrace` also retains
+a reference to the original virtual tracer; the tracer must outlive the error.
+Trace entries belong to the tracer, rather than to the error's own storage.
 
-Example:
+`Errable#(T, Reasons)` uses ordinary errors. A traced result uses
+`Errable#(T, Reasons, ErrorWithTrace#(Reasons))`. There is one success/error
+choice protocol, with the same matching, ownership and cleanup behavior.
+
+The shorthand outputs `-> !T` and `-> !!T` create a single `result` output and
+infer its reasons from the body. They select ordinary and traced errors,
+respectively. `Errable#(T)` also requests inferred ordinary reasons.
 
 ```rg
-..file_not_found
-..permission_denied
-
-read_file() -> (.result: Errable#(Int32, (..file_not_found))) := {
-    result = ..error(.reason = ..file_not_found)
+read_value := () -> !Int32 {
+    result = ..error (.reason = ..invalid_format)
 }
 
-load_file() -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied))) := {
-    value := read_file()!
+load_value := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
+    assume error_tracer
+    value ::= read_value()!! "loading configuration"
     result = ..ok value
 }
 ```
 
-For the common single-result case there is also shorthand syntax:
+A contextual `..error (.reason = ..invalid_format)` constructs the destination's
+payload. In a traced result its ordinary `.tracer` default acquires the lexical
+`error_tracer` and records the origin. It does not manufacture a noop tracer.
+An explicitly supplied tracer overrides that default. A body's assumptions do
+not apply to output defaults, which execute before entering the body.
 
-```rg
-load_file() -> !Int32 := {
-    value := read_file()!
-    result = ..ok value
-}
-```
+Both output forms accept defaults, for example `-> !Void = ..ok Void()`.
+Reaching the end or using a bare `return` retains the initialized result;
+propagation replaces it with an error. An output without a default still needs
+initialization. Defaults participate in reason inference.
 
-`-> !T` means a single output binding named `result` whose type is an `Errable`
-returning `T`. In this special form, the compiler infers the reasons from the
-body and closes the return `Errable` after semantic analysis.
-
-The shorthand can declare an explicit default for its `result` binding:
-
-```rg
-work() -> !Void = ..ok Void() := {
-    perform_step()!
-}
-```
-
-The default initializes the output before the body executes. Reaching the end
-or using a bare `return` retains that value unless the body replaces it;
-propagation with `!` or `!!` replaces it with the error. Defaults participate in
-reason inference, and this syntax also applies to non-`Void` and generic
-functions. `-> !Void` alone does not declare a success default.
-
-> [!IMPLEMENTATION]
-> An error-producing output default currently needs an explicit `.tracer`;
-> automatic creation from the function's reached tracer is not available in
-> output initializers. Success defaults such as `..ok Void()` need no tracer.
-
-The same inference path is also available when the output is written
-explicitly as `Errable#(T)` and omits `.reasons`:
-
-```rg
-load_file() -> (.result: Errable#(Int32)) := {
-    value := read_file()!
-    result = ..ok value
-}
-```
-
-Omitting the reasons requests an inferred error set. Function outputs infer
-that set from their body; other positions need enough context to determine it.
-
-> [!IMPLEMENTATION]
-> Generic consumers requiring a nominal Errable can still reject inferred error
-> envelopes. Direct matching remains available for those values.
-
-The compiler can also infer a narrower subset of the declared reasons by
-looking at the actual propagation and return sites in the function body. That
-inferred subset is surfaced in tooling hover even when the full declared
-`.reasons` are still written explicitly in source.
-
-In `core`, the same idea is already used for file opening, filesystem, and
-stream failures:
-
-```rg
-..file_open_failed
-..path_open_failed
-..stream_read_failed
-..stream_write_failed
-..stream_flush_failed
-..stream_close_failed
-..out_of_memory
-
-open(.p: $&File, .path: &Char, .mode: FileOpenMode)
-    -> (.result: Errable#(Bool, (..file_open_failed)))
-
-read_file(.self: &FileSystem, .path: StringView)
-    -> (.result: Errable#(
-        String,
-        (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory)
-    ))
-
-read_byte(.self: $&Reader)
-    -> (.result: Errable#(ReadByte, (..stream_read_failed)))
-
-write_byte(.self: $&Writer, .byte: UInt8)
-    -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)))
-```
-
-`read_line()` and `read_file()` explicitly propagate `..out_of_memory`.
-They delegate buffer creation and growth to fallible `String` helpers.
-
-In `core`, the idiomatic approach for growth or allocation operations is no
-longer:
-- a raw pointer checked against `0`
-- a `Bool` indicating whether allocation succeeded
-
-Instead, use:
-- `allocate(...) -> Errable#(Allocation, (..out_of_memory))`
-- helpers such as `string_with_capacity(...)`
-- growth operations returning `Errable#(Void, (..out_of_memory))`
-
-This is already used in `String` and the fallible paths of `DynamicArray`
-(`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
-
-EOF remains outside the error channel:
-
-```rg
-ReadByte : Choice = (
-    ..ok UInt8
-    ..end
-)
-```
+Core allocation, collection, numeric, text and I/O operations generally return
+ordinary errors. Their allocator, FFI, stream and other capabilities remain
+independent of diagnostics. EOF remains an ordinary reader outcome, not an
+error. Diagnostic operations such as test assertions retain traced errors.
 
 ## Propagation
 
 `!` and `!!`:
 - short-circuit
 - execute `defer`s
-- add an entry to the trace
 - require the current `Errable` to represent every propagated reason
 - can be used in expression position or as a standalone statement, for example
   `step()!`, when the `..ok` value is not needed
@@ -218,15 +116,24 @@ The expression yields the `..ok` value. A named struct remains whole even
 when it has only one field. An anonymous one-field payload is unpacked to
 that field's value.
 
-`!! "context"` also attaches textual context to the trace entry. A tracer
+`!` forwards the existing payload without adding context or acquiring a tracer.
+A traced payload stays traced. Propagating it into an ordinary result is rejected;
+propagating an ordinary payload into a traced result also requires explicit promotion.
+Reason subsets can widen without changing the payload's trace mode.
+
+`!! "context"` explicitly promotes an ordinary error using the lexical
+`error_tracer`, or appends context to its existing tracer. It requires a traced
+output and an ordinary lexical `error_tracer` value. The operand runs once;
+the context expression runs only on failure. If the error is already traced,
+its original tracer is retained even when the caller supplies a different one. A tracer
 that retains the context copies it, so the entry does not borrow a temporary
 string. A tracer that emits the entry immediately can use the text during the
 call.
 
 ### Reporting and returning
 
-`expr!!!` accepts an `Errable#(T, Reasons)`. It evaluates the operand once and
-moves the success payload out as `T`. On error it reports the stored trace
+`expr!!!` accepts an `Errable` with either error payload. It evaluates the operand once and
+moves the success payload out as `T`. On error it reports the error (including its trace when present)
 through the ordinary reachable writer and returns from the containing function.
 It is shorthand for recovery whose error branch reports and executes a bare
 `return`, not propagation into the function's Errable output.
@@ -243,7 +150,7 @@ An optional block after `!!!` runs only on failure, after reporting and before
 the containing function returns:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
 }
@@ -278,17 +185,29 @@ ErrorTracer#(.Tracer: Type): Contract = (
 )
 ```
 
-`!` calls `add_context` with the propagation location and empty context.
-`!! "context"` calls it with
-the location and context. `add_context` cannot return an error: propagation must
+`!` never calls `add_context`. `!! "context"` calls it with the location
+and context, while direct traced construction records its origin. `add_context` cannot return an error: propagation must
 still succeed when tracing cannot retain or emit an entry. A policy may
 allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
-The capability has type `$&Virtual#(.contract: ErrorTracer)`. A tracer may
-be supplied through `reach error_tracer`, so intermediate
-functions need not list it manually. This capability selects the tracer when
-an error is created. Later propagation and reporting use the reference in
-that error, even under a different `assume error_tracer`:
+The capability has type `$&Virtual#(ErrorTracer)`. A tracer may
+be supplied through an explicit `error_tracer` input or lexical `assume`.
+Intermediate functions must declare that input to forward the caller's tracer;
+there is no propagation through undeclared parameters. The input is required
+and has no default. To disable tracing explicitly, enable
+`assume error_tracer ::= $&noop_error_tracer` in the calling scope.
+Compile-time entry bodies create their own local noop tracer instead of borrowing
+the program's mutable global storage:
+
+```rg
+assume error_tracer ::= NoopErrorTracer() | to_virtual#(ErrorTracer)($&_) | $&_
+```
+
+This capability selects the tracer when a traced error is created or a plain
+error is explicitly promoted. Later context and reporting use its retained reference. Returning an error that retains a
+function-local tracer is rejected by ordinary reference lifetime rules. A tracer
+input keeps that storage in the caller instead, even under a different local
+`assume error_tracer`:
 
 ```rg
 assume error_tracer ::= FixedSizeErrorTracer(
@@ -299,7 +218,7 @@ run()
 ```
 
 The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
-contract. Alternatively, a declared `$&Virtual#(.contract: ErrorTracer)`
+contract. Alternatively, a declared `$&Virtual#(ErrorTracer)`
 capability type permits `to_virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
@@ -331,8 +250,8 @@ this diagnostic retention policy. No policy may interpret reused storage as an
 old entry or access storage that is no longer valid.
 
 Entries store compact `SourceLocationId` values. Executable metadata maps
-them to filenames, lines, and source text when `report` runs. `Error` therefore
-needs neither source strings nor an allocator.
+them to filenames, lines, and source text when `report` runs. Error values
+therefore need neither source strings nor an allocator.
 
 `reset_context` clears the tracer's retained diagnostic context and permits
 storage reuse. Existing errors remain valid: their reasons and tracer
@@ -346,15 +265,10 @@ storage are internal to the tracer, not lifetimes of the error value.
 the same infallible propagation interface. Other policies can implement the
 same abstract interface.
 
-Tracer initialization uses an already available tracer. At bootstrap, a
-`NoopErrorTracer` with program lifetime provides this capability without
-allocation. If a new tracer's initialization fails, its error retains the
-previous tracer; the partially initialized tracer is never published.
-
-`report` returns ordinary I/O errors, but errors created by the reporting
-operation use the program-lifetime `NoopErrorTracer`. Reporting must not
-automatically report its own failures or invoke the failing tracer again.
-The caller decides whether to propagate, inspect, or ignore a report failure.
+Tracer initialization and reporting do not require a separate diagnostic
+capability merely because a supporting operation can fail. `report` returns
+ordinary I/O errors. Reporting never recursively reports its own failures;
+the caller chooses whether to propagate, inspect or ignore them.
 
 > [!IDEA]
 > An allocating tracer could retain complete traces, growing storage during
@@ -367,15 +281,12 @@ The caller decides whether to propagate, inspect, or ignore a report failure.
 > later `report`. Because `add_context` is infallible, write failures during these
 > flushes must be ignored or recorded for a later fallible `report`.
 
-Fallible virtual methods receive the reached tracer capability alongside
-ordinary arguments, including implementations whose bodies always succeed.
-This keeps runtime dispatch consistent when an implementation creates an error.
 `source_location(.id)` resolves a recorded ID to immutable source metadata;
 IDs that were not produced by `error_location_id()` abort.
 
 Current direction for reason inference:
 - The signature still spells out the complete declared set.
-- `-> !T` already allows `.reasons` to be omitted in the special case of a
+- `-> !T` and `-> !!T` allow `.reasons` to be omitted for a
   single `result` output.
 - `Errable#(T)` without `.reasons` is also accepted in explicit function
   outputs.
@@ -405,7 +316,7 @@ my_thing := fallible() handle error, value {
             value = 0
         }
         ..permission_denied {
-            report_trace(.tracer = error.tracer)!
+            report_error(.err = &error)!
             value = 1
         }
     }
@@ -452,7 +363,7 @@ Omit the value binding to handle an error and continue without recovering a valu
 
 ```rg
 save() handle error {
-    report_trace(.tracer = error.tracer)!
+    report_error(.err = &error)!
 }
 continue_work()
 ```
@@ -467,6 +378,6 @@ new function. Owned payloads and handler locals receive ordinary cleanup on
 normal continuation and on control transfers.
 
 The ordinary `add_context` helper accepts a `StringView`; `add_context_text`
-accepts zero-terminated text. Both reach the tracer capability and call its
+accepts zero-terminated text. Both receive the tracer capability as an ordinary input and call its
 scoped operation. Direct operations use `ErrorTracer#(T).add_context(...)`,
 `reset_context` and `report`; virtual calls use `ErrorTracer#()` instead.

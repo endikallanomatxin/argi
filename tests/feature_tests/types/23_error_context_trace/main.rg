@@ -1,15 +1,27 @@
 ..test_error
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
+) {
+    assume error_tracer
+
     result = ..error(.reason = ..test_error)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(
+        .t: Int32, .reasons: (..test_error), .error_type: ErrorWithTrace#((..test_error))
+    )
+) {
+    assume error_tracer
+
     value := fail()!! "while reading foo"
     result = ..ok value
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     tracer ::= ProbeTracer()
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
@@ -18,7 +30,7 @@ main() -> (.status_code: Int32) := {
         status_code = 1
         return
     }
-    if tracer.line != 8 {
+    if tracer.line != 20 {
         status_code = 2
         return
     }
@@ -36,15 +48,16 @@ main() -> (.status_code: Int32) := {
     }
 }
 
-ProbeTracer: Type = (
+ProbeTracer := (
     .count           : UIntNative = 0
     .line            : UIntNative = 0
     .column          : UIntNative = 0
     .context_matches : Bool       = false
 )
 
-implement ErrorTracer#(ProbeTracer)(
-    .add_context = (.self: $&ProbeTracer, .location: SourceLocationId, .context: StringView) -> () {
+implement ErrorTracer#(ProbeTracer) (
+    .add_context = (.self: $&ProbeTracer, .location: SourceLocationId, .context: StringView) -> (
+    ) {
         reader ::= source_location(.id = location).location
         self&.count = self&.count + 1
         self&.line = reader.line
@@ -54,10 +67,10 @@ implement ErrorTracer#(ProbeTracer)(
 
     .reset_context = (.self: $&ProbeTracer) -> () { self&.count = 0 }
 
-    .report = (
-            .self   : $&ProbeTracer,
-            .writer : $&Virtual#(.contract: Writer)
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) { result = ..ok Void() }
+    .report = (.self: $&ProbeTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
+
+        result = ..ok Void()
+    }
 )

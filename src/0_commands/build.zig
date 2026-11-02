@@ -1,11 +1,11 @@
 const std = @import("std");
-const llvm = @import("../5_codegen/llvm.zig");
+const llvm = @import("../5_codegen/llvm/llvm.zig");
 const c = llvm.c;
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
-const link = @import("../5_codegen/link.zig");
+const link = @import("../5_codegen/llvm/link.zig");
 const frontend = @import("frontend_pipeline.zig");
-const codegen = @import("../5_codegen/codegen.zig");
+const codegen = @import("../5_codegen/llvm/codegen.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
 const graph_print = @import("../4_semantics/global/print.zig");
@@ -73,7 +73,7 @@ fn printMissingMainError(module_dir: []const u8, from_manifest: bool) void {
         std.debug.print("Error: executable module has no valid main function:\n  {s}\n\n", .{module_dir})
     else
         std.debug.print("Error: module has no executable main function:\n  {s}\n\n", .{module_dir});
-    std.debug.print("Expected main() -> () or main() -> (.status_code: Int32).\n", .{});
+    std.debug.print("Expected main with no outputs or (.status_code: Int32), optionally accepting System.\n", .{});
 }
 
 fn dumpDiagnostics(diagnostics: *diag.Diagnostics, flags: BuildFlags) void {
@@ -169,8 +169,7 @@ fn printStats(
     std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
     std.debug.print("      binding types:           {d:.3} ms\n", .{milliseconds(semantic_timings.binding_types_ns)});
     std.debug.print("      assignment values:       {d:.3} ms\n", .{milliseconds(semantic_timings.assignment_values_ns)});
-    std.debug.print("      dereferences:            {d:.3} ms\n", .{milliseconds(semantic_timings.dereferences_ns)});
-    std.debug.print("      addresses:               {d:.3} ms\n", .{milliseconds(semantic_timings.addresses_ns)});
+    std.debug.print("      reference types:         {d:.3} ms\n", .{milliseconds(semantic_timings.reference_types_ns)});
     std.debug.print("      generic types:           {d:.3} ms\n", .{milliseconds(semantic_timings.known_generic_types_ns)});
     std.debug.print("      field access types:      {d:.3} ms\n", .{milliseconds(semantic_timings.field_access_types_ns)});
     std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
@@ -340,12 +339,14 @@ fn compileResolvedPlan(
         .environ_map = environ_map,
         .target = flags.target,
     }, plan.module_dir);
-    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files.items);
     var frontend_options = options.frontend_options;
     frontend_options.collect_stats = flags.stats;
     frontend_options.module_jobs = flags.frontend_jobs.resolve();
     frontend_options.entry_module_dir = plan.module_dir;
-    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, frontend_options);
+    // Semantic passes explicitly release speculative state and per-body facts.
+    // A command-wide arena would retain all of that discarded work.
+    var pipeline = frontend.FrontendPipeline.init(std.heap.smp_allocator, io, &diagnostics, frontend_options);
     defer pipeline.deinit();
 
     const frontend_start = nowNs(io);
@@ -375,6 +376,8 @@ fn compileResolvedPlan(
         return error.CompilationFailed;
     };
     defer generator.deinit();
+    if (pipeline.safety_ctx) |*safety| generator.annotations = &safety.annotations;
+    generator.unit = if (pipeline.global_unit) |*unit| unit else null;
     const module = generator.generate() catch |err| {
         if (flags.show_semantic_graph) graph_print.print(graph);
         dumpDiagnostics(&diagnostics, flags);

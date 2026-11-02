@@ -1,2 +1,3 @@
-Comparator(.left: CInt, .right: CInt) -> (.result: CInt) : CFunctionPointer
-main() -> () := { callback := Comparator(.address = 0) }
+Comparator(.left: CInt, .right: CInt) -> (.result: CInt): CFunctionPointer
+
+main := () -> () { callback := Comparator(.address = 0) }

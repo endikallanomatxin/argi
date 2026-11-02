@@ -1,9 +1,9 @@
-escape(.system: System) -> (.result: System) := {
+escape := (.system: System) -> (.result: System) {
     local_clock ::= ~system.clock&
     result = system
     result.clock = $&local_clock
 }
 
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     escaped ::= escape(system)
 }

@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const llvm_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/5_codegen/llvm-c.h"),
+        .root_source_file = b.path("src/5_codegen/llvm/llvm-c.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -76,6 +76,8 @@ pub fn build(b: *std.Build) void {
         .source_dir = b.path("more"),
         .install_dir = .prefix,
         .install_subdir = "lib/argi/more",
+        // Colocated library tests and their helpers are development sources.
+        .exclude_extensions = &.{"_test.rg"},
     });
     install_more.step.dependOn(&clean_installed_more.step);
     b.getInstallStep().dependOn(&install_more.step);
@@ -95,27 +97,45 @@ pub fn build(b: *std.Build) void {
     //
     // TEST -------------------------------------------------------------------
 
+    const compiler_test_frontend = b.createModule(.{
+        .root_source_file = b.path("src/frontend_test_support.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    compiler_test_frontend.addImport("llvm_c", llvm_c_mod);
+    compiler_test_frontend.addOptions("frontend_build_options", frontend_build_options);
+
     const tests_mod = b.createModule(.{
-        .root_source_file = b.path("tests/test.zig"),
+        .root_source_file = discoverProgramTests(b) catch @panic("cannot discover program tests"),
         .target = target,
         .optimize = optimize,
     });
     tests_mod.addImport("llvm_c", llvm_c_mod);
+    tests_mod.addImport("compiler_test_frontend", compiler_test_frontend);
     linkLlvmModule(tests_mod, llvm_lib_path, llvm_libs_raw);
+    if (target.result.os.tag == .linux) tests_mod.linkSystemLibrary("util", .{});
 
     const program_options = b.addOptions();
     program_options.addOption(u32, "workers", test_jobs);
     program_options.addOption(bool, "progress", test_progress);
+    program_options.addOption(bool, "filtered", test_filters.len != 0);
+    program_options.addOption([]const u8, "compiler_version", @import("src/0_commands/version.zig").current);
+    program_options.addOption([]const u8, "repository_root", b.pathFromRoot("."));
     tests_mod.addOptions("program_test_options", program_options);
+    tests_mod.addImport("program_tests", tests_mod);
     tests_mod.addImport("program_test_sharding", b.createModule(.{ .root_source_file = b.path("tests/sharding.zig"), .target = target, .optimize = optimize }));
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
         .filters = test_filters,
-        .test_runner = if (test_jobs > 1) .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple } else null,
+        .test_runner = .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple },
     });
     const program_test_step = b.step("test-programs", "Run Argi program tests");
     if (test_jobs == 1) {
-        const run_exe_tests = addTestRun(b, exe_tests, test_progress);
+        const run_exe_tests = b.addRunArtifact(exe_tests);
+        run_exe_tests.addArgs(&.{ "all", ".zig-cache/program-tests/serial.log" });
+        run_exe_tests.expectExitCode(0);
+        run_exe_tests.expectStdOutMatch("[programs all]");
+        run_exe_tests.has_side_effects = true;
         run_exe_tests.step.dependOn(b.getInstallStep());
         program_test_step.dependOn(&run_exe_tests.step);
     } else {
@@ -150,6 +170,11 @@ pub fn build(b: *std.Build) void {
     });
     internal_tests_mod.addImport("llvm_c", llvm_c_mod);
     internal_tests_mod.addOptions("frontend_build_options", frontend_build_options);
+    const internal_test_options = b.addOptions();
+    internal_test_options.addOption(bool, "extended_allocation_sweeps", b.option(bool, "test-extended-allocation-sweeps", "Sweep every resource-prelude semantic preparation allocation (expensive)") orelse false);
+    internal_test_options.addOption(usize, "allocation_failure_start", b.option(usize, "test-allocation-failure-start", "First extended allocation/resize failure index (inclusive)") orelse 0);
+    internal_test_options.addOption(usize, "allocation_failure_end", b.option(usize, "test-allocation-failure-end", "Last extended allocation/resize failure index (exclusive)") orelse std.math.maxInt(usize));
+    internal_tests_mod.addOptions("internal_test_options", internal_test_options);
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,
@@ -159,6 +184,19 @@ pub fn build(b: *std.Build) void {
 
     const internal_test_step = b.step("test-internal", "Run compiler unit tests");
     internal_test_step.dependOn(&run_internal_tests.step);
+
+    const http_tests = b.addRunArtifact(exe);
+    http_tests.addArgs(&.{ "test", "more/network/http", "--sysroot", b.getInstallPath(.prefix, "") });
+    if (b.args) |args| http_tests.addArgs(args);
+    http_tests.step.dependOn(b.getInstallStep());
+    http_tests.has_side_effects = true;
+    const http_test_step = b.step("test-http", "Run the HTTP library's native Argi tests");
+    http_test_step.dependOn(&http_tests.step);
+    const http_example = b.addRunArtifact(exe);
+    http_example.addArgs(&.{ "build", "more/network/http/examples/server", "--sysroot", b.getInstallPath(.prefix, ""), "--frontend-jobs", "1", "--output", ".zig-cache/http-server-example" });
+    http_example.step.dependOn(&http_tests.step);
+    http_example.has_side_effects = true;
+    http_test_step.dependOn(&http_example.step);
 
     const benchmark_mod = b.createModule(.{
         .root_source_file = b.path("src/frontend_benchmark.zig"),
@@ -176,9 +214,111 @@ pub fn build(b: *std.Build) void {
     const benchmark_step = b.step("benchmark-frontend", "Measure clean and reused frontend compilations");
     benchmark_step.dependOn(&benchmark_run.step);
 
+    const execution_benchmark_mod = b.createModule(.{
+        .root_source_file = b.path("src/execution_benchmark.zig"),
+        .target = target,
+        .optimize = optimize,
+        .error_tracing = if (optimize == .Debug) false else null,
+    });
+    execution_benchmark_mod.addOptions("frontend_build_options", frontend_build_options);
+    const execution_benchmark = b.addExecutable(.{ .name = "execution-benchmark", .root_module = execution_benchmark_mod });
+    const execution_install = b.addInstallArtifact(execution_benchmark, .{});
+    b.step("build-execution-benchmark", "Build the retained execution benchmark").dependOn(&execution_install.step);
+    const execution_run = b.addRunArtifact(execution_benchmark);
+    if (b.args) |args| execution_run.addArgs(args);
+    b.step("benchmark-execution", "Measure retained session phases and memory").dependOn(&execution_run.step);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);
+    if (test_filters.len == 0) test_step.dependOn(http_test_step);
+}
+
+/// Assemble discovered tests in one module, so Zig collects their test blocks.
+/// Fixture test files may import the shared support module, but other local
+/// imports and embedded files need to be added to this generated tree too.
+fn discoverProgramTests(b: *std.Build) !std.Build.LazyPath {
+    const io = b.graph.io;
+    const allocator = b.allocator;
+    var root = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("tests/feature_tests"), .{ .iterate = true });
+    defer root.close(io);
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    var categories = root.iterate();
+    while (try categories.next(io)) |category| {
+        if (category.kind != .directory) continue;
+        var category_dir = try root.openDir(io, category.name, .{ .iterate = true });
+        defer category_dir.close(io);
+        var cases = category_dir.iterate();
+        while (try cases.next(io)) |case| {
+            if (case.kind != .directory) continue;
+            const relative = try std.fmt.allocPrint(allocator, "{s}/{s}/test.zig", .{ category.name, case.name });
+            category_dir.access(io, try std.fmt.allocPrint(allocator, "{s}/test.zig", .{case.name}), .{}) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => return err,
+            };
+            try paths.append(allocator, relative);
+        }
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+
+    var prefixes: std.ArrayList([]const u8) = .empty;
+    for (paths.items) |path| {
+        const prefix = try allocator.dupe(u8, b.fmt("tests.feature_tests.{s}.test.", .{path[0 .. path.len - ".zig".len]}));
+        for (prefix) |*byte| if (byte.* == '/') {
+            byte.* = '.';
+        };
+        try prefixes.append(allocator, prefix);
+    }
+    std.mem.sort([]const u8, prefixes.items, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+    for (prefixes.items[0..], 0..) |prefix, index| {
+        if (index == 0) continue;
+        const previous = prefixes.items[index - 1];
+        if (std.mem.startsWith(u8, prefix, previous)) {
+            std.debug.print("ambiguous fixture test prefix: {s} and {s}\n", .{ previous, prefix });
+            return error.AmbiguousFixtureTestPrefix;
+        }
+    }
+
+    const files = b.addWriteFiles();
+    _ = files.addCopyFile(b.path(".github/scripts/release_smoke_test.rg"), ".github/scripts/release_smoke_test.rg");
+    _ = files.addCopyFile(b.path("tests/test.zig"), "tests/test.zig");
+    _ = files.addCopyFile(b.path("tests/support.zig"), "tests/support.zig");
+    _ = files.addCopyFile(b.path("tests/frontend_context.zig"), "tests/frontend_context.zig");
+    _ = files.addCopyFile(b.path("tests/terminal_probe.zig"), "tests/terminal_probe.zig");
+    var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(allocator,
+        \\pub const support = @import("tests/support.zig");
+        \\pub const central = @import("tests/test.zig");
+        \\pub const central_prefix = @typeName(central) ++ ".test.";
+        \\pub const Group = struct { prefix: []const u8, fixture: []const u8, isolation: @import("tests/support.zig").Isolation };
+        \\pub const groups = [_]Group{
+        \\
+    );
+    for (paths.items) |path| {
+        const fixture = path[0 .. path.len - "/test.zig".len];
+        const import_path = b.fmt("tests/feature_tests/{s}", .{path});
+        const fixture_path = b.fmt("tests/feature_tests/{s}", .{fixture});
+        _ = files.addCopyFile(b.path(import_path), import_path);
+        try source.appendSlice(allocator, b.fmt(
+            "    .{{ .prefix = @typeName(@import(\"{f}\")) ++ \".test.\", .fixture = \"{f}\", .isolation = @import(\"{f}\").isolation }},\n",
+            .{ std.zig.fmtString(import_path), std.zig.fmtString(fixture_path), std.zig.fmtString(import_path) },
+        ));
+    }
+    try source.appendSlice(allocator,
+        \\};
+        \\comptime { _ = central; _ = groups; }
+        \\
+    );
+    return files.add("root.zig", source.items);
 }
 
 fn addTestRun(b: *std.Build, tests: *std.Build.Step.Compile, progress: bool) *std.Build.Step.Run {
@@ -320,32 +460,12 @@ fn linkLlvm(module: *std.Build.Module, libs_str: []const u8) void {
 // paths and content, not mtimes or the checkout location, for the build identity.
 fn compilerFingerprint(b: *std.Build) ![32]u8 {
     const io = b.graph.io;
-    var dir = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("src"), .{ .iterate = true });
-    defer dir.close(io);
-    var walker = try dir.walk(b.allocator);
-    defer walker.deinit();
-    var paths: std.ArrayList([]const u8) = .empty;
-    while (try walker.next(io)) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.path, ".zig") and !std.mem.endsWith(u8, entry.path, ".rg")) continue;
-        try paths.append(b.allocator, try b.allocator.dupe(u8, entry.path));
-    }
-    std.mem.sort([]const u8, paths.items, {}, struct {
-        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
-            return std.mem.lessThan(u8, lhs, rhs);
-        }
-    }.lessThan);
-    var hash = std.crypto.hash.Blake3.init(.{});
-    for (paths.items) |path| {
-        const contents = try dir.readFileAlloc(io, path, b.allocator, .limited(16 * 1024 * 1024));
-        const length: u64 = @intCast(path.len);
-        hash.update(std.mem.asBytes(&length));
-        hash.update(path);
-        const content_length: u64 = @intCast(contents.len);
-        hash.update(std.mem.asBytes(&content_length));
-        hash.update(contents);
-    }
-    var fingerprint: [32]u8 = undefined;
-    hash.final(&fingerprint);
-    return fingerprint;
+    var root = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("."), .{});
+    defer root.close(io);
+    return @import("src/compiler_fingerprint.zig").compute(b.allocator, io, root, &.{
+        .{ .path = "src/main.zig" },
+        .{ .path = "build.zig", .source = false },
+        .{ .path = "src/compiler_fingerprint.zig", .source = false },
+        .{ .path = "src/5_codegen/llvm/llvm-c.h", .source = false },
+    });
 }

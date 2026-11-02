@@ -1,17 +1,20 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     text ::= unwrap_or_abort(.value = String(.length = 0))
 
-    if text.length != 0 {
+    if byte_length(&text).count != 0 {
         status_code = 1
         return
     }
 
-    nul ::= bytes_get(.view = &text, .index = 0).byte
-    if nul != 0 {
+    nul_rejected ::= is(.value = bytes_get(.view = &text, .index = 0), .variant = ..error)
+    if nul_rejected == false {
         status_code = 2
         return
     }

@@ -1,16 +1,34 @@
 ..missing
 
-attempt(.fail: Bool) -> (.result: Errable#(.t: Int32, .reasons: (..missing))) := {
+attempt := (.fail: Bool) -> (.result: Errable#(.t: Int32, .reasons: (..missing))) {
+
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-recover#(.t: Type)(.input: Errable#(.t: t, .reasons: (..missing)), .fallback: t) -> (.result: t) := {
+recover := #(.t: Type) (.input: Errable#(.t: t, .reasons: (..missing)), .fallback: t) -> (
+    .result : t
+) {
     result = ~input handle error, value {
         match error.reason { ..missing { value = ~fallback } }
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+recover_greater := #(.t: Type) (
+    .input: Errable#(.t: t, .reasons: (..missing)), .fallback: t, .than: t
+) -> (.result: Bool) {
+    selected ::= ~input handle error, value { value = ~fallback }
+    result = selected > than
+}
+
+try_greater := #(.t: Type) (.input: Errable#(.t: t, .reasons: (..missing)), .than: t) -> (
+    .result : Bool = false
+) {
+    selected ::= ~input handle error, value { return }
+    result = selected > than
+}
+
+main := () -> (.status_code: Int32 = 0) {
+
     first ::= attempt(.fail = false) handle error, value {
         match error.reason { ..missing { value = 9 } }
     }
@@ -18,5 +36,20 @@ main() -> (.status_code: Int32 = 0) := {
         match error.reason { ..missing { value = 9 } }
     }
     third ::= recover(.input = attempt(.fail = true), .fallback = 11).result
+    if recover_greater(.input = attempt(.fail = false), .fallback = 0, .than = 6) == false {
+        abort
+    }
+    if recover_greater(.input = attempt(.fail = true), .fallback = 11, .than = 10) == false {
+        abort
+    }
+    if try_greater(.input = attempt(.fail = false), .than = 6) == false { abort }
+    if try_greater(.input = attempt(.fail = true), .than = 6) { abort }
+    native_input: Errable#(UIntNative, (..missing)) = ..ok 42
+    if [
+        recover_greater#(.t: UIntNative)(.input = native_input, .fallback = 0, .than = 41)
+        == false
+    ] {
+        abort
+    }
     if first != 7 or second != 9 or third != 11 { abort }
 }

@@ -1,19 +1,21 @@
--- The system source is a capability, independent of deterministic Pcg32 state.
-RandomNumberGenerator: Type = (._ffi: $&ForeignFunctionInterface)
+_RandomNumberGeneratorInitArgs := (.ffi: $&ForeignFunctionInterface)
 
-once _acquire_random_number_generator := (
-    .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
-) -> (
+-- The system source is a capability, independent of deterministic Pcg32 state.
+RandomNumberGenerator := (._ffi: $&ForeignFunctionInterface)
+
+_acquire_random_number_generator := once _RandomNumberGeneratorInitArgs -> (
     .result : RandomNumberGenerator
 ) {
-    ffi ::= args.ffi
 
     result = (._ffi = ffi)
 }
 
-implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach ffi))(
+RandomNumberGeneratorInitArgs: Type = _RandomNumberGeneratorInitArgs
+
+implement Init#(RandomNumberGenerator, RandomNumberGeneratorInitArgs) (
     .Result : Type = RandomNumberGenerator
-    .init   = _acquire_random_number_generator
+
+    .init = _acquire_random_number_generator
 )
 
 ..entropy_unavailable
@@ -22,7 +24,7 @@ implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach
     _system_entropy(.bytes: $&UInt8, .length: UIntNative) -> (.status: Int32): CFunction(
         .symbol = "getentropy"
     )
-}#else {
+} #else {
     #if target_os("windows") {
         _system_entropy(.bytes: $&UInt8, .length: UIntNative) -> (.status: Int32): CFunction(
             .symbol = "_argi_system_entropy"
@@ -32,13 +34,16 @@ implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach
 
 -- Fill only initialized storage. A failing source may have changed a prefix;
 -- callers must discard all bytes after an error. Empty requests need no FFI.
-fill_random_bytes(
-    .self        : $&RandomNumberGenerator,
-    .destination : ArrayView#(.t: UInt8),
-) -> (.result: Errable#(Void, (..entropy_unavailable))) := {
+fill_random_bytes := (
+    .self: $&RandomNumberGenerator, .destination: MutableArrayView#(.t: UInt8)
+) -> (.result: Errable#(Void, (..entropy_unavailable))) {
+
     extent ::= length(&destination).count
 
-    if extent == 0 { result = ..ok Void() return }
+    if extent == 0 {
+        result = ..ok Void()
+        return
+    }
     #if target_os("linux") or target_os("macos") or target_os("windows") {
         assume ffi ::= self&._ffi
         offset :: UIntNative = 0
@@ -46,7 +51,7 @@ fill_random_bytes(
             chunk ::= extent - offset
             if chunk > 256 { chunk = 256 }
             pointer ::= unwrap_or_abort(
-                .value = get_rw_ref($&destination, .index = offset)
+                .value = get_mutable_reference($&destination, .index = offset)
             ).result
             if _system_entropy(.bytes = pointer, .length = chunk).status != 0 {
                 result = ..error(.reason = ..entropy_unavailable)
@@ -55,7 +60,7 @@ fill_random_bytes(
             offset = offset + chunk
         }
         result = ..ok Void()
-    }#else {
+    } #else {
         result = ..error(.reason = ..entropy_unavailable)
     }
 }

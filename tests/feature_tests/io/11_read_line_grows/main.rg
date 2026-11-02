@@ -1,13 +1,12 @@
-DummyInput: Type = (
+DummyInput := (
     .index : UIntNative = 0
 )
 
-implement Reader#(DummyInput)(
-    .read_byte = (
-            .self : $&DummyInput
-        ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-        ) {
+implement Reader#(DummyInput) (
+    .read_byte = (.self: $&DummyInput) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
+
         if self&.index < 20 {
             current ::= self&.index
             self&.index = current + 1
@@ -25,15 +24,18 @@ implement Reader#(DummyInput)(
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     stdin_storage :: DummyInput = (
         .index = 0
     )
     assume reader ::= $&stdin_storage
-    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
+    result ::= read_line(.allocator = allocator, .reader = $&stdin_storage)
 
     match result {
         ..error _ {
@@ -46,22 +48,22 @@ main(.system: System) -> (.status_code: Int32) := {
                 }
                 ..ok ~line_payload {
                     line ::= ~line_payload
-                    if line.length != 20 {
+                    if byte_length(&line).count != 20 {
                         status_code = 2
                         return
                     }
 
-                    if capacity(.self = &line).value < 20 {
+                    if capacity(.self = &line).count < 20 {
                         status_code = 3
                         return
                     }
 
-                    if bytes_get(.view = &line, .index = 0).byte != 65 {
+                    if unwrap_or_abort(.value = bytes_get(.view = &line, .index = 0)) != 65 {
                         status_code = 4
                         return
                     }
 
-                    if bytes_get(.view = &line, .index = 19).byte != 65 {
+                    if unwrap_or_abort(.value = bytes_get(.view = &line, .index = 19)) != 65 {
                         status_code = 5
                         return
                     }

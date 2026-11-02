@@ -1,9 +1,9 @@
-set_zero(.target: $&Int32) -> () := {
-    target& = 0
+set_zero := (.target: $&Int32) -> () {
+    target&= 0
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     status_code = 7
-    #defer set_zero(.target = $&status_code)
+    defer set_zero(.target = $&status_code)
     return
 }

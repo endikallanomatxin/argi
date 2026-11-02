@@ -1,13 +1,12 @@
-DummyInput: Type = (
+DummyInput := (
     .index : UIntNative = 0
 )
 
-implement Reader#(DummyInput)(
-    .read_byte = (
-            .self : $&DummyInput
-        ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-        ) {
+implement Reader#(DummyInput) (
+    .read_byte = (.self: $&DummyInput) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
+
         if self&.index == 0 {
             self&.index = 1
             result = ..ok ..ok 79
@@ -30,15 +29,18 @@ implement Reader#(DummyInput)(
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     stdin_storage :: DummyInput = (
         .index = 0
     )
     assume reader ::= $&stdin_storage
-    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
+    result ::= read_line(.allocator = allocator, .reader = $&stdin_storage)
 
     if is(.value = result, .variant = ..ok) {
     } else {
@@ -54,17 +56,17 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     line ::= ~outer ..ok
 
-    if line.length != 2 {
+    if byte_length(&line).count != 2 {
         status_code = 3
         return
     }
 
-    if bytes_get(.view = &line, .index = 0).byte != 79 {
+    if unwrap_or_abort(.value = bytes_get(.view = &line, .index = 0)) != 79 {
         status_code = 4
         return
     }
 
-    if bytes_get(.view = &line, .index = 1).byte != 75 {
+    if unwrap_or_abort(.value = bytes_get(.view = &line, .index = 1)) != 75 {
         status_code = 5
         return
     }

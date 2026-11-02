@@ -1,18 +1,18 @@
 # System
 
 An executable may declare `main(.system: System)`. The program entry scope
-creates the process resources, passes references to them through `System`, and
+creates the process resources, passes borrowed capabilities through `System`, and
 cleans them up after `main` returns. A `main` that needs none of these
 capabilities may omit the input.
 
 `System` is a bundle of capabilities, not an allocator or an owner of the
-process resources. Copying it copies references to those resources; the
+process resources. Copying it copies references and virtual handles; the
 copies remain subject to their lifetimes.
 
 ```rg
 System : Type = (
     .memory: $&Memory
-    .page_allocator: $&PageAllocator
+    .page_allocator: Virtual#(Allocator)
     .terminal: $&Terminal
     .args: $&Arguments
     .env_vars: $&EnvironmentVariables
@@ -36,12 +36,11 @@ randomness, and foreign calls.
 `ProcessManager` provides [child processes and their streams](165_processes.md).
 
 Functions receive the capabilities they use through ordinary inputs. They
-may be passed explicitly or supplied through lexical `assume` or a declared
-`reach` input. There is no implicit default allocator. For example:
+may be passed explicitly or supplied through lexical `assume`. There is no implicit default allocator. For example:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
 }
 ```
 
@@ -56,7 +55,7 @@ exits with `0`; the integer form uses its returned status, including on early
 `return`. There is no special fallible-main contract.
 
 ```rg
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!!
 }
@@ -68,15 +67,16 @@ such an early return, initialize `.status_code: Int32 = 0` and assign `1` in
 an attached error block:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
 }
 ```
 
-Reporting uses the ordinary writer and the tracer stored in the error.
+Reporting uses the ordinary writer and includes the trace when the error carries one.
 The checked entry provides a stderr writer and a bounded 4096-byte tracer;
-functions using reporting need a reachable writer or an explicit writer input.
+functions using reporting need a declared writer input, supplied explicitly or
+through a lexical assumption.
 A locally selected writer or tracer retains its ordinary meaning. Reporting
 finishes before normal return cleanup releases borrowed resources. A failed
 report is not recursively reported and does not alter the pending return.
@@ -98,7 +98,7 @@ Error-reporting helpers also take a writer; route them explicitly to
 `system.terminal&.stderr` or select that writer in a nested lexical scope.
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume reader ::= $&system.terminal&.stdin
     assume writer ::= $&system.terminal&.stdout
     print("Hello world\n")
@@ -122,7 +122,7 @@ to the base writer. Both borrowed resources must outlive the wrapper; temporarie
 referenced in the `assume` expression remain alive for its enclosing scope.
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,
         .buffer = view($&zeroed#(.t: [4096]UInt8)()),
@@ -135,8 +135,8 @@ Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
 
-A fallible helper can return an error borrowing a tracer supplied by its caller
-or the program entry scope. A tracer created inside the helper cannot escape
-in an `Error` or `ErrorTrace`. Create a custom tracer in the caller, keep its
-buffer and virtual wrapper alive, and pass or reach that capability while the
+A helper returning `!!T` can borrow a tracer supplied by its caller or the
+program entry scope. A tracer created inside the helper cannot escape in an
+`ErrorWithTrace`. Ordinary `!T` errors have no diagnostic dependency. Create a custom tracer in the caller, keep its
+buffer and virtual wrapper alive, and pass that capability explicitly or through lexical `assume` while the
 caller handles or reports the error.

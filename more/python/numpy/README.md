@@ -12,7 +12,7 @@ main(.system: System) -> !Void = ..ok Void() := {
     interpreter ::= python.Python(.ffi = system.ffi)!
     values: [3]Float64 = (1.0, 2.0, 3.0)
     vector ::= numpy.Vector64(.interpreter = &interpreter,
-        .values = view(.array = &values))!
+        .values = view(.self = &values))!
     if numpy.dot(.left = &vector, .right = &vector)! != 14.0 { abort }
 }
 ```

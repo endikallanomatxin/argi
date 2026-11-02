@@ -1,18 +1,24 @@
-api := import("./api")
-Local: Type = (.value: Int32)
-Holder#(.T: Type): Type = (.value: T)
+api := import ("./api")
+
+Local := (.value: Int32)
+
+Holder := #(.T: Type) (.value: T)
+
 implement api.Inspect#(&Local) (
     .inspect = (.value: &Local) -> (.result: Int32) { result = value&.value }
 )
+
 implement api.Inspect#($&Local) (
     .inspect = (.value: $&Local) -> (.result: Int32) {
         value&.value = value&.value + 1
         result = value&.value
     }
 )
+
 implement#(.T: Type) api.Inspect#(&Holder#(T)) (
     .inspect = (.value: &Holder#(T)) -> (.result: Int32) { result = 19 }
 )
+
 main := () -> (.status_code: Int32 = 0) {
     local ::= Local(7)
     holder ::= Holder#(Int32)(.value = 3)

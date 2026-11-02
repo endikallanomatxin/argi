@@ -1,23 +1,26 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     text ::= unwrap_or_abort(.value = String(.length = 2))
-    bytes_set(.string = $&text, .index = 0, .value = 79)
-    bytes_set(.string = $&text, .index = 1, .value = 75)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 79))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 75))
 
-    view ::= as_view(.self = &text)
-    if view.length != 2 {
+    view ::= view(.self = &text)
+    if byte_length(&view).count != 2 {
         status_code = 1
         return
     }
 
-    if bytes_get(.view = &view, .index = 0).byte != 79 {
+    if unwrap_or_abort(.value = bytes_get(.view = &view, .index = 0)) != 79 {
         status_code = 2
         return
     }
 
-    if bytes_get(.view = &view, .index = 1).byte != 75 {
+    if unwrap_or_abort(.value = bytes_get(.view = &view, .index = 1)) != 75 {
         status_code = 3
         return
     }

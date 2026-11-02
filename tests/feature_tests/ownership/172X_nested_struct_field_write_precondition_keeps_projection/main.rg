@@ -1,9 +1,9 @@
-Thing : Type = (
-    .value: Int32
+Thing := (
+    .value : Int32
 )
 
-Container : Type = (
-    .pointer: $&Thing
+Container := (
+    .pointer : $&Thing
 )
 
 implement Deinit#(Thing) (
@@ -12,11 +12,11 @@ implement Deinit#(Thing) (
     }
 )
 
-write_nested(.container: $&Container) -> () := {
+write_nested := (.container: $&Container) -> () {
     container&.pointer&.value = 3
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     x :: Thing = (.value = 1)
     container :: Container = (.pointer = $&x)
 

@@ -1,12 +1,12 @@
-Box : Type = (
-    .item: &Int32
+Box := (
+    .item : &Int32
 )
 
-read(.box: Box) -> (.value: Int32) := {
+read := (.box: Box) -> (.value: Int32) {
     value = box.item&
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     original :: Int32 = 1
     box :: Box = (.item = &original)
     if true {

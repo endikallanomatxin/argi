@@ -1,6 +1,9 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     count :: UIntNative = length(.self = system.args).count
     if count < 1 {
@@ -18,7 +21,7 @@ main(.system: System) -> (.status_code: Int32) := {
     first_length :: UIntNative = 0
     for arg in system.args {
         if seen == 0 {
-            first_length = arg.length
+            first_length = byte_length(&arg).count
         }
         seen = seen + 1
     }

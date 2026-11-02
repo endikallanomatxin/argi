@@ -1,21 +1,8 @@
-_bounded_stream_maximum() -> (.value: UIntNative) := {
-    maximum :: UIntNative = 0
-    byte_index :: UIntNative = 0
-    native_bytes ::= size_of(.type = UIntNative)
-
-    while byte_index < native_bytes {
-        maximum = maximum * 256 + 255
-        byte_index = byte_index + 1
-    }
-
-    value = maximum
-}
-
 StreamCopyEnd: Type = (..end, ..limit)
 
 implement ImplicitlyCopyable#(StreamCopyEnd) ()
 
-StreamCopyResult: Type = (.count: UIntNative, .termination: StreamCopyEnd)
+StreamCopyResult := (.count: UIntNative, .termination: StreamCopyEnd)
 
 implement ImplicitlyCopyable#(StreamCopyResult) ()
 
@@ -23,12 +10,12 @@ implement ImplicitlyCopyable#(StreamCopyResult) ()
 
 -- A limit is a stopping point, not an assertion that the source ended. No
 -- lookahead byte is consumed, including when the limit is zero or exactly met.
-copy_stream_limited#(
+copy_stream_limited := #(
     .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
-)(
+) (
     .reader : $&ReaderType,
     .writer : $&WriterType,
-    .buffer : ArrayView#(.t: UInt8),
+    .buffer : MutableArrayView#(.t: UInt8),
     .limit  : UIntNative
 ) -> (
     .result : Errable#(
@@ -40,7 +27,8 @@ copy_stream_limited#(
             ..invalid_stream_buffer
         )
     )
-) := {
+) {
+
     copied :: UIntNative = 0
 
     if limit == 0 {
@@ -75,33 +63,26 @@ copy_stream_limited#(
 
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
-read_all_limited#(
-    .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
-)(
+read_all_limited := #(
+    .SelfType: Type: BlockReader#(SelfType)
+) (
     .self      : $&SelfType,
-    .buffer    : ArrayView#(.t: UInt8),
+    .buffer    : MutableArrayView#(.t: UInt8),
     .limit     : UIntNative,
-    .allocator : $&AllocatorType
+    .allocator : Virtual#(Allocator)
 ) -> (
     .result : Errable#(
-        String,
+        DynamicArray#(UInt8),
         (
             ..stream_read_failed,
             ..invalid_stream_buffer,
             ..size_limit_exceeded,
-            ..size_overflow,
             ..out_of_memory
         )
     )
-) := {
+) {
+
     assume allocator
-    maximum ::= _bounded_stream_maximum().value
-
-    if limit >= maximum {
-        result = ..error(.reason = ..size_overflow)
-        return
-    }
-
     size ::= length(&buffer).count
 
     if size == 0 {
@@ -112,13 +93,13 @@ read_all_limited#(
     initial ::= size
 
     if initial > limit { initial = limit }
-    out ::= string_with_capacity(.allocator = allocator, .capacity = initial)!
+    out ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = initial)!
 
-    while out.length < limit {
-        request ::= limit - out.length
+    while length(&out).count < limit {
+        request ::= limit - length(&out).count
         if request > size { request = size }
-        needed ::= out.length + request
-        current ::= capacity(&out).value
+        needed ::= length(&out).count + request
+        current ::= capacity(&out).count
         -- Reserve before the read so allocation failure consumes no new chunk.
         if needed > current {
             grown ::= current
@@ -126,8 +107,10 @@ read_all_limited#(
                 if grown > limit / 2 { grown = limit } else { grown = grown * 2 }
                 if grown == 0 { grown = 1 }
             }
-            fresh ::= string_with_capacity(.allocator = allocator, .capacity = grown)!
-            push_view($&fresh, .view = as_view(&out), .allocator = allocator)!
+            -- Generic array growth may exceed a requested minimum. Allocate
+            -- the exact bounded capacity before consuming another source chunk.
+            fresh ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = grown)!
+            for byte in out { push_assume_capacity($&fresh, .value = byte) }
             deinit(.self = $&out)
             out = ~fresh
         }
@@ -139,7 +122,12 @@ read_all_limited#(
             return
         }
         prefix ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = got))
-        string_append_bytes($&out, .source = as_readonly(&prefix).view)
+        index :: UIntNative = 0
+        while index < got {
+            byte ::= unwrap_or_abort(.value = get(&prefix, .index = index))
+            push_assume_capacity($&out, .value = byte)
+            index = index + 1
+        }
     }
     -- A single scratch byte distinguishes exact EOF from excess data.
     probe ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = 1))

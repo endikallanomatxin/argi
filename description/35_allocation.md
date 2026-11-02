@@ -23,16 +23,44 @@ The low-level alignment must be a nonzero power of two. Implementations check
 this precondition and `abort` if it is violated; an invalid alignment is not
 `..out_of_memory`. The typed `allocate#(.t: T)(.count)` helper computes the
 size and alignment from `T`, checks multiplication overflow, and still returns
-raw `Allocation` storage. A zero-size allocation is valid. Allocation failure
-returns no storage, safe reference, or cleanup obligation.
+raw `Allocation` storage. It privately retains the requested element size and
+count, including a zero count or zero-sized elements; this metadata establishes
+no occupancy or cleanup obligation. A zero-size allocation is valid. Allocation
+failure returns no storage, safe reference, or cleanup obligation.
 
 A zero-size allocation provides no accessible bytes. An allocator may reserve
 internal padding for it, but that padding does not authorize a nonzero-size
 slot. The allocation may still be released normally.
 
+## Allocator capabilities in library APIs
+
+General allocating APIs receive `Virtual#(Allocator)` by value. Copying this
+borrowed handle copies its receiver and method-table pointers, not the concrete
+allocator. The handle and every resulting allocation retain the concrete
+allocator's lifetime dependencies. Allocators do not add
+participants to collection, formatting, concatenation or copying contracts.
+`FalliblyCopyable#(Value)` retains the selected value implementation's associated
+failure reasons. Constructors use virtual allocator fields in their Args records.
+
+Convert once at the capability boundary and use ordinary lexical assumptions:
+
+```rg
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+items ::= DynamicArray#(Int32)(.capacity = 16)!
+push($&items, .value = 42)!
+```
+
+`System.page_allocator` supplies a virtual capability backed by a concrete
+PageAllocator owned by the checked entry scope. ArenaAllocator and
+GeneralPurposeAllocator take the same virtual capability as their backing input.
+`Allocation` keeps its own virtual deallocator and lifetime dependencies, so a
+collection may use another allocator for later growth without retaining one
+allocator in its type or representation. Low-level `allocate_bytes` and
+`allocate#(T)` remain generic and accept concrete or virtual providers.
+
 ## Raw storage and typed slots
 
-`Allocation.data` is a non-dereferenceable `RawPointer<UInt8>`. An
+`Allocation.data` is a non-dereferenceable `RawPointer#(UInt8)`. An
 `Allocation` records size, alignment, a temporal anchor, and the means to
 release its storage. Its type alone does not determine whether the allocation
 has an independent lifetime or inherits one from an arena.
@@ -45,13 +73,25 @@ Allocation : Type = (
     .size: UIntNative
     .alignment: UIntNative
     .anchor: &Any
-    .deallocator: Virtual#(.contract: Deallocator)
+    .deallocator: Virtual#(Deallocator)
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative
     ._release_size: UIntNative
+    ._slot_extent: ?_AllocationSlotExtent
+    ._slot_state: UIntNative = 0
 )
 ```
+
+Typed allocation requests retain their element size and count. When the selected
+representation needs cleanup or reference companions, the allocator request also
+reserves a private prefix for them. Public data and size describe only the payload;
+physical cleanup releases the original acquisition, including that prefix.
+The private slot-state handle travels with the receipt. Preparing it does not
+initialize elements or activate destruction. Borrowing selects an existing slot
+identity and requires no additional metadata allocation. Cleanup conformance
+selection precedes preparation, including generic types allocated before their
+first value is constructed in a later REPL command.
 
 The private storage fields retain the address, extent, and alignment certified
 by the allocator at establishment. Public receipt fields describe a requested
@@ -70,7 +110,7 @@ retains the acquisition's original extent and alignment.
 `AcquiredStorage` certifies a successful physical acquisition, independently
 of any temporal owner or initialized `T`. Its address, size, and alignment are
 private to bundled core. `acquire_heap_storage(size, alignment, ffi)` and
-`acquire_page_storage(memory, size, alignment)` return `Errable<AcquiredStorage>`.
+`acquire_page_storage(memory, size, alignment)` return `Errable#(AcquiredStorage)`.
 Neither publishes a receipt on failure. A zero-size request is valid and grants
 no readable bytes, even when acquisition reserves heap or page padding.
 
@@ -105,34 +145,44 @@ an allocation through `Allocator`; supplying an integer to the trusted boundary
 does not discharge the acquisition obligation. The analogous integer-address
 operation for an existing domain is `trusted_establish_inherited_storage`.
 
-Higher-level values such as `String` and `DynamicArray<T>` keep their own
-occupancy and length invariants. `MaybeUninit<T>` identifies a typed slot
+Higher-level values such as `String` and `DynamicArray#(T)` keep their own
+occupancy and length invariants. `MaybeUninit#(T)` identifies a typed slot
 without claiming whether it is occupied. It has no occupancy flag and does
 not expose a `T`; only initialization establishes a live value. A container
 must track which slots contain live values. Its private helpers initialize a
 vacant slot through the trusted opaque move-in operation or extract an
-occupied slot through opaque move-out. `DynamicArray<T>` keeps `[0, length)`
+occupied slot through opaque move-out. `DynamicArray#(T)` keeps `[0, length)`
 occupied and `[length, capacity)` vacant. Its movement operations pass slot
 handles to trusted relocation; normal references are formed only after
 checking `index < length`. Empty slots cannot be exposed as `&T` or `$&T`.
 
-`allocation_slot<T>(allocation, index)` selects a complete, aligned slot inside
+`allocation_slot#(T)(allocation, index)` selects a complete, aligned slot inside
 both the declared extent and the allocation's private certified extent. It
-rejects arithmetic wrap and invalid bounds with a runtime trap. The result is
-`MaybeUninit<T>`, not `&T` or `$&T`: selection cannot read, write, or destroy a
-`T`. The handle's address is private, and its validity depends on the allocation
+rejects arithmetic wrap and invalid bounds with a runtime trap. If a typed
+request retained the same element size, selection also checks its logical count.
+Zero-sized selection requires that retained extent: byte bounds alone cannot
+authorize any logical zero-sized position. Nonzero reinterpretations continue
+to check physical byte bounds. The result is `MaybeUninit#(T)`, not `&T` or
+`$&T`: selection cannot read, write, or destroy a `T`. The handle's address is private, and its validity depends on the allocation
 and backing anchor. Copies and forwarding retain those dependencies. Ending
 the allocation or resetting its backing region invalidates the handle.
-`uninit_slot_address<T>(slot)` exposes an integer address without certifying
+`uninit_slot_address#(T)(slot)` exposes an integer address without certifying
 initialized contents or granting a reference conversion.
 
 ### Slot authority and occupancy
 
 Slot selection is repeatable: selecting the same index twice or copying a
-`MaybeUninit<T>` produces handles to the same bytes. These handles carry range
+`MaybeUninit#(T)` produces handles to the same bytes. These handles carry range
 and lifetime validity, not exclusive ownership or permission to initialize.
 Consuming one handle does not revoke the others. Making the handle move-only
 would therefore not, by itself, establish exclusive slot authority.
+
+The handle retains its logical index separately from its byte address. Distinct
+zero-sized elements can share an address while naming different positions.
+Trusted establishment from a handle carries that index and checks that it
+corresponds to the address and satisfies the retained logical bound when
+applicable. This position adds no occupancy or cleanup authority;
+raw establishment without an index cannot recover it from an address.
 
 The storage owner controls occupancy through private state. Ordinary operations
 request a transition from that owner; they cannot assert occupancy by supplying
@@ -153,7 +203,7 @@ publish an occupied slot unless it leaves a valid live value there. Cleanup
 visits occupied slots only.
 
 Occupation can be represented by a collection invariant rather than a flag for
-each element. `DynamicArray<T>` uses its initialized prefix: append publishes
+each element. `DynamicArray#(T)` uses its initialized prefix: append publishes
 the new length after moving in a value; pop removes an element from the prefix
 and moves it out. Other owners may use different private representations.
 Their trusted implementation must keep occupancy and stored values consistent.
@@ -163,14 +213,14 @@ replacement, or relocation ends the referenced value's storage generation.
 The owner may conservatively invalidate all element references for a structural
 mutation. Copied storage handles do not override that invalidation or authorize
 a second extraction. Range validity alone never proves that a live `T` remains.
-`DynamicArray<T>` conservatively invalidates element references, views, and
+`DynamicArray#(T)` conservatively invalidates element references, views, and
 iterators on successful `set`, as well as on structural mutations: replacing
 contents ends the old value's lifetime even if length and address stay equal.
 A new borrow after replacement refers to the new live value.
 
 > [!IMPLEMENTATION]
-> `DynamicArray<T>` implements owner-controlled transitions using private
-> length and trusted opaque operations. `allocation_slot<T>` only selects
+> `DynamicArray#(T)` implements owner-controlled transitions using private
+> length and trusted opaque operations. `allocation_slot#(T)` only selects
 > storage; there is no general ordinary initialization or extraction API for
 > arbitrary allocation slots. Such an API must establish owner-controlled
 > occupancy and content-reference invalidation before exposing reads.
@@ -197,7 +247,7 @@ implicit default allocator. `GeneralPurposeAllocator` receives a backing
 allocator. A program selects its allocator, for example:
 
 ```rg
-assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 ```
 
 Allocators compose: a `PageAllocator` may back a

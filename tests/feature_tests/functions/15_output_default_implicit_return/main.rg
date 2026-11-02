@@ -1,2 +1,2 @@
-main() -> (.status_code: Int32 = 42) := {
+main := () -> (.status_code: Int32 = 42) {
 }

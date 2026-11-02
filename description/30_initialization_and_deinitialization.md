@@ -5,20 +5,23 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-Canonical construction uses `Init#(T, Args)`. The target and argument record
-are participants; their selected conformance determines `T` or `Errable#(T, R)`
-as its associated Result.
-Calling `T(...)` completes that record and invokes the selected `init` operation.
+Canonical construction uses `Init#(Target, Args)`. The complete participant tuple
+selects a conformance; Args is its nominal input record. The associated Result
+is Target or `Errable#(Target, R)`, and the required operation is
+`Args -> (.result: Result)`. `T(...)` fixes Target, infers Args against candidate
+signatures, and completes ordinary defaults and lexical assumptions.
+
 No uninitialized destination is passed into it: the successful value is returned
 directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
 apply to intermediate values on every exit.
 
 ```rg
-Point: Type = (.x: Int32, .y: Int32)
-implement Init#(Point, (.x: Int32, .y: Int32 = 0)) (
+Point := (.x: Int32, .y: Int32)
+PointArgs := (.x: Int32, .y: Int32 = 0)
+implement Init#(Point, PointArgs) (
     .Result: Type = Point
-    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
-        result = (.x = args.x, .y = args.y)
+    .init = PointArgs -> (.result: Result) {
+        result = (.x = x, .y = y)
     }
 )
 
@@ -28,36 +31,38 @@ point ::= Point(.x = 10)
 Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
-Box#(.T: Type): Type = (.value: T)
-implement#(.T: Type) Init#(Box#(T), (.value: T)) (
+Box := #(.T: Type) (.value: T)
+BoxArgs := #(.T: Type) (.value: T)
+implement#(.T: Type) Init#(Box#(T), BoxArgs#(T)) (
     .Result: Type = Box#(T)
-    .init = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
+    .init = BoxArgs#(T) -> (.result: Result) { result = (.value = ~value) }
 )
 ```
 
-The requested type, such as `Box#(Int32)`, and input argument types select the
-conformance together. Generic argument fields can retain a concrete allocator
-without adding it to the target type. Constructor syntax contextualizes literals
-and completes defaults against applicable argument patterns, then uses contract
-specificity. Incomparable applicable patterns are ambiguous. The result never
-selects a conformance, and an incompatible selected result cannot bypass custom
-construction.
-Record defaults retain scalar literals, payload-free choice variants and lexical
-reach directives without executing runtime expressions during type materialization.
+The requested type, such as `Box#(Int32)`, fixes the target participant. An
+allocator type can be a parameter of Args and the implementation, without becoming
+part of the constructed type. Several conformances may construct the same target.
+Different inferred argument types require explicit qualification, such as
+`Init#(Target, ChosenArgs).init(...)`; specificity ranks candidates only for the
+same complete tuple. Expected outputs never select a conformance. The selected
+Result must construct the target and cannot bypass custom construction.
+
+Record defaults retain scalar literals and payload-free choice variants directly.
+Other defaults remain caller-evaluated expression recipes during type materialization.
 The selected operation preserves argument loans and projected output dependencies.
-References carried inside Args retain effects on their referents, including
-consumption and invalidation. Copying Args does not let its local field-slot
+References carried inside input records retain effects on their referents, including
+consumption and invalidation. Copying an input record does not let its local field-slot
 updates overwrite caller slots. Repeated consumption and aliasing between
 consumed reference fields are checked across that boundary.
 
-When Args determines every parameter of a nominal family, its application can
+When inputs determine every parameter of a nominal family, its application can
 be omitted: `Box(.value = byte)` infers the same target as `Box#(UInt8)` for a
 UInt8 input. This inference also applies inside generic bodies. If several
-conformances infer different targets and none dominates, specify the target
+conformances infer different targets, specify the target
 explicitly; Result is never used to choose its missing parameters.
 
 All bundled core and official more constructors use this contract. `Range`
-uses one Args record with default start and step. Scaled durations, relative
+uses one input signature with default start and step. Scaled durations, relative
 deadlines, precise Unix timestamps, and paths copied from views use ordinary
 named factories. Single-use capabilities reuse named `once` functions as their
 `init` members, preserving entrypoint call-graph checks.
@@ -113,11 +118,21 @@ Cleanup follows initializedness: an already deinitialized place is not
 destroyed twice. Replacing a live value first cleans the old one, then
 initializes the same storage with the replacement.
 
-`#defer` schedules a statement to run when the current scope exits, including
+A record may be initialized field by field. Once all fields are initialized,
+the complete value has the same cleanup as a whole-value initializer. If the
+scope exits before completion, only its initialized owning fields are cleaned;
+the incomplete record's `deinit` is not called. This applies recursively to
+partially initialized nested records and to early exits.
+
+`defer` schedules a statement to run when the current scope exits, including
 on a return or error propagation. Deferred statements run in reverse order,
 before automatic cleanup of the scope's locals. Use it for an exit action
 that automatic cleanup does not provide; a local value with a suitable
 `deinit` does not need a deferred `deinit` call.
+
+`defer` is a reserved keyword, as is `implement`. It has no directive prefix:
+write `defer { ... }` or `defer cleanup(...)`. The former `#defer` spelling is
+rejected with a migration diagnostic.
 
 Deferred actions cannot return from the containing function or propagate errors
 with `!`, `!!`, or `!!!`: doing so would bypass remaining deferred actions and

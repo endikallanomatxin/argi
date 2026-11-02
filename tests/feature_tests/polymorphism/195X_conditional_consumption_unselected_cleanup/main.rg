@@ -1,4 +1,4 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -6,11 +6,11 @@ implement Deinit#(Resource) (
     }
 )
 
-release_if(.resource: $&Resource, .consume: Bool) -> () := {
+release_if := (.resource: $&Resource, .consume: Bool) -> () {
     if consume { deinit(resource) }
 }
 
-main() -> () := {
+main := () -> () {
     resource ::= Resource(42)
     release_if($&resource, true)
 }

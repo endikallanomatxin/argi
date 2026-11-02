@@ -30,6 +30,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: Write
             )
         )
     ) {
+
         storage ::= zeroed#([1]UInt8)()
         buffer ::= view($&storage)
         copied :: UIntNative = 0
@@ -68,6 +69,7 @@ implement#(.ReaderType: Type: BlockReader#(ReaderType), .base_type: Type: Writer
             )
         )
     ) {
+
         capacity ::= length(&writer&.buffer).count
         copied :: UIntNative = 0
 

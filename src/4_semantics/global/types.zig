@@ -27,6 +27,29 @@ pub const LayoutError = error{
     TypeHasNoRuntimeLayout,
 };
 
+/// Follow storage links without changing nominal equality or contract lookup.
+/// The bounded walk safely probes unresolved or cyclic definitions while the
+/// semantic fixed point is still materializing types.
+pub fn representationType(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalTypeId {
+    var current = ty;
+    for (0..graph.types.items.len + 1) |_| {
+        const semantic = graph.resolvedSemanticType(current) orelse return null;
+        const next: ?graph_mod.GlobalTypeId = switch (semantic) {
+            .generic => if (genericInstance(graph, current)) |instance| switch (instance.shape) {
+                .alias => |target| target,
+                else => null,
+            } else null,
+            else => null,
+        };
+        current = next orelse return current;
+    }
+    return null;
+}
+
+pub fn representation(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalType {
+    return graph.resolvedSemanticType(representationType(graph, ty) orelse return null);
+}
+
 /// Init and Convert return their target directly or in one Errable success payload.
 pub fn resultMatchesTarget(graph: *const graph_mod.GlobalSemanticGraph, result: graph_mod.GlobalTypeId, target: graph_mod.GlobalTypeId) bool {
     if (equal(graph, result, target)) return true;
@@ -43,37 +66,49 @@ pub fn isErrable(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     return switch (semantic) {
         .inferred_choice => |choice| choice.kind == .errable,
         .generic => |generic| blk: {
-            const owner = graph.moduleForDeclaration(generic.base) orelse break :blk false;
+            const owner = graph.moduleForFamilyDefinition(generic.base) orelse break :blk false;
             break :blk graph.modules.items[@intFromEnum(owner)].is_bundled_core and
-                std.mem.eql(u8, graph.text(graph.declaration(generic.base).name), "Errable");
+                std.mem.eql(u8, graph.familyDefinitionName(generic.base), "Errable");
         },
         else => false,
     };
 }
 
+pub fn isCUnion(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return switch (graph.semanticType(ty)) {
+        .nominal => |decl| graph.typeDefinition(decl).struct_layout == .c_union,
+        .structural => |shape| shape.layout == .c_union,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .structure => |shape| shape.layout == .c_union,
+            else => false,
+        } else false,
+        else => false,
+    };
+}
+
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
-    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    const semantic = representation(graph, ty) orelse return null;
     return switch (semantic) {
         .structural => |shape| shape.fields,
-        .declared => |decl| graph.declarations.items[@intFromEnum(decl)].struct_fields,
+        .nominal => |decl| graph.typeDefinition(decl).struct_fields,
         .generic => genericFields(graph, ty),
         else => null,
     };
 }
 
 pub fn variants(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.VariantRange {
-    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    const semantic = representation(graph, ty) orelse return null;
     return switch (semantic) {
         .structural_choice => |shape| shape.variants,
         .inferred_choice => |shape| shape.variants,
-        .declared => |decl| graph.declarations.items[@intFromEnum(decl)].choice_variants,
+        .nominal => |decl| graph.typeDefinition(decl).choice_variants,
         .generic => genericVariants(graph, ty),
         else => null,
     };
 }
 
 pub fn arrayElement(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalTypeId {
-    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    const semantic = representation(graph, ty) orelse return null;
     return switch (semantic) {
         .array => |array| array.element,
         .generic => blk: {
@@ -89,7 +124,7 @@ pub fn arrayElement(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
 }
 
 pub fn arrayLength(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?u64 {
-    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    const semantic = representation(graph, ty) orelse return null;
     return switch (semantic) {
         .array => |array| array.length,
         .generic => blk: {
@@ -136,7 +171,7 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
 
 pub fn variantTag(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, hit: VariantHit) i32 {
     const layout: primitives.ChoiceLayout = switch (graph.semanticType(ty)) {
-        .declared => |id| graph.declaration(id).choice_layout,
+        .nominal => |id| graph.typeDefinition(id).choice_layout,
         .structural_choice => |shape| shape.layout,
         .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .choice => |shape| shape.layout,
@@ -174,79 +209,49 @@ pub fn materializeNullable(
     const variant_start: u32 = @intCast(graph.variants.items.len);
     try graph.variants.append(allocator, .{ .name = none_name, .source = source, .value = 0 });
     try graph.variants.append(allocator, .{ .name = some_name, .payload_type = payload_ty, .source = source, .value = 1 });
-    try graph.resolveType(id, .{ .structural_choice = .{
+    try graph.resolveType(allocator, id, .{ .structural_choice = .{
         .variants = .{ .start = variant_start, .len = 2 },
     } });
 }
 
-/// Destructors receive an address of the owned value. A reference itself is
-/// never the value whose lifetime that destructor closes.
-pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
-    if (graph.semanticType(ty) == .pointer) return null;
-    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+/// Recover nullable's element before or after choice materialization. The
+/// sugar has structural identity, including its variant and payload names.
+pub fn nullableChild(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalTypeId {
+    if (graph.types.items[@intFromEnum(ty)] == .nullable) return graph.types.items[@intFromEnum(ty)].nullable;
+    const choices = variants(graph, ty) orelse return null;
+    if (choices.len != 2) return null;
+    const none = findVariant(graph, ty, "none") orelse return null;
+    if (none.variant.payload_type != null) return null;
+    const some = findVariant(graph, ty, "some") orelse return null;
+    const payload = some.variant.payload_type orelse return null;
+    const members = fields(graph, payload) orelse return null;
+    if (members.len != 1) return null;
+    const field = graph.fields.items[members.start];
+    if (!std.mem.eql(u8, graph.text(field.name), "value")) return null;
+    return field.ty;
+}
+
+/// A cleanup obligation comes from materialized Deinit evidence, independently
+/// of storage acquisition. This is an existence query, not operation selection;
+/// it must neither resolve new evidence nor rank caller-specific implementations.
+/// A reference is never the owned value whose lifetime a destructor closes.
+pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    if (graph.semanticType(ty) == .pointer) return false;
+    const contract = standard_contracts.standardDefinition(graph, "Deinit") orelse return false;
     var operations = contract_evidence.materializedOperations(graph, contract);
-    var found: ?graph_mod.GlobalFunctionId = null;
     while (operations.next()) |selected| {
-        const id = selected.materializedFunction(graph) orelse continue;
+        const id = selected.materializedFunction() orelse continue;
         const function = graph.function(id);
         if (!function.flags.is_deinit or function.input.len == 0) continue;
         const participant = selected.participant(graph, 0) orelse continue;
-        if (!equal(graph, participant, ty)) continue;
-        // Preserve declaration-order selection when the same evidence is reached
-        // through several caller contexts.
-        if (found == null or @intFromEnum(id) < @intFromEnum(found.?)) found = id;
+        if (equal(graph, participant, ty)) return true;
     }
-    return found;
-}
-
-/// A cleanup obligation comes from selected Deinit evidence, independently
-/// of storage acquisition.
-pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
-    return deinitFunction(graph, ty) != null;
-}
-
-/// Opaque drops use selected Deinit evidence and check its capability inputs
-/// against the supplied arguments.
-pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
-    var found: ?graph_mod.GlobalFunctionId = null;
-    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
-    var operations = contract_evidence.materializedOperations(graph, contract);
-    while (operations.next()) |selected| {
-        const id = selected.materializedFunction(graph) orelse continue;
-        const function = graph.function(id);
-        if (!function.flags.is_deinit) continue;
-        const participant = selected.participant(graph, 0) orelse continue;
-        if (!equal(graph, participant, value_type)) continue;
-        var self_matches = false;
-        var arguments_match = true;
-        for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |expected, index| {
-            const name = graph.text(expected.name);
-            const is_receiver = index == 0;
-            if (is_receiver) {
-                self_matches = true;
-                continue;
-            }
-            var provided = false;
-            for (graph.fields.items[supplied.start..][0..supplied.len]) |actual| {
-                if (!std.mem.eql(u8, name, graph.text(actual.name))) continue;
-                provided = true;
-                if (!equal(graph, expected.ty, actual.ty)) arguments_match = false;
-                break;
-            }
-            if (!provided and expected.default_value == null) arguments_match = false;
-            if (!arguments_match) break;
-        }
-        if (!self_matches or !arguments_match) continue;
-        if (found != null and found.? != id) return error.AmbiguousOpaqueDestructor;
-        found = id;
-    }
-    return found;
+    return false;
 }
 
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
     if (graph.isTypeUnresolved(ty)) return null;
-    for (graph.generic_instances.items) |instance| if (instance.type_id == ty) return instance;
-    return null;
+    return graph.genericInstance(ty);
 }
 
 pub fn typeForDeclaration(graph: *const graph_mod.GlobalSemanticGraph, decl: graph_mod.GlobalDeclId) ?graph_mod.GlobalTypeId {
@@ -262,7 +267,60 @@ pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
 }
 
 pub fn identityEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
-    return a == b or equal(graph, a, b);
+    if (a == b) return true;
+    if (!equal(graph, a, b)) return false;
+    const left = graph.types.items[@intFromEnum(a)];
+    const right = graph.types.items[@intFromEnum(b)];
+    // Structural assignability ignores defaults, but specialization must retain
+    // them: a generic body can construct a value using the supplied type.
+    return switch (left) {
+        .pointer => |value| identityEqual(graph, value.child, right.pointer.child),
+        .array => |value| identityEqual(graph, value.element, right.array.element),
+        .nullable => |value| identityEqual(graph, value, right.nullable),
+        .virtual => |value| identityEqual(graph, value, right.virtual),
+        .structural => |value| result: {
+            if (value.layout != right.structural.layout) break :result false;
+            for (graph.fields.items[value.fields.start..][0..value.fields.len], graph.fields.items[right.structural.fields.start..][0..right.structural.fields.len]) |first, second| {
+                if (first.default_value != second.default_value or !identityEqual(graph, first.ty, second.ty)) break :result false;
+            }
+            break :result true;
+        },
+        .structural_choice => |value| result: {
+            if (value.layout != right.structural_choice.layout) break :result false;
+            for (graph.variants.items[value.variants.start..][0..value.variants.len], graph.variants.items[right.structural_choice.variants.start..][0..right.structural_choice.variants.len]) |first, second| {
+                if (first.payload_type) |payload| if (!identityEqual(graph, payload, second.payload_type.?)) break :result false;
+            }
+            break :result true;
+        },
+        else => true,
+    };
+}
+
+/// Operation compatibility compares the callable fields, not the nominal
+/// identity of their enclosing records. Field types retain ordinary equality.
+/// Extra implementation inputs must be optional so requirement-only callers
+/// can still invoke the implementation.
+pub fn operationInputsCompatible(graph: *const graph_mod.GlobalSemanticGraph, required: graph_mod.FieldRange, implementation: graph_mod.FieldRange) bool {
+    if (implementation.len < required.len) return false;
+    if (!operationFieldsEqual(graph, required, .{ .start = implementation.start, .len = required.len })) return false;
+    for (graph.fields.items[implementation.start + required.len ..][0 .. implementation.len - required.len]) |field|
+        if (field.default_value == null) return false;
+    return true;
+}
+
+pub fn operationFieldsEqual(graph: *const graph_mod.GlobalSemanticGraph, required: graph_mod.FieldRange, implementation: graph_mod.FieldRange) bool {
+    if (required.len != implementation.len) return false;
+    for (graph.fields.items[required.start..][0..required.len], graph.fields.items[implementation.start..][0..implementation.len]) |expected, actual| {
+        if (!std.mem.eql(u8, graph.text(expected.name), graph.text(actual.name)) or !equal(graph, expected.ty, actual.ty)) return false;
+    }
+    return true;
+}
+
+pub fn hasNominalIdentity(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return switch (graph.resolvedSemanticType(ty) orelse return false) {
+        .nominal, .generic => true,
+        else => false,
+    };
 }
 
 pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTypeId, b: graph_mod.GlobalTypeId) bool {
@@ -275,8 +333,9 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
             .builtin => |y| x == y,
             else => false,
         },
-        .declared => |x| switch (right) {
-            .declared => |y| x == y,
+        .definition => |x| right == .definition and x == right.definition,
+        .nominal => |x| switch (right) {
+            .nominal => |y| x == y,
             else => false,
         },
         .pointer => |x| switch (right) {
@@ -292,7 +351,7 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
             else => false,
         },
         .inferred_errable => |x| switch (right) {
-            .inferred_errable => |y| equal(graph, x, y),
+            .inferred_errable => |y| x.traced == y.traced and equal(graph, x.child, y.child),
             else => false,
         },
         .generic => |x| switch (right) {
@@ -322,7 +381,7 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
 /// (`nullable`/`inferred_errable`) and construction-time holes are rejected
 /// because GlobalSema must materialize them before Safety/Codegen.
 pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) LayoutError!Layout {
-    const semantic = graph.resolvedSemanticType(ty) orelse return error.UnmaterializedGlobalType;
+    const semantic = representation(graph, ty) orelse return error.UnmaterializedGlobalType;
     return switch (semantic) {
         .builtin => |builtin| builtinLayout(graph, builtin),
         .pointer => .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() },
@@ -331,12 +390,13 @@ pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
             const stride = alignForward(element.size, element.alignment);
             break :blk .{ .size = stride * array.length, .alignment = element.alignment };
         },
-        .declared => |decl| declaredLayout(graph, decl),
+        .nominal => |decl| nominalLayout(graph, decl),
         .structural => |shape| structLayout(graph, shape.fields, shape.layout),
         .structural_choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
         .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
         .generic => genericLayout(graph, ty),
         .virtual => .{ .size = graph.target.pointerBytes() * 2, .alignment = graph.target.pointerBytes() },
+        .definition => error.TypeHasNoRuntimeLayout,
         .nullable, .inferred_errable => error.UnmaterializedGlobalType,
     };
 }
@@ -352,7 +412,7 @@ pub fn alignmentOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
 fn builtinLayout(graph: *const graph_mod.GlobalSemanticGraph, builtin: primitives.BuiltinType) Layout {
     return switch (builtin) {
         .Void => .{ .size = 0, .alignment = 1 },
-        .Int8, .UInt8, .Char, .Bool, .Any => .{ .size = 1, .alignment = 1 },
+        .Int8, .UInt8, .Bool, .Any => .{ .size = 1, .alignment = 1 },
         .Int16, .UInt16, .Float16 => .{ .size = 2, .alignment = 2 },
         .Int32, .UInt32, .Float32 => .{ .size = 4, .alignment = 4 },
         .Int64, .UInt64, .Float64 => .{ .size = 8, .alignment = 8 },
@@ -360,10 +420,10 @@ fn builtinLayout(graph: *const graph_mod.GlobalSemanticGraph, builtin: primitive
     };
 }
 
-fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalDeclId) LayoutError!Layout {
+fn nominalLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mod.GlobalTypeDefinitionId) LayoutError!Layout {
     const raw: usize = @intFromEnum(decl_id);
-    if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
-    const decl = graph.declarations.items[raw];
+    if (raw >= graph.type_definitions.items.len) return error.UnmaterializedGlobalType;
+    const decl = graph.type_definitions.items[raw];
     if (decl.struct_layout == .c_function_pointer) return .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() };
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
@@ -408,24 +468,32 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
     return .{ .size = alignForward(offset, alignment), .alignment = alignment };
 }
 
+/// Regular-choice ABI shared with execution descriptors: an i32 tag followed
+/// by one physical field per alternative. Payloadless fields occupy one byte.
+pub const ChoiceStorage = struct {
+    offset: u64 = 4,
+    alignment: u64 = 4,
+
+    pub fn append(self: *ChoiceStorage, payload: ?Layout) u64 {
+        const field = payload orelse Layout{ .size = 1, .alignment = 1 };
+        self.offset = alignForward(self.offset, field.alignment);
+        const offset = self.offset;
+        self.offset += field.size;
+        self.alignment = @max(self.alignment, field.alignment);
+        return offset;
+    }
+
+    pub fn finish(self: ChoiceStorage) Layout {
+        return .{ .size = alignForward(self.offset, self.alignment), .alignment = self.alignment };
+    }
+};
+
 fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.VariantRange, kind: primitives.ChoiceLayout) LayoutError!Layout {
     if (kind == .c_enum) return .{ .size = 4, .alignment = 4 };
-    // Keep the current ABI exactly: regular choices are a tag followed by one
-    // storage field per variant (rather than a payload union).
-    var offset: u64 = 4;
-    var alignment: u64 = 4;
-    for (graph.variants.items[range.start..][0..range.len]) |variant| {
-        // LLVM retains an i8 field for a variant without a payload.
-        // Include it in offsets and copy sizes even though it carries no value.
-        const layout: Layout = if (variant.payload_type) |payload_ty|
-            try layoutOf(graph, payload_ty)
-        else
-            .{ .size = 1, .alignment = 1 };
-        offset = alignForward(offset, layout.alignment);
-        offset += layout.size;
-        alignment = @max(alignment, layout.alignment);
-    }
-    return .{ .size = alignForward(offset, alignment), .alignment = alignment };
+    var storage: ChoiceStorage = .{};
+    for (graph.variants.items[range.start..][0..range.len]) |variant|
+        _ = storage.append(if (variant.payload_type) |payload| try layoutOf(graph, payload) else null);
+    return storage.finish();
 }
 
 fn alignForward(value: u64, alignment: u64) u64 {
@@ -460,18 +528,17 @@ pub fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: any
         // Positional arguments and their named spelling identify the same
         // specialization when their declaration-order values agree.
         if (left.name.len != 0 and right.name.len != 0 and !std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
-        switch (left.value) {
-            .type => |left_ty| switch (right.value) {
-                .type => |right_ty| if (!identityEqual(graph, left_ty, right_ty)) return false,
-                else => return false,
-            },
-            .comptime_int => |left_int| switch (right.value) {
-                .comptime_int => |right_int| if (left_int != right_int) return false,
-                else => return false,
-            },
-        }
+        if (!genericArgumentValuesEqual(graph, left.value, right.value)) return false;
     }
     return true;
+}
+
+pub fn genericArgumentValuesEqual(graph: *const graph_mod.GlobalSemanticGraph, left: graph_mod.GenericArgument.Value, right: graph_mod.GenericArgument.Value) bool {
+    return switch (left) {
+        .definition => |value| right == .definition and value.origin == right.definition.origin and genericArgumentsEqual(graph, value.captures, right.definition.captures),
+        .type => |value| right == .type and identityEqual(graph, value, right.type),
+        .comptime_int => |value| right == .comptime_int and value == right.comptime_int,
+    };
 }
 
 fn fieldRangesEqual(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.FieldRange, b: graph_mod.FieldRange) bool {
@@ -527,8 +594,9 @@ test "cleanup queries require selected Deinit evidence" {
         .files = .{ .start = 0, .len = 0 },
         .declarations = .{ .start = 0, .len = 2 },
     });
+    try graph.family_definitions.append(allocator, .{ .source = source, .declaration = @enumFromInt(0), .kind = .contract, .parameter_count = 1 });
     try graph.declarations.appendSlice(allocator, &.{
-        .{ .kind = .contract_type, .name = name, .source = source },
+        .{ .kind = .contract_type, .name = name, .source = source, .family_definition = @enumFromInt(0) },
         .{ .kind = .function, .name = name, .source = source },
     });
     try graph.types.appendSlice(allocator, &.{
@@ -543,29 +611,34 @@ test "cleanup queries require selected Deinit evidence" {
         .flags = .{ .is_deinit = true },
     });
     try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
-    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, null), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
-    try graph.function_refs.append(allocator, @enumFromInt(0));
     try graph.contract_operation_bindings.append(allocator, .{
-        .contract_declaration = @enumFromInt(0),
+        .contract_definition = @enumFromInt(0),
         .requirement_index = 0,
         .requirement_source = source,
         .implementation_source = source,
         .name = name,
-        .declaration = @enumFromInt(1),
+        .definition = @enumFromInt(0),
+        .materialized_function = null,
     });
     try graph.contract_conformances.append(allocator, .{
         .declaration = @enumFromInt(0),
         .participants = .{ .start = 0, .len = 1 },
         .associated_arguments = .{ .start = 1, .len = 0 },
-        .operations = .{ .start = 0, .len = 1 },
         .operation_bindings = .{ .start = 0, .len = 1 },
         .source = source,
     });
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
+    var transaction = graph.beginTransaction(allocator);
+    defer transaction.deinit();
+    try graph.completeOperationBinding(allocator, @enumFromInt(0), @enumFromInt(0));
+    try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
+    transaction.rollback();
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
+    try graph.completeOperationBinding(allocator, @enumFromInt(0), @enumFromInt(0));
     try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
     try std.testing.expect(!hasDestructor(&graph, @enumFromInt(1)));
-    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, @enumFromInt(0)), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 }
 
 test "global semantic types expose structural fields and variants" {
@@ -602,7 +675,7 @@ test "type helpers reject construction-time unresolved slots" {
 pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
     return switch (semantic) {
-        .declared => |id| if (graph.declaration(id).struct_layout == .c_incomplete) id else null,
+        .nominal => |id| if (graph.typeDefinition(id).struct_layout == .c_incomplete) graph.typeDefinition(id).declaration else null,
         .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |target| incompleteDeclaration(graph, target),
             else => null,
@@ -612,15 +685,12 @@ pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: gr
 }
 
 /// Lifecycle lookup can consult the module defining a nominal destination
-/// while retaining the caller's lexical context for reached arguments.
+/// while retaining the caller's lexical assumptions for ordinary inputs.
 pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
-    const declaration = switch (semantic) {
-        .declared => |id| id,
-        .generic => |identity| identity.base,
-        else => return null,
-    };
-    return graph.moduleForDeclaration(declaration);
+    if (semantic == .generic) return graph.moduleForFamilyDefinition(semantic.generic.base);
+    if (semantic != .nominal) return null;
+    return graph.moduleForTypeDefinition(semantic.nominal);
 }
 
 /// References retain the extension owner of their nominal referent. Structural
@@ -629,4 +699,271 @@ pub fn conformanceParticipantOwner(graph: *const graph_mod.GlobalSemanticGraph, 
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
     if (semantic == .pointer) return conformanceParticipantOwner(graph, semantic.pointer.child);
     return nominalTypeOwner(graph, ty);
+}
+
+/// Runtime layout of the language's validated borrowed string literals.
+/// Shared by executor presentation and both literal lowerers.
+pub fn isStringView(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    const range = fields(graph, ty) orelse return false;
+    if (range.len != 2) return false;
+    const data = graph.fields.items[range.start];
+    const length = graph.fields.items[range.start + 1];
+    if (!std.mem.eql(u8, graph.text(data.name), "_data") or !std.mem.eql(u8, graph.text(length.name), "_length")) return false;
+    const pointer = graph.semanticType(data.ty);
+    return pointer == .pointer and pointer.pointer.mutability == .read_only and
+        isBuiltin(graph, pointer.pointer.child, .UInt8) and isBuiltin(graph, length.ty, .UIntNative);
+}
+
+/// Compiler-owned entity values have no runtime storage. Following a binding
+/// preserves the value, including its precise classification and identity.
+pub const EntityValue = union(enum) {
+    type: graph_mod.GlobalTypeId,
+    definition: graph_mod.DefinitionValue,
+};
+
+pub fn entityValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?EntityValue {
+    var node = initial;
+    for (0..graph.nodes.items.len + 1) |_| {
+        switch (graph.node(node).content) {
+            .type_literal => |ty| return .{ .type = ty },
+            .definition_literal => |definition| return .{ .definition = definition },
+            .binding_use => |id| {
+                const binding = graph.binding(id);
+                if (binding.mutability != .constant or binding.deferred_initialization) return null;
+                node = binding.initialization orelse return null;
+            },
+            else => return null,
+        }
+    }
+    return null;
+}
+
+pub fn typeValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.GlobalTypeId {
+    const value = entityValue(graph, initial) orelse return null;
+    return if (value == .type) value.type else null;
+}
+
+pub fn definitionClass(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSemanticGraph, definition: graph_mod.GlobalFamilyDefinitionId) !graph_mod.GlobalTypeId {
+    for (graph.types.items, 0..) |ty, raw| {
+        if (ty == .definition and ty.definition == definition) return @enumFromInt(@as(u32, @intCast(raw)));
+    }
+    const id: graph_mod.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .definition = definition });
+    return id;
+}
+
+/// Definition values are distinct from concrete types. Aliases preserve the
+/// producer identity and never allocate another template or specialization.
+pub fn definitionValue(graph: *const graph_mod.GlobalSemanticGraph, initial: graph_mod.GlobalNodeId) ?graph_mod.DefinitionValue {
+    const value = entityValue(graph, initial) orelse return null;
+    return if (value == .definition) value.definition else null;
+}
+
+pub fn staticDefinitionBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.DefinitionValue {
+    if (graph.isBindingTypeUnresolved(id)) return null;
+    const binding = graph.binding(id);
+    if (binding.mutability != .constant or binding.deferred_initialization) return null;
+    const semantic = graph.resolvedSemanticType(binding.ty) orelse return null;
+    if (semantic != .definition) return null;
+    return definitionValue(graph, binding.initialization orelse return null);
+}
+
+pub fn isStaticBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) bool {
+    return staticTypeBinding(graph, id) != null or staticDefinitionBinding(graph, id) != null;
+}
+
+pub fn staticTypeBinding(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBindingId) ?graph_mod.GlobalTypeId {
+    if (graph.isBindingTypeUnresolved(id)) return null;
+    const binding = graph.binding(id);
+    if (binding.mutability != .constant or binding.deferred_initialization or !isBuiltin(graph, binding.ty, .Type)) return null;
+    return typeValue(graph, binding.initialization orelse return null);
+}
+
+test "structural compatibility keeps defaults separate from specialization identity" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    const name = try graph.addString(a, "value");
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    for (0..2) |index| {
+        try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = @intCast(41 + index) } });
+        try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0), .default_value = @enumFromInt(index) });
+        try graph.types.append(a, .{ .structural = .{ .fields = .{ .start = @intCast(index), .len = 1 } } });
+    }
+    try std.testing.expect(equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    try std.testing.expect(!identityEqual(&graph, @enumFromInt(1), @enumFromInt(2)));
+    for ([_]u32{ 1, 2 }) |child|
+        try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(child), .mutability = .read_only } });
+    try std.testing.expect(equal(&graph, @enumFromInt(3), @enumFromInt(4)));
+    try std.testing.expect(!identityEqual(&graph, @enumFromInt(3), @enumFromInt(4)));
+}
+
+test "nominal definitions retain identity without declarations and share only representation" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .UInt8 },
+        .{ .nominal = @enumFromInt(0) },
+        .{ .nominal = @enumFromInt(1) },
+    });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "value"), .source = source, .ty = @enumFromInt(0) });
+    for (0..2) |index| try graph.type_definitions.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = @intCast(index) },
+        .struct_fields = .{ .start = 0, .len = 1 },
+    });
+    try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(1)));
+    try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    try std.testing.expectEqual(Layout{ .size = 1, .alignment = 1 }, try layoutOf(&graph, @enumFromInt(1)));
+    try std.testing.expectEqual(Layout{ .size = 1, .alignment = 1 }, try layoutOf(&graph, @enumFromInt(2)));
+}
+
+test "static type values preserve long alias chains and reject cycles or mutable bindings" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Type } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .type_literal = @enumFromInt(0) } });
+    const name = try graph.addString(a, "alias");
+    for (0..128) |raw| {
+        try graph.bindings.append(a, .{ .source = source, .name = name, .ty = @enumFromInt(1), .initialization = @enumFromInt(@as(u32, @intCast(raw))), .mutability = .constant });
+        try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(@as(u32, @intCast(raw))) } });
+    }
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), staticTypeBinding(&graph, @enumFromInt(127)));
+    graph.bindings.items[0].mutability = .variable;
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, null), staticTypeBinding(&graph, @enumFromInt(127)));
+    graph.bindings.items[0].mutability = .constant;
+    graph.bindings.items[0].initialization = @enumFromInt(128);
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, null), staticTypeBinding(&graph, @enumFromInt(127)));
+}
+
+test "definition values preserve classification and aliases without runtime layout" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const declaration: graph_mod.GlobalFamilyDefinitionId = @enumFromInt(0);
+    const name = try graph.addString(a, "family");
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
+    const classification = try definitionClass(a, &graph, declaration);
+    try std.testing.expectEqual(classification, try definitionClass(a, &graph, declaration));
+    try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = .{ .origin = declaration } } });
+    for (0..128) |raw| {
+        try graph.bindings.append(a, .{ .source = source, .name = name, .ty = classification, .initialization = @enumFromInt(@as(u32, @intCast(raw))), .mutability = .constant });
+        try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .binding_use = @enumFromInt(@as(u32, @intCast(raw))) } });
+    }
+    const last: graph_mod.GlobalBindingId = @enumFromInt(127);
+    try std.testing.expectEqual(declaration, staticDefinitionBinding(&graph, last).?.origin);
+    try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
+    try std.testing.expect(isStaticBinding(&graph, last));
+    try graph.markBindingTypeUnresolved(a, last);
+    try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
+    try std.testing.expectEqual(null, staticTypeBinding(&graph, last));
+    try graph.resolveBindingType(a, last, classification);
+    try std.testing.expectEqual(declaration, staticDefinitionBinding(&graph, last).?.origin);
+    try std.testing.expectError(error.TypeHasNoRuntimeLayout, layoutOf(&graph, classification));
+    graph.bindings.items[0].mutability = .variable;
+    try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
+    graph.bindings.items[0].mutability = .constant;
+    graph.bindings.items[0].initialization = @enumFromInt(128);
+    try std.testing.expectEqual(null, staticDefinitionBinding(&graph, last));
+}
+
+test "nominal identity survives binding aliases pool growth and rejected definitions" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.fields.append(a, .{ .source = source, .name = try graph.addString(a, "value"), .ty = @enumFromInt(0) });
+    try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
+    try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
+    const retained = graph.checkpoint();
+    const name = try graph.addString(a, "Alias");
+    for (0..128) |_| {
+        try graph.declarations.append(a, .{ .kind = .type, .name = name, .source = source, .type_id = @enumFromInt(1) });
+        try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
+    }
+    try graph.types.append(a, .{ .nominal = @enumFromInt(128) });
+    try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    graph.rollback(a, retained);
+    try std.testing.expectEqual(@as(usize, 1), graph.type_definitions.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.declarations.items.len);
+    try graph.types.append(a, .{ .nominal = @enumFromInt(0) });
+    try std.testing.expect(equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+    try std.testing.expectEqual(Layout{ .size = 4, .alignment = 4 }, try layoutOf(&graph, @enumFromInt(2)));
+}
+
+test "family identity survives aliases pool growth and rejected definitions" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const family: graph_mod.GlobalFamilyDefinitionId = @enumFromInt(0);
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
+    const classification = try definitionClass(a, &graph, family);
+    const retained = graph.checkpoint();
+    const name = try graph.addString(a, "Alias");
+    for (0..128) |_| {
+        try graph.declarations.append(a, .{ .kind = .binding, .name = name, .source = source });
+        try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 1 });
+    }
+    const other = try definitionClass(a, &graph, @enumFromInt(128));
+    try std.testing.expect(!equal(&graph, classification, other));
+    try std.testing.expectEqual(classification, try definitionClass(a, &graph, family));
+    graph.rollback(a, retained);
+    try std.testing.expectEqual(@as(usize, 1), graph.family_definitions.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.declarations.items.len);
+    try std.testing.expectEqual(classification, try definitionClass(a, &graph, family));
+}
+
+test "operation compatibility retains nominal field identity and allows only optional extra inputs" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const item = try graph.addString(a, "item");
+    const fallback = try graph.addString(a, "fallback");
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .nominal = @enumFromInt(0) }, .{ .nominal = @enumFromInt(1) } });
+    for (0..2) |_| try graph.type_definitions.append(a, .{ .source = source, .struct_fields = .{ .start = 0, .len = 1 } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .bool_literal = false } });
+    try graph.fields.appendSlice(a, &.{
+        .{ .source = source, .name = item, .ty = @enumFromInt(0) },
+        .{ .source = source, .name = item, .ty = @enumFromInt(1) },
+        .{ .source = source, .name = item, .ty = @enumFromInt(1) },
+        .{ .source = source, .name = fallback, .ty = @enumFromInt(0), .default_value = @enumFromInt(0) },
+        .{ .source = source, .name = item, .ty = @enumFromInt(2) },
+        .{ .source = source, .name = fallback, .ty = @enumFromInt(0) },
+    });
+    const required: graph_mod.FieldRange = .{ .start = 1, .len = 1 };
+    try std.testing.expect(operationInputsCompatible(&graph, required, .{ .start = 2, .len = 2 }));
+    try std.testing.expect(!operationFieldsEqual(&graph, required, .{ .start = 2, .len = 2 }));
+    try std.testing.expect(!operationInputsCompatible(&graph, required, .{ .start = 4, .len = 1 }));
+    try std.testing.expect(!operationInputsCompatible(&graph, .{ .start = 4, .len = 1 }, .{ .start = 4, .len = 2 }));
+    try std.testing.expect(!equal(&graph, @enumFromInt(1), @enumFromInt(2)));
+}
+
+test "definition values preserve captured environments through binding aliases" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .type, .parameter_count = 2 });
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Bool }, .{ .builtin = .Int32 } });
+    const classification = try definitionClass(a, &graph, @enumFromInt(0));
+    for (0..2) |raw| {
+        try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(raw) } });
+        try graph.nodes.append(a, .{ .source = source, .ty = classification, .content = .{ .definition_literal = .{ .origin = @enumFromInt(0), .captures = .{ .start = @intCast(raw), .len = 1 } } } });
+        try graph.bindings.append(a, .{ .source = source, .name = try graph.addString(a, "alias"), .ty = classification, .initialization = @enumFromInt(raw), .mutability = .constant });
+    }
+    const first = staticDefinitionBinding(&graph, @enumFromInt(0)).?;
+    const second = staticDefinitionBinding(&graph, @enumFromInt(1)).?;
+    try std.testing.expectEqual(first.origin, second.origin);
+    try std.testing.expect(!genericArgumentsEqual(&graph, first.captures, second.captures));
+    for (0..128) |_| try graph.generic_arguments.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .comptime_int = 7 } });
+    try std.testing.expectEqualDeep(first, staticDefinitionBinding(&graph, @enumFromInt(0)).?);
+    try std.testing.expectEqualDeep(second, staticDefinitionBinding(&graph, @enumFromInt(1)).?);
 }

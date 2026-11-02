@@ -1,11 +1,11 @@
-MaybeInt : Type = (
+MaybeInt: Type = (
     ..none
     ..some Int32
 )
 
-main() -> (.status_code: Int32 = 0) := {
-    a : MaybeInt = ..none
-    b : MaybeInt = ..some 123
+main := () -> (.status_code: Int32 = 0) {
+    a: MaybeInt = ..none
+    b: MaybeInt = ..some 123
 
     match a {
         ..none {
@@ -29,7 +29,7 @@ main() -> (.status_code: Int32 = 0) := {
         }
     }
 
-    n ::= b..some
+    n ::= b ..some
     if n != 123 {
         status_code = 4
         return

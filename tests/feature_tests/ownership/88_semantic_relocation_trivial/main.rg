@@ -1,4 +1,4 @@
-Marker : Type = (.value: Int32)
+Marker := (.value: Int32)
 
 implement Deinit#(Marker) (
     .deinit = (.self: $&Marker) -> () {
@@ -6,7 +6,7 @@ implement Deinit#(Marker) (
     }
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     source :: Marker = (.value = 7)
     destination :: Marker = (.value = 0)
     deinit(.self = $&destination)

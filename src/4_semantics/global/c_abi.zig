@@ -19,14 +19,14 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
     if (isRawPointer(graph, ty) or isFunctionPointer(graph, ty)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |builtin| switch (builtin) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Float32, .Float64, .Char, .Bool => true,
+            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Float32, .Float64, .Bool => true,
             else => false,
         },
         // Legacy bindings use references as pointer parameters. Their pointee
         // layout and foreign effects remain obligations of the binding.
         .pointer => |pointer| types.incompleteDeclaration(graph, pointer.child) == null,
-        .declared => |id| graph.declaration(id).choice_variants != null and
-            graph.declaration(id).choice_layout == .c_enum,
+        .nominal => |id| graph.typeDefinition(id).choice_variants != null and
+            graph.typeDefinition(id).choice_layout == .c_enum,
         .structural_choice => |shape| shape.layout == .c_enum,
         .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
             .alias => |target| supportsScalarValue(graph, target, depth + 1),
@@ -37,11 +37,19 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
     };
 }
 
-/// Foreign imports have a logical reached capability argument. It participates
+/// Foreign imports have a logical capability input. It participates
 /// in ordinary dependency resolution and safety, but never in the C ABI. Add
 /// it after relocation so its nominal identity comes from bundled core rather
 /// than a user declaration with the same spelling.
 pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mod.GlobalSemanticGraph) !void {
+    var pending = false;
+    for (graph.functions.items) |function| {
+        if (function.flags.is_c_abi and !function.flags.has_declared_body and !function.flags.has_foreign_capability) {
+            pending = true;
+            break;
+        }
+    }
+    if (!pending) return;
     var capability: ?graph_mod.GlobalTypeId = null;
     for (graph.declarations.items, 0..) |declaration, index| {
         if (!std.mem.eql(u8, graph.text(declaration.name), "ForeignFunctionInterface")) continue;
@@ -51,25 +59,29 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         break;
     }
     const child = capability orelse return;
-    const pointer: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
-    try graph.types.append(allocator, .{ .pointer = .{ .child = child, .mutability = .read_write } });
+    const pointer = pointer: {
+        for (graph.types.items, 0..) |ty, index| {
+            if (graph.isTypeUnresolved(@enumFromInt(index))) continue;
+            if (ty == .pointer and ty.pointer.child == child and ty.pointer.mutability == .read_write)
+                break :pointer @as(graph_mod.GlobalTypeId, @enumFromInt(index));
+        }
+        const id: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
+        try graph.types.append(allocator, .{ .pointer = .{ .child = child, .mutability = .read_write } });
+        break :pointer id;
+    };
     const name = try graph.addString(allocator, "ffi");
-    for (graph.functions.items) |*function| {
-        if (!function.flags.is_c_abi or function.flags.has_declared_body) continue;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!function.flags.is_c_abi or function.flags.has_declared_body or function.flags.has_foreign_capability) continue;
+        // Publish the signature only once all backing pools are ready. A failed
+        // allocation leaves this function unchanged and earlier imports intact.
+        const saved = graph.checkpoint();
+        errdefer graph.rollback(allocator, saved);
         const source = graph.declaration(function.declaration).source;
-        const segment_start: u32 = @intCast(graph.reach_segments.items.len);
-        try graph.reach_segments.append(allocator, name);
-        const alternative_start: u32 = @intCast(graph.reach_alternatives.items.len);
-        try graph.reach_alternatives.append(allocator, .{ .segments = .{ .start = segment_start, .len = 1 } });
-        const reach: graph_mod.GlobalReachId = @enumFromInt(graph.reaches.items.len);
-        try graph.reaches.append(allocator, .{ .alternatives = .{ .start = alternative_start, .len = 1 } });
-        const fallback: graph_mod.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
-        try graph.nodes.append(allocator, .{ .source = source, .ty = pointer, .content = .{ .reach_directive = reach } });
         const old_fields = try allocator.dupe(graph_mod.Field, graph.fields.items[function.input.start..][0..function.input.len]);
         defer allocator.free(old_fields);
         const field_start: u32 = @intCast(graph.fields.items.len);
         try graph.fields.appendSlice(allocator, old_fields);
-        try graph.fields.append(allocator, .{ .name = name, .ty = pointer, .source = source, .default_value = fallback });
+        try graph.fields.append(allocator, .{ .name = name, .ty = pointer, .source = source });
         const old_bindings = try allocator.dupe(graph_mod.GlobalBindingId, graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]);
         defer allocator.free(old_bindings);
         const binding: graph_mod.GlobalBindingId = @enumFromInt(graph.bindings.items.len);
@@ -77,9 +89,11 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
         const binding_start: u32 = @intCast(graph.binding_refs.items.len);
         try graph.binding_refs.appendSlice(allocator, old_bindings);
         try graph.binding_refs.append(allocator, binding);
-        function.input = .{ .start = field_start, .len = function.input.len + 1 };
-        function.input_bindings = .{ .start = binding_start, .len = function.input_bindings.len + 1 };
-        function.flags.has_foreign_capability = true;
+        var completed = function;
+        completed.input = .{ .start = field_start, .len = function.input.len + 1 };
+        completed.input_bindings = .{ .start = binding_start, .len = function.input_bindings.len + 1 };
+        completed.flags.has_foreign_capability = true;
+        try graph.setFunction(allocator, @enumFromInt(raw), completed);
     }
 }
 
@@ -93,7 +107,7 @@ pub fn physicalInputCount(function: graph_mod.Function) u32 {
 pub fn isFunctionPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
-        .declared => |id| graph.declaration(id).struct_layout == .c_function_pointer,
+        .nominal => |id| graph.typeDefinition(id).struct_layout == .c_function_pointer,
         else => false,
     };
 }
@@ -133,9 +147,9 @@ fn rawPointerDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     switch (instance.shape) {
         .alias => |target| return rawPointerDepth(graph, target, depth + 1),
         .structure => |shape| {
-            const declaration = graph.declaration(generic.base);
+            const declaration = graph.declaration(graph.familyDeclaration(generic.base));
             if (!std.mem.eql(u8, graph.text(declaration.name), "RawPointer")) return false;
-            const module = graph.moduleForDeclaration(generic.base) orelse return false;
+            const module = graph.moduleForFamilyDefinition(generic.base) orelse return false;
             if (!graph.modules.items[@intFromEnum(module)].is_bundled_core or shape.fields.len != 1) return false;
             const field = graph.fields.items[shape.fields.start];
             return std.mem.eql(u8, graph.text(field.name), "address") and types.isBuiltin(graph, field.ty, .UIntNative);
@@ -154,8 +168,8 @@ fn representationDepth(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
     if (depth >= 32) return false;
     if (supportsScalarValue(graph, ty, depth)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
-        .declared => |id| blk: {
-            const declaration = graph.declaration(id);
+        .nominal => |id| blk: {
+            const declaration = graph.typeDefinition(id);
             if (declaration.struct_layout == .regular) break :blk false;
             break :blk fieldsHaveRepresentation(graph, declaration.struct_fields orelse break :blk false, depth);
         },
@@ -284,11 +298,11 @@ fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
         .builtin => |value| switch (value) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Char, .Bool, .Float32, .Float64 => true,
+            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Bool, .Float32, .Float64 => true,
             else => false,
         },
-        .declared => |id| blk: {
-            const declaration = graph.declaration(id);
+        .nominal => |id| blk: {
+            const declaration = graph.typeDefinition(id);
             if (declaration.choice_layout == .c_enum and declaration.choice_variants != null) break :blk true;
             if (declaration.struct_layout == .regular) break :blk false;
             break :blk recordFields(graph, declaration.struct_fields orelse break :blk false, depth);
@@ -387,8 +401,8 @@ fn numericShape(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
             shape.leaf(offset, layout.size, scalarIsFloating(graph, ty));
             return;
         },
-        .declared => |id| {
-            const declaration = graph.declaration(id);
+        .nominal => |id| {
+            const declaration = graph.typeDefinition(id);
             if (declaration.choice_variants != null) {
                 const layout = types.layoutOf(graph, ty) catch return;
                 shape.leaf(offset, layout.size, false);
@@ -748,7 +762,7 @@ test "callback signatures reject safe references through materialized aliases" {
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
         .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } },
     });
-    try graph.generic_instances.append(allocator, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
+    try graph.registerGenericInstance(allocator, .{ .type_id = @enumFromInt(2), .shape = .{ .alias = @enumFromInt(1) } });
     try std.testing.expect(isSafeReferenceValue(&graph, @enumFromInt(2)));
     try std.testing.expect(!isSafeReferenceValue(&graph, @enumFromInt(0)));
 }
@@ -783,4 +797,39 @@ test "Windows x64 records use integer carriers or indirect copies" {
             }
         }
     }
+}
+
+fn extendForeignCapabilities(allocator: std.mem.Allocator) !void {
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const capability_name = try graph.addString(allocator, "ForeignFunctionInterface");
+    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .is_bundled_core = true, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 2 } });
+    try graph.declarations.append(allocator, .{ .kind = .type, .name = capability_name, .source = .{ .file_index = 0, .offset = 0 }, .type_id = @enumFromInt(0) });
+    try graph.type_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .declaration = @enumFromInt(0) });
+    try graph.types.append(allocator, .{ .nominal = @enumFromInt(0) });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 } });
+    const foreign: graph_mod.Function = .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_c_abi = true } };
+    try graph.functions.append(allocator, foreign);
+    try prepareForeignCapabilities(allocator, &graph);
+    const retained = graph.functions.items[0];
+    const saved = graph.checkpoint();
+    try prepareForeignCapabilities(allocator, &graph);
+    try std.testing.expectEqualDeep(saved, graph.checkpoint());
+    try graph.functions.append(allocator, foreign);
+    prepareForeignCapabilities(allocator, &graph) catch |err| {
+        try std.testing.expectEqualDeep(retained, graph.functions.items[0]);
+        try std.testing.expectEqualDeep(foreign, graph.functions.items[1]);
+        return err;
+    };
+    try std.testing.expectEqualDeep(retained, graph.functions.items[0]);
+    try std.testing.expectEqual(@as(u32, 1), graph.functions.items[1].input.len);
+    try std.testing.expectEqual(@as(u32, 0), physicalInputCount(graph.functions.items[1]));
+    try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
+    const complete = graph.checkpoint();
+    try prepareForeignCapabilities(allocator, &graph);
+    try std.testing.expectEqualDeep(complete, graph.checkpoint());
+}
+
+test "foreign capability preparation extends signatures once and survives allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, extendForeignCapabilities, .{});
 }

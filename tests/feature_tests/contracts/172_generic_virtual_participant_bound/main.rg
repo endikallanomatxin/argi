@@ -1,10 +1,12 @@
-read_count#(.T: Type: BlockReader#(T)) := (
-    .reader: $&T, .buffer: ArrayView#(.t: UInt8)
-) -> (.count: UIntNative) {
+read_count := #(.T: Type: BlockReader#(T)) (.reader: $&T, .buffer: MutableArrayView#(.t: UInt8)) -> (
+    .count : UIntNative
+) {
+
     count = unwrap_or_abort(.value = BlockReader#().read_block(reader, .buffer = buffer))
 }
 
 main := () -> (.status_code: Int32 = 0) {
+
     bytes: [2]UInt8 = (42, 7)
     scratch :: [1]UInt8 = (0)
     reader ::= ByteReader(.bytes = view(&bytes))

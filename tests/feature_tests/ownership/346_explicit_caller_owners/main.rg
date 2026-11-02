@@ -1,6 +1,6 @@
-Counter: Type = (.external: $&Int32, .alive: Bool)
+Counter := (.external: $&Int32, .alive: Bool)
 
-Resource: Type = (.counter: $&Counter, .value: Int32)
+Resource := (.counter: $&Counter, .value: Int32)
 
 implement Deinit#(Counter) (
     .deinit = (.self: $&Counter) -> () {
@@ -16,15 +16,15 @@ implement Deinit#(Resource) (
     }
 )
 
-make(.counter: $&Counter, .value: Int32) -> (.result: Resource) := {
+make := (.counter: $&Counter, .value: Int32) -> (.result: Resource) {
     result = Resource(counter, value)
 }
 
-relay(.resource: &Resource) -> (.result: &Resource) := {
+relay := (.resource: &Resource) -> (.result: &Resource) {
     result = resource
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     external :: Int32 = 0
 
     {

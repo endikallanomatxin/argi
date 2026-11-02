@@ -1,18 +1,23 @@
 # Source formatting
 
 The standard formatter uses four spaces for indentation and a soft width of
-100 columns. Parentheses, brackets, and braces determine indentation; existing
-line breaks in calls, lists, and blocks are retained. A multiline collection
-places its opening and closing delimiters on separate lines and uses one row
-per field. Long calls expand their complete argument group rather than moving
-only the final argument to a continuation line. Lines without a safe break point,
-including comments and strings, may exceed the width.
+96 columns. Parentheses, brackets, and braces determine indentation. Short
+expression lists stay inline; longer lists pack complete elements into rows
+using the available width after indentation. Their row sizes depend on the
+rendered expressions, not the element count or type. Lists with comments retain
+separate rows, records use one row per field, and nested matrix lists keep one
+row per inner list. Long calls expand their complete argument group rather
+than moving only the final argument to a continuation line. Lines without a
+safe break point, including comments and strings, may exceed the width.
 
 Opening braces remain on the same line as their declaration or condition.
 A short body containing one statement can remain on one line; a body with
 multiple statements expands, including loops and conditional bodies. Empty
 bodies use `{}`. Multiline bodies remain multiline; formatting does not add
-implicit returns. Functions and global type declarations have at least one
+implicit returns. Explicit semicolon statement separators are preserved; the
+formatter adds a space after them when the next statement remains on the same
+line. Multiple-statement blocks still expand under the ordinary block rules.
+Functions and global type declarations have at least one
 blank line between declarations, with leading documentation comments kept
 attached to their declaration.
 
@@ -23,15 +28,15 @@ that layout. Signature fields use eight spaces and closing delimiters use
 four spaces, while the function body uses ordinary four-space indentation:
 
 ```rg
-add#(
+add := #(
         .n : UIntNative
         .t : Type: Scalar
-    )(
+    ) (
         .left  : &Vector#(.n = n, .t: t)
         .right : &Vector#(.n = n, .t: t)
     ) -> (
         .result : Vector#(.n = n, .t: t)
-    ) := {
+    )  {
     result = left&
 }
 ```
@@ -64,7 +69,12 @@ spaces. Evaluation order, short-circuiting, and precedence remain unchanged.
 Consecutive fields in multiline structs align their names, type markers,
 types, and default-value assignments. This applies equally to the structural
 input and value literals used by calls. Comments and blank lines separate
-alignment groups. Other declarations use uniform spacing.
+alignment groups. Each alignment column may add at most 24 padding spaces.
+When a long field exceeds that limit, it is removed from the first column and
+alignment is retried for the remaining fields. Removed fields form secondary
+columns under the same rule, without reordering source rows. This applies to
+both field names and default-value assignments. Other declarations use uniform
+spacing.
 
 Comments, literal contents, declaration order, import order, and field order
 are preserved. Blank-line runs become at most one blank line, leading and

@@ -1,7 +1,7 @@
 ..failed
 
 Mover#(.Participant: Type): Contract = (
-    .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+    .transfer : (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
         .result : Errable#(?Int32, (..failed))
     ) where {
         on result ..ok {
@@ -9,15 +9,15 @@ Mover#(.Participant: Type): Contract = (
             on result ..some {}
             on result ..none {}
         }
-        on result ..error { depends_on(result, error_tracer) }
+
     }
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
 implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -28,13 +28,9 @@ implement Deinit#(Resource) (
 drops :: Int32 = 0
 
 _impl_transfer_Manager := (
-        .self        : &Manager,
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .result : Errable#(?Int32, (..failed))
-    )  {
+    .self: &Manager, .source: $&Resource, .destination: $&Resource, .move: Bool
+) -> (.result: Errable#(?Int32, (..failed))) {
+
     if move {
         relocate(source, destination)
         result = ..ok ..some(.value = 1)
@@ -45,18 +41,15 @@ _impl_transfer_Manager := (
     result = ..ok ..none
 }
 
-transfer_owned(
-        .mover       : &Virtual#(Mover),
-        .source      : $&Resource,
-        .destination : $&Resource,
-        .move        : Bool
-    ) -> (
-        .result : Errable#(?Int32, (..failed))
-    ) := {
+transfer_owned := (
+    .mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource, .move: Bool
+) -> (.result: Errable#(?Int32, (..failed))) {
+
     result = transfer(mover, source, destination, move)
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
+
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

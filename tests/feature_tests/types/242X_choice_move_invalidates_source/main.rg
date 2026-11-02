@@ -3,7 +3,7 @@ Result : Type = (
     ..error Int32
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0)  {
     source : Result = ..ok 42
     _ ::= ~source
     payload ::= source..ok

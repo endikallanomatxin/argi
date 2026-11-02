@@ -1,34 +1,34 @@
-Row: Type = (.value: Int32)
-Column: Type = (.value: Int32)
+Row := (.value: Int32)
+
+Column := (.value: Int32)
 
 Product#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
-    .Scale: Int
-    .multiply: (.left: &Left, .right: &Right) -> (.result: Result)
+    .Result   : Type
+    .Scale    : Int
+    .multiply : (.left: &Left, .right: &Right) -> (.result: Result)
 )
 
 OtherProduct#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
-    .multiply: (.left: &Left, .right: &Right) -> (.result: Result)
+    .Result   : Type
+    .multiply : (.left: &Left, .right: &Right) -> (.result: Result)
 )
 
 implement Product#(Row, Column) (
-    .multiply =
-        (.left: &Row, .right: &Column) -> (.result: Result) {
+    .multiply = (.left: &Row, .right: &Column) -> (.result: Result) {
         result = left&.value * right&.value * Scale
     }
-    .Scale: Int = 2
-    .Result: Type = Int32
+    .Scale  : Int  = 2
+    .Result : Type = Int32
 )
 
 implement OtherProduct#(Row, Column) (
-    .Result: Type = Int32
+    .Result   : Type = Int32
     .multiply = (.left: &Row, .right: &Column) -> (.result: Result) {
         result = left&.value + right&.value
     }
 )
 
-product#(.A: Type, .B: Type) := (.left: &A, .right: &B) -> (.result: Product#(A, B).Result) {
+product := #(.A: Type, .B: Type) (.left: &A, .right: &B) -> (.result: Product#(A, B).Result) {
     result = Product#(A, B).multiply(left, right).result
 }
 

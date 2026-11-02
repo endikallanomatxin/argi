@@ -1,6 +1,6 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Tracked: Type = (.drops: $&Int32)
+Tracked := (.drops: $&Int32)
 
 implement Deinit#(Tracked) (
     .deinit = (.self: $&Tracked) -> () {
@@ -11,26 +11,28 @@ implement Deinit#(Tracked) (
 SlotProtocol#(.Participant: Type): Contract = (
     domain contents
 
-    .put: (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
-    .take: (.self: $&Participant) -> (.value: Tracked) where {
+    .put  : (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
+    .take : (.self: $&Participant) -> (.value: Tracked) where {
         owns(value)
         from_storage(value, self.contents)
         empties(self.contents)
     }
 )
 
-Slot: Type = (.storage: Allocation)
+Slot := (.storage: Allocation)
 
-implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.storage) }
+implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where {
+    contents(self.storage)
+}
 
-_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
+_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
 }
 
-_impl_take_Slot := (.self: $&Slot) -> (.value: Tracked)  {
+_impl_take_Slot := (.self: $&Slot) -> (.value: Tracked) {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
@@ -38,26 +40,28 @@ _impl_take_Slot := (.self: $&Slot) -> (.value: Tracked)  {
     trusted_opaque_mark_empty($&self&.storage)
 }
 
-forward_put(.slot: $&Virtual#(SlotProtocol), .value: Tracked) -> () := {
+forward_put := (.slot: $&Virtual#(SlotProtocol), .value: Tracked) -> () {
     put(slot, ~value)
 }
 
-forward_take(.slot: $&Virtual#(SlotProtocol)) -> (.value: Tracked) := {
+forward_take := (.slot: $&Virtual#(SlotProtocol)) -> (.value: Tracked) {
     value = take(slot)
 }
 
-OtherSlot: Type = (.padding: Int32, .storage: Allocation)
+OtherSlot := (.padding: Int32, .storage: Allocation)
 
-implement SlotProtocol#(OtherSlot) (.put = _impl_put_OtherSlot, .take = _impl_take_OtherSlot) where { contents(self.storage) }
+implement SlotProtocol#(OtherSlot) (.put = _impl_put_OtherSlot, .take = _impl_take_OtherSlot) where {
+    contents(self.storage)
+}
 
-_impl_put_OtherSlot := (.self: $&OtherSlot, .value: Tracked) -> ()  {
+_impl_put_OtherSlot := (.self: $&OtherSlot, .value: Tracked) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
 }
 
-_impl_take_OtherSlot := (.self: $&OtherSlot) -> (.value: Tracked)  {
+_impl_take_OtherSlot := (.self: $&OtherSlot) -> (.value: Tracked) {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
@@ -65,12 +69,17 @@ _impl_take_OtherSlot := (.self: $&OtherSlot) -> (.value: Tracked)  {
     trusted_opaque_mark_empty($&self&.storage)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
+    allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
+
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
 
     {
-        implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
+        implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)($&allocator)))
         slot ::= to_virtual#(SlotProtocol)($&implementation)
         forward_put($&slot, Tracked($&drops))
         extracted ::= forward_take($&slot)
@@ -81,7 +90,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if drops != 1 { status_code = 2 }
 
     {
-        other ::= OtherSlot(13, unwrap_or_abort(allocate#(Tracked)(allocator)))
+        other ::= OtherSlot(13, unwrap_or_abort(allocate#(Tracked)($&allocator)))
         other_slot ::= to_virtual#(SlotProtocol)($&other)
         forward_put($&other_slot, Tracked($&drops))
         extracted ::= forward_take($&other_slot)

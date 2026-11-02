@@ -53,10 +53,10 @@ A deferred checked flush handles failure locally rather than returning from
 its containing function. For a program with an explicit exit status:
 
 ```rg
-#defer {
+defer {
     flush(output) handle error {
         status_code = 1
-        report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+        report_error(.err = &error, .writer = writer) handle ignored {}
     }
 }
 ```
@@ -73,8 +73,26 @@ Only successful reads increase the pending length. On a read failure, previously
 accepted bytes remain pending; bytes written into free space by the failed read
 are ignored. Writes and flushes retain the buffered writer's existing failure
 policy, which discards pending bytes on failure to avoid repeating uncertain
-native progress. Stream errors and unrepresentable totals are reported through
+native progress. Buffered adapters forward the underlying ordinary error.
+Stream errors and unrepresentable totals are reported through
 an `Errable`; failure may follow consumed input and already written output.
+
+File streams retain their read/write access mode. Reads from write-only files
+and writes to read-only files report `stream_read_failed` and
+`stream_write_failed` before calling native stdio. Standard input is readable;
+standard output and error are writable. `File()` creates a closed handle.
+Adopting a native stream with `file_from_stream` requires explicit `readable`
+and `writable` arguments matching that stream's mode; these declarations do not
+grant additional native access.
+
+For File streams, a native stdio read error, including an interruption reported
+by stdio, becomes `stream_read_failed`, not EOF or a successful zero-byte read.
+BufferedReader preserves that error. This boundary does not automatically retry
+the interrupted operation; the File remains open and can still be closed once.
+Interrupted native stdio writes and flushes similarly report
+`stream_write_failed` and `stream_flush_failed`. BufferedWriter discards its
+pending bytes after such a failure instead of replaying uncertain progress
+during cleanup. Closing still releases the File even if native close fails.
 
 ## Bounded consumption
 
@@ -89,19 +107,17 @@ are retried. Read/write errors may follow consumed or written prefixes; the
 helper neither closes nor flushes endpoints.
 
 `read_all_limited(.self, .buffer, .limit, .allocator)` reads a complete stream
-into an owning `String`, preserving arbitrary bytes, including embedded NULs.
+into an owning `DynamicArray#(UInt8)`, preserving arbitrary bytes, including embedded NULs.
 It imposes no UTF-8 validation. Scratch must be initialized and nonempty,
 including at limit zero. A source ending within the limit returns the owner.
 After accumulating exactly the limit, it reads one byte into scratch to check
 EOF. An extra byte returns `size_limit_exceeded` and is consumed; no remaining
 excess is read. A zero limit accepts only an already exhausted source.
 
-The owner's capacity stays within `max(1, limit)`, plus String's trailing NUL
-byte. Growth can temporarily retain both old and new allocations, so peak
+The owner's capacity stays within `max(1, limit)`. Growth can temporarily retain both old and new allocations, so peak
 storage is at most two such allocations plus caller scratch and allocator
 bookkeeping. Growth reserves the next requested chunk before consuming it.
-A limit that cannot leave room for the trailing NUL reports `size_overflow`
-before allocation or reading. `out_of_memory`, `stream_read_failed`, and limit
+`out_of_memory`, `stream_read_failed`, and limit
 errors release accumulated ownership; they return no partial owner and do not
 rewind the stream. Static and virtual block readers support both operations.
 

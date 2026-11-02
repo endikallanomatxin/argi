@@ -1,5 +1,6 @@
 calls :: Int32 = 0
-Plain: Type = (.value: Int32)
+
+Plain := (.value: Int32)
 
 deinit := (.self: $&Plain) -> () {
     calls = calls + 1

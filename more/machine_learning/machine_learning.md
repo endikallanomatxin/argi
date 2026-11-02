@@ -25,7 +25,7 @@ DenseLayer init(.input_size: Int, .output_size: Int) -> (.result: DenseLayer) :=
 	)
 }
 
-forward(.layer: DenseLayer, .input: Tracked#(.t: NDVector)) -> (.output: Tracked#(.t: NDVector)) := {
+forward := (.layer: DenseLayer, .input: Tracked#(.t: NDVector)) -> (.output: Tracked#(.t: NDVector))  {
 	output = input|dot(layer._weights)|add(layer._biases)
 }
 ```
@@ -39,14 +39,14 @@ MyModel : Type = (
 	)
 )
 
-forward(.model: MyModel, .input: Tracked#(.t: NDVector)) -> (.output: Tracked#(.t: NDVector)) := {
+forward := (.model: MyModel, .input: Tracked#(.t: NDVector)) -> (.output: Tracked#(.t: NDVector))  {
 	for layer in model._layers {
 		input = layer|forward(input)
 	}
 	output = input
 }
 
-loss(.model: MyModel, .input: Tracked#(.t: NDVector), .target: Tracked#(.t: NDVector)) -> (.value: Tracked#(.t: Float)) := {
+loss := (.model: MyModel, .input: Tracked#(.t: NDVector), .target: Tracked#(.t: NDVector)) -> (.value: Tracked#(.t: Float))  {
 	prediction = model|forward(input)
 	value = mse(prediction, target)
 }

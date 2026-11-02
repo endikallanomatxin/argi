@@ -1,4 +1,4 @@
-Value: Type = (.value: Int32)
+Value := (.value: Int32)
 
 copy := (.self: &Value) -> (.result: Value) {
     result = (.value = self&.value)

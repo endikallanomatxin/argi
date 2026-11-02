@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include "network_connect.h"
 typedef int argi_socket;
 #define ARGI_INVALID_SOCKET (-1)
 #define argi_close_socket close
@@ -133,9 +134,13 @@ int32_t _argi_network_socket(const struct argi_net_address *address, int32_t ope
     if (owner->descriptor == ARGI_INVALID_SOCKET) { free(owner); return -1; }
     if (argi_net_prepare(owner->descriptor)) goto failed;
     if (operation == 0) {
+#ifdef _WIN32
         int status;
         do { status = connect(owner->descriptor, (struct sockaddr *)&native, (int)address->length); }
         while (status && argi_net_interrupted());
+#else
+        int status = argi_net_connect(owner->descriptor, (struct sockaddr *)&native, (socklen_t)address->length);
+#endif
         if (status) goto failed;
     } else {
         if (bind(owner->descriptor, (struct sockaddr *)&native, (int)address->length)) goto failed;

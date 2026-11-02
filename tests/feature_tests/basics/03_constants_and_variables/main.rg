@@ -1,19 +1,18 @@
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     -- This file tests
     -- constant and variable declarations
     -- combined and separate assignments
 
     -- Constants
-    constant_int_combined : Int32 = 1
+    constant_int_combined: Int32 = 1
 
-    constant_int_separate : Int32
+    constant_int_separate: Int32
     constant_int_separate = 2
 
-    constant_float_combined : Float32 = 3.14
+    constant_float_combined: Float32 = 3.14
 
-    constant_float_separate : Float32
+    constant_float_separate: Float32
     constant_float_separate = 2.718
-
 
     -- Variables
     variable_int_combined :: Int32 = 42

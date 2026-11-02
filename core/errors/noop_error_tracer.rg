@@ -1,8 +1,8 @@
 -- The virtual wrapper and its receiver both have program lifetime.
-NoopErrorTracer: Type = (.marker: UInt8 = 0)
+NoopErrorTracer := (.marker: UInt8 = 0)
 
 noop_error_tracer_storage :: NoopErrorTracer = (.marker = 0)
-noop_error_tracer :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
+noop_error_tracer :: Virtual#(ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
     .value = $&noop_error_tracer_storage
 )
 
@@ -13,9 +13,10 @@ implement ErrorTracer#(NoopErrorTracer) (
 
     .reset_context = (.self: $&NoopErrorTracer) -> () {}
 
-    .report = (.self: $&NoopErrorTracer, .writer: $&Virtual#(.contract: Writer)) -> (
+    .report = (.self: $&NoopErrorTracer, .writer: $&Virtual#(Writer)) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
+
         result = ..ok Void()
     }
 )

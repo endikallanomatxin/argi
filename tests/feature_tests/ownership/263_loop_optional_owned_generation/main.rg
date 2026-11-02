@@ -1,15 +1,25 @@
-Holder : Type = (
-    .buffer: String
+Holder := (
+    .buffer : String
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&AllocatorProvider)) (
-    .Result: Type = Holder
-    .init = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
-        allocator ::= ~args.allocator
+HolderInitArgs: Type = (
+    .allocator : Virtual#(Allocator)
+)
 
-        assume allocator
+implement Init#(
+    Holder, HolderInitArgs
+) (
+    .Result : Type = Holder
 
-        result.buffer = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
+    .init = HolderInitArgs -> (.result: Result) {
+
+        _init_allocator ::= ~allocator
+
+        assume allocator := _init_allocator
+
+        result.buffer = unwrap_or_abort(
+            .value = string_with_capacity(.allocator = _init_allocator, .capacity = 1)
+        )
     }
 )
 
@@ -19,24 +29,30 @@ implement Deinit#(Holder) (
     }
 )
 
-append#(.AllocatorType: Type: Allocator#(AllocatorType))(.self: $&Holder, .allocator: $&AllocatorType) -> () := {
+append := (
+    .self: $&Holder, .allocator: Virtual#(Allocator)
+) -> () {
+
     assume allocator
 
-    _ ::= push_byte(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
+    _ ::= push_ascii(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32 = 0) {
 
-    holder ::= Holder(.allocator = $&allocator_storage)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+
+    holder ::= Holder(.allocator = allocator)
     i :: UIntNative = 0
     while i < 1 {
-        append(.self = $&holder, .allocator = $&allocator_storage)
+        append(.self = $&holder, .allocator = allocator)
         i = i + 1
     }
 
-    if holder.buffer.length != 1 {
+    if byte_length(&holder.buffer).count != 1 {
         status_code = 1
         return
     }

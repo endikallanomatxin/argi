@@ -12,7 +12,7 @@ pub fn evaluate(allocator: std.mem.Allocator, tree: *const syn.FileSyntaxTree, s
     if (call.module_qualifier != null) return null;
     const name = tree.tokenTextFromSource(source, call.callee_token);
     const query = std.meta.stringToEnum(selection.Query, name) orelse return null;
-    if (call.type_arguments.len != 0 or call.type_arguments_struct != null)
+    if (call.specialization_arguments != null)
         return report(tree, node, diagnostics, "target predicates do not accept generic arguments");
     const literal_input = tree.structValueLiteral(call.input) orelse
         return report(tree, node, diagnostics, "target predicates require one positional literal string argument");

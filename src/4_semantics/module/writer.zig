@@ -1,56 +1,83 @@
 const std = @import("std");
 const graph_mod = @import("graph.zig");
 const entities = @import("entities.zig");
-const storage = @import("storage.zig");
 const strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
 
-/// Canonical mutation API for ModuleSema. New semantic lowering should use this
-/// instead of appending to discovery-time construction tables directly.
+/// Canonical append API for module-owned semantic identities.
 pub const Writer = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
-    construction_bases: storage.ConstructionBases,
     pending_owner_function: ?entities.ModuleFunctionId = null,
 
     pub fn init(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph) Writer {
-        const bases = graph.semantic.construction_bases orelse blk: {
-            const value = storage.ConstructionBases{
-                .types = @intCast(graph.types.items.len),
-                .fields = @intCast(graph.fields.items.len + graph.structural_fields.items.len),
-                .variants = @intCast(graph.choice_variant_entries.items.len + graph.structural_choice_variants.items.len),
-                .generic_arguments = @intCast(graph.generic_type_arguments.items.len),
-            };
-            graph.semantic.construction_bases = value;
-            break :blk value;
-        };
-        return .{ .allocator = allocator, .graph = graph, .construction_bases = bases };
+        return .{ .allocator = allocator, .graph = graph };
     }
 
     pub fn addString(self: *Writer, text: []const u8) !graph_mod.StringRange {
         return strings.append(&self.graph.strings, self.allocator, text);
     }
 
-    fn ensureConstructionPrefixesStable(self: *const Writer) !void {
-        const bases = self.construction_bases;
-        if (self.graph.types.items.len != @as(usize, bases.types) or
-            self.graph.fields.items.len + self.graph.structural_fields.items.len != @as(usize, bases.fields) or
-            self.graph.choice_variant_entries.items.len + self.graph.structural_choice_variants.items.len != @as(usize, bases.variants) or
-            self.graph.generic_type_arguments.items.len != @as(usize, bases.generic_arguments))
-        {
-            return error.ModuleSemanticConstructionPrefixMutated;
+    pub fn ensureFamilyDefinition(self: *Writer, declaration: entities.ModuleDeclId, kind: primitives.FamilyKind, parameter_count: u32) !entities.ModuleFamilyDefinitionId {
+        const record = self.graph.declaration(declaration);
+        if (record.family_definition) |id| {
+            std.debug.assert(self.graph.semantic.family_definitions.items[@intFromEnum(id)].kind == kind);
+            return id;
         }
+        const id = try directId(entities.ModuleFamilyDefinitionId, self.graph.semantic.family_definitions.items.len);
+        try self.graph.semantic.family_definitions.append(self.allocator, .{
+            .source = .{ .file_index = record.module_file_index, .offset = record.source_offset },
+            .declaration = declaration,
+            .kind = kind,
+            .parameter_count = parameter_count,
+        });
+        self.graph.declarations.items[@intFromEnum(declaration)].family_definition = id;
+        return id;
     }
 
-    fn canonicalTypeBase(self: *const Writer) usize {
-        return self.construction_bases.types;
+    pub fn addParameterizedType(self: *Writer, value: @import("parameterized/storage.zig").ParameterizedType) !void {
+        const family = try self.ensureFamilyDefinition(value.declaration, .type, value.parameters.len);
+        const index = try index32(self.graph.semantic.parameterized_storage.parameterized_types.items.len);
+        try self.graph.semantic.parameterized_storage.parameterized_types.append(self.allocator, value);
+        self.completeFamilyDefinition(family, index, value.parameters.len);
+    }
+
+    pub fn addParameterizedFunction(self: *Writer, value: @import("parameterized/storage.zig").ParameterizedFunction) !void {
+        const family = if (value.concrete_function == null) try self.ensureFamilyDefinition(value.declaration, .function, value.parameters.len) else null;
+        const index = try index32(self.graph.semantic.parameterized_storage.parameterized_functions.items.len);
+        try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, value);
+        if (family) |id| self.completeFamilyDefinition(id, index, value.parameters.len);
+    }
+
+    pub fn addContractDefinition(self: *Writer, value: @import("parameterized/storage.zig").ContractDefinition) !void {
+        const family = try self.ensureFamilyDefinition(value.declaration, .contract, value.parameters.len);
+        const index = try index32(self.graph.semantic.parameterized_storage.contract_definitions.items.len);
+        try self.graph.semantic.parameterized_storage.contract_definitions.append(self.allocator, value);
+        self.completeFamilyDefinition(family, index, value.parameters.len);
+        self.graph.semantic.family_definitions.items[@intFromEnum(family)].domain_count = @intCast(value.domains.len);
+    }
+
+    fn completeFamilyDefinition(self: *Writer, id: entities.ModuleFamilyDefinitionId, index: u32, parameter_count: u32) void {
+        const definition = &self.graph.semantic.family_definitions.items[@intFromEnum(id)];
+        std.debug.assert(definition.template_index == null);
+        definition.template_index = index;
+        definition.parameter_count = parameter_count;
+    }
+
+    pub fn typeDefinitionAt(self: *Writer, source: primitives.SourceRef) !entities.ModuleTypeDefinitionId {
+        for (self.graph.semantic.type_definitions.items, 0..) |definition, index| {
+            if (definition.source.file_index == source.file_index and definition.source.offset == source.offset)
+                return @enumFromInt(@as(u32, @intCast(index)));
+        }
+        const id = try directId(entities.ModuleTypeDefinitionId, self.graph.semantic.type_definitions.items.len);
+        try self.graph.semantic.type_definitions.append(self.allocator, .{ .source = source });
+        return id;
     }
 
     pub fn addType(self: *Writer, ty: entities.ModuleType) !entities.ModuleTypeId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
+        const id = try directId(
             entities.ModuleTypeId,
-            self.canonicalTypeBase() + self.graph.semantic.types.items.len,
+            self.graph.semantic.types.items.len,
         );
         try self.graph.semantic.types.append(self.allocator, ty);
         return id;
@@ -67,35 +94,31 @@ pub const Writer = struct {
     }
 
     pub fn addExternalType(self: *Writer, reference: entities.ExternalRefId) !entities.ModuleTypeId {
-        return self.addType(.{ .external = reference });
+        const destination = try self.addType(.{ .external = reference });
+        _ = try self.addPendingOperation(.{ .resolve_type = .{ .destination = destination, .external = reference } });
+        return destination;
     }
 
     pub fn addField(self: *Writer, field: entities.Field) !entities.ModuleFieldId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
+        const id = try directId(
             entities.ModuleFieldId,
-            @as(usize, self.construction_bases.fields) + self.graph.semantic.fields.items.len,
+            self.graph.semantic.fields.items.len,
         );
         try self.graph.semantic.fields.append(self.allocator, field);
         return id;
     }
 
     pub fn addVariant(self: *Writer, variant: entities.ChoiceVariant) !entities.ModuleVariantId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
+        const id = try directId(
             entities.ModuleVariantId,
-            @as(usize, self.construction_bases.variants) + self.graph.semantic.variants.items.len,
+            self.graph.semantic.variants.items.len,
         );
         try self.graph.semantic.variants.append(self.allocator, variant);
         return id;
     }
 
     pub fn addGenericArgument(self: *Writer, argument: entities.GenericArgument) !entities.ModuleGenericArgId {
-        try self.ensureConstructionPrefixesStable();
-        const id = try logicalId(
-            entities.ModuleGenericArgId,
-            @as(usize, self.construction_bases.generic_arguments) + self.graph.semantic.generic_arguments.items.len,
-        );
+        const id = try directId(entities.ModuleGenericArgId, self.graph.semantic.generic_arguments.items.len);
         try self.graph.semantic.generic_arguments.append(self.allocator, argument);
         return id;
     }
@@ -187,26 +210,21 @@ fn directId(comptime Id: type, index: usize) !Id {
     return @enumFromInt(try index32(index));
 }
 
-fn logicalId(comptime Id: type, index: usize) !Id {
-    return directId(Id, index);
-}
-
 fn index32(value: usize) !u32 {
     if (value > std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
     return @intCast(value);
 }
 
-test "module semantic writer allocates canonical ids after compatibility prefixes" {
+test "module semantic writers share canonical ids across construction contexts" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
     defer graph.deinit(allocator);
 
-    try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.fields.append(allocator, .{
+    try graph.semantic.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
+    try graph.semantic.fields.append(allocator, .{
         .name = .{ .start = 0, .len = 0 },
         .ty = @enumFromInt(0),
-        .source_offset = 0,
-        .has_default = false,
+        .source = .{ .file_index = 0, .offset = 0 },
     });
 
     var writer = Writer.init(allocator, &graph);
@@ -243,17 +261,19 @@ test "module semantic writer interleaves external and resolved canonical types" 
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(pointer_ty));
 }
 
-test "module semantic writer rejects compatibility prefix growth after canonical ids exist" {
-    const allocator = std.testing.allocator;
-    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "demo") };
-    defer graph.deinit(allocator);
-
-    var writer = Writer.init(allocator, &graph);
-    _ = try writer.addResolvedType(.{ .builtin = .Int32 });
-    try graph.types.append(allocator, .{ .builtin = .Bool });
-
-    try std.testing.expectError(
-        error.ModuleSemanticConstructionPrefixMutated,
-        writer.addResolvedType(.{ .builtin = .Float32 }),
-    );
+test "external type values register deferred resolution in the current owner" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "demo") };
+    defer graph.deinit(a);
+    var writer = Writer.init(a, &graph);
+    const reference = try writer.addExternalRef(.{ .kind = .type, .module_path = null, .name = try writer.addString("Alias"), .source = .{ .file_index = 0, .offset = 0 } });
+    const ty = try writer.addExternalType(reference);
+    try std.testing.expectEqual(@as(usize, 1), graph.semantic.pending_operations.items.len);
+    const operation = graph.semantic.pending_operations.items[0].resolve_type;
+    try std.testing.expectEqual(ty, operation.destination);
+    try std.testing.expectEqual(reference, operation.external);
+    try std.testing.expectEqual(@as(?entities.ModuleFunctionId, null), graph.semantic.pending_owner_functions.items[0]);
+    writer.pending_owner_function = @enumFromInt(3);
+    _ = try writer.addExternalType(reference);
+    try std.testing.expectEqual(@as(?entities.ModuleFunctionId, @enumFromInt(3)), graph.semantic.pending_owner_functions.items[1]);
 }

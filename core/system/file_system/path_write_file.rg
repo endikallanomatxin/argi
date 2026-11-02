@@ -4,17 +4,14 @@ FileWriting#(.PathValue: Type): Contract = (
     .write_file : (.self: &FileSystem, .path: PathValue, .text: &String) -> (.result: Result)
 )
 
-AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+AllocatingFileWriting#(.PathValue: Type): Contract = (
     .Result     : Type
-    .write_file : (
-        .self      : &FileSystem,
-        .path      : PathValue,
-        .text      : &String,
-        .allocator : $&Provider   = reach allocator
-    ) -> (.result: Result)
+    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: Virtual#(Allocator)) -> (
+        .result : Result
+    )
 )
 
-_path_write_file_c := (.self: &FileSystem, .path: &Char, .text: &String) -> (
+_path_write_file_c := (.self: &FileSystem, .path: &CChar, .text: &String) -> (
     .result : Errable#(
         Void,
         (
@@ -25,8 +22,9 @@ _path_write_file_c := (.self: &FileSystem, .path: &Char, .text: &String) -> (
         )
     )
 ) {
+
     assume ffi := self&._ffi
-    open_result ::= File(.file_system = self, .path = path, .mode = ..write)
+    open_result ::= open_file(.file_system = self, .path = path, .mode = ..write)
     file :: File
 
     match open_result {
@@ -90,14 +88,15 @@ _path_write_file_string := (.self: &FileSystem, .path: &String, .text: &String) 
         )
     )
 ) {
+
     assume ffi := self&._ffi
     c_path ::= as_c_string(path)
 
     result = write_file(self, .path = c_path, .text = text)
 }
 
-_path_write_file_view#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Provider
+_path_write_file_view := (
+    .self: &FileSystem, .path: StringView, .text: &String, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         Void,
@@ -110,6 +109,7 @@ _path_write_file_view#(.Provider: Type: Allocator#(Provider)) := (
         )
     )
 ) {
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -135,12 +135,13 @@ _path_write_file_owned := (.self: &FileSystem, .path: &Path, .text: &String) -> 
         )
     )
 ) {
+
     assume ffi := self&._ffi
 
     result = write_file(self, .path = &path&.text, .text = text)
 }
 
-implement FileWriting#(&Char) (
+implement FileWriting#(&CChar) (
     .Result : Type = Errable#(
         Void,
         (
@@ -166,7 +167,7 @@ implement FileWriting#(&String) (
     .write_file = _path_write_file_string
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) AllocatingFileWriting#(StringView, Provider) (
+implement AllocatingFileWriting#(StringView) (
     .Result : Type = Errable#(
         Void,
         (

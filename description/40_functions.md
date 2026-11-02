@@ -5,23 +5,37 @@ signature has an explicit type. The input fields form one logical input
 structure; the output fields form one logical output structure.
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 ```
 
 The body reads inputs by name and assigns output bindings by name. An output
 without a default must receive a value before the function completes. A
-default supplies its value when the body does not replace it:
+default initializes its output once at function entry, before the body. Output
+initializers execute in declaration order, and their calls, lifetime effects and
+cleanup follow the same rules as body statements. The body may then replace the
+initial value:
 
 ```rg
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
 }
 ```
+
+Output defaults can refer to function inputs and earlier outputs. Their
+temporaries belong to the function scope, just as temporaries in its body.
 
 Empty `()` denotes no input or no output. A `return` leaves the function; it
 does not carry a separate result expression. Results come from the output
 bindings.
+
+`main`, tests and `#run` are invoked through checked entry scopes using ordinary
+function calls. Each can request `.system: System` or declare no inputs.
+`main` and tests may also declare ordinary defaulted inputs.
+Their output policies differ: `main` returns no values or `status_code: Int32`,
+tests return `!()`, and `#run` returns values that can freeze into compiler
+constants. Runtime adapters interpret process/test status; compile-time
+execution enforces the constant-value boundary instead.
 
 ## Calls and results
 
@@ -87,12 +101,23 @@ named arguments use `#(.t: Type, .other: OtherType)`.
 
 ## Function variants
 
-Functions with the same name may have different input types. Dispatch uses
-the name and input types, not output types or input field names. An ambiguous
-call is an error.
+An ordinary function has one identity in its module namespace. It cannot be
+overloaded by changing runtime inputs or compile-time parameters. Generic
+functions specialize that single declaration.
 
-A function may be declared `once` when it is intended to be consumed at most
-once from the reachable call graph of the compiled entrypoint.
+Multiple dispatch selects implementations of [contract operations](135_contracts.md).
+Calls with multiple applicable operation identities require qualification;
+incomparable most-specific implementations are rejected as ambiguous.
+
+A function definition value can be marked `once`, as in
+`acquire := once Args -> Result { ... }`. Aliases retain its identity and
+single-use restriction. See [Once functions](42_once.md) for entrypoint and
+reachability rules.
+
+A defined C-ABI function can annotate its definition value:
+`compare := (...) -> (...): CFunction { ... }`. The same value can be marked
+once, but once functions cannot be selected as C callbacks. C-ABI definitions
+remain concrete; parameterized C-ABI definitions are rejected.
 
 > [!IDEA]
 > Anonymous functions could use the same input, output, and body syntax as
@@ -144,5 +169,12 @@ sum ::= 5 | add(.left = _ | identity(.value = _), .right = _)
 Pipes bind more tightly than multiplication and addition, retaining the same
 precedence as direct call/postfix expressions. Use `[a + b] | process(_)` to
 pipe the sum, or `[value | transform(_)] * scale` to group the transformed value.
+Trailing error operators apply to the completed pipe stage. For example,
+`value | transform(_)!!!` means `[value | transform(_)]!!!`, and
+`value | first(_)! | second(_)!` propagates after each stage. This applies to
+`!`, `!! context`, and `!!!`, including its optional reporting block. Error
+operators inside call arguments or explicit brackets keep their ordinary scope:
+`value | combine(_, other()!)!` propagates the nested argument independently.
+
 The right operand is a call or another primary expression, so a complete
 arithmetic right operand uses brackets. Braces remain lexical blocks.

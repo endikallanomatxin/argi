@@ -1,9 +1,10 @@
-CsvReasons: Type = (..invalid_csv, ..out_of_memory, ..size_limit_exceeded)
+CsvReasons: Type = (..invalid_csv, ..invalid_utf8, ..out_of_memory, ..size_limit_exceeded)
 
-CsvRecord: Type = (.fields: DynamicArray#(.t: String))
+CsvRecord := (.fields: DynamicArray#(.t: String))
 
 implement Deinit#(CsvRecord) (
     .deinit = (.self: $&CsvRecord) -> () {
+
         while length(&self&.fields).count > 0 {
             discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
         }
@@ -16,51 +17,47 @@ implement Deinit#(CsvRecord) (
 -- embedded line breaks and doubled quotes. Accept CRLF and LF record endings;
 -- bare CR is invalid outside quotes. Empty input has no records; a blank line
 -- contains one empty field. Encoding and width validation belong to the consumer.
-CsvReader: Type = (
-    ._text : StringView,
-    ._position : UIntNative,
-    ._ended : Bool,
+CsvReader := (
+    ._text               : StringView,
+    ._position           : UIntNative,
+    ._ended              : Bool,
     .maximum_field_bytes : UIntNative,
     .maximum_fields      : UIntNative
 )
 
-implement Init#(
-    CsvReader,
-    (
-        .text : StringView,
-        .maximum_field_bytes : UIntNative  = 1048576,
-        .maximum_fields      : UIntNative  = 1024,
-    )
-) (
+CsvReaderInitArgs: Type = (
+    .text                : StringView,
+    .maximum_field_bytes : UIntNative  = 1048576,
+    .maximum_fields      : UIntNative  = 1024
+)
+
+implement Init#(CsvReader, CsvReaderInitArgs) (
     .Result : Type = CsvReader
-    .init   = (
-        .args : (
-            .text : StringView,
-            .maximum_field_bytes : UIntNative  = 1048576,
-            .maximum_fields      : UIntNative  = 1024,
-        )
-    ) -> (.result: Result) {
-        text ::= args.text
-        maximum_field_bytes ::= args.maximum_field_bytes
-        maximum_fields ::= args.maximum_fields
+
+    .init = CsvReaderInitArgs -> (.result: Result) {
+        _init_text ::= text
+        _init_maximum_field_bytes ::= maximum_field_bytes
+        _init_maximum_fields ::= maximum_fields
 
         result = (
-            ._text = text
-            ._position = 0
-            ._ended = false
-            .maximum_field_bytes = maximum_field_bytes
-            .maximum_fields      = maximum_fields
+            ._text               = _init_text
+            ._position           = 0
+            ._ended              = false
+            .maximum_field_bytes = _init_maximum_field_bytes
+            .maximum_fields      = _init_maximum_fields
         )
     }
 )
 
 -- Errors are terminal, and no partially decoded record escapes.
-next#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .self: $&CsvReader, .allocator: $&AllocatorType = reach allocator
-) -> (.result: Errable#(?CsvRecord, CsvReasons)) := {
+next := (
+    .self: $&CsvReader, .allocator: Virtual#(Allocator)
+) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
+
+
     assume allocator
 
-    if self&._ended or self&._position == self&._text.length {
+    if self&._ended or self&._position == byte_length(&self&._text).count {
         result = ..ok ..none
         return
     }
@@ -75,27 +72,37 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
             result = ..error(.reason = ..size_limit_exceeded)
             return
         }
-        field ::= string_with_capacity(.capacity = 16)!
+        field ::= DynamicArray#(UInt8)(.capacity = 16)!
         quoted ::= false
-        if position < self&._text.length {
-            if bytes_get(.view = &self&._text, .index = position).byte == 34 {
+        if position < byte_length(&self&._text).count {
+            if [
+                unwrap_or_abort(.value = bytes_get(.view = &self&._text, .index = position))
+                == 34
+            ] {
                 quoted = true
                 position = [position + 1]
             }
         }
         closed ::= false
-        while position < self&._text.length {
-            byte ::= bytes_get(.view = &self&._text, .index = position).byte
+        while position < byte_length(&self&._text).count {
+            byte ::= unwrap_or_abort(
+                .value = bytes_get(.view = &self&._text, .index = position)
+            )
             if quoted {
                 if byte == 34 {
                     position = position + 1
-                    if position < self&._text.length {
-                        if bytes_get(.view = &self&._text, .index = position).byte == 34 {
-                            if field.length >= self&.maximum_field_bytes {
+                    if position < byte_length(&self&._text).count {
+                        if [
+                            unwrap_or_abort(
+                                .value = bytes_get(.view = &self&._text, .index = position)
+                            )
+                            == 34
+                        ] {
+                            if length(&field).count >= self&.maximum_field_bytes {
                                 result = ..error(.reason = ..size_limit_exceeded)
                                 return
                             }
-                            push_byte(.self = $&field, .byte = 34)!
+                            push(.self = $&field, .value = 34, .allocator = allocator)!
                             position = position + 1
                             continue
                         }
@@ -110,25 +117,31 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
                     return
                 }
             }
-            if field.length >= self&.maximum_field_bytes {
+            if length(&field).count >= self&.maximum_field_bytes {
                 result = ..error(.reason = ..size_limit_exceeded)
                 return
             }
-            push_byte(.self = $&field, .byte = byte)!
+            push(.self = $&field, .value = byte, .allocator = allocator)!
             position = position + 1
         }
         if quoted and closed == false {
             result = ..error(.reason = ..invalid_csv)
             return
         }
-        push(.self = $&record.fields, .value = ~field)!
-        if position == self&._text.length { break }
-        separator ::= bytes_get(.view = &self&._text, .index = position).byte
+        text ::= string_from_bytes(.bytes = view(&field))!
+        push(.self = $&record.fields, .value = ~text, .allocator = allocator)!
+        if position == byte_length(&self&._text).count { break }
+        separator ::= unwrap_or_abort(
+            .value = bytes_get(.view = &self&._text, .index = position)
+        )
         position = position + 1
         if separator == 44 { continue }
         if separator == 10 { break }
-        if separator == 13 and position < self&._text.length {
-            if bytes_get(.view = &self&._text, .index = position).byte == 10 {
+        if separator == 13 and position < byte_length(&self&._text).count {
+            if [
+                unwrap_or_abort(.value = bytes_get(.view = &self&._text, .index = position))
+                == 10
+            ] {
                 position = [position + 1]
                 break
             }
@@ -144,9 +157,10 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
-write_record#(.WriterType: Type: Writer#(WriterType))(
-    .writer: $&WriterType, .fields: ArrayViewRO#(.t: StringView)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
+write_record := #(.WriterType: Type: Writer#(WriterType)) (
+    .writer: $&WriterType, .fields: ArrayView#(.t: StringView)
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+
     index :: UIntNative = 0
 
     while index < length(&fields).count {
@@ -154,8 +168,8 @@ write_record#(.WriterType: Type: Writer#(WriterType))(
         text ::= unwrap_or_abort(.value = get(.self = &fields, .index = index))
         Writer#().write_byte(.self = writer, .byte = 34)!
         cursor :: UIntNative = 0
-        while cursor < text.length {
-            byte ::= bytes_get(.view = &text, .index = cursor).byte
+        while cursor < byte_length(&text).count {
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = cursor))
             Writer#().write_byte(.self = writer, .byte = byte)!
             if byte == 34 { Writer#().write_byte(.self = writer, .byte = byte)! }
             cursor = cursor + 1

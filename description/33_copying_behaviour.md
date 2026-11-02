@@ -58,9 +58,9 @@ InfalliblyCopyable#(.Value: Type): Contract = (
     .copy: (.self: &Value) -> (.value: Value)
 )
 
-FalliblyCopyable#(.Value: Type, .Provider: Type: Allocator): Contract = (
+FalliblyCopyable#(.Value: Type): Contract = (
     .reasons: Type
-    .copy: (.self: &Value, .allocator: $&Provider)
+    .copy: (.self: &Value, .allocator: Virtual#(Allocator))
         -> (.result: Errable#(Value, reasons))
 )
 
@@ -77,12 +77,13 @@ FalliblyCopyable   => never copied implicitly
 
 An infallible but expensive type can implement `InfalliblyCopyable` while
 requiring explicit `copy(&value)`. A fallible type such as `String` can
-implement `FalliblyCopyable#(String, Provider)` with `.reasons = (..out_of_memory)`; its failure remains
+implement `FalliblyCopyable#(String)` with `.reasons = (..out_of_memory)`; its failure remains
 part of `copy`, not a differently named operation.
 
-The allocator provider participates in fallible-copy selection. Associated
-reasons belong to that complete tuple. Qualify calls when necessary:
-`FalliblyCopyable#(String, PageAllocator).copy(&original, .allocator = allocator)`.
+The value type selects fallible-copy behavior and its associated reasons.
+The allocator is an ordinary virtual capability, supplied explicitly or through
+`assume allocator`. Qualify calls when necessary:
+`FalliblyCopyable#(String).copy(&original, .allocator = allocator)`.
 A function merely named `copy` establishes no copy capability and does not
 change implicit-copy permission.
 
@@ -136,6 +137,11 @@ match copied_result {
 If an element-wise container copy fails part way through, it must destroy the
 already copied prefix exactly once before releasing its new backing storage.
 The original container remains unchanged.
+
+`HashMap` supports this protocol when its keys, values, and hash policy are all
+`FalliblyCopyable`. Its errors include failures from copying each of those types
+and allocating the destination table. A map whose elements or policy do not
+support copying remains usable as a movable owner.
 
 
 ## Explicit move

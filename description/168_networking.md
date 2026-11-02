@@ -6,14 +6,14 @@ capability retains its ordinary FFI dependency; sockets and resolution owners
 borrow it and must be cleaned up before it ends.
 
 ```rg
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume writer ::= $&system.terminal&.stderr
     assume network := system.network
     addresses ::= resolve_addresses(.host = "localhost", .port = 8080)!!!
     address ::= get(.self = &addresses, .index = 0)!!!
     connection ::= TcpConnection(.address = address)!!!
     bytes: [4]UInt8 = (112, 105, 110, 103)
-    write_all(.self = $&connection, .buffer = view(.array = &bytes))!!!
+    write_all(.self = $&connection, .buffer = view(.self = &bytes))!!!
     shutdown_write(.self = $&connection)!!!
 }
 ```
@@ -76,6 +76,14 @@ handle or native allocation is a safe reference or an allocation receipt.
 `set_timeout(.self, .milliseconds)` configures native receive/send timeouts for a
 connection or UDP socket. Zero restores blocking operation without a timeout.
 These timeouts do not bound DNS resolution, connection establishment, or accept.
+On POSIX, an interrupted connection waits for completion and checks the socket
+error rather than submitting a second connection request. Interruptions while
+waiting do not restart that request.
+Interrupted POSIX sends and receives retry only when the native operation
+reports interruption without progress. A successful partial transfer returns its
+count immediately; completing a TCP transfer belongs to the caller's loop.
+Other errors are reported without retrying. UDP truncation remains an error even
+after retries and even when a prefix was written into the destination.
 Resolution, opening, accepting, reads, writes, options, and close have distinct
 error reasons; argument, allocation, oversized-datagram, and truncation failures
 remain distinguishable. The baseline does not expose platform errno values.

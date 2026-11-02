@@ -1,9 +1,7 @@
-run_main(.system: System) -> !Void = ..ok Void() := {
-    directory ::= Directory(.self = system.file_system, .path = ".")!
-    copy ::= directory
-}
+main := (.system: System) -> (.status_code: Int32 = 1) {
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
+    assume writer ::= $&system.terminal&.stderr
+    directory ::= Directory(.self = system.file_system, .path = ".")!!!
+    copy ::= directory
     status_code = 0
 }

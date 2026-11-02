@@ -147,7 +147,7 @@ Functions declare named input and output fields. The body assigns the output
 bindings; `return` exits without a separate result expression:
 
 ```rg
-add(.left: Int32, .right: Int32) -> (.sum: Int32) := {
+add := (.left: Int32, .right: Int32) -> (.sum: Int32)  {
     sum = left + right
 }
 
@@ -167,10 +167,10 @@ and [Multiple Dispatch](131_multiple_dispatch.md).
 
 ## Construction and cleanup
 
-A type may provide `implement Init#(T, Args)` to construct a value and
+A type may provide `implement Init#(Target, Args)` to construct a value and
 `implement Deinit#(T)` to clean up a live value. Both contracts are optional.
-`T(...)` selects Init evidence from its target and argument record; its
-associated Result is T or `Errable#(T, R)` when construction can fail.
+`T(...)` fixes Target and infers the nominal Args type from applicable signatures.
+The associated Result is T or `Errable#(T, R)` when construction can fail.
 Local values that need cleanup are cleaned at scope exit.
 
 See [Initialization and deinitialization](30_initialization_and_deinitialization.md),
@@ -219,3 +219,20 @@ for & item in values { sum = sum + item& }
 ```
 
 Each braced body has its own lexical scope. See [Control flow](44_control_flow.md).
+
+## Explicit statement separators
+
+A semicolon (`;`) separates statements or declarations without requiring a
+physical newline. Newlines remain the usual spelling; semicolons are optional.
+They are also allowed after the final statement before a closing brace:
+
+```rg
+x := 1; y := 2
+if ready { prepare(); execute(); }
+```
+
+`return;` is a return without a value. A semicolon is a statement boundary,
+not expression whitespace or a separator for arguments, fields, or type
+parameters. Continue to use their ordinary separators. Semicolons inside
+strings and comments are ordinary text. They do not change lexical scope,
+evaluation order, or cleanup behavior.

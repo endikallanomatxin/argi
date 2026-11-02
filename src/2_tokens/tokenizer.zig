@@ -1,4 +1,5 @@
 const std = @import("std");
+const lexical = @import("../1_base/lexical.zig");
 const tok = @import("token.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const sf = @import("../1_base/source_files.zig");
@@ -342,10 +343,7 @@ pub const Tokenizer = struct {
         // Comments
         if (current == '-' and self.peekNext() == '-') {
             const start = self.location.offset;
-            while (self.peek()) |c| {
-                if (c == '\n') break;
-                _ = self.advance();
-            }
+            self.location.offset = @intCast(lexical.commentEnd(self.source, start));
             try self.addToken(tok.Content{ .comment = self.textRange(start, self.location.offset) }, loc);
             return;
         }
@@ -359,6 +357,12 @@ pub const Tokenizer = struct {
         }
         if (current == '.') {
             try self.addToken(tok.Content{ .dot = .{} }, loc);
+            _ = self.advance();
+            return;
+        }
+
+        if (current == ';') {
+            try self.addToken(tok.Content{ .semicolon = .{} }, loc);
             _ = self.advance();
             return;
         }
@@ -380,7 +384,7 @@ pub const Tokenizer = struct {
         if (std.ascii.isAlphabetic(current) or current == '_') {
             const start = self.location.offset;
             while (self.peek()) |c| {
-                if (!std.ascii.isAlphanumeric(c) and c != '_') break;
+                if (!lexical.identifierContinue(c)) break;
                 _ = self.advance();
             }
             const word = self.source[start..self.location.offset];
@@ -404,8 +408,6 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .keyword_break = .{} }, loc);
             } else if (std.mem.eql(u8, word, "continue")) {
                 try self.addToken(tok.Content{ .keyword_continue = .{} }, loc);
-            } else if (std.mem.eql(u8, word, "reach")) {
-                try self.addToken(tok.Content{ .keyword_reach = .{} }, loc);
             } else if (std.mem.eql(u8, word, "import")) {
                 try self.addToken(tok.Content{ .keyword_import = .{} }, loc);
             } else if (std.mem.eql(u8, word, "assume")) {
@@ -414,6 +416,10 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .keyword_once = .{} }, loc);
             } else if (std.mem.eql(u8, word, "test")) {
                 try self.addToken(tok.Content{ .keyword_test = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "implement")) {
+                try self.addToken(tok.Content{ .keyword_implement = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "defer")) {
+                try self.addToken(tok.Content{ .keyword_defer = .{} }, loc);
             } else if (std.mem.eql(u8, word, "and")) {
                 try self.addToken(tok.Content{ .keyword_and = .{} }, loc);
             } else if (std.mem.eql(u8, word, "or")) {
@@ -542,7 +548,7 @@ pub const Tokenizer = struct {
                 _ = self.advance();
 
                 // 1. Escape (`\\`) or literal character?
-                var char_val: u8 = undefined;
+                var char_val: u21 = undefined;
                 if (self.peek() == null) {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
@@ -554,17 +560,9 @@ pub const Tokenizer = struct {
                         try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     };
-                    char_val = switch (esc) {
-                        'n' => '\n', // newline
-                        't' => '\t', // tab
-                        'r' => '\r', // carriage return
-                        '\\' => '\\', // backslash
-                        '\'' => '\'', // single quote
-                        '0' => 0, // NUL
-                        else => {
-                            try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
-                            return TokenizerError.UnknownCharacter;
-                        },
+                    char_val = lexical.escape('\'', esc) orelse {
+                        try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
+                        return TokenizerError.UnknownCharacter;
                     };
                     _ = self.advance(); // Skip the escape character.
                 } else { // -- ordinary character --
@@ -572,13 +570,25 @@ pub const Tokenizer = struct {
                         try self.diagnostics.add(loc, .syntax, "empty char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     }
-                    char_val = self.peek().?;
-                    _ = self.advance();
+                    const start: usize = self.location.offset;
+                    const width = std.unicode.utf8ByteSequenceLength(self.source[start]) catch {
+                        try self.diagnostics.add(loc, .syntax, "invalid UTF-8 in character literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    };
+                    if (width > self.source.len - start) {
+                        try self.diagnostics.add(loc, .syntax, "truncated UTF-8 in character literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    }
+                    char_val = std.unicode.utf8Decode(self.source[start..][0..width]) catch {
+                        try self.diagnostics.add(loc, .syntax, "invalid Unicode scalar in character literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    };
+                    for (0..width) |_| _ = self.advance();
                 }
 
                 // 2. The closing quote must follow.
                 if (self.peek() != '\'') {
-                    try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
+                    try self.diagnostics.add(loc, .syntax, "character literal must contain exactly one Unicode scalar", .{});
                     return TokenizerError.UnknownCharacter;
                 }
                 _ = self.advance(); // Skip the closing quote.
@@ -595,32 +605,21 @@ pub const Tokenizer = struct {
                 _ = self.advance();
                 const text_start = self.location.offset;
 
-                // Collect characters while handling escapes.
-                while (self.peek()) |c| {
-                    if (c == '"') break;
-                    if (c == '\\') {
-                        _ = self.advance(); // Skip '\'
-                        const esc = self.peek() orelse {
-                            try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
-                            return TokenizerError.UnknownCharacter;
-                        };
-                        switch (esc) { // Common escapes.
-                            'n', 't', 'r', '\\', '"', '0' => {},
-                            else => {
-                                try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
-                                return TokenizerError.UnknownCharacter;
-                            },
-                        }
-                        _ = self.advance();
-                    } else {
-                        _ = self.advance();
-                    }
+                const literal = lexical.quoted(self.source, text_start - 1);
+                if (literal.invalid_escape) |offset| {
+                    try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{self.source[offset]});
+                    return TokenizerError.UnknownCharacter;
                 }
-                if (self.peek() != '"') {
+                if (!literal.closed) {
                     try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
+                self.location.offset = @intCast(literal.content_end);
                 const text_end = self.location.offset;
+                if (!std.unicode.utf8ValidateSlice(self.source[text_start..text_end])) {
+                    try self.diagnostics.add(loc, .syntax, "string literal is not valid UTF-8", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
                 // Close the quote.
                 _ = self.advance();
 
@@ -654,7 +653,7 @@ fn expectTokenizerDiagnostics(source: []const u8, should_diagnose: bool) !void {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&allocator, files[0..]);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files[0..]);
     defer diagnostics.deinit();
 
     var tokenizer_ctx = Tokenizer.init(
@@ -678,7 +677,7 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&allocator, files[0..]);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files[0..]);
     defer diagnostics.deinit();
 
     var tokenizer_ctx = Tokenizer.init(
@@ -744,4 +743,34 @@ test "tokenizer invalid numeric literals" {
     try expectTokenizerDiagnostics("1..2", true);
     try expectTokenizerDiagnostics("1.2.3", true);
     try expectTokenizerDiagnostics("1.", true);
+}
+
+test "tokenizer requires valid UTF-8 in string literals" {
+    try expectTokenizerDiagnostics("\"caf\xc3\xa9\"", false);
+    try expectTokenizerDiagnostics("\"\xf0\x9f\x98\x80\"", false);
+    try expectTokenizerDiagnostics("\"\xc0\x80\"", true);
+    try expectTokenizerDiagnostics("\"\xed\xa0\x80\"", true);
+    try expectTokenizerDiagnostics("\"\xf4\x90\x80\x80\"", true);
+    try expectTokenizerDiagnostics("\"\xe2\x82\"", true);
+}
+
+test "character literals contain exactly one Unicode scalar" {
+    const cases = .{ .{ "'A'", @as(u32, 65) }, .{ "'ñ'", @as(u32, 241) }, .{ "'€'", @as(u32, 8364) }, .{ "'🙂'", @as(u32, 128578) }, .{ "'\\0'", @as(u32, 0) } };
+    inline for (cases) |case| {
+        const files = [_]sf.SourceFile{.{ .path = "unicode_literal.rg", .code = case[0] }};
+        const allocator = std.testing.allocator;
+        var diagnostics = try diag.Diagnostics.init(&allocator, &files);
+        defer diagnostics.deinit();
+        var tokenizer = Tokenizer.init(allocator, &diagnostics, case[0], diagnostics.source_db.fileId(0));
+        defer tokenizer.deinit();
+        const tokens = try tokenizer.tokenize();
+        try std.testing.expectEqual(case[1], tokens.contents[0].literal.char_literal);
+    }
+    try expectTokenizerDiagnostics("''", true);
+    try expectTokenizerDiagnostics("'ab'", true);
+    try expectTokenizerDiagnostics("'e\xcc\x81'", true);
+    try expectTokenizerDiagnostics("'\xc0\x80'", true);
+    try expectTokenizerDiagnostics("'\xed\xa0\x80'", true);
+    try expectTokenizerDiagnostics("'\xf4\x90\x80\x80'", true);
+    try expectTokenizerDiagnostics("'\xe2\x82'", true);
 }

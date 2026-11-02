@@ -2,8 +2,8 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
-const codegen = @import("../5_codegen/codegen.zig");
-const llvm = @import("../5_codegen/llvm.zig").c;
+const codegen = @import("../5_codegen/llvm/codegen.zig");
+const llvm = @import("../5_codegen/llvm/llvm.zig").c;
 const ModuleCache = frontend.cache.ModuleCache;
 
 const Result = struct {
@@ -31,7 +31,7 @@ fn compileWithExecution(files: []const sf.SourceFile, session: ?*ModuleCache, op
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diagnostics = diag.Diagnostics.init(&allocator, files);
+    var diagnostics = try diag.Diagnostics.init(&allocator, files);
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{
         .module_cache = session,
@@ -49,6 +49,7 @@ fn compileWithExecution(files: []const sf.SourceFile, session: ?*ModuleCache, op
     if (failure == null) {
         var generator = try codegen.CodeGenerator.init(allocator, std.testing.io, &pipeline.global_graph.?, &diagnostics, .{});
         defer generator.deinit();
+        if (pipeline.safety_ctx) |*safety| generator.annotations = &safety.annotations;
         if (generator.generate()) |module| {
             const printed = llvm.LLVMPrintModuleToString(module);
             defer llvm.LLVMDisposeMessage(printed);
@@ -84,8 +85,8 @@ fn expectCleanEquivalent(files: []const sf.SourceFile, session: *ModuleCache) !R
     return cached;
 }
 
-const main_source = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n";
-const dep_source = "answer() -> (.result: Int32) := { result = 7 }\n";
+const main_source = "dep := import(\"../dep\")\nmain := () -> (.status_code: Int32) { status_code = dep.answer().result }\n";
+const dep_source = "answer := () -> (.result: Int32) { result = 7 }\n";
 
 test "frontend module cache reuses modules after source arenas are destroyed" {
     var session = ModuleCache.init(std.testing.allocator, .{});
@@ -104,7 +105,7 @@ test "frontend module cache reuses modules after source arenas are destroyed" {
     try std.testing.expectEqualStrings(cold.ir, warm.ir);
 
     var edited = files;
-    edited[1].code = "answer() -> (.result: Int32) := { result = 9 }\n";
+    edited[1].code = "answer := () -> (.result: Int32)  { result = 9 }\n";
     const rebuilt = try expectCleanEquivalent(&edited, &session);
     defer rebuilt.deinit();
     try std.testing.expectEqual(@as(usize, 1), rebuilt.hits);
@@ -122,7 +123,7 @@ test "frontend module cache regenerates imported diagnostics and remaps source I
     const valid = try expectCleanEquivalent(&files, &session);
     valid.deinit();
     var changed = files;
-    changed[1].code = "answer() -> (.result: Bool) := { result = true }\n";
+    changed[1].code = "answer := () -> (.result: Bool)  { result = true }\n";
     const bad = try expectCleanEquivalent(&changed, &session);
     defer bad.deinit();
     try std.testing.expect(bad.failure != null);
@@ -141,16 +142,16 @@ test "frontend module cache invalidates file sets, origins, options, and core in
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     var files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" },
-        .{ .path = "core/config.rg", .code = "Config : Type = (.value: Int32)\n", .origin = .bundled_core },
+        .{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" },
+        .{ .path = "core/config.rg", .code = "Config := (.value: Int32)\n", .origin = .bundled_core },
     };
     const initial = try expectCleanEquivalent(&files, &session);
     initial.deinit();
-    files[1].code = "Config : Type = (.value: Int32)\n-- changed configuration\n";
+    files[1].code = "Config := (.value: Int32)\n-- changed configuration\n";
     const core_changed = try expectCleanEquivalent(&files, &session);
     defer core_changed.deinit();
     try std.testing.expectEqual(@as(usize, 2), core_changed.misses);
-    const extra = [_]sf.SourceFile{ files[0], files[1], .{ .path = "app/helper.rg", .code = "helper() -> () := {}\n" } };
+    const extra = [_]sf.SourceFile{ files[0], files[1], .{ .path = "app/helper.rg", .code = "helper := () -> ()  {}\n" } };
     const added = try expectCleanEquivalent(&extra, &session);
     defer added.deinit();
     try std.testing.expectEqual(@as(usize, 1), added.misses);
@@ -174,12 +175,12 @@ test "frontend module cache invalidates file sets, origins, options, and core in
 test "frontend module cache does not store invalid syntax" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
-    var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "broken(.input) -> () := {}\n" }};
+    var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "broken := (.input) -> ()  {}\n" }};
     const bad = try expectCleanEquivalent(&files, &session);
     defer bad.deinit();
     try std.testing.expect(bad.failure != null);
     try std.testing.expectEqual(@as(usize, 0), session.entries.items.len);
-    files[0].code = "main() -> (.status_code: Int32 = 0) := {}\n";
+    files[0].code = "main := () -> (.status_code: Int32 = 0)  {}\n";
     const recovered = try expectCleanEquivalent(&files, &session);
     defer recovered.deinit();
     try std.testing.expect(recovered.failure == null);
@@ -191,8 +192,8 @@ test "frontend module cache reuses explicit qualified contract bounds without de
     defer session.deinit();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = "dep := import(\"../dep\")\n" ++
-            "use#(.Value: Type: dep.Contract)(.value: Value) -> (.result: Int32) := { result = 3 }\n" ++
-            "main() -> (.status_code: Int32) := { status_code = use(.value = 1).result }\n" },
+            "use := #(.Value: Type: dep.Contract) (.value: Value) -> (.result: Int32)  { result = 3 }\n" ++
+            "main := () -> (.status_code: Int32)  { status_code = use(.value = 1).result }\n" },
         .{ .path = "dep/contract.rg", .code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(Int32) ()\n" },
     };
     const cold = try expectCleanEquivalent(&files, &session);
@@ -201,7 +202,7 @@ test "frontend module cache reuses explicit qualified contract bounds without de
     defer warm.deinit();
     try std.testing.expectEqual(@as(usize, 2), warm.hits);
     var changed = files;
-    changed[1].code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(Char) ()\n";
+    changed[1].code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(UInt8) ()\n";
     const invalid = try expectCleanEquivalent(&changed, &session);
     defer invalid.deinit();
     try std.testing.expect(invalid.failure != null);
@@ -220,7 +221,7 @@ test "frontend module cache bounds memory and preserves leased snapshots" {
     defer leased.release();
     const original_dir = try std.testing.allocator.dupe(u8, leased.graph.module_dir);
     defer std.testing.allocator.free(original_dir);
-    const other = [_]sf.SourceFile{.{ .path = "other/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const other = [_]sf.SourceFile{.{ .path = "other/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" }};
     const replacement = try expectCleanEquivalent(&other, &session);
     replacement.deinit();
     try std.testing.expectEqualStrings(original_dir, leased.graph.module_dir);
@@ -239,8 +240,8 @@ test "frontend module cache reruns safety on cached ownership effects" {
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = "Resource : Type = ()\n" ++
             "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
-            "consume(.res: Resource) -> (.result: Int32 = 0) := {}\n" ++
-            "main() -> (.status_code: Int32) := {\n" ++
+            "consume := (.res: Resource) -> (.result: Int32 = 0)  {}\n" ++
+            "main := () -> (.status_code: Int32)  {\n" ++
             "handle := Resource()\n" ++
             "status_code = consume(.res = ~handle).result\n" ++
             "status_code = consume(.res = handle).result\n}\n" },
@@ -259,7 +260,7 @@ test "frontend module cache reruns safety on cached ownership effects" {
 test "frontend module cache does not retain partially lowered modules" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32) := { status_code = 99999999999999999999999999999 }\n" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32)  { status_code = 99999999999999999999999999999 }\n" }};
     const bad = try expectCleanEquivalent(&files, &session);
     defer bad.deinit();
     try std.testing.expect(bad.failure != null);
@@ -298,7 +299,7 @@ test "frontend module cache persists canonical graphs across sessions" {
         defer third.deinit();
         try third.enablePersistence(std.testing.io, root);
         var edited = files;
-        edited[1].code = "answer() -> (.result: Int32) := { result = 11 }\n";
+        edited[1].code = "answer := () -> (.result: Int32)  { result = 11 }\n";
         const changed = try expectCleanEquivalent(&edited, &third);
         defer changed.deinit();
         try std.testing.expectEqual(@as(usize, 1), changed.hits);
@@ -312,7 +313,7 @@ test "frontend module cache rebuilds truncated corrupt and incompatible snapshot
     defer tmp.cleanup();
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" }};
     for (0..4) |damage| {
         {
             var first = ModuleCache.init(std.testing.allocator, .{});
@@ -364,7 +365,7 @@ test "frontend module cache treats unwritable cache paths as optional" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     try session.enablePersistence(std.testing.io, path);
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main() -> (.status_code: Int32 = 0) := {}\n" }};
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "main := () -> (.status_code: Int32 = 0)  {}\n" }};
     const result = try expectCleanEquivalent(&files, &session);
     defer result.deinit();
     try std.testing.expect(result.failure == null);
@@ -376,7 +377,7 @@ test "frontend module cache preserves target selection and discarded source edit
     defer session.deinit();
     var files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
         "bad := import(\"./missing\")\n" ++
-        "} #else {\nmain() -> (.status_code: Int32 = 0) := {}\n}\n" }};
+        "} #else {\nmain := () -> (.status_code: Int32 = 0)  {}\n}\n" }};
     const first = try expectCleanEquivalent(&files, &session);
     defer first.deinit();
     try std.testing.expect(first.failure == null);
@@ -385,7 +386,7 @@ test "frontend module cache preserves target selection and discarded source edit
     try std.testing.expectEqual(@as(usize, 1), reused.hits);
     files[0].code = "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
         "bad := import(\"./another_missing\")\n" ++
-        "} #else {\nmain() -> (.status_code: Int32 = 0) := {}\n}\n";
+        "} #else {\nmain := () -> (.status_code: Int32 = 0)  {}\n}\n";
     const changed = try expectCleanEquivalent(&files, &session);
     defer changed.deinit();
     try std.testing.expect(changed.failure == null);
@@ -396,8 +397,8 @@ test "frontend module cache separates platform branches by compilation target" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "#if target_os(\"windows\") {\n" ++
-        "main() -> (.status_code: Int32 = 11) := {}\n" ++
-        "} #else {\nmain() -> (.status_code: Int32 = 22) := {}\n}\n" }};
+        "main := () -> (.status_code: Int32 = 11)  {}\n" ++
+        "} #else {\nmain := () -> (.status_code: Int32 = 22)  {}\n}\n" }};
     const linux = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .linux, .abi = .gnu });
     defer linux.deinit();
     const windows = try compileForTarget(&files, &session, .{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
@@ -425,12 +426,12 @@ test "frontend module cache preserves associated projections and participant tup
         \\    .Count: Int
         \\)
         \\implement Product#(Int32, Int64) (.Count: Int = 2, .Result: Type = Int32, .multiply = _multiply)
-        \\_multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
-        \\projected() -> (.value: Product#(Int32, Int64).Result) := { value = 0 }
-        \\Box#(.T: Type): Type = (.value: Product#(T, Int64).Result)
-        \\read_box(.box: &Box#(Int32)) -> (.value: Int32) := { value = box&.value }
-        \\forward#(.A: Type, .B: Type)(.left: A, .right: B) -> (.value: Product#(A, B).Result) := { value = multiply(left, right).value }
-        \\main() -> (.status_code: Int32) := {
+        \\_multiply := (.left: Int32, .right: Int64) -> (.value: Int32)  { value = 0 }
+        \\projected := () -> (.value: Product#(Int32, Int64).Result)  { value = 0 }
+        \\Box := #(.T: Type) (.value: Product#(T, Int64).Result)
+        \\read_box := (.box: &Box#(Int32)) -> (.value: Int32)  { value = box&.value }
+        \\forward := #(.A: Type, .B: Type) (.left: A, .right: B) -> (.value: Product#(A, B).Result)  { value = multiply(left, right).value }
+        \\main := () -> (.status_code: Int32)  {
         \\    box ::= Box#(Int32)(0)
         \\    status_code = forward#(Int32, Int64)(read_box(&box).value, 7).value
         \\}
@@ -475,13 +476,13 @@ test "frontend module cache preserves associated constant dimensions" {
         \\    .Count: Int
         \\)
         \\Cell: Type = ()
-        \\Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
+        \\Buffer := #(.n: Int) (.values: Array#(.n = n, .t: Int32))
         \\implement Shape#(Cell) (.Count: Int = 2)
-        \\Box#(.T: Type): Type = (.values: Array#(.n = Shape#(T).Count, .t: Int32))
-        \\read(.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
-        \\take#(.n: Int)(.values: &Array#(.n = n, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
-        \\forward#(.T: Type)(.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (.value: Int32) := { value = take#(.n = Shape#(T).Count)(values).value }
-        \\main() -> (.status_code: Int32) := {
+        \\Box := #(.T: Type) (.values: Array#(.n = Shape#(T).Count, .t: Int32))
+        \\read := (.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32)  { value = values&[0] + values&[1] }
+        \\take := #(.n: Int) (.values: &Array#(.n = n, .t: Int32)) -> (.value: Int32)  { value = values&[0] + values&[1] }
+        \\forward := #(.T: Type) (.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (.value: Int32)  { value = take#(.n = Shape#(T).Count)(values).value }
+        \\main := () -> (.status_code: Int32)  {
         \\    buffer ::= Buffer#(.n = Shape#(Cell).Count)((20, 22))
         \\    box ::= Box#(Cell)(buffer.values)
         \\    status_code = forward(Cell(), &box.values).value + take#(.n = Shape#(Cell).Count)(&box.values).value - 84
@@ -530,11 +531,11 @@ test "frontend module cache preserves explicit unary contract participants" {
         \\    .read: (.other: &Other, .source: &Participant) -> (.value: &Int32)
         \\        where depends_on(value, source)
         \\)
-        \\Cell: Type = (.value: Int32)
+        \\Cell := (.value: Int32)
         \\implement Readable#(Cell) (.Other: Type = Cell, .read = _read)
-        \\_read(.other: &Cell, .source: &Cell) -> (.value: &Int32) := { value = &source&.value }
-        \\consume#(.T: Type: Readable#(.Other: Cell))(.other: &Cell, .source: &T) -> (.value: &Int32) := { value = read(other, source).value }
-        \\main() -> (.status_code: Int32 = 0) := {
+        \\_read := (.other: &Cell, .source: &Cell) -> (.value: &Int32)  { value = &source&.value }
+        \\consume := #(.T: Type: Readable#(.Other: Cell)) (.other: &Cell, .source: &T) -> (.value: &Int32)  { value = read(other, source).value }
+        \\main := () -> (.status_code: Int32 = 0)  {
         \\    other ::= Cell(7)
         \\    source ::= Cell(42)
         \\    if consume(&other, &source)& != 42 { abort }
@@ -608,6 +609,48 @@ test "frontend module cache preserves shared unary conformance selection" {
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "constraint") != null);
 }
 
+test "frontend module cache preserves generated compile-time entry provenance" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/execution/152_anonymous_comptime_entry/main.rg", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(source);
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = source },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    {
+        var cold = ModuleCache.init(std.testing.allocator, .{});
+        defer cold.deinit();
+        try cold.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &cold);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqual(@as(usize, 0), cold.disk_write_failures);
+    }
+    var warm = ModuleCache.init(std.testing.allocator, .{});
+    defer warm.deinit();
+    try warm.enablePersistence(std.testing.io, root);
+    const result = try expectCleanEquivalent(&files, &warm);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+    try std.testing.expectEqual(@as(usize, 2), result.hits);
+    try std.testing.expectEqual(@as(usize, 0), result.misses);
+    try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
+    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, "local ::= 42", "local ::= missing()");
+    defer std.testing.allocator.free(changed);
+    try std.testing.expect(!std.mem.eql(u8, source, changed));
+    var invalid = files;
+    invalid[0].code = changed;
+    const rejected = try expectCleanEquivalent(&invalid, &warm);
+    defer rejected.deinit();
+    try std.testing.expect(rejected.failure != null);
+    const restored = try expectCleanEquivalent(&files, &warm);
+    defer restored.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), restored.failure);
+}
+
 test "frontend module cache preserves scoped implementation bodies" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -641,7 +684,7 @@ test "frontend module cache preserves scoped implementation bodies" {
     try std.testing.expectEqual(@as(usize, 0), result.misses);
     try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
     var invalid = files;
-    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, ".multiply =\n        (.left: &Row, .right: &Column) -> (.result: Result) {\n        result = left&.value * right&.value * Scale\n    }", ".multiply = wrong_result");
+    const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, ".multiply = (.left: &Row, .right: &Column) -> (.result: Result) {\n        result = left&.value * right&.value * Scale\n    }", ".multiply = wrong_result");
     defer std.testing.allocator.free(changed);
     try std.testing.expect(!std.mem.eql(u8, source, changed));
     invalid[0].code = try std.fmt.allocPrint(std.testing.allocator, "{s}\nwrong_result := (.left: &Row, .right: &Column) -> (.result: UInt8) {{ result = 1 }}\n", .{changed});
@@ -661,7 +704,7 @@ test "parallel module semantics preserves IR across cache lifetimes and edits" {
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = main_source },
         .{ .path = "dep/answer.rg", .code = dep_source },
-        .{ .path = "other/extra.rg", .code = "extra() -> (.result: Int32) := { result = 11 }" },
+        .{ .path = "other/extra.rg", .code = "extra := () -> (.result: Int32)  { result = 11 }" },
     };
     const serial = try compileWithExecution(&files, null, .{}, .{}, io, 1);
     defer serial.deinit();
@@ -676,7 +719,7 @@ test "parallel module semantics preserves IR across cache lifetimes and edits" {
     try std.testing.expectEqual(@as(usize, 3), warm.hits);
     try std.testing.expectEqualStrings(serial.ir, warm.ir);
     var edited = files;
-    edited[1].code = "answer() -> (.result: Int32) := { result = 9 }";
+    edited[1].code = "answer := () -> (.result: Int32)  { result = 9 }";
     const changed = try compileWithExecution(&edited, &session, .{}, .{}, io, 4);
     defer changed.deinit();
     const changed_serial = try compileWithExecution(&edited, null, .{}, .{}, io, 1);
@@ -692,9 +735,9 @@ test "parallel module semantics retains deterministic local failure diagnostics"
     defer threaded.deinit();
     const io = threaded.io();
     const files = [_]sf.SourceFile{
-        .{ .path = "app/main.rg", .code = "main() -> () := {}" },
-        .{ .path = "first/bad.rg", .code = "same() -> () := {}\nsame() -> () := {}" },
-        .{ .path = "second/bad.rg", .code = "duplicate() -> () := {}\nduplicate() -> () := {}" },
+        .{ .path = "app/main.rg", .code = "main := () -> ()  {}" },
+        .{ .path = "first/bad.rg", .code = "same := () -> ()  {}\nsame := () -> ()  {}" },
+        .{ .path = "second/bad.rg", .code = "duplicate := () -> ()  {}\nduplicate := () -> ()  {}" },
     };
     const serial = try compileWithExecution(&files, null, .{}, .{}, io, 1);
     defer serial.deinit();
@@ -724,4 +767,182 @@ test "parallel module semantics permits inline execution when async is unavailab
     defer serial.deinit();
     try std.testing.expectEqual(null, parallel.failure);
     try std.testing.expectEqualStrings(serial.ir, parallel.ir);
+}
+
+test "module frontend initializes interactive execution without a program entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const files = [_]sf.SourceFile{.{
+        .path = "/interactive_core/main.rg",
+        .code = "answer := () -> (.result: Int32) { result = 42 }\n",
+        .origin = .bundled_core,
+    }};
+    var diagnostics = try diag.Diagnostics.init(&allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), prepared.modules.len);
+    try std.testing.expect(pipeline.global_graph == null);
+    var session: @import("../execution/interactive.zig").Interactive = undefined;
+    try session.initPrepared(allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitStatements("value ::= answer()");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
+    try session.close();
+}
+
+fn retainFrontendSelections(allocator: std.mem.Allocator) !void {
+    const source = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { selected := import(\"./later\") } #else { discarded := import(\"./missing\") }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.parseFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), pipeline.source_selections.items.len);
+    var selected = &pipeline.source_selections.items[0];
+    const pending = try selected.imports(allocator);
+    defer pending.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), pending.pending.len);
+    try selected.resolve(pending.pending[0], true);
+    const rendered = try selected.imports(allocator);
+    defer rendered.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.source, "./later") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.source, "./missing") == null);
+    try std.testing.expectEqualStrings(source, pipeline.source_db.get(pipeline.source_db.fileId(0)).source);
+    // Retokenizing starts a fresh decision owner instead of reusing a previous
+    // compilation's choice for unchanged source offsets.
+    _ = try pipeline.parseFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), pipeline.source_selections.items.len);
+    try std.testing.expect(pipeline.source_selections.items[0].decisions[0] == null);
+}
+
+test "frontend retains source selection plans and releases failed preparation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFrontendSelections, .{});
+}
+
+test "frontend evaluates module conditions before selecting main and program entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "noop_error_tracer :: () = ()\nchoose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing()!!! } }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .entry_module_dir = "/project" });
+    defer pipeline.deinit();
+    const graph = pipeline.semantizeGlobalFiles(&files) catch |err| {
+        try diagnostics.dump();
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), (try @constCast(graph).functionsNamed(a, "main")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try @constCast(graph).functionsNamed(a, "__argi_entry")).len);
+}
+
+test "frontend module condition cache reuse preserves selected declarations" {
+    const files = [_]sf.SourceFile{.{
+        .path = "/project/main.rg",
+        .code = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { main := () -> (.status_code: Int32) { status_code = 42 } } #else { main := () -> () { missing() } }",
+    }};
+    var cache = ModuleCache.init(std.testing.allocator, .{});
+    defer cache.deinit();
+    const first = try expectCleanEquivalent(&files, &cache);
+    defer first.deinit();
+    const second = try expectCleanEquivalent(&files, &cache);
+    defer second.deinit();
+    try std.testing.expectEqual(@as(usize, 1), second.hits);
+}
+
+fn stagedFrontendAllocationFailures(allocator: std.mem.Allocator) !void {
+    const source = "#if true { main := () -> (.status_code: Int32) { status_code = 42 } }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    // Diagnostics own their arena; compiler state must release each allocation
+    // through the reclaimable frontend allocator, including on failure.
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.semantizeGlobalFiles(&files);
+}
+
+test "staged frontend releases failed module condition preparation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, stagedFrontendAllocationFailures, .{});
+}
+
+test "computed test discovery excludes main and dormant test bodies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { missing_main() }\n#if choose() { test selected := () -> () { missing_test() } } #else { test discarded := () -> () {} }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source }};
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{ .semantizing = .{ .root_selection = .requests_only, .exhaustive_function_bodies = true } });
+    defer pipeline.deinit();
+    try pipeline.prepareTestDiscovery(&files);
+    var count: usize = 0;
+    for (pipeline.syntax_files.items) |*file| for (file.roots) |root| {
+        const declaration = file.testDeclaration(root) orelse continue;
+        try std.testing.expectEqualStrings("selected", file.tokenText(&diagnostics.source_db, declaration.function.name_token));
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "prepared interactive modules retain selected namespaces across commands and reset" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "choose := () -> (.ok: Bool) { ok = true }\nmain := () -> () { unused_main() }\n#if choose() { answer := () -> (.result: Int32) { result = 42 } } #else { missing := import(\"./missing\") }";
+    const files = [_]sf.SourceFile{.{ .path = "/project/main.rg", .code = source, .origin = .bundled_core }};
+    var diagnostics = try diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(&files);
+    const node_count = prepared.relocation.graph.nodes.items.len;
+    var session: @import("../execution/interactive.zig").Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitStatements("value ::= answer()");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("value")).?.value.runtime.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitStatements("bad ::= missing()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.reset();
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(node_count, prepared.relocation.graph.nodes.items.len);
+    try session.close();
+}
+
+fn preparedSessionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const files = [_]sf.SourceFile{.{
+        .path = "/project/main.rg",
+        .code = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { answer := () -> (.value: Int32) { value = 42 } }",
+    }};
+    var diagnostic_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = try diag.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var invocation = std.heap.ArenaAllocator.init(allocator);
+    defer invocation.deinit();
+    var pipeline = frontend.FrontendPipeline.init(invocation.allocator(), std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    _ = try pipeline.prepareSessionFiles(&files);
+}
+
+test "prepared interactive modules release failed template construction" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, preparedSessionAllocationFailures, .{});
 }

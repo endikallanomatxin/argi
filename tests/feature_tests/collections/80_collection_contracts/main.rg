@@ -1,36 +1,55 @@
-read#(.Collection: Type: IndexableValue#(.Item: Int32))(.items: &Collection, .index: UIntNative) -> (.value: Int32) := {
+read := #(.Collection: Type: IndexableValue#(.Item: Int32)) (
+    .items: &Collection, .index: UIntNative
+) -> (.value: Int32) {
+
     value = unwrap_or_abort(.value = get(.self = items, .index = index))
 }
-borrow#(.Collection: Type: Indexable#(.Item: Int32))(.items: &Collection) -> (.value: Int32) := {
-    pointer ::= unwrap_or_abort(.value = get_ro_ref(.self = items, .index = 0))
+
+borrow := #(.Collection: Type: Indexable#(.Item: Int32)) (.items: &Collection) -> (
+    .value : Int32
+) {
+
+    pointer ::= unwrap_or_abort(.value = get_reference(.self = items, .index = 0))
     value = pointer&
 }
-write#(.Collection: Type: IndexableMutable#(.Item: Int32))(.items: $&Collection) -> () := {
-    pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = items, .index = 0))
-    pointer& = 9
+
+write := #(.Collection: Type: MutableIndexable#(.Item: Int32)) (.items: $&Collection) -> () {
+
+    pointer ::= unwrap_or_abort(.value = get_mutable_reference(.self = items, .index = 0))
+    pointer&= 9
 }
-resize#(.Provider: Type: Allocator#(Provider), .Collection: Type: Resizable#(.Collection: Collection, .Provider: Provider, .Item: Int32))(.items: $&Collection, .allocator: $&Provider) -> (.value: Int32) := {
+
+resize := #(.Collection: Type: Resizable#(.Item: Int32)) (
+    .items: $&Collection, .allocator: Virtual#(Allocator)
+) -> (.value: Int32) {
+
     unwrap_or_abort(.value = push(.self = items, .value = 3, .allocator = allocator))
-    unwrap_or_abort(.value = insert(.self = items, .i = 0, .value = 4, .allocator = allocator))
-    removed ::= unwrap_or_abort(.value = remove(.self = items, .i = 0))
+    unwrap_or_abort(
+        .value = insert(.self = items, .index = 0, .value = 4, .allocator = allocator)
+    )
+    removed ::= unwrap_or_abort(.value = remove(.self = items, .index = 0))
     popped ::= unwrap_or_abort(.value = pop(.self = items))
     value = removed + popped
 }
-main(.system: System) -> (.status_code: Int32 = 0) := {
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&storage
+    allocator_concrete := $&storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
     dynamic ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
     if resize(.items = $&dynamic, .allocator = allocator).value != 7 { abort }
-    unwrap_or_abort(.value = push(.self = $&dynamic, .value = 2))
+    unwrap_or_abort(.value = push(.self = $&dynamic, .value = 2, .allocator = allocator))
     write(.items = $&dynamic)
     if read(.items = &dynamic, .index = 0).value != 9 { abort }
     if borrow(.items = &dynamic).value != 9 { abort }
-    values : [2]Int32 = (5, 6)
-    borrowed_view ::= view(.array = $&values)
+    values: [2]Int32 = (5, 6)
+    borrowed_view ::= view(.self = $&values)
     write(.items = $&borrowed_view)
     if read(.items = &borrowed_view, .index = 0).value != 9 { abort }
     if borrow(.items = &borrowed_view).value != 9 { abort }
-    readonly ::= view(.array = &values)
+    readonly ::= view(.self = &values)
     if read(.items = &readonly, .index = 1).value != 6 { abort }
     if borrow(.items = &readonly).value != 9 { abort }
     if is(.value = get(.self = &readonly, .index = 2).result, .variant = ..ok) { abort }

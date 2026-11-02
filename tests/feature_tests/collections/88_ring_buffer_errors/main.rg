@@ -1,8 +1,11 @@
-FailingAllocator: Type = (.attempts: UIntNative = 0)
+FailingAllocator := (.attempts: UIntNative = 0)
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
+
     allocator :: FailingAllocator = (.attempts = 0)
-    match RingBuffer#(.t: Int32)(.capacity = 0, .allocator = $&allocator) {
+
+    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    match RingBuffer#(.t: Int32)(.capacity = 0, .allocator = allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..invalid_capacity { abort } }
     }
@@ -12,36 +15,37 @@ main() -> (.status_code: Int32 = 0) := {
         maximum = maximum * 256 + 255
         index = index + 1
     }
-    match RingBuffer#(.t: Int32)(.capacity = maximum, .allocator = $&allocator) {
+    match RingBuffer#(.t: Int32)(.capacity = maximum, .allocator = allocator_virtual) {
+        ..ok _ { abort }
+        ..error ~err { if err.reason != ..out_of_memory { abort } }
+    }
+    match DynamicArray#(.t: Int32)(.capacity = maximum, .allocator = allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
     if allocator.attempts != 0 { abort }
-    match RingBuffer#(.t: Int32)(.capacity = 2, .allocator = $&allocator) {
+    match RingBuffer#(.t: Int32)(.capacity = 2, .allocator = allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
     if allocator.attempts != 1 { abort }
 }
 
-implement Allocator#(FailingAllocator)(
-    .allocate = (
-            .self      : $&FailingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative          = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(FailingAllocator) (
+    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
+
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator)(
+implement Deallocator#(FailingAllocator) (
     .deallocate = (
-            .self      : $&FailingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () { abort }
+        .self      : $&FailingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () { abort }
 )

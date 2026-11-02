@@ -1,11 +1,11 @@
-Point : Type = (
-    ._hidden: Int32
-    .visible: Int32
+Point := (
+    ._hidden : Int32
+    .visible : Int32
 )
 
-make_point() -> (.point: Point) := {
+make_point := () -> (.point: Point) {
     point = (
-        ._hidden = 4,
-        .visible = 8,
+        ._hidden = 4
+        .visible = 8
     )
 }

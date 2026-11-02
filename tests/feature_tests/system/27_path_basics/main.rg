@@ -1,11 +1,13 @@
-main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32) {
 
-    full :: Path = unwrap_or_abort(.value = path_with_view(
-        .allocator = $&allocator_storage,
-        .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
-    ))
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+
+    full :: Path = unwrap_or_abort(
+        .value = path_with_view(.allocator = allocator, .view = "/tmp/demo/file.txt")
+    )
 
     if is_absolute(.self = &full).ok {
     } else {
@@ -14,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     name ::= file_name(.self = &full).value
-    if name? {
+    if name ?{
         if name == "file.txt" {
         } else {
             status_code = 2
@@ -26,7 +28,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     parent_view ::= parent(.self = &full).value
-    if parent_view? {
+    if parent_view ?{
         if parent_view == "/tmp/demo" {
         } else {
             status_code = 4
@@ -53,20 +55,18 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    base :: Path = unwrap_or_abort(.value = path_with_view(
-        .allocator = $&allocator_storage,
-        .view = c_string_as_view(.text = "/tmp/demo"),
-    ))
-    child :: Path = unwrap_or_abort(.value = path_with_view(
-        .allocator = $&allocator_storage,
-        .view = c_string_as_view(.text = "child.txt"),
-    ))
+    base :: Path = unwrap_or_abort(
+        .value = path_with_view(.allocator = allocator, .view = "/tmp/demo")
+    )
+    child :: Path = unwrap_or_abort(
+        .value = path_with_view(.allocator = allocator, .view = "child.txt")
+    )
 
-    joined_result ::= join(.left = &base, .right = &child, .allocator = $&allocator_storage)
+    joined_result ::= join(.left = &base, .right = &child, .allocator = allocator)
     match joined_result {
-        ..ok ~ payload {
+        ..ok ~payload {
             joined ::= ~payload
-            joined_view ::= as_view(.self = &joined)
+            joined_view ::= view(.self = &joined)
             if joined_view == "/tmp/demo/child.txt" {
             } else {
                 status_code = 8

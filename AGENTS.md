@@ -14,10 +14,14 @@ This repository contains a compiler for a new programming language written in Zi
     - `tests/feature_tests/_support/` contains shared fixture modules; compiler unit tests are registered through `src/internal_tests.zig`.
     - Files in the same test case directory share namespace and are compiled together as one folder-level module.
     - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
-    - The feature coverage check scans literal case paths in `tests/test.zig`;
-      use complete paths in registration tables rather than concatenated prefixes.
+    - Each ordinary fixture has a sibling `test.zig`, automatically imported by
+      the build. Declare its isolation explicitly; shared-state orchestration
+      remains in `tests/test.zig`. See `docs/testing.md` for details.
 
 - `more/`: Official library modules that are not part of `core/`.
+    - Library behavior tests belong beside the implementation as `*_test.rg`
+      and run with `argi test <module-directory>`. Keep compiler regressions,
+      including rejected programs and backend-specific checks, under `tests/`.
 
 - `description/`: Language specification and open language-design questions.
 
@@ -65,7 +69,8 @@ This repository contains a compiler for a new programming language written in Zi
        tokenizing, syntaxing, semantizing or codegen.
     4. Implement the feature in `src/` until it compiles.
     5. Ensure all tests pass and generated LLVM IR makes sense for the feature.
-    6. Add the test to `tests/test.zig` where applicable.
+    6. Add ordinary Zig tests in the fixture's `test.zig`; use `tests/test.zig`
+       for custom orchestration across fixtures or shared resources.
     7. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
 
@@ -94,7 +99,9 @@ feature first.
   capped at 16. `-Dtest-jobs=N` sets the worker count and `-jN` limits concurrent
   build steps. Shared-state tests finish before fixture workers start; fixtures
   stay on one worker. Per-worker totals and optional active-case progress are
-  recorded under `.zig-cache/program-tests/`.
+  recorded under `.zig-cache/program-tests/`. Tab-separated case lines record
+  per-test duration, isolation, outcome and leaks. Fixture `test.zig` files are
+  discovered once by the build; Zig provides the actual test inventory.
 
 - CLI builds reuse canonical module snapshots under `.argi-cache/frontend/`.
   Use `argi build --no-cache` when comparing against a fresh frontend build;
@@ -116,6 +123,26 @@ feature first.
   before widening the run; avoid parallel full-suite runs during diagnosis.
   Use `-Dtest-progress=true` to identify an active case when a run stalls.
 
+- Retained expression/reference propagation skips only a prefix certified at a
+  fixed point. Relevant writes to older graph slots must preserve certificate
+  invalidation and transactional undo, including same-ID type completion,
+  variants, definitions and block results. Quiescence alone is insufficient:
+  completion and compile-time execution can mutate the graph. Stabilize before
+  Safety; its appended nodes remain an uncertified suffix. Ordinary graph
+  transactions use full sweeps, nested scopes inherit the outer boundary, and
+  rollback restores the certificate. Unresolved binding inference still scans
+  older initializers, which can become inferable when new array types appear.
+
+- VM immutable payloads use a nonmoving heap collected between successful
+  invocations. Root live frame and partial-storage values, including acquired
+  reference evidence; released acquisitions are tombstones, never roots.
+  Publish public results and host-observed snapshots until reset. Packed
+  snapshots can contain interior slices, so trace their complete allocations.
+  Route every aggregate snapshot, projection path and virtual descriptor through
+  the payload heap, including partial materialization and numeric byte writes.
+  Collection neither runs language cleanup nor reuses frame identities. Preserve
+  both detached metadata and payload owners while copying fresh-run arguments.
+
 - `zig build` installs core under `zig-out/lib/argi/core` and the official
   more library under `zig-out/lib/argi/more`. Rebuild after editing either
   library before manually invoking `zig-out/bin/argi`, so validation uses the
@@ -126,6 +153,9 @@ feature first.
   invocation. Run optimization-mode validation serially after the active suite.
 
 - Current module rules in the compiler:
+  - Iterator protocol calls generated for `for` retain the loop's lexical
+    assumptions and shadowing context. Preserve specialized `assume` values
+    in their ordinary input fields; calls never extend caller signatures.
   - all `.rg` files in a folder share namespace
   - `argi build` compiles a folder module, not a single `.rg` file
   - `import("...")` must be assigned to a name
@@ -162,17 +192,20 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left,
-  Right and Args participants. Custom equality uses Equal with the same tuple;
+  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left and
+  Right participants and implementation-owned operation signatures. Auxiliary
+  providers specialize the selected callable, never the conformance. Custom
+  equality uses Equal with Left and Right;
+  borrowed equality uses reference participants and direct operation inputs.
   Equal returns (.ok: Bool), and != negates one selected operation call.
   Ordering uses CompareRelations#(Left, Right), with explicit operand types and
   four Bool predicates. Its blanket implementation consumes Compare#(Left, Right)
   and ordinary Ordering interpreters; scalar specializations retain direct predicates.
   These contracts have no Args participant or default operations. Unordered maps
   to false for all four predicates; TotalOrder excludes unordered by semantic promise.
-  C enum and callback equality selects Equal evidence;
+  Payloadless choice, C enum and callback equality selects Equal evidence;
   the compiler supplies only their private empty representation classification.
-  Infer participant bindings from Args, including reached generic providers,
+  Infer participant bindings from Args, including lexically assumed generic providers,
   never from Result. Concrete and specialized generic expressions share the
   selected-evidence path; no receiver is implicitly borrowed. Trusted scalar
   conformances lower to representation primitives only after selection, keeping
@@ -187,19 +220,22 @@ feature first.
   MatrixProduct shares the inner-dimension binding and can specialize Result.
   Nominal Multiply adapters delegate to that protocol. Dynamic multiplication
   stores its static provider in Args; no ordinary multiply overload is retained.
-  Canonical construction for migrated types uses `implement Init#(T, Args)`, with
-  an Args record participant and a Result of T or Errable containing T. Type calls
-  infer Args from target/input patterns, complete defaults and reached capabilities
-  and invoke the selected scoped init operation. Selected evidence supplies
-  initializer safety and projected output dependencies; never add a second
-  constructor registry. Generic type calls can infer their target parameters from
-  Args in concrete and specialized bodies; never infer those parameters from Result.
-  Closed/generic tuples remain ambiguous when they infer incomparable targets.
-  Move owning Args fields into lexical owners before fallible construction steps.
+  Canonical construction uses `implement Init#(Target, Args)` with nominal input
+  records and associated Result. The fixed init signature is Args -> (.result: Result).
+  Type calls fix Target and infer Args, including allocator types, from candidate
+  signatures and explicit or lexically assumed values. Never synthesize structural identities
+  for argument literals. Result is Target or one Errable containing Target;
+  it never selects a conformance. Different inferred targets or argument types
+  require disambiguation; specificity only compares one complete participant tuple.
+  Preserve every explicitly supplied target parameter during inference.
+  Captured implementation parameters and callable parameters have separate IDs;
+  transfer bindings by capture position, never by names. Preserve selected safety
+  evidence and output dependencies without a second constructor registry.
+  Owning inputs still require lexical owners before fallible construction steps.
   All bundled core and more constructor families now use Init. Single-use
-  capabilities reuse named once functions as their init operations; preserve
+  capabilities reuse named once function values (`acquire := once ...`) as their
+  init operations; preserve
   their function identity through lifecycle wrappers and entrypoint analysis.
-  Reach defaults describe lexical lookup, not values to type-check before lookup.
   Scaled durations, relative deadlines, precise Unix timestamps and copied paths
   use named factories rather than legacy constructor overloads.
   Explicit conversion uses `Convert#(Source, Target)` through the unique ordinary
@@ -228,14 +264,29 @@ feature first.
   allocator input. Definite whole-owner consumption permits emptying owned
   opaque storage, never borrowed referents or retaining new hidden values.
   Automatic and explicit cleanup select the same evidence. Lifecycle wrappers
-  preserve ordinary alias-function behavior and forward optional/reached
-  capabilities through tracked calls. They create no second destructor registry.
+  preserve ordinary alias-function behavior and forward declared auxiliary
+  inputs through ordinary lexical assumptions. They create no second destructor registry.
   Whole-receiver destruction supersedes owned field post-values while retaining
   effects through borrowed references. Unknown pointer referents keep separate
   symbolic consumption identities/state; preserve copies, joins and loop equality
   without changing their shared borrow root or inventing concrete pointee places.
   Symbolic consumption targets only whole unknown pointers, never aggregate
-  envelopes or opaque domains. Reject uninitialized/repeated destruction.
+  envelopes or opaque domains. Unknown references in by-value input records
+  use separate function-local SymbolicPointeeIds for each reference leaf, including
+  nested records; they are not binding IDs or proof of disjointness. Preserve
+  explicit empty sibling facts. Summary effects inspect the projected slot type
+  before treating it as referent storage. Opaque-transfer obligations for unknown
+  input roots remain in caller-relative summaries; concrete lexical/acquired
+  loans must still be checked at the caller. Direct input references separate backing validity
+  from the observed value generation. Explicit straight-line reinitialization
+  renews only its selected reference after RHS evaluation. Historical aliases
+  stay stale; distinct consumption identities still carry caller-side alias
+  obligations, so ending a shared generation alone cannot forbid consuming
+  another input. Reject uninitialized/repeated destruction. Pointer writes retain
+  a definite-initialization proof only when every visited incoming state agrees.
+  Symbolic call cleanup targets retain evaluated input identities. Bytecode flag
+  updates use those argument snapshots and affect referents, never reference slots.
+  Owning writes without that proof still require a checked replacement plan.
   Erased receiver consumption stays unsupported until runtime cleanup identities
   exist. Destructor declarations use only Deinit; `TypeName deinit(...)` is
   rejected with a migration diagnostic. Cleanup has no nominal destructor
@@ -246,8 +297,8 @@ feature first.
   external references. Auxiliary cleanup counters should mutate stable record
   fields rather than replace a whole borrowed capability.
   Imported nominal construction selects visible Init evidence. Automatic cleanup
-  falls back to the defining module when caller lookup finds no destructor; reached
-  arguments retain the caller's context.
+  falls back to the defining module when caller lookup finds no destructor; assumed
+  arguments retain the caller's lexical context.
   Bundled core is already visible, so it needs no second cleanup lookup.
   CFunctionPointer declarations are nominal types backed by signature FunctionIds,
   not runtime symbols or direct callees. Their logical ffi dependency remains
@@ -305,14 +356,89 @@ feature first.
 - Block stream operations use initialized byte views and readonly write sources.
   Validate complete ranges before binary writes, and advance borrowed byte cursor
   positions only on success. Exact reads and complete writes accept partial native
-  progress; zero write progress is an error. Buffered readers initialize their
-  allocation before exposing a native refill view. Deque iterators retain its
-  shape dependency, including in returned borrowed elements.
+  progress; zero write progress is an error. Buffered readers and writers borrow
+  caller-provided initialized byte views; their construction neither allocates
+  nor takes ownership. Omitting the buffer evaluates its zeroed-array default
+  independently in the caller scope. Preserve its temporary storage and lifetime
+  just as for an explicit argument; no allocator or I/O-specific fallback is used.
+  Empty buffers delegate to the base stream. Reader refills publish bytes only on success.
+  Deque iterators retain the deque's shape dependency, including in returned
+  borrowed elements.
   Limited copies stop without lookahead; owning complete reads check EOF with
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.
 
+- Local whole-binding replacement evaluates its RHS into a lexical owner, runs the
+  selected cleanup of the previous value, and moves the replacement into place.
+  A checked `replacement` node owns one complete write, including its destination,
+  lexical preparation, selected old-value cleanup and commit. Its shared plan
+  verifier checks their order and exact owner/projection identity. Generic value
+  sequences alone carry no replacement semantics. Safety/summaries traverse the
+  ordinary write and preparation nodes. Both backends consume the complete plan.
+  Native writes capture address, type and cleanup state before RHS emission;
+  selected cleanup and commit use that same destination. Nested replacements
+  restore the outer capture. Scope-exit cleanup keeps its separate identity.
+  Ownership finalization uses cleanup activation to omit destruction for proven
+  first initialization. Preserve temporary provenance in value-sequence summaries;
+  a sequence result must not skip the bindings that establish its dependencies.
+  A block's ret_val can also be its last statement: execute/collect its effects
+  once, retaining its value across following cleanup. Statically rooted local
+  record fields use the same checked replacement sequence
+  and a projected cleanup target; only that field changes generation and cleanup
+  activation. Constant local reference aliases retain a proven lexical
+  cleanup_target on writes; evaluate the original pointer, and update the target's
+  cleanup flags, never the reference slot's. The global verifier checks this proof.
+  Reference-only bodies that solely forward an input preserve its lexical identity
+  through ordinary/generic calls. Use the selected input binding and completed
+  argument order; preserve call execution and safety, never substitute defaults.
+  Retargetable/unknown aliases and indexed replacement still require an evaluated
+  destination and shared cleanup identity. VM lowering rejects owning writes
+  through unresolved aliases and indexed storage until those identities are modeled.
+  A reference field's cleanup flag describes its slot, never its referent.
+  Bytecode cleanup flags are attached to sorted owner slots through the shared
+  immutable cleanup layouts and start false on frame entry. Projections select
+  preorder flag ranges; no runtime table enumerates field or variant paths. Their dense namespace and byte buffers
+  are separate from typed value slots; they never establish value initialization.
+  Reuse call buffers only when both value and flag counts match. Lifecycle
+  queries can address vacant storage without reading its value; following pointers and indices still reads
+  initialized operands. Reference copies retain target identity, while value
+  copies never copy cleanup obligations. Keep general indirect replacement
+  rejected until selected plans and native evidence transport are implemented.
+  Native addresses do not identify cleanup obligations: zero-sized siblings
+  may share an address. Both backends use `5_codegen/cleanup_layout.zig` for
+  field/variant shape; transport evidence by owner/projection identity rather
+  than recovering it from a physical pointer. Payloadless variants have no
+  child storage or cleanup flag.
+  Native flags occupy one contiguous preorder block per owner. A projected
+  DropState is a view of its subrange; bulk updates must preserve siblings.
+  Cleanup layout counts are cached per retained graph and checked for overflow.
+  Both backends allocate flags only for bindings referenced by checked cleanup
+  plans; ordinary locals without cleanup obligations need no flag storage.
+  Immutable record literals can establish reference-field targets through their
+  selected initializers. Preserve the original pointer evaluation and renew only
+  the reference used for replacement, never sibling fields or record copies.
+  Call post-states distinguish preserved, possible and definite initialization;
+  an initialized post-state alone can preserve the entry value. Only definite
+  writes reactivate unavailable caller cleanup unconditionally. Conditional
+  initialization uses represented result outcomes and must not enable cleanup
+  on paths that preserve vacant storage.
+  Call reinitialization renews the selected argument reference slot, including
+  explicit dereference paths through copied or borrowed records; sibling fields
+  and earlier record copies retain their old generations.
+  Virtual capture summaries distinguish entry, proven final post-call and stale
+  generations. Freeze destinations before input post-value instantiation; resolve
+  planned post-capture identities only after all writes and generation refreshes.
+  Renew only matching post-capture observations, preserving old aliases and child
+  initialization facts. Forward caller-relative alias obligations for every later
+  write against captured reachable storage and receiver-initializer sources,
+  including captures used only inside wrappers. Unsupported temporal order stays
+  rejected; final binding values never establish capture timing.
+
 - Structural automatic cleanup follows record fields and active choice payloads.
+  Vacant local records retain selected field cleanup beneath nominal Deinit as
+  an incomplete-value fallback. Whole destruction clears all child flags before
+  that walk; summaries join the two alternatives instead of sequencing them.
+  Cleanup branch proofs retain current generation guards and never revive old aliases.
   AutoDeinitField keeps variant projections distinct from record fields; preserve
   that distinction in summary substitution, checker state branches, relocation,
   and codegen. Moving a match payload disables the source choice's cleanup.
@@ -322,12 +448,11 @@ feature first.
   including inside nested payloads; those obligations grant no fresh storage.
 
 - Copy permission comes from contracts, never ordinary functions named `copy`.
-  FalliblyCopyable selects Value and allocator Provider jointly. Its associated
+  FalliblyCopyable selects Value and receives a virtual allocator. Its associated
   reasons feed the single recursive DynamicArray copy algorithm; ordinary `!`
-  propagation preserves the original tracer and lexical owners clean partial
+  propagation preserves any existing trace and lexical owners clean partial
   copies. Infallible elements use a non-allocating fallible-protocol adapter.
-  Queries with an unknown provider can conservatively forbid implicit copying,
-  but cannot establish conformance or select an operation.
+  Conservative copy queries cannot establish conformance or select an operation.
 
 - Owning collection operations move generic input values into lexical owners
   before fallible branches. Extract replaced or discarded structural elements
@@ -335,21 +460,55 @@ feature first.
   Nominal-only opaque drop hooks on generic input slots do not provide that
   cleanup. Keep unchecked replacement helpers limited to copyable metadata.
 
-- Owning hash tables keep occupied entries separate from slot metadata. Move
+- HashMap supports copyable and noncopyable keys and values through one table.
+  HashPolicy associates one implicitly copyable Query, projects stored keys into
+  it, and hashes/compares that representation for insertion and every query.
+  Standard text queries use StringView; callers explicitly project owning strings.
+  MapQuery shares Query across membership, lookup, removal and extraction;
+  readonly/mutable lookup contracts differ by returned access, never key spelling.
+  MapLookup borrows values, MutableMapLookup adds mutable access, and
+  MapLookupValue requires MapLookup and implicit copying, matching IndexableValue.
+  Hashable feeds canonical bytes to a generic block Hasher independently of
+  equality. StandardHashPolicy composes Hashable with borrowed Equal evidence.
+  It uses FNV-1a-64 with explicit offset basis and no hidden randomness. Integers
+  feed their actual widths; text prefixes bytes with its length. Only standard
+  Init supplies a default policy value; custom Init requires its policy, and both
+  share one initialization helper. Preserve Errable outcome provenance when
+  forwarding helper results, so failure does not retain successful-owner loans.
+  Compile-time parameter defaults follow explicit bindings and input inference.
+  Partial Init targets retain supplied type/integer parameters; never infer from
+  Result or reuse a previously instantiated target. Maps receive allocators through
+  ordinary explicit or assumed inputs.
+  Copied lookup and key/value iteration require only the copied element capability.
+  Default map iteration borrows both fields; mutable entry iteration never exposes
+  mutable keys. Hash tables keep occupied entries separate from slot metadata. Move
   extracted structural entries into lexical owners for recursive field cleanup;
   nominal-only opaque drop hooks do not replace aggregate cleanup. Replace
   grouped backing storage as a whole when growing to update sibling lifetime
   roots together. Keys exposed for lookup and iteration remain readonly.
 
+- HashSet and PriorityQueue each support copyable and noncopyable elements
+  through one representation. Set queries use the policy Query; insertion consumes keys.
+  Only copied set iteration and queue peek require ImplicitlyCopyable.
+  OrderPolicy always borrows comparison operands, including sorting and search.
+  Collection allocators are explicit or supplied through lexical assume.
+
 - Hash map iteration never exposes mutable keys. Borrowed entry iterators retain
   a direct table shape anchor in addition to their owner loan; return references
   must preserve that anchor explicitly. Value edits through borrowed references
   preserve iteration, while successful put/remove and table growth invalidate it.
-  UTF-8 views validate borrowed bytes without freezing them; callers must preserve
-  the validated contents. Checked decoding cursors advance only on success.
-  Test entry wrappers report bounded traces before cleanup, then replace their
-  trace handle with the program-lifetime noop tracer while preserving the reason
-  used by the C wrapper for failure/skip status.
+  CodepointView borrows an already-valid StringView without a preliminary scan;
+  scalar length is computed on demand. Both it and CodepointIterator retain the
+  source's storage dependencies. Arbitrary bytes use checked Utf8Decoder or
+  utf8_decode_bytes; decoding neither certifies nor freezes their source.
+  Checked decoding cursors advance only on success.
+  Error stores only its reason; ErrorWithTrace additionally borrows its original
+  tracer. Both use Errable, with !T and !!T selecting their inferred outputs.
+  Plain ! forwards without acquiring or extending a tracer; !! context promotes
+  or extends explicitly on the error branch through ordinary checked calls.
+  Never implicitly add or discard trace references. Test entry wrappers report
+  errors before cleanup, then explicitly construct a reason-only result for the
+  C status adapter so no entry-local diagnostic loan escapes.
 
 - Local `Errable` handling (`handle error, value { ... }`) lowers to a match
   inside an explicit `value_sequence`. Its result storage is deferred in the
@@ -357,7 +516,7 @@ feature first.
   The `handle error { ... }` variant has no result slot and discards the success
   payload through ordinary branch cleanup. Both forms retain the containing
   function and loop control-flow context. `!!!` uses the same recovery lowering
-  with an ordinary report_trace call and a bare containing-function return.
+  with an ordinary report_error call and a bare containing-function return.
   Its optional block runs after reporting and before that return, only on error;
   keep the action's lexical cleanup in concrete and parameterized lowering.
   Control headers require grouping brackets around `!!! { ... }` so the block
@@ -550,7 +709,7 @@ feature first.
   in summary equality, substitution and deduplication. Grouped storage and
   mappings through references require additional transfer identities.
 
-- Moving `for ~ item in collection` loops consume through `OwningIterable`.
+- Moving `for ~ item in collection` loops consume through `MovingIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical
   block; synthetic iterator owners inherit the source item's captured cleanup
   arguments. Loop transfers clean only scopes inside the current loop boundary,
@@ -767,3 +926,9 @@ faster.
   their work is integrated. Before deleting an old branch, verify that it does
   not contain unique work; preserve and rebase unique work onto the appropriate
   current base when necessary.
+
+- Character literals contain exactly one Unicode scalar and materialize as the
+  bundled core nominal UnicodeScalar type, including generic bodies. Their
+  validated numeric payload is not a byte or an implicit CChar conversion.
+  C-string interfaces use target-resolved CChar; preserve signedness in literal
+  contextualization and error-context checks. No builtin Char type remains.

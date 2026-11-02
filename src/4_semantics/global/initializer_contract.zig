@@ -22,8 +22,8 @@ pub fn classify(graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_
     const semantic = graph.resolvedSemanticType(result_type) orelse return .invalid;
     const is_errable = switch (semantic) {
         .generic => |identity| blk: {
-            const declaration = graph.declaration(identity.base);
-            const owner = graph.moduleForDeclaration(identity.base) orelse break :blk false;
+            const declaration = graph.declaration(graph.familyDeclaration(identity.base));
+            const owner = graph.moduleForFamilyDefinition(identity.base) orelse break :blk false;
             break :blk graph.modules.items[@intFromEnum(owner)].is_bundled_core and
                 std.mem.eql(u8, graph.text(declaration.name), "Errable");
         },

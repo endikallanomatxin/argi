@@ -1,4 +1,4 @@
-probe#(.T: Type)(.left: T, .right: T) -> (.ok: Bool) := {
+probe := #(.T: Type) (.left: T, .right: T) -> (.ok: Bool) {
     ok = __scalar_less_than(.left = left, .right = right)
 }
 

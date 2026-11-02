@@ -1,5 +1,5 @@
 -- Owners preserve a checked row-major shape; no exported mutable shape fields.
-DynamicMatrix#(.t: Type: Scalar): Type = (
+DynamicMatrix := #(.t: Type: Scalar) (
     ._rows   : UIntNative,
     ._cols   : UIntNative,
     ._values : DynamicArray#(.t: t)
@@ -7,16 +7,11 @@ DynamicMatrix#(.t: Type: Scalar): Type = (
 
 ..dimension_mismatch
 
-_extent(.rows: UIntNative, .cols: UIntNative) -> (
+_extent := (.rows: UIntNative, .cols: UIntNative) -> (
     .result : Errable#(UIntNative, (..dimension_mismatch))
-) := {
-    maximum :: UIntNative = 0
-    i :: UIntNative = 0
+) {
 
-    while i < size_of(.type = UIntNative) {
-        maximum = maximum * 256 + 255
-        i = i + 1
-    }
+    maximum ::= integer_limits(.value = rows).maximum
 
     if cols != 0 {
         if rows > maximum / cols {
@@ -28,59 +23,57 @@ _extent(.rows: UIntNative, .cols: UIntNative) -> (
     result = ..ok rows * cols
 }
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
-    DynamicMatrix#(.t: t),
-    (
-        .rows      : UIntNative,
-        .cols      : UIntNative,
-        .values    : ArrayViewRO#(.t: t),
-        .allocator : $&Provider = reach allocator,
-    )
+DynamicMatrixInitArgs: Type = #(.t: Type: Scalar) (
+    .rows      : UIntNative,
+    .cols      : UIntNative,
+    .values    : ArrayView#(.t: t),
+    .allocator : Virtual#(Allocator)
+)
+
+implement#(.t: Type: Scalar) Init#(
+    DynamicMatrix#(.t: t), DynamicMatrixInitArgs#(t)
 ) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    .init   = (
-        .args : (
-            .rows      : UIntNative,
-            .cols      : UIntNative,
-            .values    : ArrayViewRO#(.t: t),
-            .allocator : $&Provider = reach allocator,
-        )
-    ) -> (.result: Result) {
-        rows ::= args.rows
-        cols ::= args.cols
-        values ::= args.values
-        allocator ::= args.allocator
 
-        count ::= _extent(.rows = rows, .cols = cols)!
+    .init = DynamicMatrixInitArgs#(t) -> (.result: Result) {
 
-        if count != length(&values).count {
+
+        _init_rows ::= rows
+        _init_cols ::= cols
+        _init_values ::= values
+        _init_allocator ::= allocator
+
+        count ::= _extent(.rows = _init_rows, .cols = _init_cols)!
+
+        if count != length(&_init_values).count {
             result = ..error(.reason = ..dimension_mismatch)
             return
         }
 
-        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+        storage ::= DynamicArray#(.t: t)(.allocator = _init_allocator, .capacity = count)!
         i :: UIntNative = 0
 
         while i < count {
-            item ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
+            item ::= unwrap_or_abort(.value = get(.self = &_init_values, .index = i)).result
             push(.self = $&storage, .value = item, .allocator = allocator)!
             i = i + 1
         }
 
-        result = ..ok(._rows = rows, ._cols = cols, ._values = ~storage)
+        result = ..ok(._rows = _init_rows, ._cols = _init_cols, ._values = ~storage)
     }
 )
 
-shape#(.t: Type: Scalar)(.self: &DynamicMatrix#(.t: t)) -> (
+shape := #(.t: Type: Scalar) (.self: &DynamicMatrix#(.t: t)) -> (
     .rows: UIntNative, .cols: UIntNative
-) := {
+) {
     rows = self&._rows
     cols = self&._cols
 }
 
-_math_get_dynamic_matrix#(.t: Type: Scalar) := (
+_math_get_dynamic_matrix := #(.t: Type: Scalar) (
     .self: &DynamicMatrix#(.t: t), .row: UIntNative, .col: UIntNative
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
+
     if row >= self&._rows or col >= self&._cols {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -89,40 +82,29 @@ _math_get_dynamic_matrix#(.t: Type: Scalar) := (
     result = get(.self = &self&._values, .index = row * self&._cols + col)
 }
 
-_math_set_dynamic_matrix#(.t: Type: Scalar) := (
+_math_set_dynamic_matrix := #(.t: Type: Scalar) (
     .self: $&DynamicMatrix#(.t: t), .row: UIntNative, .col: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
+
     if row >= self&._rows or col >= self&._cols {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
 
-    pointer ::= get_rw_ref(.self = $&self&._values, .index = row * self&._cols + col)!
+    pointer ::= get_mutable_reference(.self = $&self&._values, .index = row * self&._cols + col)!
     pointer&= value
 
     result = ..ok Void()
 }
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
-    DynamicMatrix#(.t: t),
-    DynamicMatrix#(.t: t),
-    (
-        .left      : &DynamicMatrix#(.t: t),
-        .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Provider = reach allocator
-    )
-) (
+implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = (
-        .args : (
-            .left      : &DynamicMatrix#(.t: t),
-            .right     : &DynamicMatrix#(.t: t),
-            .allocator : $&Provider = reach allocator
-        )
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
-        assume allocator ::= args.allocator
+
+
+        assume allocator
 
         if left&._rows != right&._rows or left&._cols != right&._cols {
             result = ..error(.reason = ..dimension_mismatch)
@@ -144,26 +126,14 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
     }
 )
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Multiply#(
-    DynamicMatrix#(.t: t),
-    DynamicMatrix#(.t: t),
-    (
-        .left      : &DynamicMatrix#(.t: t),
-        .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Provider = reach allocator
-    )
-) (
+implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .multiply = (
-        .args : (
-            .left      : &DynamicMatrix#(.t: t),
-            .right     : &DynamicMatrix#(.t: t),
-            .allocator : $&Provider = reach allocator
-        )
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
-        assume allocator ::= args.allocator
+
+
+        assume allocator
 
         if left&._cols != right&._rows {
             result = ..error(.reason = ..dimension_mismatch)
@@ -205,9 +175,11 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Multiply#(
     }
 )
 
-_math_transpose_dynamic_matrix#(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) := (
-    .self: &DynamicMatrix#(.t: t), .allocator: $&Provider
+_math_transpose_dynamic_matrix := #(.t: Type: Scalar) (
+    .self: &DynamicMatrix#(.t: t), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicMatrix#(.t: t), (..out_of_memory))) {
+
+
     count ::= length(&self&._values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
 
@@ -231,25 +203,30 @@ _math_transpose_dynamic_matrix#(.t: Type: Scalar, .Provider: Type: Allocator#(Pr
     result = ..ok(._rows = self&._cols, ._cols = self&._rows, ._values = ~storage)
 }
 
-DynamicVector#(.t: Type: Scalar): Type = (._values: DynamicArray#(.t: t))
+DynamicVector := #(.t: Type: Scalar) (._values: DynamicArray#(.t: t))
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
-    DynamicVector#(.t: t),
-    (.values: ArrayViewRO#(.t: t), .allocator: $&Provider = reach allocator)
+DynamicVectorInitArgs: Type = #(.t: Type: Scalar) (
+    .values    : ArrayView#(.t: t),
+    .allocator : Virtual#(Allocator)
+)
+
+implement#(.t: Type: Scalar) Init#(
+    DynamicVector#(.t: t), DynamicVectorInitArgs#(t)
 ) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
-    .init   = (.args: (.values: ArrayViewRO#(.t: t), .allocator: $&Provider = reach allocator)) -> (
-        .result : Result
-    ) {
-        values ::= args.values
-        allocator ::= args.allocator
 
-        count ::= length(&values).count
-        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+    .init = DynamicVectorInitArgs#(t) -> (.result: Result) {
+
+
+        _init_values ::= values
+        _init_allocator ::= allocator
+
+        count ::= length(&_init_values).count
+        storage ::= DynamicArray#(.t: t)(.allocator = _init_allocator, .capacity = count)!
         i :: UIntNative = 0
 
         while i < count {
-            value ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
+            value ::= unwrap_or_abort(.value = get(.self = &_init_values, .index = i)).result
             push(.self = $&storage, .value = value, .allocator = allocator)!
             i = i + 1
         }
@@ -258,28 +235,31 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
     }
 )
 
-length#(.t: Type: Scalar)(.self: &DynamicVector#(.t: t)) -> (.count: UIntNative) := {
+length := #(.t: Type: Scalar) (.self: &DynamicVector#(.t: t)) -> (.count: UIntNative) {
     count = length(&self&._values).count
 }
 
-_math_get_dynamic_vector#(.t: Type: Scalar) := (
+_math_get_dynamic_vector := #(.t: Type: Scalar) (
     .self: &DynamicVector#(.t: t), .index: UIntNative
 ) -> (.result: Errable#(t, (..out_of_bounds))) {
+
     result = get(.self = &self&._values, .index = index)
 }
 
-_math_set_dynamic_vector#(.t: Type: Scalar) := (
+_math_set_dynamic_vector := #(.t: Type: Scalar) (
     .self: $&DynamicVector#(.t: t), .index: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    pointer ::= get_rw_ref(.self = $&self&._values, .index = index)!
+
+    pointer ::= get_mutable_reference(.self = $&self&._values, .index = index)!
     pointer&= value
 
     result = ..ok Void()
 }
 
-_math_dot_dynamic_vector#(.t: Type: Scalar) := (
+_math_dot_dynamic_vector := #(.t: Type: Scalar) (
     .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t)
 ) -> (.result: Errable#(t, (..dimension_mismatch))) {
+
     count ::= length(left).count
 
     if count != length(right).count {
@@ -300,26 +280,14 @@ _math_dot_dynamic_vector#(.t: Type: Scalar) := (
     result = ..ok sum
 }
 
-implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
-    DynamicVector#(.t: t),
-    DynamicVector#(.t: t),
-    (
-        .left      : &DynamicVector#(.t: t),
-        .right     : &DynamicVector#(.t: t),
-        .allocator : $&Provider = reach allocator
-    )
-) (
+implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = (
-        .args : (
-            .left      : &DynamicVector#(.t: t),
-            .right     : &DynamicVector#(.t: t),
-            .allocator : $&Provider = reach allocator
-        )
+        .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t), .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
-        left ::= args.left
-        right ::= args.right
-        assume allocator ::= args.allocator
+
+
+        assume allocator
 
         count ::= length(left).count
 
@@ -342,9 +310,11 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Add#(
     }
 )
 
-_math_scale_dynamic_vector#(.t: Type: Scalar, .Provider: Type: Allocator#(Provider)) := (
-    .self: &DynamicVector#(.t: t), .factor: t, .allocator: $&Provider
+_math_scale_dynamic_vector := #(.t: Type: Scalar) (
+    .self: &DynamicVector#(.t: t), .factor: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicVector#(.t: t), (..out_of_memory))) {
+
+
     count ::= length(self).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
     i :: UIntNative = 0

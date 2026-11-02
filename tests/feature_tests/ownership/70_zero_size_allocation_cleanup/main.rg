@@ -1,11 +1,14 @@
-CountingAllocator: Type = (
+CountingAllocator := (
     .ffi           : $&ForeignFunctionInterface
     .deallocations : Int32
 )
 
-main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage :: CountingAllocator = (.deallocations = 0)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32) {
+
+    allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 0)
     match result {
         ..ok ~payload {
@@ -20,33 +23,27 @@ main(.system: System) -> (.status_code: Int32) := {
     status_code = allocator_storage.deallocations - 1
 }
 
-implement Allocator#(CountingAllocator)(
-    .allocate = (
-            .self      : $&CountingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative           = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(CountingAllocator) (
+    .allocate = (.self: $&CountingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
+
         storage ::= malloc(.size = 1, .ffi = self&.ffi)
         deallocator ::= to_virtual#(.contract: Deallocator)(.value = self)
         allocation ::= trusted_establish_allocation(
-            .storage     = storage
-            .size        = size
-            .alignment   = alignment
-            .deallocator = deallocator
+            .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )
         result = ..ok ~allocation
     }
 )
 
-implement Deallocator#(CountingAllocator)(
+implement Deallocator#(CountingAllocator) (
     .deallocate = (
-            .self      : $&CountingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
+        .self      : $&CountingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
         self&.deallocations = self&.deallocations + 1
         free(.address = data.address, .ffi = self&.ffi)
     }

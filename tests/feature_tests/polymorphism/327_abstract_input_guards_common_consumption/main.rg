@@ -1,6 +1,6 @@
 Selection: Type = (..left, ..right)
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 drops :: Int32 = 0
 
@@ -11,23 +11,25 @@ implement Deinit#(Resource) (
 )
 
 Releaser#(.Participant: Type): Contract = (
-    .release: (.self: &Participant, .resource: $&Resource, .mode: Selection) -> (.value: Int32) where {
+    .release : (.self: &Participant, .resource: $&Resource, .mode: Selection) -> (.value: Int32) where {
         consumes(resource)
         on mode ..left {}
         on mode ..right {}
     }
 )
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
 implement Releaser#(Manager) (.release = _impl_release_Manager)
 
-_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .mode: Selection) -> (.value: Int32)  {
+_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .mode: Selection) -> (
+    .value : Int32
+) {
     deinit(resource)
     value = 42
 }
 
-main() -> () := {
+main := () -> () {
     manager ::= Manager(0)
     releaser ::= to_virtual#(Releaser)(&manager)
 

@@ -1,6 +1,9 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     src_path ::= from_literal(
         .data = "tests/feature_tests/system/22_file_system_mutations/build/temp_src.txt"
@@ -32,7 +35,9 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    created_file_result ::= File(.file_system = system.file_system, .path = src_path, .mode = ..write)
+    created_file_result ::= open_file(
+        .file_system = system.file_system, .path = src_path, .mode = ..write
+    )
     if is(.value = created_file_result, .variant = ..ok) {
     } else {
         status_code = 4

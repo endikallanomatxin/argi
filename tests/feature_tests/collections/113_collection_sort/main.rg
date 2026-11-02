@@ -1,28 +1,32 @@
 Descending: Type = ()
 
-implement OrderPolicy#(Descending, Int32)(
-    .less = (.self: &Descending, .left: Int32, .right: Int32) -> (.ok: Bool) { ok = left > right }
+implement OrderPolicy#(Descending, Int32) (
+    .less = (.self: &Descending, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = left&> right&
+    }
 )
 
-check_sorted#(
-        .policy : Type: OrderPolicy#(policy, Int32), .Collection: Type: Indexable#(.Item: Int32))(
-        .self  : &Collection,
-        .order : &policy
-    ) -> () := {
+check_sorted := #(
+    .policy: Type: OrderPolicy#(policy, Int32), .Collection: Type: Indexable#(.Item: Int32)
+) (.self: &Collection, .order: &policy) -> () {
+
     count ::= length(.self = self).count
     index :: UIntNative = 1
     while index < count {
-        before ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = index - 1))&
-        current ::= unwrap_or_abort(.value = get_ro_ref(.self = self, .index = index))&
-        if OrderPolicy#(policy, Int32).less(.self = order, .left = current, .right = before).ok {
+        before ::= unwrap_or_abort(.value = get_reference(.self = self, .index = index - 1))&
+        current ::= unwrap_or_abort(.value = get_reference(.self = self, .index = index))&
+        if OrderPolicy#(
+            policy, Int32
+        ).less(.self = order, .left = &current, .right = &before).ok {
             abort
         }
         index = index + 1
     }
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume allocator ::= system.page_allocator
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
+    assume allocator := system.page_allocator
     order ::= Int32OrderPolicy()
     descending ::= Descending()
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 8))
@@ -36,8 +40,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity(.self = $&array, .value = 1)
     push_assume_capacity(.self = $&array, .value = -10)
     push_assume_capacity(.self = $&array, .value = 9)
-    borrowed ::= unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))
-    borrowed_view ::= view(.array = $&array)
+    borrowed ::= unwrap_or_abort(.value = get_reference(.self = &array, .index = 0))
+    borrowed_view ::= view(.self = $&array)
     sort(.self = $&array, .order = &order)
     check_sorted(.self = &borrowed_view, .order = &order)
     if borrowed&!= -10 or length(.self = &array).count != 8 { abort }
@@ -53,13 +57,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     deinit(.self = $&array)
     fixed: [5]Int32 = (99, 3, 1, 2, -99)
-    fixed_view ::= view(.array = $&fixed)
+    fixed_view ::= view(.self = $&fixed)
     middle ::= unwrap_or_abort(.value = slice(.self = &fixed_view, .start = 1, .count = 3))
     sort(.self = $&middle, .order = &order)
     if fixed[0] != 99 or fixed[1] != 1 or fixed[2] != 2 or fixed[3] != 3 or fixed[4] != -99 {
         abort
     }
     empty: [0]Int32 = ()
-    empty_view ::= view(.array = $&empty)
+    empty_view ::= view(.self = $&empty)
     sort(.self = $&empty_view, .order = &order)
 }

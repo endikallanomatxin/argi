@@ -1,8 +1,11 @@
-main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32) {
 
-    out_result ::= string_with_capacity(.allocator = $&allocator_storage, .capacity = 0)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+
+    out_result ::= string_with_capacity(.allocator = allocator, .capacity = 0)
     match out_result {
         ..error _ {
             status_code = 1
@@ -12,17 +15,15 @@ main(.system: System) -> (.status_code: Int32) := {
             out ::= ~output_payload
 
             step_1 ::= format_into(
-                .out       = $&out
-                .value     = "answer="
-                .allocator = $&allocator_storage
+                .out = $&out, .value = "answer=", .allocator = allocator
             )
-            step_2 ::= format_into(.out = $&out, .value = 42, .allocator = $&allocator_storage)
+            step_2 ::= format_into(.out = $&out, .value = 42, .allocator = allocator)
             step_3 ::= format_into(
-                .out       = $&out
-                .value     = ", ok="
-                .allocator = $&allocator_storage
+                .out = $&out, .value = ", ok=", .allocator = allocator
             )
-            step_4 ::= format_into(.out = $&out, .value = true, .allocator = $&allocator_storage)
+            step_4 ::= format_into(
+                .out = $&out, .value = true, .allocator = allocator
+            )
             if [
                 is(.value = step_1, .variant = ..ok)
                 and is(.value = step_2, .variant = ..ok)
@@ -35,7 +36,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 return
             }
 
-            out_view ::= as_view(.self = &out)
+            out_view ::= view(.self = &out)
             if out_view == "answer=42, ok=true" {
             } else {
                 deinit(.self = $&out)
@@ -47,7 +48,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    number_result ::= format(.value = -105, .allocator = $&allocator_storage)
+    number_result ::= format(.value = -105, .allocator = allocator)
     match number_result {
         ..error _ {
             status_code = 3
@@ -55,7 +56,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~number_payload {
             text ::= ~number_payload
-            text_view ::= as_view(.self = &text)
+            text_view ::= view(.self = &text)
             if text_view == "-105" {
             } else {
                 deinit(.self = $&text)
@@ -66,8 +67,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    view ::= c_string_as_view(.text = "demo")
-    view_result ::= format(.value = view, .allocator = $&allocator_storage)
+    demo ::= "demo"
+    view_result ::= format(.value = demo, .allocator = allocator)
     match view_result {
         ..error _ {
             status_code = 5
@@ -75,7 +76,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~bool_payload {
             text ::= ~bool_payload
-            text_view ::= as_view(.self = &text)
+            text_view ::= view(.self = &text)
             if text_view == "demo" {
             } else {
                 deinit(.self = $&text)

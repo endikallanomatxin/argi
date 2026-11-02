@@ -1,7 +1,7 @@
-first := import("./first")
-second := import("./second")
+first := import ("./first")
+second := import ("./second")
 
-through_generic#(.T: Type) := (.value: T) -> (.result: Int32) {
+through_generic := #(.T: Type) (.value: T) -> (.result: Int32) {
     result = first.query(.value = value) + second.query(.value = value)
 }
 

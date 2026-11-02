@@ -2,21 +2,27 @@
 
 Testing is a native Argi language feature.
 
-Tests are declared explicitly at top level with the same function-like header shape used by `main`, but prefixed with `test`:
+Tests are declared explicitly at top level with the same named-function syntax
+used by `main`, prefixed with `test`. The assignment precedes the signature:
 
 ```rg
-test my_test(.system: System) -> !() := {
+test my_test := () -> !() {
     testing.expect(true)!
 }
 ```
 
-V1 supports exactly this surface shape:
+The test entry contract requires:
 
 - top-level only
-- one input: `.system: System`, supplied by the checked entry wrapper
-- return: `-> !()`
+- optional `.system: System` input supplied by the checked entry wrapper
+- ordinary auxiliary inputs, including the required `error_tracer` used by
+  testing helpers, resolved from the wrapper's lexical assumptions
+- return: `-> !()` for plain errors, or `-> !!()` for traced assertion failures
 
-There is no other test syntax in v1.
+As with `main` and `#run`, requesting `System` is optional. Input types are
+checked through the ordinary generated call, rather than requiring the literal
+spelling `System`. Test failure reporting owns its terminal and trace resources
+even when the test requests no system input.
 
 These are not supported:
 
@@ -29,7 +35,8 @@ These are not supported:
 Tests are discoverable by the compiler and tooling as explicit top-level declarations.
 
 - `argi build` ignores test declarations
-- `argi test <module-dir>` discovers and runs tests
+- `argi test <module-dir>` discovers and runs tests without requiring a manifest
+- `argi test` runs the current manifest's `[test].modules` list; it does not recursively scan the project
 
 Tests are not semantically merged into one synthetic `main`.
 Each test is treated as its own root / entrypoint.
@@ -49,76 +56,45 @@ Current behavior:
 
 ### `core.testing`
 
-The official testing helpers live in `core/testing/testing.rg`.
+Basic assertions return plain errors and need no tracer or `System`:
 
-Current helpers:
-
-- `testing.expect(...)`
-- `testing.expect_equal(...)`
-- `testing.expect_error(...)`
-- `testing.fail(...)`
-- `testing.skip(...)`
-
-They compose with Argi’s existing `Errable` and `!` flow.
-
-Examples:
+- `testing.expect(condition)` checks a Boolean condition.
+- `testing.expect_equal(expected, actual)` compares values through equality.
+- `testing.expect_error(.expected_reason, .actual_result)` checks a failure's reason.
+- `testing.expect_equal_strings`, `expect_equal_views` and `expect_equal_bytes`
+  compare text or initialized views.
+- `testing.fail()` returns `..test_failed`; `testing.skip()` returns `..test_skipped`.
 
 ```rg
-test simple_pass(.system: System) -> !() := {
+test equality := () -> !() {
     testing.expect(true)!
+    testing.expect_equal(42, 42)!
 }
 ```
+
+Each helper also has an explicit diagnostic form ending in `_with_trace`.
+These forms require `error_tracer`, resolve it through ordinary explicit or
+lexically assumed arguments, and return errors carrying its trace. They can
+include a message and detailed mismatch information. No default tracer is
+provided and no trace is implicitly discarded.
 
 ```rg
-test equality(.system: System) -> !() := {
-    testing.expect_equal(.expected = 1, .actual = 1)!
+test detailed_equality := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
+    assume error_tracer
+    testing.expect_equal_with_trace(42, 42, .message = "vertex count")!
 }
 ```
 
-```rg
-..some_reason
+Both forms preserve the same assertion failure and skip reasons. A plain test
+uses `!` to propagate ordinary failures. A traced test promotes those failures
+explicitly with `!! "context"`; forwarding an existing trace with `!` adds no
+context. Prefer a context describing the test's intent over repeating each
+operation's name. Tests that inspect error traces use the diagnostic forms.
 
-some_fallible_call() -> (.result: Errable#(Int32, (..some_reason))) := {
-    result = ..error(.reason = ..some_reason)
-}
-
-test expected_error(.system: System) -> !() := {
-    call_result := some_fallible_call()
-    testing.expect_error(.expected_reason = ..some_reason, .actual_result = call_result)!
-}
-```
-
-### Failures, skips, and propagated program errors
-
-There is a distinction between testing-framework outcomes and real program errors that happen inside a test.
-
-Testing-framework layer:
-
-- assertion/helper failure -> `..test_failed`
-- explicit skip -> `..test_skipped`
-
-Program-under-test layer:
-
-- if test code directly propagates a real error with `!`, that original reason is preserved
-
-So:
-
-- `testing.expect(false)!` fails the test with `..test_failed`
-- `testing.skip("not implemented yet")!` skips the test with `..test_skipped`
-- `testing.expect_error(...)` fails with `..test_failed` when the actual result succeeds unexpectedly or fails with a different reason
-- a direct `some_fallible_call()!` inside a test preserves the original reason from `some_fallible_call`
-
-`testing.expect_error(...)` checks the actual error reason, not merely that an error happened.
-
-### Trace and context
-
-Testing helpers reuse the normal error trace/context machinery.
-
-That means:
-
-- helper-originated failures produce normal traced errors
-- `expect_error` mismatch messages appear as normal test failure context
-- directly propagated program errors keep their original trace and reasons
+`expect_error` examines the actual reason, not merely whether an error occurred.
+Its result is a normal assertion error even when the inspected result was traced;
+it consumes that result explicitly instead of converting or propagating its error.
+Unexpected successful owning values receive ordinary lexical cleanup.
 
 ### `once`
 
@@ -145,22 +121,22 @@ This is intentional:
 
 ### Equality diagnostics
 
-`expect` and `expect_equal` accept an optional bounded `.message: StringView`
+`expect_with_trace` and `expect_equal_with_trace` accept a bounded `.message: StringView`
 that supplies caller context. Integer, floating-point, and Boolean equality
 failures report the expected and actual values; other comparable types retain
 an ordinary equality failure message. Successful checks produce no output.
 
-`expect_equal_strings(.expected, .actual, .message)` compares complete byte
+`expect_equal_strings_with_trace(.expected, .actual, .message)` compares complete byte
 extents, including embedded NULs. Inputs may be two StringViews or two borrowed
-Strings. `expect_equal` also compares StringViews by their byte contents.
+Strings. `expect_equal_with_trace` also compares StringViews by their byte contents.
 Failures report the first differing byte index, expected and actual byte values
 (or `<end>` for a shorter input), and both lengths. Indices count bytes, not
 Unicode scalars or graphemes.
 
-`expect_equal_views(.expected, .actual, .message)` compares readonly initialized
+`expect_equal_views_with_trace(.expected, .actual, .message)` compares readonly initialized
 array views element by element. Element types must support equality. Failures
 report the first differing element index and both lengths. A differing length
-reports the common-prefix length as its index. `expect_equal_bytes` additionally
+reports the common-prefix length as its index. `expect_equal_bytes_with_trace` additionally
 reports byte values or `<end>`. Empty views require no data pointer.
 
 Assertion diagnostics use bounded stack storage and require no allocator.

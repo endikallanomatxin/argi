@@ -3,15 +3,15 @@ putchar(.character: UInt8) -> (): ExternFunction
 
 getchar() -> (.character: Int32): ExternFunction
 
-puts(.string: &Char) -> (): ExternFunction
+puts(.string: &CChar) -> (): ExternFunction
 
-strlen(.string: &Char) -> (.length: UIntNative): ExternFunction
+strlen(.string: &CChar) -> (.length: UIntNative): ExternFunction
 
-getenv(.name: &Char) -> (.value: &Char): ExternFunction
+getenv(.name: &CChar) -> (.value: &CChar): ExternFunction
 
-fdopen(.fd: Int32, .mode: &Char) -> (.stream: &Any): ExternFunction
+fdopen(.fd: Int32, .mode: &CChar) -> (.stream: &Any): ExternFunction
 
-fopen(.path: &Char, .mode: &Char) -> (.stream: &Any): ExternFunction
+fopen(.path: &CChar, .mode: &CChar) -> (.stream: &Any): ExternFunction
 
 fclose(.stream: &Any) -> (.status: Int32): ExternFunction
 
@@ -29,11 +29,11 @@ feof(.stream: &Any) -> (.status: Int32): ExternFunction
 
 ferror(.stream: &Any) -> (.status: Int32): ExternFunction
 
-remove(.path: &Char) -> (.status: Int32): ExternFunction
+remove(.path: &CChar) -> (.status: Int32): ExternFunction
 
-rename(.old_path: &Char, .new_path: &Char) -> (.status: Int32): ExternFunction
+rename(.old_path: &CChar, .new_path: &CChar) -> (.status: Int32): ExternFunction
 
-access(.path: &Char, .mode: Int32) -> (.status: Int32): ExternFunction
+access(.path: &CChar, .mode: Int32) -> (.status: Int32): ExternFunction
 
 -- Memory management
 alloca(.size: UIntNative) -> (.pointer: $&Any): ExternFunction
@@ -48,7 +48,10 @@ _aligned_free(.address: UIntNative) -> (): ExternFunction
 
 memcpy(.dst: $&Any, .src: &Any, .n: UIntNative) -> (): ExternFunction
 
-fread_into(.buffer: ArrayView#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) := {
+fread_into := (
+    .buffer: MutableArrayView#(.t: UInt8), .stream: &Any, .ffi: $&ForeignFunctionInterface
+) -> (.count: UIntNative) {
+    assume ffi
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -66,25 +69,26 @@ _FileWriteBuffer#(.Buffer: Type): Contract = (
     .bytes : (.self: &Buffer) -> (.pointer: &UInt8)
 )
 
-_write_buffer_mutable(.self: &ArrayView#(.t: UInt8)) -> (.pointer: &UInt8) := {
+_write_buffer_mutable := (.self: &MutableArrayView#(.t: UInt8)) -> (.pointer: &UInt8) {
     pointer = read_reference#(.t: UInt8)(.base = data(.self = self).pointer).reference
 }
 
-_write_buffer_readonly(.self: &ArrayViewRO#(.t: UInt8)) -> (.pointer: &UInt8) := {
+_write_buffer_readonly := (.self: &ArrayView#(.t: UInt8)) -> (.pointer: &UInt8) {
     pointer = data(.self = self).pointer
 }
 
-implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
+implement _FileWriteBuffer#(MutableArrayView#(.t: UInt8)) (
     .bytes = _write_buffer_mutable
 )
 
-implement _FileWriteBuffer#(ArrayViewRO#(.t: UInt8)) (
+implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
     .bytes = _write_buffer_readonly
 )
 
-fwrite_from#(.Buffer: Type: _FileWriteBuffer#(Buffer)) := (.buffer: Buffer, .stream: &Any) -> (
-    .count : UIntNative
-) {
+fwrite_from := #(.Buffer: Type: _FileWriteBuffer#(Buffer)) (
+    .buffer: Buffer, .stream: &Any, .ffi: $&ForeignFunctionInterface
+) -> (.count: UIntNative) {
+    assume ffi
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -98,21 +102,21 @@ fwrite_from#(.Buffer: Type: _FileWriteBuffer#(Buffer)) := (.buffer: Buffer, .str
 }
 
 -- Direct libc allocation requires its own foreign-call capability.
-malloc(.size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) := {
-    address = _malloc(.size = size).address
+malloc := (.size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) {
+    address = _malloc(.size = size, .ffi = ffi).address
 }
 
-aligned_alloc(.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
+aligned_alloc := (.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
     .address : UIntNative
-) := {
-    address = _aligned_alloc(.alignment = alignment, .size = size).address
+) {
+    address = _aligned_alloc(.alignment = alignment, .size = size, .ffi = ffi).address
 }
 
-free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
-    _free(.address = address)
+free := (.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () {
+    _free(.address = address, .ffi = ffi)
 }
 
 -- Aligned CRT storage has its own release operation on Windows.
-aligned_free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
-    _aligned_free(.address = address)
+aligned_free := (.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () {
+    _aligned_free(.address = address, .ffi = ffi)
 }

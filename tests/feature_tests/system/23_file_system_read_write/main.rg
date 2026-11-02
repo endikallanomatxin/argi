@@ -1,6 +1,9 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     path ::= from_literal(
         .data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt"
@@ -15,11 +18,11 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 4))
-    bytes_set(.string = $&text, .index = 0, .value = 65)
-    bytes_set(.string = $&text, .index = 1, .value = 114)
-    bytes_set(.string = $&text, .index = 2, .value = 103)
-    bytes_set(.string = $&text, .index = 3, .value = 105)
+    text ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 4))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 3, .byte = 105))
 
     write_result ::= write_file(.self = system.file_system, .path = path, .text = &text)
     if is(.value = write_result, .variant = ..ok) {
@@ -36,27 +39,27 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     read_back ::= ~read_back_result ..ok
 
-    if read_back.length != 4 {
+    if byte_length(&read_back).count != 4 {
         status_code = 4
         return
     }
 
-    if bytes_get(.view = &read_back, .index = 0).byte != 65 {
+    if unwrap_or_abort(.value = bytes_get(.view = &read_back, .index = 0)) != 65 {
         status_code = 5
         return
     }
 
-    if bytes_get(.view = &read_back, .index = 1).byte != 114 {
+    if unwrap_or_abort(.value = bytes_get(.view = &read_back, .index = 1)) != 114 {
         status_code = 6
         return
     }
 
-    if bytes_get(.view = &read_back, .index = 2).byte != 103 {
+    if unwrap_or_abort(.value = bytes_get(.view = &read_back, .index = 2)) != 103 {
         status_code = 7
         return
     }
 
-    if bytes_get(.view = &read_back, .index = 3).byte != 105 {
+    if unwrap_or_abort(.value = bytes_get(.view = &read_back, .index = 3)) != 105 {
         status_code = 8
         return
     }

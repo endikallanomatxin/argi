@@ -1,17 +1,17 @@
 -- Collection operations retain one identity per capability.
 Indexable#(.Collection: Type): Contract = (
-    .Item       : Type
-    .length     : (.self: &Collection) -> (.count: UIntNative)
-    .get_ro_ref : (.self: &Collection, .index: UIntNative) -> (
+    .Item          : Type
+    .length        : (.self: &Collection) -> (.count: UIntNative)
+    .get_reference : (.self: &Collection, .index: UIntNative) -> (
         .result : Errable#(&Item, (..out_of_bounds))
     )
 )
 
 -- Writable indexing reuses the readonly capability without duplicating it.
-IndexableMutable#(.Collection: Type): Contract = (
+MutableIndexable#(.Collection: Type): Contract = (
     .Item : Type
     Indexable#(.Collection: Collection, .Item: Item)
-    .get_rw_ref : (.self: $&Collection, .index: UIntNative) -> (
+    .get_mutable_reference : (.self: $&Collection, .index: UIntNative) -> (
         .result : Errable#($&Item, (..out_of_bounds))
     )
 )
@@ -27,25 +27,23 @@ IndexableValue#(.Collection: Type): Contract = (
 -- Removal needs no allocation capability; its identity has one participant.
 Removable#(.Collection: Type): Contract = (
     .Item : Type
-    IndexableMutable#(.Collection: Collection, .Item: Item)
+    MutableIndexable#(.Collection: Collection, .Item: Item)
     .pop    : (.self: $&Collection) -> (.result: Errable#(Item, (..empty)))
-    .remove : (.self: $&Collection, .i: UIntNative) -> (
+    .remove : (.self: $&Collection, .index: UIntNative) -> (
         .result : Errable#(Item, (..out_of_bounds))
     )
 )
 
--- Growth depends on both the collection and the allocation provider. The
--- provider participates in static selection rather than being implicitly erased.
-Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+-- Growth selects the collection's behavior independently of its allocator.
+Resizable#(.Collection: Type): Contract = (
     .Item : Type
     Removable#(.Collection: Collection, .Item: Item)
-    .push : (.self: $&Collection, .value: Item, .allocator: $&Provider = reach allocator) -> (
+    .push : (.self: $&Collection, .value: Item, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
     .insert : (
-        .self      : $&Collection,
-        .i         : UIntNative,
-        .value     : Item,
-        .allocator : $&Provider    = reach allocator
-    ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds)))
+        .self: $&Collection, .index: UIntNative, .value: Item, .allocator: Virtual#(Allocator)
+    ) -> (
+        .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
+    )
 )

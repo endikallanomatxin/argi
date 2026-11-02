@@ -1,4 +1,5 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     if length(.self = system.args).count == 2 {
         value ::= unwrap_or_abort(.value = get(.self = system.args, .index = 1)).result
         if value != "done" { abort }
@@ -8,10 +9,23 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     child :: Process
     {
         bytes: [4]UInt8 = (100, 111, 110, 101)
-        argument: StringView = (.data = &bytes[0], .length = 4)
+        argument_storage ::= unwrap_or_abort(
+            .value = string_from_bytes(
+                .bytes = unwrap_or_abort(
+                    .value = slice(&view(&bytes), .start = 0, .count = 4)
+                )
+                .allocator = system.page_allocator
+            )
+        )
+        argument ::= view(&argument_storage)
         args: [1]StringView = (argument)
-        child = unwrap_or_abort(.value = spawn(.self = system.proc_man, .executable = executable,
-                .arguments = view(.array = &args))).result
+        child = unwrap_or_abort(
+            .value = spawn(
+                .self       = system.proc_man
+                .executable = executable
+                .arguments  = view(.self = &args)
+            )
+        ).result
     }
     match unwrap_or_abort(.value = wait(.self = $&child)).result {
         ..exited payload { if payload.code != 0 { abort } }

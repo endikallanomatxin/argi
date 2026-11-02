@@ -1,20 +1,22 @@
-JsonReasons: Type = (..invalid_json, ..json_depth_exceeded, ..invalid_utf8)
+JsonReasons: Type = (..invalid_json, ..json_depth_exceeded)
 
-_byte(.text: StringView, .position: UIntNative) -> (.value: UInt8) := {
-    value = bytes_get(.view = &text, .index = position).byte
+_byte := (.text: StringView, .position: UIntNative) -> (.value: UInt8) {
+
+    value = unwrap_or_abort(.value = bytes_get(.view = &text, .index = position))
 }
 
-_space(.text: StringView, .position: UIntNative) -> (.next: UIntNative) := {
+_space := (.text: StringView, .position: UIntNative) -> (.next: UIntNative) {
     next = position
 
-    while next < text.length {
+    while next < byte_length(&text).count {
         byte ::= _byte(.text = text, .position = next).value
         if byte != 32 and byte != 9 and byte != 10 and byte != 13 { return }
         next = next + 1
     }
 }
 
-_hex(.byte: UInt8) -> (.value: UInt32 = 16) := {
+_hex := (.byte: UInt8) -> (.value: UInt32 = 16) {
+
     if byte >= 48 and byte <= 57 {
         value = [byte - 48] | convert#(.to: UInt32)(_)
         return
@@ -28,8 +30,9 @@ _hex(.byte: UInt8) -> (.value: UInt32 = 16) := {
     if byte >= 97 and byte <= 102 { value = [byte - 87] | convert#(.to: UInt32)(_) }
 }
 
-_quad(.text: StringView, .position: UIntNative) -> (.result: Errable#(UInt32, JsonReasons)) := {
-    if position > text.length or text.length - position < 4 {
+_quad := (.text: StringView, .position: UIntNative) -> (.result: Errable#(UInt32, JsonReasons)) {
+
+    if position > byte_length(&text).count or byte_length(&text).count - position < 4 {
         result = ..error(.reason = ..invalid_json)
         return
     }
@@ -52,12 +55,13 @@ _quad(.text: StringView, .position: UIntNative) -> (.result: Errable#(UInt32, Js
 
 -- Return the byte after a closing quote. Reject isolated UTF-16 surrogates:
 -- the accepted profile always denotes Unicode scalar values.
-_string_end(.text: StringView, .position: UIntNative) -> (
+_string_end := (.text: StringView, .position: UIntNative) -> (
     .result : Errable#(UIntNative, JsonReasons)
-) := {
+) {
+
     cursor ::= position + 1
 
-    while cursor < text.length {
+    while cursor < byte_length(&text).count {
         byte ::= _byte(.text = text, .position = cursor).value
         cursor = cursor + 1
         if byte == 34 {
@@ -69,7 +73,7 @@ _string_end(.text: StringView, .position: UIntNative) -> (
             return
         }
         if byte == 92 {
-            if cursor == text.length {
+            if cursor == byte_length(&text).count {
                 result = ..error(.reason = ..invalid_json)
                 return
             }
@@ -83,7 +87,7 @@ _string_end(.text: StringView, .position: UIntNative) -> (
                     return
                 }
                 if unit >= 55296 and unit <= 56319 {
-                    if text.length - cursor < 6 {
+                    if byte_length(&text).count - cursor < 6 {
                         result = ..error(.reason = ..invalid_json)
                         return
                     }
@@ -122,15 +126,16 @@ _string_end(.text: StringView, .position: UIntNative) -> (
     result = ..error(.reason = ..invalid_json)
 }
 
-_digit(.byte: UInt8) -> (.value: Bool) := { value = byte >= 48 and byte <= 57 }
+_digit := (.byte: UInt8) -> (.value: Bool) { value = byte >= 48 and byte <= 57 }
 
-_number_end(.text: StringView, .position: UIntNative) -> (
+_number_end := (.text: StringView, .position: UIntNative) -> (
     .result : Errable#(UIntNative, JsonReasons)
-) := {
+) {
+
     cursor ::= position
 
     if _byte(.text = text, .position = cursor).value == 45 { cursor = cursor + 1 }
-    if cursor == text.length {
+    if cursor == byte_length(&text).count {
         result = ..error(.reason = ..invalid_json)
         return
     }
@@ -144,7 +149,7 @@ _number_end(.text: StringView, .position: UIntNative) -> (
             result = ..error(.reason = ..invalid_json)
             return
         }
-        while cursor < text.length {
+        while cursor < byte_length(&text).count {
             if _digit(.byte = _byte(.text = text, .position = cursor).value).value == false {
                 break
             }
@@ -152,11 +157,11 @@ _number_end(.text: StringView, .position: UIntNative) -> (
         }
     }
 
-    if cursor < text.length {
+    if cursor < byte_length(&text).count {
         if _byte(.text = text, .position = cursor).value == 46 {
             cursor = cursor + 1
             start ::= cursor
-            while cursor < text.length {
+            while cursor < byte_length(&text).count {
                 if _digit(.byte = _byte(.text = text, .position = cursor).value).value == false {
                     break
                 }
@@ -169,16 +174,16 @@ _number_end(.text: StringView, .position: UIntNative) -> (
         }
     }
 
-    if cursor < text.length {
+    if cursor < byte_length(&text).count {
         exponent ::= _byte(.text = text, .position = cursor).value
         if exponent == 101 or exponent == 69 {
             cursor = cursor + 1
-            if cursor < text.length {
+            if cursor < byte_length(&text).count {
                 sign ::= _byte(.text = text, .position = cursor).value
                 if sign == 43 or sign == 45 { cursor = cursor + 1 }
             }
             start ::= cursor
-            while cursor < text.length {
+            while cursor < byte_length(&text).count {
                 if _digit(.byte = _byte(.text = text, .position = cursor).value).value == false {
                     break
                 }
@@ -194,17 +199,18 @@ _number_end(.text: StringView, .position: UIntNative) -> (
     result = ..ok cursor
 }
 
-_literal(.text: StringView, .position: UIntNative, .expected: StringView) -> (
+_literal := (.text: StringView, .position: UIntNative, .expected: StringView) -> (
     .result : Errable#(UIntNative, JsonReasons)
-) := {
-    if text.length - position < expected.length {
+) {
+
+    if byte_length(&text).count - position < byte_length(&expected).count {
         result = ..error(.reason = ..invalid_json)
         return
     }
 
     offset :: UIntNative = 0
 
-    while offset < expected.length {
+    while offset < byte_length(&expected).count {
         if [
             _byte(.text = text, .position = position + offset).value
             != _byte(.text = expected, .position = offset).value
@@ -215,17 +221,18 @@ _literal(.text: StringView, .position: UIntNative, .expected: StringView) -> (
         offset = offset + 1
     }
 
-    end ::= position + expected.length
+    end ::= position + byte_length(&expected).count
 
     result = ..ok end
 }
 
-_value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximum: UIntNative) -> (
-    .result : Errable#(UIntNative, JsonReasons)
-) := {
+_value_end := (
+    .text: StringView, .position: UIntNative, .depth: UIntNative, .maximum: UIntNative
+) -> (.result: Errable#(UIntNative, JsonReasons)) {
+
     cursor ::= _space(.text = text, .position = position).next
 
-    if cursor == text.length {
+    if cursor == byte_length(&text).count {
         result = ..error(.reason = ..invalid_json)
         return
     }
@@ -268,7 +275,7 @@ _value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximu
     if object { closing = 125 }
     cursor = _space(.text = text, .position = cursor + 1).next
 
-    if cursor < text.length {
+    if cursor < byte_length(&text).count {
         if _byte(.text = text, .position = cursor).value == closing {
             end ::= cursor + 1
             result = ..ok end
@@ -278,7 +285,7 @@ _value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximu
 
     while true {
         if object {
-            if cursor == text.length {
+            if cursor == byte_length(&text).count {
                 result = ..error(.reason = ..invalid_json)
                 return
             }
@@ -288,7 +295,7 @@ _value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximu
             }
             cursor = _string_end(.text = text, .position = cursor)!
             cursor = _space(.text = text, .position = cursor).next
-            if cursor == text.length {
+            if cursor == byte_length(&text).count {
                 result = ..error(.reason = ..invalid_json)
                 return
             }
@@ -302,7 +309,7 @@ _value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximu
             .text = text, .position = cursor, .depth = depth + 1, .maximum = maximum
         )!
         cursor = _space(.text = text, .position = cursor).next
-        if cursor == text.length {
+        if cursor == byte_length(&text).count {
             result = ..error(.reason = ..invalid_json)
             return
         }
@@ -324,10 +331,9 @@ _value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximu
 -- number lexemes rather than converting to a fixed-width representation.
 -- Duplicate object keys are accepted. Recursion is bounded to at most 256
 -- containers, independently of the caller's requested limit.
-validate(.text: StringView, .maximum_depth: UIntNative = 64) -> (
+validate := (.text: StringView, .maximum_depth: UIntNative = 64) -> (
     .result : Errable#(Void, JsonReasons) = ..ok Void()
-) := {
-    validate_utf8(.text = text)!
+) {
 
     if maximum_depth > 256 {
         result = ..error(.reason = ..json_depth_exceeded)
@@ -336,36 +342,44 @@ validate(.text: StringView, .maximum_depth: UIntNative = 64) -> (
 
     end ::= _value_end(.text = text, .position = 0, .depth = 0, .maximum = maximum_depth)!
 
-    if _space(.text = text, .position = end).next != text.length {
+    if _space(.text = text, .position = end).next != byte_length(&text).count {
         result = ..error(.reason = ..invalid_json)
     }
 }
 
-JsonToken: Type = (.kind: UInt8, .lexeme: StringView)
+JsonToken := (.kind: UInt8, .lexeme: StringView)
 
 implement ImplicitlyCopyable#(JsonToken) ()
 
 -- Kind is the first byte: punctuation, quote, literal initial, or number
 -- initial. Lexemes borrow the complete validated input, including quotes.
 -- Callers must preserve those bytes for the cursor's entire lifetime.
-JsonCursor: Type = (._text: StringView, ._position: UIntNative)
+JsonCursor := (._text: StringView, ._position: UIntNative)
 
-implement Init#(JsonCursor, (.text: StringView, .maximum_depth: UIntNative = 64)) (
+JsonCursorInitArgs: Type = (
+    .text          : StringView,
+    .maximum_depth : UIntNative  = 64
+)
+
+implement Init#(JsonCursor, JsonCursorInitArgs) (
     .Result : Type = Errable#(JsonCursor, JsonReasons)
-    .init   = (.args: (.text: StringView, .maximum_depth: UIntNative = 64)) -> (.result: Result) {
-        text ::= args.text
-        maximum_depth ::= args.maximum_depth
 
-        validate(.text = text, .maximum_depth = maximum_depth)!
+    .init = JsonCursorInitArgs -> (.result: Result) {
 
-        result = ..ok(._text = text, ._position = 0)
+        _init_text ::= text
+        _init_maximum_depth ::= maximum_depth
+
+        validate(.text = _init_text, .maximum_depth = _init_maximum_depth)!
+
+        result = ..ok(._text = _init_text, ._position = 0)
     }
 )
 
-next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
+next := (.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) {
+
     start ::= _space(.text = self&._text, .position = self&._position).next
 
-    if start == self&._text.length {
+    if start == byte_length(&self&._text).count {
         result = ..ok ..none
         return
     }
@@ -393,9 +407,8 @@ next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
         }
     }
 
-    lexeme :: StringView = (
-        .data   = string_view_byte_address(.self = &self&._text, .index = start).reference
-        .length = end - start
+    lexeme ::= unwrap_or_abort(
+        .value = slice(.self = self&._text, .start = start, .count = [end - start])
     )
     self&._position = end
 
@@ -403,13 +416,14 @@ next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
 }
 
 -- Decode exactly one JSON string into independent UTF-8 storage.
-decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .text: StringView, .allocator: $&AllocatorType = reach allocator
+decode_string := (
+    .text: StringView, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String, (..invalid_json, ..json_depth_exceeded, ..invalid_utf8, ..out_of_memory)
     )
-) := {
+) {
+
     assume allocator
     validate(.text = text, .maximum_depth = 0)!
     start ::= _space(.text = text, .position = 0).next
@@ -420,14 +434,15 @@ decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 
     end ::= _string_end(.text = text, .position = start)!
-    decoded ::= string_with_capacity(.capacity = end - start)!
+    -- Unescaping never expands beyond the source byte length.
+    decoded ::= DynamicArray#(UInt8)(.capacity = end - start)!
     cursor ::= start + 1
 
     while cursor < end - 1 {
         byte ::= _byte(.text = text, .position = cursor).value
         cursor = cursor + 1
         if byte != 92 {
-            push_byte(.self = $&decoded, .byte = byte)!
+            push_assume_capacity(.self = $&decoded, .value = byte)
             continue
         }
         escape ::= _byte(.text = text, .position = cursor).value
@@ -441,10 +456,10 @@ decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 cursor = cursor + 6
             }
             if code < 128 {
-                push_byte(
-                    .self = $&decoded
-                    .byte = unwrap_or_abort(.value = code | convert#(.to: UInt8)(_))
-                )!
+                push_assume_capacity(
+                    .self  = $&decoded
+                    .value = unwrap_or_abort(.value = code | convert#(.to: UInt8)(_))
+                )
             } else {
                 width :: UIntNative = 2
                 divisor :: UInt32 = 64
@@ -462,15 +477,18 @@ decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 first ::= unwrap_or_abort(
                     .value = [[prefix + code / divisor] | convert#(.to: UInt8)(_)]
                 )
-                push_byte(.self = $&decoded, .byte = first)!
+                push_assume_capacity(.self = $&decoded, .value = first)
                 continuation :: UInt32 = 128
                 offset :: UIntNative = 1
                 while offset < width {
                     divisor = divisor / 64
                     next_byte ::= unwrap_or_abort(
-                        .value = [continuation + code / divisor % 64] | convert#(.to: UInt8)(_)
+                        .value = [
+                            [continuation + code / divisor % 64]
+                            | convert#(.to: UInt8)(_)
+                        ]
                     )
-                    push_byte(.self = $&decoded, .byte = next_byte)!
+                    push_assume_capacity(.self = $&decoded, .value = next_byte)
                     offset = offset + 1
                 }
             }
@@ -480,29 +498,29 @@ decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
             if escape == 110 { escape = 10 }
             if escape == 114 { escape = 13 }
             if escape == 116 { escape = 9 }
-            push_byte(.self = $&decoded, .byte = escape)!
+            push_assume_capacity(.self = $&decoded, .value = escape)
         }
     }
 
-    result = ..ok ~decoded
+    copied ::= string_from_bytes(.bytes = view(&decoded))!
+    result = ..ok ~copied
 }
 
-_hex_ascii(.value: UInt8) -> (.byte: UInt8) := {
+_hex_ascii := (.value: UInt8) -> (.byte: UInt8) {
     byte = value + 48
 
     if value >= 10 { byte = value + 87 }
 }
 
--- Validate input before writing; native writer failures can leave a prefix.
-write_string#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType, .text: StringView) -> (
-    .result : Errable#(Void, (..invalid_utf8, ..stream_write_failed, ..stream_flush_failed)) = ..ok Void(
-    )
-) := {
-    validate_utf8(.text = text)!
+-- Input is already valid text; native writer failures can leave a prefix.
+write_string := #(.WriterType: Type: Writer#(WriterType)) (
+    .writer: $&WriterType, .text: StringView
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+
     Writer#().write_byte(.self = writer, .byte = 34)!
     cursor :: UIntNative = 0
 
-    while cursor < text.length {
+    while cursor < byte_length(&text).count {
         byte ::= _byte(.text = text, .position = cursor).value
         if byte < 32 {
             write(.self = writer, .value = "\\u00")!

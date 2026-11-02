@@ -60,7 +60,7 @@ built-in signed or unsigned integer type, including target-width `UIntNative`.
 Both operands have the same type; compatible integer literals follow a typed
 operand. A successful result contains that same integer type.
 
-The first three operations return `Errable<T, out_of_range>`. Their checks
+The first three operations return `Errable#(T, out_of_range)`. Their checks
 precede arithmetic that could overflow or underflow. Division additionally
 reports `division_by_zero` for a zero divisor, including `0 / 0`. Signed division
 truncates toward zero. Dividing a signed minimum by `-1` reports `out_of_range`,
@@ -76,7 +76,17 @@ next ::= checked_add(.left = bytes, .right = 1)!
 
 ## Characters
 
-`Char` holds a character value.
+`UnicodeScalar` represents a Unicode scalar value: U+0000 through U+10FFFF,
+excluding U+D800 through U+DFFF (surrogates). It is a nominal core type,
+independent of its UTF-8 encoding. Literals such as `'A'`, `'ñ'`, `'€'`, and
+`'🙂'` each produce one `UnicodeScalar`. A literal must contain exactly one
+scalar; a visible grapheme made from multiple scalars belongs in a string.
+Equality compares scalar values; ordering follows their numeric Unicode values,
+without locale collation or normalization.
+
+`UInt8` represents arbitrary bytes. `CChar` represents C's target-dependent
+`char` and is used at C-string boundaries. Neither accepts character literals
+implicitly; use explicit conversion or numeric byte values.
 
 String types and views are described in [Strings](162_strings.md).
 

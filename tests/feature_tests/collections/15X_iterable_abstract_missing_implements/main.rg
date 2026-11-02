@@ -1,19 +1,19 @@
-FakeIterator : Type = (
-    .index: UIntNative
+FakeIterator := (
+    .index : UIntNative
 )
 
-FakeIterable : Type = ()
+FakeIterable: Type = ()
 
-to_iterator(.value: &FakeIterable) -> (.iterator: FakeIterator) := {
+to_iterator := (.value: &FakeIterable) -> (.iterator: FakeIterator) {
     iterator = (.index = 0)
 }
 
-sum_iterable#(.T: Type: Iterable#(T))(.items: &T) -> (.sum: Int32) := {
+sum_iterable := #(.T: Type: Iterable#(T)) (.items: &T) -> (.sum: Int32) {
     iterator ::= to_iterator(.value = items)
     sum = 0
 }
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     fake :: FakeIterable = ()
     status_code = sum_iterable(.items = &fake).sum
 }

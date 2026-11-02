@@ -1,11 +1,14 @@
 calls :: Int32 = 0
+
 make_default := () -> (.value: Int32) {
     calls = calls + 1
     value = 7
 }
-identity#(.T: Type) := (.value: T = make_default()) -> (.result: T) {
+
+identity := #(.T: Type) (.value: T = make_default()) -> (.result: T) {
     result = value
 }
+
 main := () -> (.status_code: Int32 = 0) {
     if calls != 0 { status_code = 1 }
     supplied ::= identity(.value = 42)

@@ -1,12 +1,12 @@
 OtherOrdering: Type = (..greater, ..less)
 
-is_less#(.T: Type)(.order: T) -> (.ok: Bool) := { ok = ..less == order }
+is_less := #(.T: Type) (.order: T) -> (.ok: Bool) { ok = ..less == order }
 
-is_before#(.T: Type)(.marker: T, .order: Ordering) -> (.ok: Bool) := {
+is_before := #(.T: Type) (.marker: T, .order: Ordering) -> (.ok: Bool) {
     ok = order == ..less or ..greater != order
 }
 
-main() -> () := {
+main := () -> () {
     other: OtherOrdering = ..less
     if is_less#(OtherOrdering)(other).ok == false { abort }
     less: Ordering = ..less

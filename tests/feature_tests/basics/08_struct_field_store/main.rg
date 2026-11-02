@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     anonymous_struct :: (.a: Int32) = (.a = 1)
 
     anonymous_struct.a = 0

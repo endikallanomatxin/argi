@@ -40,6 +40,13 @@ pub const InputPath = struct {
     storage_domain: ?u32 = null,
 };
 
+pub const CapturedStorage = struct {
+    path: InputPath,
+    /// A final generation needs an ordered proof; stale also represents an
+    /// intermediate capture whose final generation cannot be established.
+    phase: enum { entry, post, stale } = .entry,
+};
+
 pub const InputDependency = struct {
     path: InputPath,
     transfers_ownership: bool = false,
@@ -73,7 +80,7 @@ pub const ValueEffect = struct {
     input_generation_dependencies: []const InputPath = &.{},
     /// Borrow all reachable generations before receiver layout is erased. This
     /// resolves caller storage identities and never retains local storage.
-    input_captured_storages: []const InputPath = &.{},
+    input_captured_storages: []const CapturedStorage = &.{},
     /// A virtual Self dependency names the erased receiver's value, not the
     /// lexical storage holding its handle. It carries validity only.
     input_receiver_values: []const InputPath = &.{},
@@ -105,9 +112,20 @@ pub const OutputVariantEffect = struct {
 
 /// Symbolic post-state of a Place reached through a function input.
 pub const PlacePostState = struct {
+    /// Whether this exit establishes a value independently of entry occupancy.
+    /// An initialized post-state alone may simply preserve the incoming value.
+    pub const Initialization = enum { preserved, possible, definite };
+
     target: InputPath,
+    initialization: Initialization = .preserved,
     initializedness: value_state.Initializedness,
     value: ValueEffect = .{},
+    /// Proven entry-relative destinations of the reference stored in this slot.
+    /// Lifetime dependencies alone never establish these identities.
+    reference_targets: ?[]const InputPath = null,
+    /// This selected reference access observes the destination's post-value;
+    /// unrelated copies continue observing their entry generation.
+    reference_refresh: bool = false,
     ends_previous_roots: bool = false,
     refreshes_storage_generation: bool = false,
     requires_available_destination: bool = false,
@@ -136,6 +154,16 @@ pub const StorageCapabilityConflict = struct {
     second: InputPath,
 };
 
+/// Ordered observations and captures must not alias an incompatible mutation.
+/// Coordinates are caller-relative; distinct inputs do not prove disjointness.
+pub const StorageObservationConflict = struct {
+    consumed: InputPath,
+    observed: InputPath,
+    /// Compare captured reachable storage, including initializer sources,
+    /// rather than only the receiver's lexical envelope.
+    captures_reachable: bool = false,
+};
+
 pub const FreshStorageCapabilityState = struct {
     source: FreshEffectSource,
     maybe_consumed: bool = false,
@@ -147,9 +175,6 @@ pub const ChoiceConditions = @import("choice_conditions.zig").ChoiceConditions;
 /// A complete approximation under an explicitly represented conjunction.
 /// Effects are shared between guards and contain no graph binding identities.
 pub const GuardedSafetyEffects = struct {
-    /// Derived compatibility records can be refreshed after receiver mapping
-    /// without discarding independently inferred entry or joint conditions.
-    origin: enum { general, outcome_partition } = .general,
     conditions: ChoiceConditions,
     effects: *const SafetySummary,
 };
@@ -164,6 +189,8 @@ pub const SafetySummary = struct {
     outputs: []const ValueEffect = &.{},
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},
+    storage_observations: []const InputPath = &.{},
+    storage_observation_conflicts: []const StorageObservationConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
     /// Using stored elements requires their hidden external dependencies;
     /// merely accessing or freeing allocation metadata does not.
@@ -175,6 +202,18 @@ pub const SafetySummary = struct {
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     opaque_storage_empties: []const InputPath = &.{},
     invalidated_domains: []const InputDomain = &.{},
+
+    /// A borrowed view of the current outcome effects, retaining common
+    /// provenance and obligations. No derived copy is stored or refreshed.
+    pub fn outcomeEffects(self: SafetySummary, outcome: OutcomePostStates) SafetySummary {
+        var selected = self;
+        selected.guarded_effects = &.{};
+        selected.outcome_post_states = &.{};
+        selected.input_post_states = outcome.input_post_states;
+        selected.invalidated_domains = outcome.invalidated_domains;
+        selected.opaque_storage_empties = outcome.opaque_storage_empties;
+        return selected;
+    }
 };
 
 pub const OutcomePostStates = struct {

@@ -8,6 +8,10 @@ const primitives = @import("../primitives/schema.zig");
 pub const Place = place_mod.PlaceFor(graph.GlobalBindingId);
 pub const Projection = place_mod.Projection;
 
+// Function-local identity of an unknown referent. A record input can contain
+// several such accesses; its binding identity cannot distinguish them.
+pub const SymbolicPointeeId = enum(u32) { _ };
+
 // Summary/effect vocabulary contains no graph pointers and is shared verbatim.
 pub const ValidityRootId = base.ValidityRootId;
 pub const StorageCapabilityId = base.StorageCapabilityId;
@@ -15,6 +19,7 @@ pub const ValidityRoot = base.ValidityRoot;
 pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
+pub const CapturedStorage = base.CapturedStorage;
 pub const InputDependency = base.InputDependency;
 pub const InputDomain = base.InputDomain;
 pub const OutputFieldEffect = base.OutputFieldEffect;
@@ -23,6 +28,7 @@ pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
 pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
+pub const StorageObservationConflict = base.StorageObservationConflict;
 pub const OpaqueOwnershipConsumption = base.OpaqueOwnershipConsumption;
 pub const StorageCapabilityUse = base.StorageCapabilityUse;
 pub const StorageCapabilityConflict = base.StorageCapabilityConflict;
@@ -111,7 +117,7 @@ pub const ValueFacts = struct {
     referenced_place: ?Place = null,
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
-    symbolic_pointees: []const graph.GlobalBindingId = &.{},
+    symbolic_pointees: []const SymbolicPointeeId = &.{},
     opaque_provenance: []const OpaqueProvenance = &.{},
     /// Concrete vtable method identities carried by a `Virtual` value. Keeping
     /// this in transient safety facts lets exact dispatch survive bindings and
@@ -203,7 +209,32 @@ pub const Tracker = struct {
     /// Cloned branch states share identities, never reuse another branch's ID.
     pub const RootNamespace = struct {
         next_id: u32 = 0,
+        next_symbolic_id: u32 = 0,
+        next_capability_id: u32 = 0,
+        projected_storage: std.ArrayList(struct {
+            parent: SymbolicPointeeId,
+            parent_generation: ValidityRootId,
+            projection: Projection,
+            identity: SymbolicPointeeId,
+            backing: ValidityRootId,
+            generation: ValidityRootId,
+            ty: ?graph.GlobalTypeId = null,
+        }) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
+
+        /// Independent session candidates copy allocation state; branches of
+        /// one proof still share it. Immutable Place paths retain their arena.
+        pub fn clone(self: *const RootNamespace, allocator: std.mem.Allocator) !RootNamespace {
+            var result = self.*;
+            result.initial_storage = try self.initial_storage.clone(allocator);
+            errdefer result.initial_storage.deinit(allocator);
+            result.projected_storage = try self.projected_storage.clone(allocator);
+            return result;
+        }
+        pub fn deinit(self: *RootNamespace, allocator: std.mem.Allocator) void {
+            self.initial_storage.deinit(allocator);
+            self.projected_storage.deinit(allocator);
+        }
     };
     namespace: ?*RootNamespace = null,
     allocator: std.mem.Allocator,
@@ -223,11 +254,12 @@ pub const Tracker = struct {
             .fresh => blk: {
                 const index = if (self.namespace) |namespace| identity: {
                     const next = namespace.next_id;
-                    namespace.next_id += 1;
+                    if (next == std.math.maxInt(u32)) return error.SafetyRootIdentityLimit;
                     break :identity next;
                 } else @as(u32, @intCast(self.roots.items.len));
                 const id: ValidityRootId = @enumFromInt(index);
                 try self.materialize(id);
+                if (self.namespace) |namespace| namespace.next_id += 1;
                 break :blk id;
             },
         };
@@ -237,9 +269,10 @@ pub const Tracker = struct {
     /// a generation already observed and ended on this path.
     pub fn materialize(self: *Tracker, id: ValidityRootId) !void {
         const index = @intFromEnum(id);
+        try self.roots.ensureTotalCapacity(index + 1);
         while (self.roots.items.len <= index) {
             const absent: ValidityRootId = @enumFromInt(self.roots.items.len);
-            try self.roots.append(.{ .id = absent, .state = .dead, .present = false });
+            self.roots.appendAssumeCapacity(.{ .id = absent, .state = .dead, .present = false });
         }
         if (!self.roots.items[index].present) self.roots.items[index] = .{ .id = id };
     }
@@ -330,4 +363,108 @@ test "empty safety values retain explicit scalar and structural facts" {
     try std.testing.expect(!isEmptyValue(ValueEffect{ .input_places = &.{.{ .input_index = 0 }} }));
     try std.testing.expect(!isEmptyValue(ValueEffect{ .input_storage_capabilities = &.{.{ .input_index = 0 }} }));
     try std.testing.expect(!isEmptyValue(ValueEffect{ .fields = &.{.{ .index = 0, .value = &empty_value_effect }} }));
+}
+
+fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var original: Tracker.RootNamespace = .{ .next_id = 2 };
+    defer original.deinit(a);
+    try original.initial_storage.append(a, .{ .storage = .{ .root = @enumFromInt(3) }, .root = @enumFromInt(1) });
+    original.next_symbolic_id = 4;
+    original.next_capability_id = 7;
+    try original.projected_storage.append(a, .{
+        .parent = @enumFromInt(0),
+        .parent_generation = @enumFromInt(1),
+        .projection = .{ .field = 0 },
+        .identity = @enumFromInt(3),
+        .backing = @enumFromInt(0),
+        .generation = @enumFromInt(1),
+    });
+    var candidate = try original.clone(allocator);
+    defer candidate.deinit(allocator);
+    var tracker = Tracker.init(allocator);
+    defer tracker.deinit();
+    tracker.namespace = &candidate;
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(try tracker.establish(.fresh)));
+    candidate.initial_storage.items[0].root = @enumFromInt(2);
+    candidate.projected_storage.items[0].projection = .{ .variant = 2 };
+    candidate.next_symbolic_id = 5;
+    candidate.next_capability_id = 8;
+    try std.testing.expect(original.projected_storage.items[0].projection.eql(.{ .field = 0 }));
+    try std.testing.expectEqual(@as(u32, 4), original.next_symbolic_id);
+    try std.testing.expectEqual(@as(u32, 7), original.next_capability_id);
+    try std.testing.expectEqual(@as(u32, 2), original.next_id);
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(original.initial_storage.items[0].root));
+    try std.testing.expectEqual(@as(u32, 3), candidate.next_id);
+}
+
+test "safety root namespaces fork candidate identities without changing accepted state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneRootNamespace, .{});
+}
+
+test "safety root identity exhaustion cannot wrap into retained roots" {
+    var namespace: Tracker.RootNamespace = .{ .next_id = std.math.maxInt(u32) };
+    var tracker = Tracker.init(std.testing.allocator);
+    defer tracker.deinit();
+    tracker.namespace = &namespace;
+    try std.testing.expectError(error.SafetyRootIdentityLimit, tracker.establish(.fresh));
+    try std.testing.expectEqual(std.math.maxInt(u32), namespace.next_id);
+    try std.testing.expectEqual(@as(usize, 0), tracker.roots.items.len);
+}
+
+/// Immutable fact fragments borrow the caller's proof allocation region.
+pub fn replaceValueRoots(
+    allocator: std.mem.Allocator,
+    value: ValueFacts,
+    sources: []const ValidityRootId,
+    replacement: ValidityRootId,
+) !ValueFacts {
+    var result = value;
+    var dependencies = std.array_list.Managed(ValidityDependency).init(allocator);
+    for (value.dependencies) |dependency| {
+        const next = if (std.mem.indexOfScalar(ValidityRootId, sources, dependency.root) != null) replacement else dependency.root;
+        var present = false;
+        for (dependencies.items) |entry| if (entry.root == next) {
+            present = true;
+            break;
+        };
+        if (!present) try dependencies.append(.{ .root = next });
+    }
+    result.dependencies = try dependencies.toOwnedSlice();
+    var owned_roots = std.array_list.Managed(ValidityRootId).init(allocator);
+    for (value.owned_roots) |root| {
+        const next = if (std.mem.indexOfScalar(ValidityRootId, sources, root) != null) replacement else root;
+        if (std.mem.indexOfScalar(ValidityRootId, owned_roots.items, next) == null) try owned_roots.append(next);
+    }
+    result.owned_roots = try owned_roots.toOwnedSlice();
+    const fields = try allocator.alloc(FieldFacts, value.fields.len);
+    for (value.fields, 0..) |field, index| {
+        const stored = try allocator.create(ValueFacts);
+        stored.* = try replaceValueRoots(allocator, field.value.*, sources, replacement);
+        fields[index] = .{ .index = field.index, .value = stored };
+    }
+    result.fields = fields;
+    const variants = try allocator.alloc(VariantFacts, value.variants.len);
+    for (value.variants, 0..) |variant, index| {
+        const stored = try allocator.create(ValueFacts);
+        stored.* = try replaceValueRoots(allocator, variant.value.*, sources, replacement);
+        variants[index] = .{ .index = variant.index, .value = stored };
+    }
+    result.variants = variants;
+    return result;
+}
+
+test "Safety root materialization does not publish partial gaps on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn materialize(a: std.mem.Allocator) !void {
+            var tracker = Tracker.init(a);
+            defer tracker.deinit();
+            tracker.materialize(@enumFromInt(67)) catch |err| {
+                try std.testing.expectEqual(@as(usize, 0), tracker.roots.items.len);
+                return err;
+            };
+            try std.testing.expect(tracker.isAlive(@enumFromInt(67)));
+            for (tracker.roots.items[0..67]) |root| try std.testing.expect(!root.present);
+        }
+    }.materialize, .{});
 }

@@ -1,15 +1,23 @@
 -- Assertions specialize diagnostics within one operation identity.
 TestEquality#(.Value: Type): Contract = (
-    .check_equal : (.expected: Value, .actual: Value, .message: StringView) -> (
-        .result : Errable#(Void, (..test_failed))
-    )
+    .check_equal : (
+        .expected     : Value,
+        .actual       : Value,
+        .message      : StringView,
+        .error_tracer : $&Virtual#(ErrorTracer)
+    ) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed))))
 )
 
 implement#(.Value: Type) TestEquality#(Value) (.check_equal = _assert_equal_generic)
 
-expect_equal#(.Value: Type: TestEquality#(Value)) := (
-    .expected: Value, .actual: Value, .message: StringView = ""
-) -> (.result: Errable#(Void, (..test_failed))) {
+expect_equal_with_trace := #(.Value: Type: TestEquality#(Value)) (
+    .expected     : Value,
+    .actual       : Value,
+    .message      : StringView              = "",
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
+    assume error_tracer
+
     result = TestEquality#(
         Value
     ).check_equal(.expected = expected, .actual = actual, .message = message)
@@ -19,7 +27,7 @@ _TestNumericDiagnostic#(.Value: Type): Contract = (
     .append_number : (.self: $&_TestDiagnostic, .value: Value) -> ()
 )
 
-_testing_append_number#(.Value: Type: _TestNumericDiagnostic#(Value)) := (
+_testing_append_number := #(.Value: Type: _TestNumericDiagnostic#(Value)) (
     .self: $&_TestDiagnostic, .value: Value
 ) -> () {
     _TestNumericDiagnostic#(Value).append_number(.self = self, .value = value)
@@ -85,8 +93,13 @@ implement _TestTextEquality#(StringView) ()
 
 implement _TestTextEquality#(&String) ()
 
-expect_equal_strings#(.Value: Type: _TestTextEquality#(Value)) := (
-    .expected: Value, .actual: Value, .message: StringView = ""
-) -> (.result: Errable#(Void, (..test_failed))) {
-    result = expect_equal(.expected = expected, .actual = actual, .message = message)
+expect_equal_strings_with_trace := #(.Value: Type: _TestTextEquality#(Value)) (
+    .expected     : Value,
+    .actual       : Value,
+    .message      : StringView              = "",
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> (.result: Errable#(Void, (..test_failed), ErrorWithTrace#((..test_failed)))) {
+    assume error_tracer
+
+    result = expect_equal_with_trace(.expected = expected, .actual = actual, .message = message)
 }

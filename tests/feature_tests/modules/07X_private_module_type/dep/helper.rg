@@ -1,3 +1,3 @@
-_HiddenStatus : Type = (
-    .code: Int32
+_HiddenStatus := (
+    .code : Int32
 )

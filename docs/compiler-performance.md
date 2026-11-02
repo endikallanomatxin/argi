@@ -1,0 +1,1660 @@
+# Measuring compiler frontend performance
+
+## Native CAD cleanup flag generation
+
+The `usage_model_builder` construction example exhausted a 4 GiB address-space
+limit while LLVM generated ancestor cleanup flags. Clearing each projected field
+recomputed completeness by loading all sibling flags, repeating those scans at
+each enclosing aggregate. A cleared descendant now marks its ancestors incomplete
+directly. Initialization still checks siblings before restoring complete-owner
+cleanup, and choice discriminant flags remain independent.
+
+With a ReleaseSafe compiler on Linux x86-64, the original command aborted after
+46.41 s at 3,559,316 KiB peak RSS. After the correction it compiled and executed
+successfully in 53.85 s at 1,867,228 KiB peak RSS under the same address-space
+limit. The failed baseline is not a completed compilation timing comparison.
+These are single observations, not statistical benchmarks.
+
+```sh
+zig build -Doptimize=ReleaseSafe -j1
+/usr/bin/time -v timeout 240s zsh -c \
+  'ulimit -v 4194304; exec ./zig-out/bin/argi test more/engineering/cad/_examples/construction --filter usage_model_builder'
+```
+
+The LLVM unit regression clears every child of a 64-field record and bounds the
+generated instruction count linearly in its width. It failed before the fix and
+passes afterward, alongside the existing cleanup tests.
+
+All four construction examples also pass together with `--filter usage_` under
+the same limit: 208.59 s elapsed and 2,050,828 KiB peak RSS. The filter restricts
+the run to construction examples. At measurement time, unfiltered CLI discovery
+also collected tests from imported modules; discovery now restricts tests to the
+requested module.
+
+## Reclaimable CLI frontend storage
+
+The CLI previously supplied its command-wide arena to `FrontendPipeline`.
+Resolver rollback, summary reevaluation and per-body Safety teardown called
+`free`, but the arena retained their backing allocations until command exit.
+The frontend now uses a reclaimable allocator; command arguments, sources and
+diagnostics retain their separate command lifetime. Existing per-body and
+per-evaluation arenas still define fact lifetimes. No checking roots or Safety
+rules change.
+
+A protected Linux x86-64 ReleaseSafe comparison used the CAD construction
+`tetrahedron_test.rg` with production geometry/storage/topology sources only.
+The isolated source tree omitted colocated development tests from dependencies;
+the same tree was checked by both binaries with `--stats --frontend-jobs 1`.
+Each process had a 2 GiB cgroup limit with swap disabled.
+
+| Measurement | Command-arena frontend | Reclaimable frontend |
+|---|---:|---:|
+| Peak process RSS (KiB, `/usr/bin/time -v`) | 1,752,508 | 220,056 |
+| Frontend elapsed (ms) | 2,362.722 | 2,045.188 |
+| Summary evaluations | 2,789 | 2,789 |
+| Checked functions | 1,600 | 1,600 |
+| Checked calls | 4,137 | 4,137 |
+| State clones | 25,352 | 25,352 |
+| State elements copied | 24,471,466 | 24,471,466 |
+
+These are individual observations, not a statistical timing comparison. Requested
+allocation bytes differ because resize/remap can now reclaim or reuse storage;
+they are not a measure of retained live facts. Four construction examples checked
+together with the corrected allocator peaked at 205,668 KiB and completed in
+5.20 s of frontend work. This does not establish a bound for exhaustive CAD tests.
+
+To reproduce, copy CAD `geometry`, `storage` and `topology` to a temporary sibling
+module tree, omitting `*_test.rg`. Put the construction test in a fourth module
+with `g := import("../geometry")` and `t := import("../topology")`, then run:
+
+```sh
+/usr/bin/time -v argi check <temporary-tree>/construction --stats --frontend-jobs 1
+```
+
+### Complete CAD topology validation
+
+Generic input inference now gathers evidence from typed arguments before
+contextualizing literals. An earlier choice literal no longer blocks a reason
+type supplied by a later Errable argument; numeric literal defaults also defer
+to concrete types supplied by other inputs. No CAD assertions were annotated,
+omitted or disabled to unblock the check.
+
+The full working-tree workload previously reported above 15 GiB now completes:
+
+```sh
+/usr/bin/time -v ./zig-out/bin/argi check more/engineering/cad/topology \
+    --stats --frontend-jobs 1
+```
+
+Both runs below used the complete module and imported development tests, a
+2 GiB process-group limit and disabled swap. ReleaseSafe reported 29 module-cache
+misses and zero hits.
+
+| Measurement | Debug | ReleaseSafe |
+|---|---:|---:|
+| Frontend elapsed (ms) | 111,691.797 | 31,807.125 |
+| GlobalSema (ms) | 39,559.231 | 7,867.340 |
+| Safety (ms) | 70,931.319 | 23,668.566 |
+| Peak process RSS (KiB, `/usr/bin/time -v`) | 444,036 | 426,416 |
+| Checked functions | 3,562 | 3,562 |
+| Summary evaluations | 6,311 | 6,311 |
+
+The ReleaseSafe run checked 42,316 calls and cloned 357,567 Safety states,
+copying 369,673,716 state elements. Safety remains the largest measured cost.
+The historical memory figure is not a same-revision controlled baseline: the
+older compiler did not complete this workload under the current limit.
+
+`argi check` validates all function bodies and Safety; it does not execute every
+CAD test. The formerly blocking contour-region test was also executed natively
+in isolation with production dependencies, and passed. Type/signature validation
+passed 83 focused internal tests, including contextual choice and numeric inputs.
+Another 104 contract and nominal-diagnostic checks passed.
+
+### Safety joins and remaining work
+
+Three checker paths cloned a destination immediately before `joinState`:
+loop fixed-point iterations, concrete loop transfers and symbolic variant
+cleanup. The join constructs a fresh result before replacing its destination,
+so those destinations can start empty. This preserves the input states and
+the existing allocation-failure behavior without copying discarded tables.
+
+The same complete CAD check, using ReleaseSafe, one frontend worker, a 2 GiB
+limit and no swap, produced the following observations:
+
+| Measurement | Before | Empty join destinations |
+|---|---:|---:|
+| State clones | 357,567 | 351,327 |
+| State elements copied | 369,673,716 | 364,820,614 |
+| State copy time (ms) | 4,159.342 | 3,772.704 |
+| Safety elapsed (ms) | 23,668.566 | 21,717.692 |
+| Peak process RSS (KiB) | 426,416 | 426,272 |
+
+Both runs checked 3,562 functions and 42,316 calls, with 6,311 summary
+evaluations and 3,147 summary changes. The deterministic reduction is 6,240
+clones and 4,853,102 copied elements. These single-run timings do not establish
+the speedup: summary inference and GlobalSema also ran faster despite being
+unchanged. This removes unnecessary work but does not resolve the main cost.
+
+Summary inference accounts for 8.85 s in the original run, including 6.07 s
+for capabilities, almost entirely capability-flow traversal. Its flow clones
+are separate from the checker clone counters above. One concrete opportunity
+was the loop-entry snapshot: it copied bindings, addresses, calls and conflicts,
+although the subsequent comparison only reads capability counts. Both `while`
+and `for` now copy only those counts, before evaluating the condition (and after
+the initializer for `for`). The independent body flow and loop widening rules
+are unchanged.
+
+On the same complete workload, this reduced requested summary allocation bytes
+from 8,744,919,142 to 8,735,710,704, a reduction of 9,208,438 bytes. These are
+cumulative allocator requests, not retained memory. Summary evaluations, changes,
+checked functions/calls and checker clone counters were identical. Capability
+flow took 5,832.541 ms versus 5,651.336 ms in the preceding run; peak RSS was
+426,352 versus 426,272 KiB. There is no demonstrated timing or peak-memory
+improvement. Keep this as removal of unused snapshot data, not as an explanation
+of the capability-flow bottleneck. Before a broader change, break down time by
+function and by flow cloning, value-effect reconstruction and joins.
+
+Do not remove summary self-dependencies merely to reduce evaluations. Functions
+with outputs reuse their previous output approximation; recursive calls also
+record dependencies. Eliminating the confirmation pass requires proving which
+summary dimensions no longer depend on that approximation. Call candidates
+likewise retain transactional state copies to preserve the caller when checking
+adds a diagnostic. Any broader reduction must preserve that isolation and OOM
+behavior, rather than replacing copies with unchecked in-place mutation.
+
+### Shared summary subtrees and completed capability flows
+
+A temporary probe measured capability joins and outermost capability-value
+queries per function evaluation. Evaluations exceeding 5 ms accounted for
+5,165.962 ms across 172 evaluations of 112 functions: joins took 4,089.624 ms
+and value queries 71.343 ms. These are instrumented, partially inclusive
+timings, not a disjoint accounting of the whole pass. The probe was removed
+after locating the cost; it adds no persistent resolver state.
+
+Branch flows already share immutable `ValueEffect` trees. Equality now skips
+shared field, variant and domain-value slices and shared child pointers, while
+still comparing their lengths, projection identities and all envelope facts.
+Distinct trees retain recursive comparison. This avoids repeatedly descending
+unchanged nested records during joins without hashes or an equality cache.
+
+Completed match and cleanup flows now transfer their tables into the destination
+instead of copying or joining a flow with itself. A function with no earlier
+exit also uses its fallthrough directly instead of cloning it into an exit
+accumulator. Actual branch combinations and earlier exits still use joins.
+
+With the same complete CAD workload and resource limits:
+
+| Measurement | Count-only loop snapshots | Shared subtrees and flow transfers |
+|---|---:|---:|
+| Capability flow (ms) | 5,832.541 | 3,505.755 |
+| Summary inference (ms) | 8,565.533 | 6,194.770 |
+| Safety elapsed (ms) | 22,291.407 | 19,919.323 |
+| Requested summary allocation bytes | 8,735,710,704 | 8,713,930,068 |
+| Peak process RSS (KiB) | 426,352 | 426,400 |
+
+Both runs retained 6,311 summary evaluations, 3,147 summary changes, 3,562
+checked functions and 42,316 checked calls. Checker clone counters were also
+unchanged. These observations show a substantially lower capability-flow cost;
+they do not establish a peak-memory reduction or attribute the gain separately
+to equality and flow transfers.
+
+A second run completed with 3,531.242 ms of capability flow, 6,248.381 ms
+of summary inference and 20,441.444 ms of Safety, with identical semantic and
+allocation counters. The lower capability-flow cost repeated; overall timings
+still vary between runs.
+
+Validation passed 87 focused Debug internal tests, including shared-subtree
+equality, summaries, loops and allocation failures. Direct native/VM executions
+of partial-choice and failed-choice-construction cleanup both returned their
+expected status 42. Nested nominal choice cleanup passed natively, and capability
+reuse in loop bodies and conditions retained its expected rejection. Compiling
+the broader ReleaseSafe fixture runner exceeded its 3 GiB cgroup limit, including
+a narrower retry; those runner invocations did not complete. Direct fixture
+checks and CAD used separate 2 GiB limits without increasing the memory budget.
+
+Follow-up runner validation completed under the original 3 GiB limit with swap
+disabled. The narrower `storage_capability`/`loop_owned_generation` selection
+rebuilt both Argi and the ReleaseSafe runner, passed 25 tests and peaked at
+2.5 GiB for the process group. The broader `storage_capability`, `cleanup`,
+`loop`, `match` and `292_test_equality_specialization` selection then rebuilt
+its runner and passed all 188 tests, with no skips, failures, leaks or error
+logs. Its process-group peak was 2,199,388,160 bytes (about 2.05 GiB).
+Both runs used `-j1 -Dtest-jobs=1`. The earlier OOM did not reproduce; these
+results close the missing focused fixture validation, not a full-suite or
+multiplatform gate. No runner change or increased memory allowance was needed.
+
+
+## Interactive latency windows
+
+The execution benchmark reports `# latency` rows at 10, 100, 1,000 and the final
+command. Each row contains the command count, number of commands since the
+previous sample, median, nearest-rank p95 and maximum submission time in ms.
+Windows are disjoint: the 100-command row measures commands 11–100, allowing
+later session latency to be compared with its initial commands. Submission time
+includes frontend/publication, lowering, verification and execution; source
+generation and sample sorting are outside the timer. Reset-cycle workloads keep
+their separate report.
+
+Samples use benchmark-only backing outside the session memory account (eight
+bytes per command). Reported session memory therefore remains comparable with
+earlier runs. Run measurements without concurrent tests; these percentiles are
+observations, not acceptance budgets or statistically established guarantees.
+
+## Checked resource-session teardown
+
+An isolated Linux x86-64 ReleaseSafe acceptance run on 2026-10-30 exposed a
+teardown failure: `execution-benchmark 1000 prelude resources 1024` completed all
+submissions with 250.403 MiB retained, then exceeded its 1 GiB tracking limit
+while Safety cloned the state for another selected destructor. Bytecode lowering,
+verification and execution had not started. The failing arena requested another
+410,305,566 bytes after retaining 1,051,364,009 bytes.
+
+Mutable branch tables now use reclaimable backing independently of immutable
+proof facts. Shared namespace entries and opaque root sets keep their proof
+lifetime; freeing a branch must not release facts retained by another branch.
+The same workload now closes successfully, peaks at 286.640 MiB including
+cleanup, and releases all tracked backing on destruction. Cleanup takes
+799.962 ms, including 37.817 ms lowering, 73.769 ms verification and 30.000 ms
+execution. The remaining time includes frontend preparation and Safety.
+
+The command workload itself takes 17,081 ms versus 16,776 ms in the failing
+baseline. This is a memory/lifetime correction, not a throughput claim.
+Isolated controls using the same build also complete checked cleanup:
+
+| Prelude workload | Commands | Final-window p50 / p95 ms | Peak MiB including cleanup | Cleanup ms |
+|---|---:|---:|---:|---:|
+| Reused calls | 1,000 | 6.532 / 7.066 | 161.611 | 13.544 |
+| Persistent resources | 1,000 | 18.400 / 23.219 | 286.640 | 799.962 |
+| New definitions | 1,000 | 4.168 / 4.560 | 156.243 | 13.401 |
+| Rejected submissions | 1,000 | 3.978 / 4.448 | 145.785 | 11.474 |
+
+Rejected submissions retain 144.593 MiB after setup's 144.587 MiB; semantic graph
+payload and live VM backing stay unchanged. These are single-run observations,
+not portable latency guarantees. Reports now include a separate `# cleanup`
+row on success or failure and an allocation-limit trace at the first denied
+allocation. Completed submissions alone do not constitute an acceptance pass.
+
+Logs: `.zig-cache/repl-resource-cleanup-{failure,fixed}.csv` and
+`.zig-cache/repl-release-fixed-{calls,definitions,rejections}.csv`.
+
+The final reference rerun enforces a 512 MiB ceiling with the same four
+1,000-command workloads. Every workload completes checked close and releases
+all tracked backing on destruction:
+
+| Prelude workload | Final-window p95 ms | Peak MiB including cleanup | Cleanup ms |
+|---|---:|---:|---:|
+| Reused calls | 6.894 | 161.611 | 13.930 |
+| Persistent resources | 23.415 | 286.640 | 780.065 |
+| New definitions | 4.451 | 156.243 | 13.153 |
+| Rejected submissions | 4.101 | 145.785 | 10.945 |
+
+Logs: `.zig-cache/release-budget-{calls,resources,definitions,rejections}.csv`.
+
+The 10,000-command rejection control also passes under 512 MiB. Retained
+backing stays at 144.593 MiB from command 1,000 through 10,000, with unchanged
+graph payload and live VM backing. Commands 1,001–10,000 have p95 4.448 ms;
+checked close takes 11.419 ms, peak backing is 145.785 MiB, and destruction
+releases every tracked byte. Log: `.zig-cache/release-budget-rejections-long.csv`.
+
+## One sweep for reference types
+
+Address and dereference type materialization now share one node-ordered scan.
+Both derive results from operand types; the fixed point still revisits old nodes
+when later contextual information changes them. There is no retained candidate
+list, completion cache or new rollback state. CLI timings and resolution profiles
+report the combined phase as `reference_types`.
+
+An isolated Linux x86-64 ReleaseSafe comparison of 1,000 prelude calls, using
+`execution-benchmark 1000 prelude calls 1024 --resolution-profile`:
+
+| Metric | Separate sweeps | Combined sweep |
+|---|---:|---:|
+| Reference node visits | 155,565,854 | 77,782,927 |
+| Reference materialization ms | 314.289 | 211.701 |
+| Fixed-point rounds | 3,001 | 3,001 |
+| Frontend/publication ms | 5,716.273 | 5,622.005 |
+| Total ms | 6,398.002 | 6,298.979 |
+| Tracked live / peak MiB | 159.847 / 160.228 | 159.847 / 160.228 |
+
+The visit reduction is exact for this workload; the timing improvement is one
+paired observation, not a general compilation-speed guarantee. Both versions
+produce the same body/reuse counts, and neither reference phase changes nodes
+during these commands. Late completion, retyping, convergence and transactional
+restoration remain covered independently by the reference materialization test.
+
+Logs: `.zig-cache/reference-sweep-{before,after}.csv`.
+
+## Reusing verifier operand scratch
+
+Structural checks and definite-initialization propagation now share one temporary
+operand list per function. Each instruction clears its length, retaining only
+the buffer capacity; the function's exit frees it on success or failure. This
+removes per-instruction allocations without caching analysis results or changing
+the initialization worklist and its intersections.
+
+Three alternating isolated Linux x86-64 ReleaseSafe runs of the existing
+`execution-benchmark --verifier` control, before/after this change:
+
+| Shape | Slots | Median before ms | Median after ms | Requested bytes before / after | Peak bytes before / after |
+|---|---:|---:|---:|---:|---:|
+| Linear | 1,000 | 2.368 | 1.911 | 25,421 / 25,289 | 25,289 / 25,289 |
+| Diamonds | 1,000 | 60.983 | 39.001 | 3,341,561 / 3,077,429 | 2,077,429 / 2,077,429 |
+
+Every run retained zero bytes. Timing varies (the after diamond runs ranged
+from 21.044 to 40.265 ms), so this is a verifier microbenchmark improvement,
+not a measured reduction in total compilation time. Join-state storage still
+dominates the peak and is unchanged.
+
+Logs: `.zig-cache/verifier-scratch-{before,after}.csv` and their `-2`/`-3`
+repetitions. All 114 bytecode internal tests pass, including allocation-failure
+and initialization-join coverage.
+
+## Repeated decimal parsing in the VM
+
+The `float_parsing` execution scenario repeatedly parses `"42.0"` as Float64
+and checks the result, without retaining numbered results or new user bindings.
+Use `core` or `prelude`; the latter supplies persistent tracing assumptions.
+
+```sh
+zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 10 prelude float_parsing 1024
+zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 100 prelude float_parsing 1024
+```
+
+An isolated Linux x86-64 ReleaseSafe run after `46b05ca6e` with this benchmark
+addition completed 53 commands before the 54th hit the unchanged 1,000,000-cell
+execution quota. This is an expected reproduction of a limitation, not a passing
+100-command benchmark. A separate ten-command run completed with clean teardown.
+
+| Point | Runtime arena bytes | Aggregate cells requested | Projection cells requested |
+|---|---:|---:|---:|
+| Prelude/setup | 1,861,748 | 8,253 | 9 |
+| 10 commands | 18,340,884 | 188,993 | 1,400 |
+| Failure during command 54 | 102,766,470 | 977,798 | 7,468 |
+
+At failure, charged storage was 999,877 cells with 8,999 frame identities.
+The aggregate counter accounts for about 98% of that charge. Counters are
+cumulative successful payload requests, not a complete liveness analysis.
+At ten commands, visible backing remained the prelude's 4,119 aggregate cells,
+one projection and 352 virtual-descriptor bytes. Retired frame slot buffers were
+484,968 bytes versus 367,928 at setup; they do not explain the arena growth.
+
+`Storage.update` reconstructs immutable aggregate paths, and `readPartial`
+materializes immutable snapshots. The `aggregate-sources` rows separate these
+successful requests. In a follow-up ten-command run, updates requested 175,440
+cells (about 97% of the 180,740 aggregate cells added after setup), while partial
+snapshot requests stayed at their setup count of four. Immutable path updates,
+not repeated partial reads, dominate this workload.
+This reproducer belongs with aggregate reclamation, rather than a larger quota
+or a float-specific execution exception. External `Vm.invoke` results and all
+other roots still require a lifetime policy before collection is safe.
+
+Logs: `.zig-cache/float-parsing-retention-fixed.csv` and
+`.zig-cache/float-parsing-retention-10.csv`; source attribution is in
+`.zig-cache/float-parsing-attribution.csv`. Failure output includes quota,
+frame, arena and payload counters for any execution benchmark scenario.
+
+### Reserved local aggregate storage
+
+Following the attribution above, local record/array initializers now reserve the
+existing occupancy-cell representation before publishing their complete value.
+Complete slot writes retain that storage. Projected writes split immutable values
+into the reserved cells, while whole-value reads still materialize independent
+snapshots. No snapshot is mutated, and frame identities remain unique. Session
+publication also checks occupancy before allowing initialization again.
+
+Isolated Linux x86-64 ReleaseSafe runs, unchanged execution quotas:
+
+| Prelude scenario | Commands | Before runtime arena bytes | After runtime arena bytes | Before execution ms | After execution ms |
+|---|---:|---:|---:|---:|---:|
+| Float parsing | 10 | 18,340,884 | 1,861,748 | 15.215 | 7.374 |
+| Scalar calls | 100 | 1,861,748 | 1,861,748 | 0.400 | 0.440 |
+| Persistent resources | 100 | 6,802,106 | 3,833,640 | 54.873 | 94.069 |
+
+Float parsing completes 100 commands with a 6,884,916-byte runtime arena and
+1,000 with 67,656,672 bytes; previously it failed during command 54. Update
+allocations are zero at both points, and partial snapshot requests remain four.
+Other immutable values, paths and identity metadata still accumulate: this is
+not garbage collection or a claim that retained memory is bounded indefinitely.
+
+Reserved cells have a cost. The resource control adds roughly 39 ms of execution
+in this sample despite reducing arena retention; total time changes from 964.834
+to 991.411 ms. Scalar-call totals are 566.858 and 566.605 ms. These single-run
+controls expose the tradeoff, not statistically established throughput results.
+Avoid a separate mutation analysis solely to remove these small reservations
+without evidence that it would simplify or materially improve real workloads.
+
+At this measurement the full native float-parsing fixture stopped at the
+unchanged instruction quota rather than memory quota. See the exact decimal
+normalization follow-up below for its subsequent VM acceptance coverage.
+The bounded `execution/02_floating_point_vm` fixture parses all three IEEE widths
+and rejects malformed input in native execution, VM execution and its existing
+`#run` probe, without increasing either budget.
+Logs: `.zig-cache/mutable-aggregate-float-{100,1000}.csv`,
+`.zig-cache/mutable-storage-{calls,resources}-{before,after}.csv`, and
+`.zig-cache/mutable-storage-float-fixture.log`.
+
+## Replacing a live aggregate
+
+The retained VM API borrows input envelopes only for the invocation and copies
+their value data into context storage. Results returned by `Vm.invoke` and
+`invokeExpression`, including immutable aggregate snapshots, remain borrowed
+from that context until reset, destruction or a fresh `run`/`runExpression`.
+Later retained invocations preserve earlier results. A fresh run can receive
+the previous result as input: it copies that input before freeing old backing.
+With a shared context, destroying one VM does not destroy the context; program
+and graph metadata must still outlive values that depend on it. References in
+returned values obey target validity separately; snapshot lifetime grants no
+permission to access dead storage. Any collector must preserve external results
+under this contract rather than tracing only live language frames.
+
+The `aggregates` execution scenario repeatedly assigns the result of one reused
+function to a single `[16]Int32` session binding. It creates no numbered results
+or additional user bindings. Every sample checks that the retained array has
+16 elements, all equal to 42. Use it alongside the scalar `calls` control:
+
+```sh
+./zig-out/bin/execution-benchmark 1000 minimal aggregates 1024
+./zig-out/bin/execution-benchmark 1000 minimal calls 1024
+./zig-out/bin/execution-benchmark 10000 minimal aggregates 1024
+```
+
+Isolated Linux x86-64 ReleaseSafe runs after `8613c01e3`, with no concurrent
+builds or suites:
+
+| Scenario | Commands | Total ms | Retained MiB | Runtime arena bytes | Visible aggregate cells |
+|---|---:|---:|---:|---:|---:|
+| Aggregates | 1,000 | 533.492 | 17.812 | 1,768,084 | 16 |
+| Scalar calls | 1,000 | 479.037 | 16.184 | 1,780 | 0 |
+| Aggregates | 10,000 | 34,824.530 | 182.333 | 14,057,702 | 16 |
+
+The aggregate run requests 16,033 complete aggregate cells and 17,017 partial
+storage cells at 1,000 commands; at 10,000 these become 160,033 and 170,017.
+These counters are cumulative allocation traffic, not live bytes. Visible backing
+counts inspect live frames and nested values, not all possible external roots;
+they are not a proof that the rest of the arena can be freed. Dead frame slots
+remain bounded at 1,848 bytes while identity metadata grows to 2,080,312 bytes
+at 10,000 commands. Both completed aggregate runs pass final teardown with zero
+requested bytes retained.
+
+This demonstrates immutable payload retention under replacement independently
+of growing user results. It does not establish a safe reclamation algorithm.
+Any implementation must preserve external results, references, cross-frame
+writes, partial/acquired storage and virtual descriptors. Much of the long-run
+time is frontend/publication (34,131.414 ms); payload reclamation alone would
+not address that cost. The first interrupted long run had no completion status
+and is excluded; the repeated long run completed with exit status zero.
+
+### Current retention attribution
+
+A serial Linux x86-64 ReleaseSafe investigation at `0e8bc4fac` separates accepted
+command history from aggregate retention. Each process had a 512 MiB requested
+backing limit, a 2 GiB address-space limit, and a 90 or 120 second timeout.
+No other benchmark, build, or test suite ran concurrently. These are individual
+diagnostic samples; the memory totals count requested session backing, not RSS.
+
+| Minimal workload | Retained MiB at 1,000 commands | Retained MiB at 10,000 commands | Total time at 10,000 (ms) |
+|---|---:|---:|---:|
+| Replace one scalar | 14.039 | 147.787 | 22,004.369 |
+| Reuse one scalar function | 15.368 | 159.966 | 28,869.549 |
+| Replace one 16-element array | 16.997 | 173.344 | 30,143.873 |
+| Reject an invalid command | 0.036 | 0.037 | 1,235.383 |
+
+The array/call difference is 13.378 MiB. Their VM arena capacities differ by
+13.405 MiB (14,057,702 versus 1,780 bytes). After successful checked close, both
+retain about 157.85 MiB outside the cleared VM context. Thus the dominant growth
+also exists without aggregate snapshots; this does not establish which snapshots
+could safely be reclaimed while execution remains active.
+
+`--graph-pools` now also emits `# ownership` records. At 10,000 scalar calls:
+
+| Independently owned backing | MiB |
+|---|---:|
+| Source-owned ModuleSG objects | 18.391 |
+| Source staging descriptor array | 25.830 |
+| Semantic session descriptor array | 25.830 |
+| Source ModuleSG pool capacities and directory strings | 25.103 |
+| Published bytecode arenas | 27.352 |
+| Submitted-source arenas | 13.644 |
+| GlobalSG direct/construction pool capacities | 9.949 |
+
+Each ModuleSG descriptor is 1,928 bytes. The three descriptor owners total
+70.050 MiB and borrow the same underlying module pools, which are counted once
+through their source owners. This is partial attribution: logical payload
+columns overlap the corresponding reserved pool columns and must not be added.
+Lookup tables, nested allocations, descriptor-list metadata, arena headers and
+other caches are not a complete additive census. The separate frame identity
+metric is logical payload, not its vector's reserved capacity: 2,080,208 bytes
+at 10,000 calls. Temporal proof arenas remain about 0.001 MiB, with one summary
+and one body-proof cache entry in this control. Global safety arena capacity is
+zero in the minimal workload.
+
+The regular submission path passes the semantic session's descriptor prefix to
+`Sources.appendModuleViews`. Because that prefix belongs to a different array,
+the staging helper copies the entire prefix before appending the new descriptor;
+the semantic session subsequently appends only the new suffix into its own
+array. For the two initial modules and 10,000 measured calls, the staging copies
+alone imply 50,015,000 descriptor copies, or 96.429 decimal GB of cumulative
+traffic. This is a calculation from the code, not retained memory or a measured
+share of elapsed time. Reusing or replacing the staging interface must preserve
+rollback, imports, staged selections and stable module identities.
+
+A separate resolution-profile run reports 6,027,011 visits each for binding,
+expression and reference type propagation at 1,000 commands, and 600,270,011
+each at 10,000, with zero changed passes. This corroborates quadratic work beyond
+descriptor copies. The unprofiled scalar-call workload spends 28,213.988 of
+28,869.549 ms in frontend/publication. Profile phase times are inclusive and
+overlap; they are not additive attribution.
+
+The result is also visible with the real REPL prelude: 1,000 scalar calls grow
+requested backing from 124.461 to 140.029 MiB while VM arena capacity stays at
+1,858,662 bytes. A 1,000-cycle minimal reset control returns to exactly 8,336
+requested bytes after every cycle. Every reported process completed checked
+close and destruction with zero tracked backing remaining.
+
+The first optimization target is accepted-command publication and duplicated
+module descriptors, followed by redundant frontend scans. VM reclamation remains
+a separate task with external-result and reference-lifetime obligations. None of
+these measurements justifies freeing storage based only on the live-frame scan.
+
+Reproduce the ownership records with:
+
+```sh
+zig build build-execution-benchmark -Doptimize=ReleaseSafe -j1
+./zig-out/bin/execution-benchmark 10000 minimal calls 512 --graph-pools
+./zig-out/bin/execution-benchmark 10000 minimal aggregates 512 --graph-pools
+./zig-out/bin/execution-benchmark 10000 minimal calls 512 --graph-pools --resolution-profile
+```
+
+Raw controls, ownership samples, profiles and process accounting:
+`.zig-cache/repl-growth-20261102/`. Adding the read-only ownership counters left
+the requested-byte totals unchanged in repeated 1,000/10,000-command controls.
+
+### Suffix-only command publication
+
+Command preparation now sends only new modules to the retained semantic session.
+Definitions, ordinary commands, imports, selected fragments and checked exit use
+the same suffix path. The source coordinator no longer stores a full descriptor
+staging array; immutable ModuleSG contents stay source-owned, and the semantic
+session keeps its own descriptor index. Existing full-prefix construction APIs
+normalize their input to a suffix without changing accepted identities.
+
+Two serial alternating ReleaseSafe samples on the same host compare the retained
+pre-change benchmark binary with the suffix implementation. Each sample executes
+10,000 minimal scalar calls under the preceding investigation's limits:
+
+| Measurement | Full-prefix staging | Suffix publication |
+|---|---:|---:|
+| Total elapsed samples (ms) | 28,965.377 / 30,002.725 | 21,846.506 / 21,775.995 |
+| Mean elapsed (ms) | 29,484.051 | 21,811.251 |
+| Retained session backing (MiB) | 159.966 | 134.137 |
+| Source staging descriptor backing (bytes) | 27,084,544 | 0 |
+
+These paired observations show about 26% less elapsed time and 16% less retained
+backing. They are a small local comparison, not a cross-platform throughput
+guarantee. The 25.830 MiB memory reduction is the removed staging allocation;
+the source-owned objects and the semantic index still have separate roles.
+No VM payload reclamation or semantic history compaction is involved.
+
+The allocator regression publishes 65 commands with source allocations capped at
+64 KiB per request. It fails in the old staging vector's capacity growth and
+passes after removing that vector. Additional tests cover suffix rollback,
+fragment namespaces, source-owner stability, and a selected conditional import
+that stages a dependency before rejection and then succeeds on retry. The
+1,000-command scalar/array/update/rejection controls and 1,000 healthy reset
+cycles also complete, with reset returning to the same 8,336-byte baseline.
+With the real prelude, the 1,000-call endpoint drops from 140.029 to 137.892 MiB;
+VM arena capacity remains 1,858,662 bytes. This small single-run prelude timing
+difference is not evidence of a general short-session speedup.
+
+Raw A/B samples and process accounting: `.zig-cache/repl-suffix-20261102/`.
+
+## Repeated healthy reset cycles
+
+The `resets` scenario measures complete work/reset cycles rather than a growing
+command history. Run with no concurrent suites or benchmarks:
+
+```sh
+./zig-out/bin/execution-benchmark 1000 minimal resets 512
+./zig-out/bin/execution-benchmark 1000 prelude resets 1024
+```
+
+Each cycle defines a function, retains a value and a reference, evaluates two
+numbered results across a rejected command, then resets. Prelude cycles also
+retain a String owner. Rejection must preserve the graph checkpoint and revision;
+reset must restore pool lengths, source-module count and result numbering.
+Arena addresses are not compared across reset because their owners are replaced.
+The existing teardown check requires zero retained requested bytes after closing
+and releasing the whole benchmark.
+
+`# resets` rows report cumulative workload time, its frontend/lowering/verification/
+execution breakdown, separate reset time, initial/post-reset requested bytes,
+post-reset minimum/maximum and whole-run peak. Setup and the first baseline reset
+are outside timings; reset time includes cleanup and prelude reconstruction.
+Requested backing bytes include retained prepared core data and arena capacity;
+they are not RSS. `--graph-pools` describes the final reset state;
+`--resolution-profile` is unsupported for this scenario.
+
+Single ReleaseSafe runs on Linux x86-64, with no concurrent suite or benchmark:
+
+| Mode | Cycles | Work ms | Reset ms | Post-reset bytes | Peak bytes |
+|---|---:|---:|---:|---:|---:|
+| Minimal | 10 | 16.5 | 4.3 | 8,576 | 124,693 |
+| Minimal | 100 | 163.6 | 39.2 | 8,576 | 124,693 |
+| Minimal | 1000 | 748.9 | 146.5 | 8,576 | 124,693 |
+| Prelude | 10 | 518.6 | 1,108.9 | 132,275,309 | 138,282,362 |
+| Prelude | 100 | 5,278.1 | 11,476.5 | 132,275,309 | 138,282,362 |
+| Prelude | 1000 | 53,508.3 | 117,485.9 | 132,275,309 | 138,282,362 |
+
+Every observed post-reset value, including the minimum and maximum over all
+1,000 cycles, equals its baseline: 8,576 bytes minimal and 132,275,309 bytes with
+prelude. Both runs pass the teardown check. A 10-cycle core-only control also
+returns to its 125,606,880-byte baseline, and the ordinary calls control passes.
+These are lifecycle and retention baselines, not a before/after speed comparison
+or evidence about poisoned resets, allocation failures, or unbounded workloads.
+
+## Resolution baseline after compiler consolidation
+
+Single instrumented ReleaseSafe runs on Linux x86-64 at `9ae716638`, using
+`execution-benchmark N prelude calls 1024 --resolution-profile`. No test suite
+ran concurrently. Times are cumulative command-loop measurements; initial
+prelude preparation is outside them. These are a current baseline, not a
+controlled comparison against earlier Debug measurements.
+
+| Commands | Total ms | Frontend/publication ms | Lowering ms | Verification ms | Execution ms | Retained MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| 10 | 61.6 | 55.9 | 2.9 | 2.8 | 0.05 | 126.342 |
+| 100 | 626.1 | 564.3 | 30.0 | 31.4 | 0.53 | 127.687 |
+| 1,000 | 7,331.6 | 6,610.8 | 373.1 | 341.0 | 6.78 | 142.378 |
+
+The 1,000-command profile records 3,001 fixed-point rounds. Assignment
+contextualization visits 151.6 million outer entries and takes 493.6 ms without
+reporting a change: typed literals account for 278.4 ms, initializers 43.7 ms,
+and writes 171.3 ms. Binding/expression type propagation takes 332.5/307.2 ms,
+also without changes. Pending-work checkpoints take 69.8 ms; global unit
+verification takes 353.9 ms. Inclusive pass timings overlap and must not be
+added to frontend time.
+
+Frontend/publication remains the main cost. These observations support examining
+repeated contextualization and propagation before adding caches or changing the
+scheduler. They do not attribute all frontend time to those sweeps, prove a
+particular complexity bound, or measure improvement from ordered-field lookup.
+Retained memory includes the prelude (126.145 MiB before commands).
+
+Raw local logs: `.zig-cache/current-resolution-prelude-{10,100,1000}.csv`.
+
+## Contextualization within an execution unit
+
+Literal and write contextualization now select candidates from the unit's existing
+reachable-node set. Candidates are rebuilt each round and sorted by node ID, so
+older nodes completed by new facts remain eligible without a persistent cache.
+Initializer contextualization retains its full binding scan; compilation without
+a closed unit retains the full node scans.
+
+Three alternating ReleaseSafe runs of `execution-benchmark 1000 prelude calls
+1024`, comparing `e3aa998f5` with this change on Linux x86-64, measured:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Median total command-loop time | 6,459.6 ms | 6,166.7 ms |
+| Total time range | 6,418.2–6,469.3 ms | 6,146.3–6,233.3 ms |
+| Median frontend/publication time | 5,800.4 ms | 5,504.2 ms |
+| Retained memory after 1,000 commands | 142.378 MiB | 142.378 MiB |
+
+Both binaries ran from the installed binary directory against the same core
+bundle, with no concurrent test suite. Initial prelude preparation is excluded.
+The median total improvement is 4.5% for this workload, not a general compilation
+speedup claim.
+
+Separate instrumented runs reduced assignment-context visits from 151,559,519
+to 9,763,257 and inclusive time from 469.3 to 78.4 ms. This includes candidate
+discovery and the unchanged initializer scan. Typed-literal and write visits
+each fell from 71,897,966 to 170,057; fixed-point rounds remained 3,001.
+
+Raw local logs: `.zig-cache/context-unit-controlled-{base,new}-{1,2,3}.csv`,
+`.zig-cache/context-candidates-before-profile.csv`, and
+`.zig-cache/context-unit-after-profile.csv`.
+
+An earlier attempt rebuilt literal/write candidate lists by scanning the entire
+graph once, replacing two full node scans. It reduced outer visits from 151.6
+million to about 93.6 million, but inclusive contextualization time increased
+from 469.3 to 519.3 ms. A pointer-iteration variant measured 522.8 ms. Unprofiled
+total timings did not establish a consistent improvement, so both were discarded.
+Fewer counted visits alone did not offset candidate discovery and allocation.
+The retained change instead limits discovery to the existing unit dependency set.
+These exploratory single-run timings are not controlled throughput comparisons.
+Local logs: `.zig-cache/context-candidates-after-{profile,throughput}.csv` and
+`.zig-cache/context-candidates-pointer-{profile,throughput}.csv`.
+
+Build the compiler and benchmark tool before measuring, with no test suite active:
+
+```sh
+zig build -Doptimize=ReleaseSafe install build-frontend-benchmark -j16
+zig build -Doptimize=ReleaseSafe benchmark-frontend -- MODULE 12 1
+zig build -Doptimize=ReleaseSafe benchmark-frontend -- MODULE 12 8
+```
+
+The optional arguments after the module select iteration and frontend worker
+counts. The benchmark compares fresh and reused in-memory frontend work and edits;
+source collection, LLVM code generation, and native linking are outside its timings.
+Use the same sources, target, optimization mode, and machine load when comparing.
+
+CLI builds persist canonical module snapshots in `.argi-cache/frontend/`.
+`--no-cache` bypasses this reuse; `--stats` reports reuse. Global semantics, safety,
+and code generation still run. Measure complete CLI builds separately from the
+in-memory frontend benchmark.
+
+In-memory snapshots own their storage independently of source collection arenas.
+Compilations hold leases on immutable completed modules, so cache replacement or
+eviction does not invalidate active consumers. Releasing the last lease frees the
+snapshot arena. This lifetime model supports arbitrary source edits; it does not
+depend on append-only REPL publication.
+
+The cache build identity follows literal Zig imports from `src/main.zig` and
+hashes embedded files as data. It also includes `build.zig`, the fingerprint
+implementation and the LLVM bridge header. Unreachable source files do not affect
+that identity; imported files remain included regardless of their names, even
+when the import appears in a test declaration. Computed dependency paths fail
+explicitly instead of being omitted. Paths are normalized relative to the
+checkout, and traversal scratch is released after each parsed file.
+
+## Generic specialization workload
+
+The execution benchmark supports `specializations` and `specialization_reuse`.
+Both call the same parameterized function containing 32 locals and conditional
+writes. Its integer compile-time tag does not affect its body. The first scenario
+uses a different tag per command; the second always uses zero. Compare them with
+`branches` for the ordinary-function control. This is a deliberately unfavorable
+case for duplicated specialization work, not a representative application.
+
+```sh
+./zig-out/bin/execution-benchmark 100 minimal specialization_reuse 1024
+./zig-out/bin/execution-benchmark 100 minimal specializations 1024
+```
+
+Three alternating, isolated ReleaseSafe runs on Linux x86-64 after `fabe4490b`
+measured the following at 100 commands. Setup and teardown are excluded; each
+run verifies the retained value, exact instance count and zero tracked backing
+after teardown. These compare workloads, not compiler versions.
+
+| Measurement | Reuse one instance | Create 100 instances |
+|---|---:|---:|
+| Median total time | 34.0 ms | 591.4 ms |
+| Total time range | 33.8–34.1 ms | 574.1–618.6 ms |
+| Median frontend/publication | 28.3 ms | 348.4 ms |
+| Median lowering | 1.6 ms | 45.9 ms |
+| Median bytecode verification | 2.9 ms | 194.4 ms |
+| Retained backing | 1.915 MiB | 19.509 MiB |
+| Semantic graph pool payload | 0.112 MiB | 3.315 MiB |
+| Executable arenas | 0.416 MiB | 14.311 MiB |
+| Graph nodes / bindings | 966 / 36 | 46,308 / 3,402 |
+| Bodies checked / reused | 1 / 99 | 100 / 0 |
+
+`# specializations` rows report commands, matching generic instances, their
+top-level body statement count, and total graph nodes/bindings/types. Top-level
+statements do not count nested expression nodes. Existing graph-pool and phase
+profiles provide separate attribution; neither measures the fraction of a body
+that could safely be shared.
+
+In separate instrumented 100-command runs, fresh instances spent 110.2 ms in
+resolution and 252.1 ms in checking, versus 11.2/10.1 ms for reuse. Binding and
+expression propagation each visited 7.0 million entries without changes, versus
+0.22 million for reuse. Inclusive phase times overlap. The 1,000-command runs
+also completed with exactly 1,000/one instances and successful teardown; their
+timings are excluded from this controlled comparison.
+
+The evidence confirms retained per-instance semantic and executable work, and
+effective reuse of an existing instance. It does not establish that shared
+semantic subtrees would be a net improvement: fixed signatures, Safety proofs
+and bytecode remain specialization-specific. First investigate repeated global
+propagation and checking cost; require another measurement before adding a
+sharing or invalidation mechanism.
+
+Local logs: `.zig-cache/specialization-reuse-isolated-{1,2,3}.csv`,
+`.zig-cache/specializations-isolated-{1,2,3}.csv`,
+`.zig-cache/{specialization-reuse,specializations}-profile.csv` and
+`.zig-cache/{specialization-reuse,specializations}-long.csv`.
+
+An attempted extension of unit-scoped contextualization to expression type
+propagation was discarded before timing. It rebuilt sorted candidates from the
+current reachable-node set, while retaining global binding inference. Existing
+REPL tests for writes into partially initialized choice payloads then failed:
+ownership finalization reached a pointer assignment whose pointer still lacked
+a type. The sibling-cleanup exit test failed as well. Thus execution reachability
+alone is not a sufficient completion frontier for this earlier propagation pass.
+Any future work must account for pending semantic operations and ownership's
+requirements, not simply filter completed graph nodes. No candidate cache or
+reachability workaround was retained. Local reproduction output is in
+`.zig-cache/unit-propagation-tests.log`.
+
+## Frontend workers
+
+`--frontend-jobs auto` uses half the detected logical CPU count, rounded down,
+with a minimum of one and a maximum of eight. CPU-query failure selects one.
+Explicit counts from 1 to 256 override this policy. CPU detection is not a global
+scheduler and does not guarantee detection of CPU quotas.
+
+Only independent module discovery and local semantic lowering use these workers.
+Parsing, cache acquisition/publication, global semantics, safety, and codegen stay
+serial. Cache hits create no worker task; zero or one dirty module runs serially.
+Worker count does not affect cache identity or language behavior.
+
+Use `--frontend-jobs 1` when an outer runner schedules many compiler processes.
+Program fixtures and `argi test` already select one frontend worker; dedicated
+concurrency tests explicitly override it. Frontend workers and the regression
+suite's `-Dtest-jobs` process workers are separate controls.
+
+When changing concurrency, compare graphs, diagnostics, emitted LLVM, and program
+results between serial and parallel runs. Include failing modules, cache reuse,
+and worker cleanup. See [compiler testing](../CONTRIBUTING.md#compiler-tests).
+
+## Incremental resolution profile
+
+Build `zig build build-execution-benchmark -j2` with no active test suite, then run:
+
+```sh
+./zig-out/bin/execution-benchmark 1000 minimal calls 1024 --resolution-profile
+./zig-out/bin/execution-benchmark 1000 minimal rejections 1024 --resolution-profile
+./zig-out/bin/execution-benchmark 100 prelude calls 1024 --resolution-profile
+```
+
+The optional `# resolution` rows report cumulative pass calls, outer pool entries
+visited, passes returning a change, inclusive milliseconds and fixed-point rounds.
+Nested type/effect traversals are not counted as extra pool visits. Timings can
+nest: global verification is inside completion, and materialization can recurse.
+Do not add inclusive columns to estimate total time. Counters live outside semantic
+transactions so rejected/speculative work remains visible. Normal compilation has
+no profile collector. Use unprofiled runs for throughput comparisons.
+
+Debug observations on Linux x86-64, based on `develop` `9a2cb9f1` plus this
+instrumentation, with a 1,024 MiB tracked allocation limit:
+
+| Session | Commands | Frontend/publication ms | Six pool passes ms | Global verification ms | Pending checkpoint ms |
+|---|---:|---:|---:|---:|---:|
+| Minimal / calls | 10 | 43.2 | 0.7 | 0.3 | 0.05 |
+| Minimal / calls | 100 | 462.4 | 32.8 | 21.0 | 0.31 |
+| Minimal / calls | 1,000 | 23,303.6 | 2,752.0 | 9,447.7 | 3.00 |
+| Minimal / rejections | 1,000 | 2,432.9 | 23.7 | 0 | 2.56 |
+| Prelude / calls | 100 | 22,850.3 | 3,275.7 | 984.4 | 37.72 |
+
+The six passes cover binding types, assignment values, dereferences, addresses,
+generic types and error-reason candidates. The 1,000 accepted minimal calls visit
+33,673,566 outer entries across these passes without any of them returning a
+change. Their 1,000 checkpoints copy just one pending entry in total; the prelude
+case copies 622,201 entries across 100 checkpoints. Queue copying is not the main
+cost in either measured workload.
+
+Global verification is a stronger candidate in growing minimal sessions than
+these six scans alone. Core/prelude sessions have a different cost distribution:
+completion takes 11.38 s, resolution 7.20 s and checking 1.50 s across 100 commands.
+These are diagnostic observations, not attribution to individual inner routines.
+Profile verification components and remaining completion work before changing
+validation boundaries or introducing new caches.
+
+### Ordered module ownership lookup
+
+`moduleForDeclaration` now searches the existing ordered physical declaration
+ranges with binary search. It allocates no index and does not canonicalize source
+fragments into their namespace owners. Graph partition validation still runs
+before verifier symbol checks; no verification is skipped or cached.
+
+A same-session Debug comparison on Linux x86-64, rebuilding the benchmark with
+only that lookup changed (same profile instrumentation and workloads):
+
+| Workload | Linear lookup total ms | Binary lookup total ms | Linear global verification ms | Binary global verification ms |
+|---|---:|---:|---:|---:|
+| 1,000 minimal calls | 25,529 | 17,090 | 9,839 | 1,163 |
+| 100 prelude calls | 29,110 | 30,190 | 952 | 906 |
+
+The minimal workload's total falls about 33%, and its global verification about
+88%. Retained memory, pool visits, completed bodies and reuse counters are
+unchanged. The prelude workload shows no end-to-end improvement in these single
+runs; its verification cost is a small part of the total. Do not extrapolate the
+minimal-session speedup to core-heavy programs. Raw run logs are local under
+`.zig-cache/module-lookup-{baseline-,}{minimal,prelude}-calls.csv`.
+
+Next investigate the remaining resolution/completion work in core-heavy sessions
+and the other accumulated verifier traversals. This change addresses repeated
+linear module ownership searches, not general incremental verification.
+
+### Constraint validation without unused substitutions
+
+The optional resolution profile also separates generic function/type constraints,
+participant conformance validation, virtual registry closure and choice annotations.
+In a Debug run of 100 calls with the prelude, generic function constraint checking
+used 1,682 ms. Skipping substitution-environment allocation for signatures with no
+constraints reduced that phase to 391 ms in a subsequent run. Constrained signatures
+still bind arguments and check every constraint; no validated-state cache is added.
+These are individual instrumented observations, not a cross-platform throughput claim.
+The allocation-failure regression proves unconstrained functions/types can be checked
+without allocating substitutions. Rejection and late-specialization fixtures retain
+coverage of constrained functions and later evidence.
+
+### Diagnose relevant node kinds before testing reachability
+
+Completion profiling now separates input and value diagnostics. In a Debug
+100-call prelude session these groups initially took 5,190 ms and 2,925 ms.
+Filtering by the diagnostic's node kinds before consulting the selected-unit hash
+set reduced value diagnostics to 668 ms in a subsequent run. The contract/runtime
+binding check also now rejects ordinary types before searching every function's
+input/output bindings for the interface exception. With both changes, the groups
+measured 423 ms and 792 ms respectively. Graph iteration and diagnostic order stay
+unchanged; every relevant selected node still receives the same checks. No state,
+cache, or validation exemption is added. The observations are individual Debug
+runs, not stable throughput guarantees.
+
+The first array-diagnostic filter accidentally omitted standalone typed record
+and array literals. Those node kinds are restored. A direct regression fails with
+the incomplete filter and checks selected literals without declarations or
+assignments, recursive dimensions and corrected valid values. Repeating the
+100-call prelude measurement with that fix gives 536 ms for input diagnostics and
+658 ms for value diagnostics. Earlier prefilter timings are historical observations,
+not evidence that the incomplete filter preserved validation coverage.
+
+Keep the distinction between candidate filtering and validation caching: the
+former removes work that cannot affect a result, while the latter would need
+explicit dependencies and rollback rules.
+
+### Temporary reachability marks
+
+The resolution profile now also times pending operations, published bodies,
+text-literal and field-access types, error result refresh, propagated reached
+inputs and reachability expansion. The reached-input phase was subsequently
+removed together with `reach`. The additional entries report timings and
+change counts; their pool-visit counters remain zero unless explicitly counted.
+
+Reachability expansion accounted for 2,095 ms of 7,306 ms of resolution in a
+Debug 100-call prelude session. Each traversal rebuilt two temporary hash tables
+for visited function/node IDs. Those IDs index fixed pools while the traversal
+borrows the graph read-only, so temporary bitsets replace the hash tables. The
+retained executable selections remain sparse maps. Fresh marks on every traversal
+preserve late body completion, newly resolved calls and recursive dependencies;
+no cross-command cache or rollback state is added.
+
+The baseline is `develop` `78aaaa9f` plus the expanded profile counters; the
+comparison changes only the temporary traversal marks.
+
+For comparisons, keep both benchmark executables in the same directory and use
+the same core tree: executable-relative installed core takes precedence over the
+development fallback. The paired runs below use binaries in `.zig-cache/`, so
+both load the repository core. These are individual profiled Debug runs, not a
+statistical throughput comparison. The retained graph and fixed-point rounds
+must agree before attributing timing differences to traversal changes.
+
+| Session | Commands | Reachability before ms | After ms | Frontend/publication before ms | After ms | Retained MiB, both |
+|---|---:|---:|---:|---:|---:|---:|
+| Prelude | 10 | 202.8 | 103.2 | 1,362.0 | 1,406.1 | 100.755 |
+| Prelude | 100 | 2,094.6 | 981.5 | 14,264.5 | 13,450.2 | 102.133 |
+| Prelude | 1,000 | 22,873.3 | 10,914.3 | 159,717.4 | 143,177.2 | 119.032 |
+| Minimal | 10 | 10.8 | 6.6 | 47.9 | 37.7 | 0.237 |
+| Minimal | 100 | 106.8 | 62.6 | 490.2 | 351.0 | 1.732 |
+| Minimal | 1,000 | 2,467.2 | 1,916.7 | 13,124.0 | 11,354.8 | 18.107 |
+
+Pass calls, pool visits, fixed-point rounds, compiled bodies/instructions and
+Safety reuse counters agree across each pair. Retained memory is identical;
+1,000-command tracked peaks are 119.373/119.375 MiB for prelude and
+18.123/18.125 MiB for minimal. The prelude startup peak is slightly higher with
+bitsets (103.815/104.305 MiB); dense marks cover whole pools even in sparse
+traversals. Reachability improves consistently in these samples, while other
+phase timings vary, including slower frontend/publication at ten prelude calls.
+Do not interpret the aggregate differences as an isolated traversal speedup.
+
+Logs: `.zig-cache/frontend-{before,after}-visits-minimal-1000.csv`,
+`.zig-cache/frontend-before-visits-prelude-1000.csv` and
+`.zig-cache/frontend-after-visits-source-prelude-1000.csv`. These cover the
+10/100/1,000 milestones in one cumulative session per workload and revision.
+
+### Pending generic representations within resolution
+
+Generic materialization now distinguishes a completed representation from one
+that is still pending (including a deferred compile-time evaluation or a defining
+module not yet available). During one `advanceResolution` call, a local worklist
+retains generic candidates and old unresolved type slots, discovers appended
+types, and retires completed candidates. It does not survive the resolution call
+or add checkpoint state. Setup retains its allocation-free full scan. Binding
+and expression type propagation, the outer fixed point and final graph
+verification are unchanged.
+
+Paired profiled Debug runs against `e2832c63`, using binaries in `.zig-cache/`
+and the same repository core:
+
+| Workload | Commands | Generic visits before | After | Generic ms before | After |
+|---|---:|---:|---:|---:|---:|
+| Prelude calls | 10 | 181,440 | 93,376 | 70.4 | 42.4 |
+| Prelude calls | 100 | 1,792,620 | 942,346 | 666.1 | 397.3 |
+| Minimal calls | 100 | 22,205 | 11,099 | 1.36 | 0.89 |
+| Minimal calls | 1,000 | 2,022,005 | 1,010,999 | 105.1 | 57.6 |
+
+Visits now count initial discovery plus candidate attempts, rather than full-pool
+visits on every round. Retained graph, bytecode, Safety counters, memory and
+fixed-point rounds agree. Frontend/publication for 100 prelude calls was
+14,314/13,766 ms; for 1,000 minimal calls it was 14,068/14,115 ms. This is a
+localized improvement, not a demonstrated overall throughput gain. An earlier
+baseline measured 557 ms for the prelude generic pass, illustrating run variation.
+Logs: `.zig-cache/generic-pending-{repeat-before,status}-prelude-100.csv` and
+`.zig-cache/generic-pending-{before,status}-minimal-1000.csv`.
+
+### Binding inference and expression propagation
+
+The binding-type profile now separates `binding_initializers` from
+`expression_types`. Their visits sum to the existing `binding_types` counter;
+its time includes both. Initializers are still inferred before the expression
+sweep, and expressions retain node order. Already typed expressions are revisited
+because later contextualization can change operand types. Independently typed
+record literals, binding initializers and writes share one completion rule.
+Nested lists are retried when their operands become compatible, even if their
+parent record already has its nominal type; complete values stop reporting
+changes. The assignment sweep follows expression propagation for this reason.
+
+Arithmetic propagation skips coercion and representation queries when both
+operands and the result already carry the same resolved type ID. A later operand
+type change takes the ordinary path again. No worklist or completion cache is
+introduced for expressions.
+
+ReleaseSafe observations at `b2c450bd0` on Linux x86-64, using the installed
+core from the same checkout and a 1,024 MiB tracked allocation limit:
+
+| Session | Total ms at 10 / 100 / 1,000 commands | Retained MiB at 1,000 |
+|---|---:|---:|
+| Minimal calls | 4.7 / 43.5 / 499.1 | 16.194 |
+| Prelude calls | 60.6 / 605.3 / 6,941.3 | 167.735 |
+| Minimal bindings | 1.5 / 19.5 / 909.1 | 14.258 |
+| Prelude bindings | 70.1 / 720.5 / 8,626.5 | 165.784 |
+| Prelude rejections | 53.0 / 512.2 / 5,547.5 | 151.456 |
+
+These are single profiled runs, not a before/after throughput comparison. Startup
+and teardown are outside command timings. The rejected session retains 151.456
+MiB at all three milestones, has no published units and passes the benchmark's
+state-rollback and teardown-leak checks.
+
+Across 1,000 prelude calls, binding initializers cost 22.2 ms, expression
+propagation 284.2 ms and assignment contextualization 407.9 ms. Initializers
+visit 7.9 million entries without changes; they are nevertheless under 0.4% of
+frontend/publication time. A new binding worklist is not justified by this run.
+Expression and assignment work are stronger candidates, but their contextual
+types can change after initial completion. Preserve that behavior when reducing
+scans. Checkpointing costs 66.1 ms; full resolution costs 1,970.6 ms and completion
+1,191.1 ms, including 318.9 ms of graph verification. Inclusive times overlap.
+
+Growing live bindings have a different cost: in the minimal 1,000-binding run,
+checking costs 402.4 ms, including 143.2 ms for continuation fork and 215.5 ms for
+seal. Do not attribute that growth solely to semantic graph scans.
+
+Fresh one-worker CLI `build --stats --no-cache` runs also examined type interning:
+weighted regression reports 9.7 ms and 4.1 million candidates; word count reports
+19.8 ms and 8.7 million. Nominal requests account for 7.1/12.5 ms respectively.
+The candidate-by-tag counters classify the entries visited, not the requested
+type. These observations identify repeated searches; they do not establish the
+benefit of adding another persistent index. Reference interning must use identity
+rather than callable compatibility, retaining internal signature defaults.
+
+Logs: `.zig-cache/frontend-current-{minimal-calls,prelude-calls,minimal-bindings,prelude-bindings,prelude-rejections}-1000.csv`
+and `.zig-cache/frontend-current-{regression,word-count}-stats.log`.
+
+### Execution preparation and continuation publication
+
+The optional profile also separates `session_layout`, `bytecode_initialization`,
+`bytecode_lowering`, `bytecode_verification`, `vm_preparation`,
+`continuation_fork`, `continuation_seal` and `semantic_publication`. These remain
+`# resolution` rows for compatibility with the existing report. They are
+inclusive boundary timings; do not add them to their parent timings.
+Initialization includes cleanup metadata and lookup preparation, while lowering
+measures instruction/descriptor generation. Verification and VM preparation are
+separate. Fork precedes body checking; seal is inside checking. Publication
+includes committing semantic proofs and releasing the checked candidate.
+
+For 100 prelude calls before the cleanup-classification change, Debug measured
+3,019 ms initializing lowering, 26 ms generating bytecode and 3,078 ms verifying
+it. ReleaseSafe measured 187, 4 and 182 ms respectively. Both initialization and
+verification independently classify cleanup-owning types. The cost attributed
+to lowering was primarily preparation, rather than instruction generation.
+
+Ownership classification now discovers structural child ranges once per call
+and propagates only pending aggregate candidates, preserving discovery order,
+nominal equivalence and reference boundaries. Without selected destructor seeds,
+all ownership bits remain false. This scratch work belongs to one read-only
+classification; there is no cross-unit cache. Verification still computes its
+own classification rather than trusting lowering metadata.
+
+Paired ReleaseSafe profiles, using the repository core and a 1,024 MiB tracked
+allocation limit (`dfde6a60` plus boundary timers before the change):
+
+| Session | Commands | Initialization before/after ms | Verification before/after ms |
+|---|---:|---:|---:|
+| Prelude calls | 100 | 186.5 / 111.8 | 182.3 / 122.6 |
+| Prelude resources | 100 | 246.6 / 142.6 | 274.1 / 181.3 |
+| Minimal calls | 1,000 | 21.4 / 4.3 | 43.5 / 28.6 |
+| Minimal bindings | 1,000 | 122.7 / 93.7 | 39.1 / 19.5 |
+
+Emitting bytecode for 100 prelude calls costs 4.1/4.3 ms. Graph/bytecode and Safety
+reuse counters match, as do reported retained/peak memory. Rejected commands
+publish no executable unit in either version. Retained memory is 102.133 MiB for
+100 prelude calls, 145.689 MiB for 100 resource commands and 16.106 MiB for 1,000
+minimal bindings; these are tracked allocations, not process RSS.
+
+One profiled prelude run had a slower total despite faster preparation, due to
+frontend variation. Separate unprofiled A/B/B/A runs (two samples per binary)
+gave mean cumulative times of 1,994.6/1,866.1 ms for 100 prelude calls and
+3,280.9/3,046.9 ms for 100 prelude resource commands. This is a local observation,
+not a general throughput guarantee. Both saved executables reside in
+`.zig-cache/` so core resolution and optimization modes agree.
+
+Continuation copying depends strongly on live state. Before the change, fork
+and seal together cost 7.4 ms for 100 prelude calls, but 853.7 ms for 1,000
+minimal bindings (327.7 ms fork, 526.0 ms seal) out of 2,696.2 ms total. With the
+cleanup change the latter remains 830.5 ms out of 2,555.0 ms. This warrants a
+separate investigation of continuation facts and persistent session layouts;
+it does not show that function-summary/body-proof caches should be merged.
+
+Logs: `.zig-cache/execution-boundaries-{before,after}-release-*.csv` and
+`.zig-cache/execution-throughput-{calls,resources}-*.csv`. Workloads include
+prelude calls/resources/rejections and minimal calls/bindings. All report the
+10/100 milestones, plus 1,000 for the minimal workloads. Initial core/prelude
+preparation and reset/teardown are outside the cumulative command timings.
+
+### Linear session-layout identity validation
+
+`session_layout.build` previously searched every preceding binding for each row.
+It now uses a temporary dense bitset keyed by validated global binding IDs. This
+preserves duplicate rejection (including static bindings), source order and
+cleanup selection; the bitset is not retained by executable units. Allocation
+failure tests cover construction and both invalid/duplicate input paths.
+
+Paired ReleaseSafe profiles with binaries in `.zig-cache/` and a 1,024 MiB limit:
+
+| Session | Commands | Layout before/after ms | Total before/after ms |
+|---|---:|---:|---:|
+| Minimal bindings | 100 | 1.091 / 0.884 | See cumulative logs |
+| Minimal bindings | 1,000 | 189.173 / 45.690 | 2,599.978 / 2,432.001 |
+| Prelude resources | 100 | 8.038 / 6.576 | 3,279.656 / 3,080.639 |
+
+These are individual instrumented runs, not statistical throughput estimates.
+The resource total varies mainly outside layout construction. Retained and peak
+tracked memory, compiled instructions and reuse counters match in paired runs:
+16.106/18.012 MiB for 1,000 bindings and 145.689/147.826 MiB for 100 resources.
+A 1,000-call control spends 1.681 ms in session layouts. The rejection control
+publishes no units and retains 100.660 MiB after 100 commands.
+
+The same reports distinguish retained frame identity metadata from slot backing.
+After 1,000 minimal calls, 2,001 dead frame identities occupy 208,208 bytes, while
+dead frame slots retain only 528 bytes. The 100-resource workload has 31,318 dead
+identities (3,622,528 identity bytes) and 405,680 dead slot bytes. Those figures do
+not justify changing identity lifetime or reclaiming storage through live
+references without a more specific workload. Verification costs 21.677 ms for
+1,000 bindings and 175.261 ms for 100 resources; join-state representation needs
+a branch-heavy workload before any change. Continuation fork/seal remains the
+larger binding-session cost and is a separate follow-up.
+
+Logs: `.zig-cache/session-layout-{before,after}-{bindings-1000,resources-100}.csv`,
+plus after-only calls and rejections controls. All command runs include the
+10/100 milestones; minimal runs also include 1,000.
+
+### Continuation publication and branch verification
+
+A continuation candidate now retains its parent proof and forks the parent's
+mutable tables directly into checking scratch. Previously it cloned those
+tables into the candidate arena, then immediately cloned them again into
+scratch and discarded the first copy. Publication still snapshots final facts
+into an independent proof arena; rejecting a candidate still leaves its parent
+unchanged. No historical chain or new persistent cache is introduced.
+
+`continuation_fork` now times that actual checking fork. The earlier timer
+covered the discarded candidate-arena copy while the second copy was included
+only in `checking`. Compare cumulative command timings rather than interpreting
+the boundary counters as two equivalent implementations of all copying work.
+
+The `branches` execution scenario calls a reusable Argi function with 32 local
+slots, 32 conditional writes and an outer branch. It reports ordinary reuse
+counters and separately re-verifies the published unit at each milestone,
+outside command timing. `# verifier` rows contain command count, cumulative
+requested allocation bytes, peak live bytes and bytes retained after this
+isolated verification. `--verifier` remains the synthetic linear/diamond
+comparison; it is not a substitute for the Argi workload.
+
+An attempted pointer-free bulk-copy path in fact snapshots did not improve the
+measured 1,000-binding seal time (515.5 ms versus 510.2 ms in the prior profile).
+That extra mechanism was discarded. Only the redundant whole-state fork was
+removed.
+
+A paired ReleaseSafe 1,000-binding run measured 2,368.0 ms before the fork change
+and 2,023.8 ms after it, with frontend/publication falling from 2,167.2 to
+1,814.8 ms. Retained memory remained 16.106 MiB; peak tracked allocations fell
+from 18.012 to 17.377 MiB. This is one instrumented comparison, not a general
+throughput guarantee. Both binaries use the repository core from `.zig-cache/`.
+The 1,000-call control completed in 1,138.7 ms with 999 body reuses. Across 1,000
+prelude rejections, retained allocations remained 100.660 MiB, with no published
+bytecode or additional dead frames.
+
+The real branch workload completed 1,000 calls with 999 body reuses. Re-verifying
+its published unit requested 860,383 bytes cumulatively, peaked at 21,974 live
+bytes, and retained zero bytes at every milestone. The synthetic 1,000-slot
+comparison peaked at 25,289 bytes for linear code and 2,077,429 bytes for 1,000
+diamonds; both retained zero. These results support keeping the current join
+representation rather than adding another cache or persistent verifier state.
+
+The default resource run reached its VM cell quota after 125 commands, retaining
+146.625 MiB with a 149.660 MiB tracked peak. This was `ExecutionMemoryLimit`, not
+an allocator failure or the benchmark's 1,024 MiB allocation limit. Investigation
+found that transferring a reusable call buffer charged its slots and flags
+again. Quota accounting now charges backing once and each fresh frame identity
+once; session preflight uses the same rule. This changes no reference identity,
+cleanup obligation or physical buffer lifetime. Tight-quota and allocation-failure
+tests cover transfer, rejection and preservation of the reusable buffer.
+
+Aggregate backing, rebuilt projections and immutable snapshots still belong to
+the execution arena. Ending a call does not prove that these are unreachable:
+results, session values and references can retain them. Reclaiming them requires
+an explicit distinction between temporary and published backing, including
+virtual descriptors and acquired storage, rather than resetting an invocation
+arena or reusing dead frame IDs. That is a concrete follow-up, not a reason to
+introduce reclamation into this change without lifetime evidence.
+
+Logs: `.zig-cache/continuation-single-fork-*.csv`,
+`.zig-cache/continuation-verifier-synthetic.csv`, and the focused
+`.zig-cache/retained-call-quota-internal.log`. The attempted bulk-copy control is
+`.zig-cache/continuation-bulk-only-bindings-1000.csv`.
+
+After correcting buffer charges, the same default-quota resource scenario stops
+after 478 commands, with 320.530 MiB retained and a 326.798 MiB tracked peak.
+The 100-command milestone still retains 145.689 MiB: correcting quota accounting
+is not physical memory reclamation. The default cell guard remains enabled; the
+attempted 1,000-resource run is deliberately reported as quota-limited, rather
+than as a completed throughput sample. Its bounded failure is recorded in
+`.zig-cache/retained-call-quota-resources-1000.csv`.
+
+Final unprofiled A/B/B/A 1,000-binding runs measured 2,368.5/2,242.7 ms before
+and 1,851.5/1,944.1 ms after these changes (means 2,305.6/1,897.8 ms, about 18%
+lower for this local workload). Logs are
+`.zig-cache/retained-call-quota-throughput-{before,after}.csv`. The final prelude
+call control completed 100 commands in 1,844.1 ms, retaining 102.133 MiB; the
+1,000-branch control retained the same 21,974-byte isolated verifier peak and
+zero verifier bytes after completion.
+
+Validation: the full Debug internal suite passed 980 tests with one skip before
+the quota correction. After that correction, 45 focused storage, acquisition,
+quota and allocation-failure tests passed. The complete ReleaseSafe program
+suite passed 2,362 tests with 11 optional skips, no failures and no leaks,
+including the real-terminal editor, native/VM, compile-time, rejected-command,
+reference, ownership and cleanup cases. Changed Zig files and the new aggregate
+diagnostic fixture pass their official format checks. Logs:
+`.zig-cache/overnight-final-{internal,programs}.log` and
+`.zig-cache/retained-call-quota-internal.log`.
+
+### Scoped execution scratch and resizable bookkeeping
+
+The next investigation separated allocations by lifetime rather than introducing
+a collector or a second ownership model:
+
+| Data | Owner and recovery |
+|---|---|
+| Call input and nested-result envelopes | One reusable execution buffer; its live capacity is charged and released on exit |
+| Captured write destinations | Active frame; freed on return or trap |
+| Partial initialization cells and tables | Mutable storage bookkeeping; cells are freed when a complete slot replaces them, call tables on return, session tables on reset |
+| Frame/region identity pools and lookup indexes | Context owner's allocator; old resized backing and teardown allocations can be reclaimed |
+| Public results, immutable aggregates, projections and virtual descriptors | At this stage, value arena until reset; the payload-reclamation follow-up below separates unreachable payloads from published results |
+
+IDs and their meanings do not change when pool backing moves. Dead frame IDs
+remain dead; reusing buffers does not reuse identities or transfer cleanup flags.
+Partial initialization uses the same allocation/release path for call and session
+storage. Complete materialized values remain independent arena-owned snapshots.
+Publishing a complete session value goes through the ordinary slot write, removing
+its previous partial representation only after copying and validation succeed.
+This prevents indirect reads from observing stale partial cells after publication;
+allocation failures preserve the old cells and their quota. It does not reclaim
+immutable snapshots or change public result lifetimes.
+The VM reserves its frame-stack capacity before constructing a frame, so failure
+to append cannot strand separately allocated captures. Failure/trap paths retire
+all active frames without running additional language cleanup.
+
+An optional `AllocationProfile` observes payload requests and transfer traffic.
+The execution benchmark prints `# transfers` (commands, call-input cells,
+nested-result cells, write-destination entries), `# backing` (commands,
+aggregate cells, partial cells, projection cells, virtual descriptor bytes), and
+`# visible-backing` (commands, aggregate cells, projection cells, virtual bytes
+observed from live frame values). Traffic includes subsequently freed backing.
+The live-frame walk does not follow references, and its slice-based counts do
+not identify whole allocations or externally retained invocation results. These
+rows are diagnostics, not a proof that any specific buffer can be reclaimed.
+The observer's scratch is outside session allocation accounting and command
+execution timing.
+
+A Debug 100-resource run attributed 69,614 call-input cells, 14,410 nested-result
+cells and 6,804 write-destination entries. After scoping those allocations and
+moving resizable bookkeeping out of the value arena, arena capacity fell from
+44,564,726 to 6,802,606 bytes. Total tracked retained memory fell from 145.689 to
+115.840 MiB (peak 147.682 to 117.107 MiB); the reduction is real, rather than only
+moving allocations outside the arena counter. Compiled instructions, dead frame
+count, live acquisitions, acquired bytes and body reuse counters matched.
+
+The final diagnostic run requested 31,158 aggregate cells, 36,640 partial cells,
+10,109 projection cells and 17,952 virtual descriptor bytes. Live-frame payload
+inspection observed 5,719 aggregate cells, one projection cell and the same
+17,952 virtual bytes. This motivates a later investigation of unused immutable
+payloads, with explicit publication/escape rules rather than freeing them just
+because a frame returns.
+
+CLI VM execution now receives the command owner's allocator, and compile-time
+execution receives the evaluator's supplied allocator rather than its local
+lowering arena. Lowering/code metadata retain their own batch lifetime. Actual
+physical recycling follows the allocator supplied by the owner; an embedder
+that deliberately supplies an arena retains its usual arena behavior. There is
+no hidden global-heap fallback, preserving allocation-failure injection.
+
+Debug attribution logs:
+`.zig-cache/runtime-transfers-{before,after}-resources-100.csv`.
+
+Final ReleaseSafe runs used the same repository core, a 1,024 MiB tracked limit
+and the default VM quotas. The 100-resource milestone reproduces the Debug
+memory figures: 115.840 MiB retained and a 117.107 MiB peak, versus
+145.689/147.682 MiB before. One thousand resources now complete rather than
+stopping at the old 478-command quota boundary: 233.783 MiB retained,
+251.384 MiB peak, 1,000 live acquisitions and 40,000 acquired bytes. No quota was
+raised. The cumulative transfer counts are 696,014 input cells, 144,010 nested
+output cells and 68,004 write-destination entries.
+
+A 1,000-call control retains 16.273 MiB instead of 18.107 MiB. Its value arena
+falls from 2,212,396 to 1,780 bytes, while 2,001 dead frame identities remain dead
+and reuse counters match. One thousand binding commands retain 14.561 MiB;
+one thousand prelude rejections remain at 100.611 MiB and publish no bytecode.
+
+Short unprofiled A/B/B/A runs do not establish a general throughput gain:
+
+| Workload | Before samples ms | After samples ms | Mean VM execution before/after ms |
+|---|---:|---:|---:|
+| 1,000 minimal calls | 1,317.4 / 1,325.3 | 1,331.5 / 1,242.1 | 9.27 / 8.17 |
+| 100 prelude resources | 3,567.1 / 3,065.6 | 3,440.4 / 3,657.9 | 216.91 / 213.72 |
+
+Resource total means increased about 7% in this small series, with substantial
+frontend variation; VM execution means are close. Debug execution is slower
+with individually freed bookkeeping because its backing allocator performs
+additional checking. The demonstrated result is lower retained memory and a
+larger useful workload within the existing quota, not an across-the-board speed
+claim. The 1,000-resource run takes about 60.4 s, of which 52.3 s is frontend and
+publication and 1.91 s is VM execution; frontend scalability remains a separate
+measured follow-up.
+
+Validation after the final allocator routing: 272 focused Debug internal tests
+passed, including allocation-failure sweeps, retained results, partial records,
+virtual dispatch, reset and pool relocation. The complete ReleaseSafe program
+suite passed 2,362 cases with 11 optional skips, no failures and no leaks. This
+includes native/VM and compile-time cases. The new bounded call test performs
+128 calls from one outer invocation, allocating write-destination tables without
+retaining every transport envelope. It also checks that an earlier public result
+still survives another invocation. Scratch
+allocation failures leave no unpublished frame/capture backing behind.
+
+Logs: `.zig-cache/runtime-transfers-{before,after}-*-release.csv`,
+`.zig-cache/runtime-transfers-throughput-*.csv`, and
+`.zig-cache/runtime-transfers-final-{internal,programs}.log`.
+
+### Current prelude control
+
+A fresh ReleaseSafe profile at `55680d64f` (Linux x86-64, current installed
+core, 1,024 MiB tracked allocation limit) gives these cumulative command times:
+
+| Session | Total ms at 10 / 100 / 1,000 commands | Retained MiB at 1,000 |
+|---|---:|---:|
+| Prelude calls | 61.2 / 600.9 / 7,148.5 | 144.075 |
+| Prelude bindings | 59.8 / 595.6 / 6,985.8 | 142.134 |
+
+These are individual instrumented observations, not a throughput A/B comparison.
+Startup and teardown are excluded. The initial retained state is about 127.8 MiB
+in both scenarios; command growth must be distinguished from that baseline.
+
+For 1,000 calls, assignment contextualization visits 155.6 million outer entries
+without reporting changes and takes 464.6 ms. Binding type materialization takes
+321.9 ms and expression propagation takes 297.5 ms. Resolution as a whole takes
+2,073.3 ms; frontend/publication takes 6,451.9 ms. Inclusive phase times overlap
+and must not be summed. Repeated scans remain a useful target, but their visit
+counts alone do not justify replacing the resolver or adding completion caches.
+
+With 1,000 live bindings, continuation fork/seal take 116.8/189.9 ms cumulatively.
+They remain more expensive than the call control, but do not dominate this
+prelude workload. Use these controls alongside minimal sessions before changing
+continuation state or work scheduling.
+
+Logs: `.zig-cache/frontend-current-prelude-profile.log` (100-call control),
+`.zig-cache/frontend-current-prelude-1000.csv`, and
+`.zig-cache/frontend-current-bindings-1000.csv`. Reproduce with
+`zig build benchmark-execution -Doptimize=ReleaseSafe -j16 -- 1000 prelude calls 1024 --resolution-profile`
+and substitute `bindings` for the second scenario. Benchmark rows are written to
+stderr; redirect that stream when collecting a report.
+
+Generic function constraints are now checked before an instance is published,
+through the same instantiation path used by ordinary and selected contract
+operations. Unit completion no longer reconstructs substitutions and reselects
+those constraints for every historical instance. Deferred body materialization
+keeps its already validated arguments. No validation frontier, extra cache or
+transaction state is needed; the `generic_function_constraints` profile phase
+in the measurements above describes the removed completion pass.
+
+The post-removal 1,000-call control takes 7,092.2 ms overall and 1,010.2 ms
+in completion, versus 7,148.5/1,224.6 ms in the preceding control. Retained
+memory remains 144.075 MiB, with the same function/instruction counts. The small
+total-time difference is insufficient to claim a general throughput improvement;
+the concrete result is removal of the repeated validation pass and its temporary
+substitution environments. Log: `.zig-cache/generic-constraints-once-profile.csv`.
+
+The partitioned post-state control completes 1,000 prelude calls in 6,452.4 ms
+and retains 144.075 MiB, with unchanged function/instruction counts. A separate
+100-resource run completes in 970.9 ms, retaining 142.771 MiB and 100 live
+acquisitions. These profiled controls exclude startup and are not an A/B speedup
+claim. Logs: `.zig-cache/partitioned-post-profile.csv` and
+`.zig-cache/partitioned-post-resources.csv`. Post-state joins retain at most three
+classes per selected output; distinct output selectors are analyzed independently.
+
+A follow-up ReleaseSafe control at `8d8fc4433` used 100 and 1,000 prelude
+calls after the diagnostic-state cleanup. At 1,000 commands it measured
+6,914.9 ms total, 6,212.3 ms frontend/publication and 142.410 MiB retained
+(startup excluded). Assignment contextualization visited 151.2 million entries
+in 469.3 ms without changes; expression propagation took 291.8 ms and binding
+initializer inference 21.6 ms. Resolution and completion were 2,102.5 and
+984.9 ms inclusive. These single observations do not establish an A/B gain.
+
+The assignment pass has three ordered responsibilities: normalize typed record
+literals, contextualize binding initializers, then contextualize direct/indirect
+writes. A typed record may still contain unresolved nested lists; a complete
+outer type is not a safe permanent completion marker. Preserve same-round
+progress and old entities completed by new information when reducing this work.
+The profile does not yet separate those three responsibilities, so instrument
+that boundary before choosing a worklist or adding retained completion state.
+Logs: `.zig-cache/frontend-post-cleanup-profile.log` and
+`.zig-cache/frontend-post-cleanup-1000-profile.log`.
+
+
+The contextualization profile now separates `typed_literal_contexts`,
+`initializer_contexts` and `write_contexts` beneath `assignment_values`.
+A 1,000-command ReleaseSafe prelude control measured respectively
+310.3 / 42.8 / 174.4 ms, with 71.7 / 7.8 / 71.7 million outer entries and
+no changes. The enclosing 527.8 ms includes profiling overhead; the new
+subphase clocks and counters mean it is not directly comparable to the older
+469.3 ms measurement. Total command time was 6,926.3 ms and retained memory
+142.410 MiB. Literal and write scans are stronger investigation targets than
+initializer contexts in this workload. No worklist or completion cache was
+introduced. Log: `.zig-cache/context-phases-prelude-profile.log`.
+
+Scalar-only record completion now rejects the need for recursive shape work
+before matching every expected field by name/position. The filter inspects
+written and assumed children afresh each sweep, so later aggregate completion
+is still visible. Incomplete records also skip the reordering-only pass;
+lexical default completion remains unchanged.
+A follow-up 1,000-command control measured 264.5 ms typed-literal work and
+465.0 ms assignment contextualization, versus 310.3/527.8 ms in the preceding
+single sample. Retained memory remained 142.410 MiB. This is directional
+single-run evidence, not a controlled throughput comparison. Outer scan counts
+are unchanged; no cache, frontier or rollback state was added.
+Log: `.zig-cache/scalar-record-completion-profile.log`.
+
+### Baseline after removing reach
+
+At `b23508439`, a ReleaseSafe 1,000-command `prelude calls` control completed
+in 6,420.7 ms: frontend/publication 5,737.6 ms, lowering 339.4 ms,
+verification 339.1 ms and execution 4.7 ms. Retained requested backing grew
+from 143.597 MiB after setup to 159.357 MiB. Setup is excluded from command
+timings; these values are not RSS. The 10/100-command totals were
+57.4/579.9 ms, retaining 143.694/145.030 MiB respectively.
+
+Assignment contextualization took 86.5 ms, including 8.5 ms typed literals,
+42.0 ms initializers and 3.5 ms writes. Its candidate counts differ from the
+older controls, so the previous scan timings are not an A/B comparison.
+Binding type propagation still visited 86.0 million entries in 329.3 ms;
+expression propagation visited 77.8 million in 307.1 ms. Dereference/address
+materialization visited the same 77.8 million entries each, taking
+163.4/147.5 ms. All these sweeps reported zero changes in this control.
+
+Resolution took 1,616.2 ms and completion 989.2 ms inclusive. Safety took
+843.4 ms, while unit verification took 326.6 ms. These are overlapping phase
+measurements, not additive shares of total time. The control compiled 1,001
+functions and 7,004 instructions, reusing 999 bodies. One function body was
+checked and 29,999 body-proof reuses were recorded.
+
+The next investigation should target redundant binding/expression propagation
+and address/dereference sweeps, preserving old entities completed by new facts.
+The smaller contextualization cost does not justify a new retained cache on
+its own. This single observation establishes a current baseline, not a
+throughput gain attributable solely to removing reach.
+
+Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
+1000 prelude calls 1024 --resolution-profile`. Raw output:
+`.zig-cache/post-reach-profile.log`.
+
+A follow-up experiment moved the existing binding/type identity check ahead
+of the unresolved-binding lookup in expression propagation. The same control
+measured 6,391.2 ms overall and 285.0 ms expression propagation, compared
+with 6,420.7/307.1 ms above. Pool visits, retained backing and executable counts
+were unchanged. The total difference is too small to establish a useful gain
+from one sample. The production change was discarded: it does not address the
+repeated sweeps. The existing binding test now also checks propagation after
+a completed binding changes type and restoration after transactional rollback.
+Raw experiment output: `.zig-cache/binding-identity-profile.log`.
+
+## Exact decimal normalization under VM quotas
+
+Individual finite Binary64 inputs `1e-300`, `1.7976931348623157e308` and
+`4.9406564584124654e-324` exhausted the default one-million-instruction VM
+budget. Exact rational normalization previously doubled a large integer one bit
+at a time. It now uses limb bit lengths and a direct multi-bit shift, followed
+by at most one correction. Decimal scaling multiplies four digits at a time;
+conservative decimal-order rejection runs only after full grammar validation.
+Nearest/even rounding still uses exact integers, without a wider floating-point
+intermediate or host parsing routine.
+
+All three extremes now pass together in the existing native, VM and compile-time
+`#run` probe with the default quotas unchanged. The complete float-parsing
+battery also runs in the VM, with explicit test-only limits of 64 million
+instructions and four million value cells. That cumulative battery includes
+hundreds of checks and multi-kilobyte cancellation and midpoint inputs; its
+budget is not a per-parse requirement. An isolated ReleaseSafe run completed in
+2.50 seconds with 245,944 KiB peak RSS. This is an acceptance measurement, not a
+controlled throughput comparison.
+
+## Retained expression and reference propagation
+
+Retained sessions now certify the node/type/binding prefix after propagation
+reaches its fixed point. Subsequent coordinated semantic transactions scan the
+node suffix unless an older dependency changes. Existing undo journals provide
+conservative invalidation for node types and contents, binding types and pending
+initializers, block results, type completion, variants and type definitions.
+Nested scopes inherit the outer boundary, and rollback restores both the
+certificate and its invalidation hints. Ordinary graph transactions retain full
+scans; a quiescent session flag alone does not establish a valid prefix.
+
+Relevant setters also invalidate the certificate outside transactions. Completion
+and compile-time execution can change a previously quiescent graph, so checking
+stabilizes propagation before safety analysis. Nodes appended by safety remain
+outside that certificate and participate in the next suffix. Contextualizing an
+old arithmetic operand reports progress even when the expression's result type
+already matches, ensuring another round revisits its consumers. Both propagation
+passes continue to include operands outside execution reachability.
+
+Alternating Linux x86-64 ReleaseSafe samples, with resolution profiling enabled:
+
+| Workload | Before elapsed ms | After elapsed ms | Before/after retained MiB |
+|---|---:|---:|---:|
+| 10,000 minimal scalar calls, sample 1 | 22,731.830 | 20,614.279 | 134.137 / 134.137 |
+| 10,000 minimal scalar calls, sample 2 | 23,601.091 | 20,490.391 | 134.137 / 134.137 |
+| 1,000 prelude scalar calls | 5,633.936 | 5,154.582 | 170.807 / 170.699 |
+| 100 prelude resource commands | 867.069 | 815.304 | 169.536 / 169.428 |
+
+The minimal-call mean decreases from 23,166.461 to 20,552.335 ms, about 11.3%.
+Each expression/reference sweep's cumulative visits fall from 600,270,011 to
+160,032. Expression propagation takes 1,210.670 versus 3.227 ms in the first
+pair; reference propagation takes 1,235.627 versus 1.756 ms. There are still
+30,001 resolution rounds. The extra pre-safety stabilization raises propagation
+calls from 30,001 to 40,001, but they visit only the required suffix. Compiled
+functions/instructions remain 10,001/70,004, with 9,999 reused bodies. Requested
+retained memory is unchanged in the minimal control; these figures are not RSS.
+
+Unresolved-binding inference deliberately retains its complete state scan:
+older initializers can become inferable when new array types appear. In the
+prelude control this visits 9,075,024 states before and 12,099,024 after, taking
+26.542/33.833 ms; expression/reference visits fall from 82,131,376 to 133,468
+each. Avoid adding a retained dependency index for this smaller residual cost
+without evidence from larger consumers. Safety and other resolution passes
+still dominate the remaining time. Two main samples and single controls provide
+directional evidence, not a general compiler-throughput guarantee.
+
+Regressions cover bounded visit counts, old operand contextualization, same-ID
+type completion, variants/definitions, quiescent mutations, nested commit and
+rollback, and reused tail IDs. Disabling the suffix starts makes the visit-count
+regression fail (expected one visit, observed three); restoring them passes.
+Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
+10000 minimal calls 1024 --resolution-profile`, and use `1000 prelude calls` or
+`100 prelude resources` for controls. Raw samples, binary hashes and focused
+red/green logs: `.zig-cache/propagation-prefix-20261102/`.
+
+Validation: 1,422 internal tests pass in both Debug and ReleaseSafe (one
+optional test skipped). The complete ReleaseSafe suite also passes 2,205
+program tests (11 skipped), HTTP library tests and the HTTP example build.
+
+## Reclaiming unreachable VM payloads
+
+Immutable aggregate buffers, reference projection paths and virtual descriptors
+now use a nonmoving typed heap independently of the context metadata arena.
+After a successful invocation, collection marks every live frame's complete and
+partial values, including acquired reference evidence. Public results and host
+observations pin their owning allocations until reset. Marking whole allocations
+handles interior slices in packed snapshots; each allocation is traversed once
+through an allocation-free work queue. Code, layouts, literal bytes, acquisition
+metadata and frame identities keep their existing owners and lifetimes.
+
+Collection neither runs language cleanup nor grants reference validity. Dead
+frame IDs remain dead, and a reference's target lifetime is checked as before.
+Traps poison the context; reset releases all payloads and metadata. Fresh-run
+argument copying keeps both old owners alive until copying finishes. Collection
+happens between invocations, so allocation loops within one invocation still
+consume their normal quota. Public snapshot retention remains deliberate and
+can still grow with the number of observed results.
+
+Single isolated Linux x86-64 ReleaseSafe before/after controls:
+
+| 1,000-command workload | Before runtime arena bytes | After metadata arena bytes | After payload bytes | Before/after execution ms | Before/after total ms |
+|---|---:|---:|---:|---:|---:|
+| Prelude float parsing | 67,358,386 | 549,776 | 335,504 | 1,260.041 / 1,596.293 | 9,593.839 / 10,126.661 |
+| Minimal aggregates | 1,768,084 | 3,336 | 5,584 | 5.170 / 10.473 | 289.953 / 290.226 |
+| Minimal scalar calls | 1,780 | 1,780 | 144 | 2.680 / 3.714 | 257.252 / 250.014 |
+
+Float parsing retains about 0.89 MB of metadata plus payload backing instead of
+67.36 MB in the arena. This reduces retained payload memory substantially, with
+an observed 26.7% execution-time cost and 5.6% total-time cost in this sample.
+Aggregate execution also pays for allocation tracking and root scanning. These
+are single controls, not established throughput estimates. Frame identities and
+other metadata still grow; this is not a constant-memory session guarantee.
+The benchmark retains `runtime_arena_bytes` for the metadata arena and appends
+`runtime_payload_bytes`, including payload registry capacity, so the new
+allocation domain cannot disappear from reported runtime backing.
+
+The focused regression previously exhausted a 256-cell quota while repeatedly
+passing and discarding a 64-element array. One hundred invocations now fit, with
+only stable identities and reusable frame backing retained. Other tests cover
+packed interior roots, public snapshots across replacement, partial storage,
+acquired virtual receiver paths, reset, traps and allocation-failure cleanup.
+Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
+1000 prelude float_parsing 1024`, or `1000 minimal aggregates` / `1000 minimal
+calls` for controls. Raw controls and binary hashes:
+`.zig-cache/vm-payload-reclamation-20261102/`.
+
+The complete ReleaseSafe suite passes 1,431 internal tests (one skipped),
+2,205 program tests (11 skipped), HTTP tests and the example build. Debug
+validation includes a complete 1,430-test internal run and 37 focused tests after
+the final acquired-storage adjustment. A 100-command prelude resource control
+also completes with persistent owners and checked exit cleanup.

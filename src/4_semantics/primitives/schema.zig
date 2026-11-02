@@ -23,7 +23,6 @@ pub const BuiltinType = enum {
     Float16,
     Float32,
     Float64,
-    Char,
     Bool,
     Void,
     Type,
@@ -47,6 +46,10 @@ pub fn integerRange(kind: BuiltinType, target: std.Target) ?IntegerRange {
         .Int8, .Int16, .Int32, .Int64 => true,
         else => false,
     };
+    return integerRangeForWidth(bits, signed);
+}
+
+pub fn integerRangeForWidth(bits: u7, signed: bool) IntegerRange {
     const bound = @as(i128, 1) << (if (signed) bits - 1 else bits);
     return .{ .minimum = if (signed) -bound else 0, .maximum = bound - 1 };
 }
@@ -163,9 +166,12 @@ pub const SafetyPrimitive = enum {
     trusted_opaque_mark_empty,
     relocate,
     float_math,
+    raw_released_storage,
+    allocation_metadata_layout,
+    prepare_allocation_metadata,
 };
 
-pub const FunctionFlags = packed struct(u16) {
+pub const FunctionFlags = packed struct(u32) {
     is_once: bool = false,
     is_test: bool = false,
     has_declared_body: bool = false,
@@ -177,7 +183,16 @@ pub const FunctionFlags = packed struct(u16) {
     is_c_export: bool = false,
     has_foreign_capability: bool = false,
     is_c_function_pointer: bool = false,
-    _padding: u5 = 0,
+    is_comptime_entry: bool = false,
+    is_comptime_host_entry: bool = false,
+    reserved: u17 = 0,
+    // Trusted metadata identities retain ordinary function-body safety.
+    is_source_location_id: bool = false,
+    is_source_location_resolver: bool = false,
+
+    pub fn isTraceSupport(self: FunctionFlags) bool {
+        return self.is_source_location_resolver;
+    }
 };
 
 pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };
@@ -211,6 +226,15 @@ pub const MethodSafetyContract = struct {
     outcomes: []const Outcome = &.{},
     source: SourceRef,
 
+    /// Frees independently allocated declaration metadata. Arena-backed GlobalSG
+    /// proofs are released with their arena instead of through this method.
+    pub fn deinit(self: MethodSafetyContract, allocator: std.mem.Allocator) void {
+        for (self.outcomes) |outcome| outcome.deinit(allocator);
+        inline for (@typeInfo(MethodSafetyContract).@"struct".fields) |field| {
+            if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
+        }
+    }
+
     pub const Relocation = struct { destination: u32, source: u32 };
     pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
     pub const Retention = struct { storage: StorageInput, input: u32 };
@@ -238,6 +262,13 @@ pub const MethodSafetyContract = struct {
         /// Repeated selectors follow their payload; other selectors conjoin.
         outcomes: []const Outcome = &.{},
         source: SourceRef,
+
+        pub fn deinit(self: Outcome, allocator: std.mem.Allocator) void {
+            for (self.outcomes) |outcome| outcome.deinit(allocator);
+            inline for (@typeInfo(Outcome).@"struct".fields) |field| {
+                if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
+            }
+        }
     };
 };
 
@@ -249,8 +280,8 @@ pub const StorageDomainMapping = struct {
 
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
 /// provenance is graph-local; semantic references use the corresponding Ids
-/// namespace. Layout lives here for nominal types because `.declared` type IDs
-/// intentionally carry only nominal identity.
+/// namespace. A declaration binds a name to a value; nominal representation
+/// belongs to the definition referenced by that value.
 pub fn Declaration(comptime Ids: type) type {
     return struct {
         kind: DeclarationKind,
@@ -258,25 +289,64 @@ pub fn Declaration(comptime Ids: type) type {
         source: SourceRef,
         type_id: ?Ids.TypeId = null,
         function_id: ?Ids.FunctionId = null,
+        family_definition: ?Ids.FamilyDefinitionId = null,
+    };
+}
+
+/// A nominal definition owns its representation independently of any binding.
+/// The optional declaration is a source-name association, never its identity.
+pub fn TypeDefinition(comptime Ids: type) type {
+    return struct {
+        source: SourceRef,
+        declaration: ?Ids.DeclId = null,
+        specialization: ?struct { origin: Ids.TypeDefinitionId, arguments: Range(Ids.GenericArgId) } = null,
+        /// Checked C callback prototype; it provides representation and ABI,
+        /// independently of the optional source-name association above.
+        function_id: ?Ids.FunctionId = null,
         struct_fields: ?Range(Ids.FieldId) = null,
         choice_variants: ?Range(Ids.VariantId) = null,
-        generic_parameter_count: ?u32 = null,
         struct_layout: StructLayout = .regular,
         choice_layout: ChoiceLayout = .regular,
+    };
+}
+
+/// Identity and body locator of a compile-time parameterized definition.
+/// Template indices address the owning module's corresponding immutable pool.
+pub const FamilyKind = enum { type, function, contract };
+pub fn FamilyDefinition(comptime Ids: type) type {
+    return struct {
+        source: SourceRef,
+        declaration: ?Ids.DeclId = null,
+        kind: FamilyKind,
+        parameter_count: u32,
+        domain_count: u32 = 0,
+        template_index: ?u32 = null,
     };
 }
 
 /// `Ids` is a namespace containing the graph-specific identity types. ModuleSG
 /// and GlobalSG instantiate the same resolved semantic shapes with different
 /// enum IDs.
+/// A compile-time family value retains its definition and lexical bindings.
+/// Its classification remains the originating family; captures are value data.
+pub fn DefinitionValue(comptime Ids: type) type {
+    return struct {
+        origin: Ids.FamilyDefinitionId,
+        captures: Range(Ids.GenericArgId) = .{ .start = 0, .len = 0 },
+    };
+}
+
 pub fn SemanticType(comptime Ids: type) type {
     return union(enum) {
         builtin: BuiltinType,
-        declared: Ids.DeclId,
+        nominal: Ids.TypeDefinitionId,
+        /// Compile-time classification of an unspecialized definition value.
+        /// It has no runtime storage layout and is not a concrete Type value.
+        definition: Ids.FamilyDefinitionId,
         pointer: struct { child: Ids.TypeId, mutability: PointerMutability },
         array: struct { length: u64, element: Ids.TypeId },
         nullable: Ids.TypeId,
-        inferred_errable: Ids.TypeId,
+        inferred_errable: struct { child: Ids.TypeId, traced: bool = false },
         /// Identity-bearing inferred choices are distinct from ordinary
         /// structural choices even when their current variant sets match.
         inferred_choice: struct {
@@ -293,7 +363,7 @@ pub fn SemanticType(comptime Ids: type) type {
             layout: ChoiceLayout = .regular,
         },
         generic: struct {
-            base: Ids.DeclId,
+            base: Ids.FamilyDefinitionId,
             arguments: Range(Ids.GenericArgId),
         },
         /// Runtime pair (data pointer, vtable pointer) carrying contract evidence.
@@ -329,6 +399,7 @@ pub fn GenericArgument(comptime Ids: type) type {
         value: Value,
 
         pub const Value = union(enum) {
+            definition: DefinitionValue(Ids),
             type: Ids.TypeId,
             comptime_int: i64,
         };
@@ -340,6 +411,8 @@ pub fn Function(comptime Ids: type) type {
         declaration: Ids.DeclId,
         input: Range(Ids.FieldId),
         output: Range(Ids.FieldId),
+        input_type: ?Ids.TypeId = null,
+        output_type: ?Ids.TypeId = null,
         body: ?Ids.BlockId = null,
         input_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
@@ -364,6 +437,14 @@ pub fn Binding(comptime Ids: type) type {
         /// for resolving the same dependencies in its implicit destructor.
         cleanup_arguments: ?Ids.NodeId = null,
         mutability: Mutability,
+    };
+}
+
+/// Sparse lexical evidence; ordinary blocks without assumptions need no entry.
+pub fn BlockAssumptions(comptime Ids: type) type {
+    return struct {
+        block: Ids.BlockId,
+        bindings: Range(Ids.BindingId),
     };
 }
 
@@ -416,26 +497,57 @@ pub fn AutoDeinitField(comptime Ids: type) type {
         field_index: u32,
         /// A choice payload uses a variant index and requires its active tag.
         is_variant: bool = false,
+        /// One symbolic element operation, repeated over this fixed dimension.
+        repeat_count: ?u64 = null,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
+        /// With deinit_fn, these are fallback operations for incomplete storage.
+        /// Whole-value destruction and fallback fields are mutually exclusive.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
     };
 }
 
 pub fn AutoDeinit(comptime Ids: type) type {
     return struct {
-        binding: Ids.BindingId,
+        /// Cleanup belongs to storage. An indirect place carries no invented
+        /// lexical owner; its identity must come from the evaluated reference.
+        storage: union(enum) {
+            binding: Ids.BindingId,
+            projected: struct { binding: Ids.BindingId, target: Ids.NodeId },
+            indirect: Ids.NodeId,
+        },
+        /// Trusted raw storage may promise a complete value without attached
+        /// cleanup evidence. Existing evidence always takes precedence.
+        allow_untracked_complete: bool = false,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
+        /// Structural cleanup, or incomplete-storage fallback when deinit_fn
+        /// is present. Never execute both for the same value.
         fields: Range(Ids.AutoDeinitFieldId) = .{ .start = 0, .len = 0 },
+        pub fn ownerBinding(self: @This()) ?Ids.BindingId {
+            return switch (self.storage) {
+                .binding => |id| id,
+                .projected => |place| place.binding,
+                .indirect => null,
+            };
+        }
+
+        pub fn targetNode(self: @This()) ?Ids.NodeId {
+            return switch (self.storage) {
+                .binding => null,
+                .projected => |place| place.target,
+                .indirect => |node| node,
+            };
+        }
     };
 }
 
+/// Erased signature and declared safety effects, completed independently of
+/// concrete handles. Runtime tables keep their own selected method identities.
 pub fn VirtualMethodRegistry(comptime Ids: type) type {
     return struct {
-        implementations: Range(Ids.FunctionId),
         /// Receiver position comes from the erased contract. A known
         /// argument may have the same concrete type as the participant after substitution.
         receiver_input_index: u32,
@@ -451,9 +563,7 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
-        // Unreached construction in executable mode retains no proof obligation.
-        safety_required: bool = true,
-        contract_decl: Ids.DeclId,
+        contract_decl: Ids.FamilyDefinitionId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),
@@ -462,11 +572,19 @@ pub fn Virtualize(comptime Ids: type) type {
     };
 }
 
+pub const CleanupInputProjection = union(enum) { field: u32, element: u64 };
+pub const CapturedCleanupInput = struct {
+    argument_index: u32,
+    projections: []const CleanupInputProjection = &.{},
+};
+
 /// A returned choice selects whether the caller still owns cleanup of a place.
+/// The place can name a lexical owner or an evaluated pointer input snapshot.
 /// Parent variants guard nested payload tags before their values are inspected.
 pub fn OutcomeCleanup(comptime Ids: type) type {
     return struct {
         place: Ids.NodeId,
+        captured_input: ?CapturedCleanupInput = null,
         output_index: u32,
         parent_variants: []const u32 = &.{},
         variant_index: u32,
@@ -486,25 +604,6 @@ pub fn VirtualCall(comptime Ids: type) type {
         output_type: Ids.TypeId,
         self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
-        consumes_auto_deinit: ?Ids.NodeId = null,
-        /// Safety records every consumed caller place, including aliases and
-        /// multiple resource inputs. These nodes identify cleanup flags only.
-        consumed_auto_deinits: []const Ids.NodeId = &.{},
-        /// Returning calls enable these destination cleanup flags.
-        initialized_auto_deinits: []const Ids.NodeId = &.{},
-        outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
-    };
-}
-
-pub fn ReachAlternative(comptime Ids: type) type {
-    return struct {
-        segments: Range(Ids.ReachSegmentId),
-    };
-}
-
-pub fn Reach(comptime Ids: type) type {
-    return struct {
-        alternatives: Range(Ids.ReachAlternativeId),
     };
 }
 
@@ -518,46 +617,9 @@ pub fn NullableUnwrap(comptime Ids: type) type {
     };
 }
 
-pub fn TestingExpectError(comptime Ids: type) type {
-    return struct {
-        expected_reason: Ids.NodeId,
-        actual_result: Ids.NodeId,
-        actual_error_variant: Ids.VariantId,
-        actual_error_payload_type: Ids.TypeId,
-        actual_reason_field_index: u32,
-        result_type: Ids.TypeId,
-        result_ok_variant: Ids.VariantId,
-        test_fail_function: Ids.FunctionId,
-        test_fail_input: ?Ids.NodeId = null,
-        expected_reason_name: ?StringRange,
-        diagnostic_line: u32,
-        diagnostic_column: u32,
-        diagnostic_source_line: StringRange,
-    };
-}
-
 pub fn ErrorPropagation(comptime Ids: type) type {
     return struct {
         errable_value: Ids.NodeId,
-        cleanup_nodes: Range(Ids.NodeId),
-        ok_variant: Ids.VariantId,
-        ok_value_field_index: ?u32,
-        error_variant: Ids.VariantId,
-        propagated_errable_type: Ids.TypeId,
-        propagated_error_variant: Ids.VariantId,
-        ok_payload_type: Ids.TypeId,
-        error_payload_type: Ids.TypeId,
-        propagated_error_payload_type: Ids.TypeId,
-        diagnostic_line: u32,
-        diagnostic_column: u32,
-        diagnostic_source_line: StringRange,
-    };
-}
-
-pub fn ErrorContext(comptime Ids: type) type {
-    return struct {
-        errable_value: Ids.NodeId,
-        context: Ids.NodeId,
         cleanup_nodes: Range(Ids.NodeId),
         ok_variant: Ids.VariantId,
         ok_value_field_index: ?u32,
@@ -588,7 +650,6 @@ pub fn Node(comptime Ids: type) type {
             declaration: Ids.DeclId,
             binding_declaration: Ids.BindingId,
             binding_use: Ids.BindingId,
-            reach_directive: Ids.ReachId,
             move_value: Ids.NodeId,
             denied_implicit_copy: Ids.NodeId,
             assignment: struct { binding: Ids.BindingId, value: Ids.NodeId },
@@ -604,14 +665,6 @@ pub fn Node(comptime Ids: type) type {
                 // the runtime address is evaluated separately from arguments.
                 callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
-                consumes_auto_deinit: ?Ids.NodeId = null,
-                /// Safety records every consumed caller place, including aliases and
-                /// multiple resource inputs. These nodes identify cleanup flags only.
-                consumed_auto_deinits: []const Ids.NodeId = &.{},
-                /// Returning calls enable these destination cleanup flags.
-                initialized_auto_deinits: []const Ids.NodeId = &.{},
-                outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
-                initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,
             virtual_call: Ids.VirtualCallId,
@@ -619,9 +672,16 @@ pub fn Node(comptime Ids: type) type {
             // Compiler-generated ordered expressions have an explicit result,
             // unlike source blocks. Their storage belongs to the outer scope.
             value_sequence: Ids.BlockId,
+            // Checked lifecycle transition. The block contains one write;
+            // its destination, prepared owner, selected cleanup and commit
+            // form one verified plan. Only ownership finalization creates it.
+            replacement: Ids.BlockId,
             int_literal: i128,
             float_literal: f64,
-            char_literal: u8,
+            char_literal: u32,
+            // Expanded independently for each omitted field. Modules retain a
+            // parameterized expression ID; global graphs retain a recipe ID.
+            captured_expression: u32,
             string_literal: StringRange,
             bool_literal: bool,
             list_literal: struct {
@@ -651,9 +711,7 @@ pub fn Node(comptime Ids: type) type {
                 payload_type: Ids.TypeId,
             },
             nullable_unwrap_or: Ids.NullableUnwrapId,
-            testing_expect_error: Ids.TestingExpectErrorId,
             error_propagation: Ids.ErrorPropagationId,
-            error_context: Ids.ErrorContextId,
             array_literal: struct {
                 elements: Range(Ids.NodeId),
                 element_type: Ids.TypeId,
@@ -673,6 +731,8 @@ pub fn Node(comptime Ids: type) type {
                 array_type: Ids.TypeId,
             },
             struct_field_store: struct {
+                // Proven lexical destination; metadata, never evaluated.
+                cleanup_target: ?Ids.NodeId = null,
                 struct_ptr: Ids.NodeId,
                 struct_type: Ids.TypeId,
                 field_index: u32,
@@ -701,8 +761,13 @@ pub fn Node(comptime Ids: type) type {
                 ty: Ids.TypeId,
                 pointer_type: Ids.TypeId,
             },
-            pointer_assignment: struct { pointer: Ids.NodeId, value: Ids.NodeId },
+            pointer_assignment: struct {
+                pointer: Ids.NodeId,
+                value: Ids.NodeId,
+                cleanup_target: ?Ids.NodeId = null,
+            },
             type_literal: Ids.TypeId,
+            definition_literal: DefinitionValue(Ids),
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };
     };
@@ -711,6 +776,8 @@ pub fn Node(comptime Ids: type) type {
 test "semantic primitives instantiate with isolated id namespaces" {
     const Ids = struct {
         pub const DeclId = enum(u32) { _ };
+        pub const TypeDefinitionId = enum(u32) { _ };
+        pub const FamilyDefinitionId = enum(u32) { _ };
         pub const TypeId = enum(u32) { _ };
         pub const FunctionId = enum(u32) { _ };
         pub const BindingId = enum(u32) { _ };
@@ -727,27 +794,20 @@ test "semantic primitives instantiate with isolated id namespaces" {
         pub const VirtualRegistryId = enum(u32) { _ };
         pub const VirtualizeId = enum(u32) { _ };
         pub const VirtualCallId = enum(u32) { _ };
-        pub const ReachSegmentId = enum(u32) { _ };
-        pub const ReachAlternativeId = enum(u32) { _ };
-        pub const ReachId = enum(u32) { _ };
         pub const NullableUnwrapId = enum(u32) { _ };
-        pub const TestingExpectErrorId = enum(u32) { _ };
         pub const ErrorPropagationId = enum(u32) { _ };
-        pub const ErrorContextId = enum(u32) { _ };
     };
 
     const Ty = SemanticType(Ids);
     const pointer = Ty{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_only } };
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(pointer.pointer.child));
 
-    const Decl = Declaration(Ids);
-    const decl = Decl{
-        .kind = .type,
-        .name = .{ .start = 0, .len = 1 },
+    const Definition = TypeDefinition(Ids);
+    const definition = Definition{
         .source = .{ .file_index = 0, .offset = 0 },
         .struct_layout = .c_union,
     };
-    try std.testing.expectEqual(StructLayout.c_union, decl.struct_layout);
+    try std.testing.expectEqual(StructLayout.c_union, definition.struct_layout);
 
     const SemanticNode = Node(Ids);
     const node = SemanticNode{

@@ -1,0 +1,13 @@
+const support = @import("../../../support.zig");
+const buildExpectFailExact = support.buildExpectFailExact;
+
+pub const isolation: support.Isolation = .fixture;
+
+test "feature_tests/ownership/50X_branch_may_move_value" {
+    try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:10:24: error: place rooted at 'pair' is moved and cannot be used (moved at tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:8:26)
+        \\      status_code = pair.left
+        \\                         ^
+        \\
+    );
+}

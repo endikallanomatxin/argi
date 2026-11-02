@@ -1,3 +1,5 @@
+_FileInitArgs := (.ffi: $&ForeignFunctionInterface)
+
 FileOpenMode: Type = (
     ..read
     ..write
@@ -8,52 +10,51 @@ implement ImplicitlyCopyable#(FileOpenMode) ()
 
 ..file_open_failed
 
-File: Type = (
-    ._ffi : $&ForeignFunctionInterface
-    .stream_address : UIntNative = 0
-    .should_close   : Bool = 0 == 1
+File := (
+    ._ffi           : $&ForeignFunctionInterface
+    .stream_address : UIntNative                 = 0
+    .should_close   : Bool                       = 0 == 1
+    ._readable      : Bool                       = false
+    ._writable      : Bool                       = false
 )
 
-once _acquire_file := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: File) {
-    ffi ::= args.ffi
-
+_init_file := _FileInitArgs -> (.result: File) {
     result = (._ffi = ffi, .stream_address = 0, .should_close = false)
 }
 
-implement Init#(File, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+FileInitArgs: Type = _FileInitArgs
+
+implement Init#(File, FileInitArgs) (
     .Result : Type = File
-    .init   = _acquire_file
+
+    .init = _init_file
 )
 
-implement Init#(
-    File,
-    (
-        .ffi : $&ForeignFunctionInterface = reach ffi,
-        .stream_address : UIntNative,
-        .should_close   : Bool
+file_from_stream := (
+    .ffi            : $&ForeignFunctionInterface,
+    .stream_address : UIntNative,
+    .should_close   : Bool,
+    .readable       : Bool,
+    .writable       : Bool
+) -> (.result: File) {
+    _init_ffi ::= ffi
+    _init_stream_address ::= stream_address
+    _init_should_close ::= should_close
+
+    result = (
+        ._ffi           = _init_ffi
+        .stream_address = _init_stream_address
+        .should_close   = _init_should_close
+        ._readable      = readable
+        ._writable      = writable
     )
-) (
-    .Result : Type = File
-    .init   = (
-        .args : (
-            .ffi : $&ForeignFunctionInterface = reach ffi,
-            .stream_address : UIntNative,
-            .should_close   : Bool
-        )
-    ) -> (.result: Result) {
-        ffi ::= args.ffi
-        stream_address ::= args.stream_address
-        should_close ::= args.should_close
+}
 
-        result = (._ffi = ffi, .stream_address = stream_address, .should_close = should_close)
-    }
-)
-
-_is_open_File(.self: &File) -> (.ok: Bool) := {
+_is_open_File := (.self: &File) -> (.ok: Bool) {
     ok = self&.stream_address != 0
 }
 
-file_open_mode_c_string(.mode: FileOpenMode) -> (.text: &Char) := {
+file_open_mode_c_string := (.mode: FileOpenMode) -> (.text: &CChar) {
     if is(.value = mode, .variant = ..read) {
         text = "rb"
         return
@@ -67,7 +68,7 @@ file_open_mode_c_string(.mode: FileOpenMode) -> (.text: &Char) := {
     text = "ab"
 }
 
-file_stream_pointer(.self: &File) -> (.stream: &Any) := {
+file_stream_pointer := (.self: &File) -> (.stream: &Any) {
     raw ::= raw_pointer#(.t: Any)(.address = self&.stream_address)
     mutable_stream ::= trusted_establish_inherited_reference#(.t: Any)(
         .raw = raw, .root = erase_reference#(.t: File)(.base = self).reference
@@ -75,15 +76,18 @@ file_stream_pointer(.self: &File) -> (.stream: &Any) := {
     stream = read_reference#(.t: Any)(.base = mutable_stream)
 }
 
-open := (
-    .p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi, .path: &Char, .mode: FileOpenMode
-) -> (.result: Errable#(Bool, (..file_open_failed))) {
+open := (.p: $&File, .ffi: $&ForeignFunctionInterface, .path: &CChar, .mode: FileOpenMode) -> (
+    .result : Errable#(Bool, (..file_open_failed))
+) {
+
     mode_text ::= file_open_mode_c_string(.mode = mode)
-    opened: &Any = fopen(.path = path, .mode = mode_text)
+    opened: &Any = fopen(.path = path, .mode = mode_text, .ffi = ffi)
     p&= (
-        ._ffi = ffi
+        ._ffi           = ffi
         .stream_address = opened | convert#(.to: UIntNative)(_)
         .should_close   = 1 == 1
+        ._readable      = is(.value = mode, .variant = ..read)
+        ._writable      = is(.value = mode, .variant = ..read) == false
     )
 
     if p&.stream_address == 0 {
@@ -94,37 +98,51 @@ open := (
     result = ..ok 1 == 1
 }
 
-init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    mode_text ::= file_open_mode_c_string(.mode = ..read)
-    stream: &Any = fdopen(.fd = 0, .mode = mode_text)
+_standard_stream(.descriptor: Int32) -> (.stream: UIntNative): CFunction(
+    .symbol = "_argi_standard_stream"
+)
+
+_file_write_byte(.stream: UIntNative, .byte: UInt8) -> (.status: Int32): CFunction(
+    .symbol = "_argi_file_write_byte"
+)
+
+_file_flush(.stream: UIntNative) -> (.status: Int32): CFunction(
+    .symbol = "_argi_file_flush"
+)
+
+_file_close(.stream: UIntNative) -> (.status: Int32): CFunction(
+    .symbol = "_argi_file_close"
+)
+
+init_stdin := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
     p&= (
-        ._ffi = ffi
-        .stream_address = stream | convert#(.to: UIntNative)(_)
-        .should_close   = 0 == 1
+        ._ffi           = ffi
+        .stream_address = _standard_stream(.descriptor = 0, .ffi = ffi)
+        .should_close   = false
+        ._readable      = true
     )
 }
 
-init_stdout(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    mode_text ::= file_open_mode_c_string(.mode = ..write)
-    stream: &Any = fdopen(.fd = 1, .mode = mode_text)
+init_stdout := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
     p&= (
-        ._ffi = ffi
-        .stream_address = stream | convert#(.to: UIntNative)(_)
-        .should_close   = 0 == 1
+        ._ffi           = ffi
+        .stream_address = _standard_stream(.descriptor = 1, .ffi = ffi)
+        .should_close   = false
+        ._writable      = true
     )
 }
 
-init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
-    mode_text ::= file_open_mode_c_string(.mode = ..write)
-    stream: &Any = fdopen(.fd = 2, .mode = mode_text)
+init_stderr := (.p: $&File, .ffi: $&ForeignFunctionInterface) -> () {
     p&= (
-        ._ffi = ffi
-        .stream_address = stream | convert#(.to: UIntNative)(_)
-        .should_close   = 0 == 1
+        ._ffi           = ffi
+        .stream_address = _standard_stream(.descriptor = 2, .ffi = ffi)
+        .should_close   = false
+        ._writable      = true
     )
 }
 
-_close_File(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) := {
+_close_File := (.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) {
+
     assume ffi := self&._ffi
 
     if self&.stream_address == 0 {
@@ -135,13 +153,12 @@ _close_File(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed)))
     close_failed ::= false
 
     if self&.should_close {
-        stream ::= file_stream_pointer(self).stream
-        close_status ::= fclose(.stream = stream).status
+        close_status ::= _file_close(.stream = self&.stream_address).status
         close_failed = close_status != 0
     }
 
     self&= (
-        ._ffi = self&._ffi
+        ._ffi           = self&._ffi
         .stream_address = 0
         .should_close   = 0 == 1
     )
@@ -156,15 +173,16 @@ _close_File(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed)))
 
 implement Reader#(File) (
     .read_byte = (.self: $&File) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+
         assume ffi := self&._ffi
 
-        if self&.stream_address == 0 {
+        if self&.stream_address == 0 or self&._readable == false {
             result = ..error(.reason = ..stream_read_failed)
             return
         }
 
         byte :: UInt8 = 0
-        byte_view ::= single_array_view#(.t: UInt8)(.data = $&byte)
+        byte_view ::= single_mutable_array_view#(.t: UInt8)(.data = $&byte)
         read_count ::= fread_into(
             .buffer = byte_view, .stream = file_stream_pointer(self).stream
         ).count
@@ -189,12 +207,13 @@ implement Reader#(File) (
     }
 )
 
-_read_file(.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
+_read_file := (.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_read_failed))
-) := {
+) {
+
     assume ffi := self&._ffi
 
-    if self&.stream_address == 0 {
+    if self&.stream_address == 0 or self&._readable == false {
         result = ..error(.reason = ..stream_read_failed)
         return
     }
@@ -212,20 +231,21 @@ _read_file(.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
     result = ..ok read_count
 }
 
-_file_write(.self: $&File, .value: ArrayView#(.t: UInt8)) -> (
+_file_write_block := (.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-) := {
+) {
+
     assume ffi := self&._ffi
 
-    if self&.stream_address == 0 {
+    if self&.stream_address == 0 or self&._writable == false {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
 
     stream ::= file_stream_pointer(self).stream
-    wrote ::= fwrite_from(.buffer = value, .stream = stream).count
+    wrote ::= fwrite_from(.buffer = buffer, .stream = stream).count
 
-    if wrote < length(&value).count {
+    if wrote < length(&buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -235,40 +255,27 @@ _file_write(.self: $&File, .value: ArrayView#(.t: UInt8)) -> (
     result = ..ok wrote
 }
 
-implement WriteValue#(File, ArrayView#(.t: UInt8)) (
+_file_write := (.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+) {
+
+    result = _file_write_block(self, .buffer = as_readonly(&value).view)
+}
+
+implement WriteValue#(File, MutableArrayView#(.t: UInt8)) (
     .Result      : Type = Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     .write_value = _file_write
 )
 
 implement BlockWriter#(File) (
-    .write_block = (.self: $&File, .buffer: ArrayViewRO#(.t: UInt8)) -> (
-        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-    ) {
-        assume ffi := self&._ffi
-
-        if self&.stream_address == 0 {
-            result = ..error(.reason = ..stream_write_failed)
-            return
-        }
-
-        stream ::= file_stream_pointer(self).stream
-        count ::= fwrite_from(.buffer = buffer, .stream = stream).count
-
-        if count < length(&buffer).count {
-            if ferror(.stream = stream).status != 0 {
-                result = ..error(.reason = ..stream_write_failed)
-                return
-            }
-        }
-
-        result = ..ok count
-    }
+    .write_block = _file_write_block
 )
 
 implement Writer#(File) (
     .flush = (.self: $&File) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
+
         assume ffi := self&._ffi
 
         if self&.stream_address == 0 {
@@ -276,7 +283,7 @@ implement Writer#(File) (
             return
         }
 
-        if fflush(.stream = file_stream_pointer(self).stream).status != 0 {
+        if _file_flush(.stream = self&.stream_address).status != 0 {
             result = ..error(.reason = ..stream_flush_failed)
             return
         }
@@ -287,20 +294,15 @@ implement Writer#(File) (
     .write_byte = (.self: $&File, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
+
         assume ffi := self&._ffi
 
-        if self&.stream_address == 0 {
+        if self&.stream_address == 0 or self&._writable == false {
             result = ..error(.reason = ..stream_write_failed)
             return
         }
 
-        single_byte :: UInt8 = byte
-        byte_view ::= single_array_view#(.t: UInt8)(.data = $&single_byte)
-        wrote ::= fwrite_from(
-            .buffer = byte_view, .stream = file_stream_pointer(self).stream
-        ).count
-
-        if wrote != 1 {
+        if _file_write_byte(.stream = self&.stream_address, .byte = byte).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
         }

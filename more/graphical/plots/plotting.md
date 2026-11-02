@@ -8,7 +8,7 @@ Figure : Type = (
 	.layout: Layout
 )
 
-Layout :: Tree<LayoutElement>
+Layout :: Tree#(LayoutElement)
 ```
 
 Explore this further.

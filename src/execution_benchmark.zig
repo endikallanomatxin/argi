@@ -1,0 +1,609 @@
+const std = @import("std");
+const interactive = @import("execution/interactive.zig");
+const sf = @import("1_base/source_files.zig");
+const diagnostics_mod = @import("1_base/diagnostic.zig");
+const frontend = @import("0_commands/frontend_pipeline.zig");
+
+// Counts requested backing bytes still owned by the session, including arena
+// slabs. These are not RSS or cumulative allocation traffic. Single-threaded
+// preparation keeps attribution deterministic without production instrumentation.
+const Memory = struct {
+    child: std.mem.Allocator = std.heap.page_allocator,
+    live: usize = 0,
+    peak: usize = 0,
+    limit: usize,
+    reported_limit: bool = false,
+
+    fn allocator(self: *Memory) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+    fn canGrow(self: *Memory, old: usize, new: usize) bool {
+        return new <= old or new - old <= self.limit -| self.live;
+    }
+    fn account(self: *Memory, old: usize, new: usize) void {
+        self.live = self.live - old + new;
+        self.peak = @max(self.peak, self.live);
+    }
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+        const self: *Memory = @ptrCast(@alignCast(ctx));
+        if (!self.canGrow(0, len)) {
+            if (!self.reported_limit) {
+                self.reported_limit = true;
+                std.debug.print("# allocation-limit,live={d},request={d},limit={d}\n", .{ self.live, len, self.limit });
+                std.debug.dumpCurrentStackTrace(.{ .first_address = ret });
+            }
+            return null;
+        }
+        const result = self.child.rawAlloc(len, alignment, ret) orelse return null;
+        self.account(0, len);
+        return result;
+    }
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) bool {
+        const self: *Memory = @ptrCast(@alignCast(ctx));
+        if (!self.canGrow(memory.len, len) or !self.child.rawResize(memory, alignment, len, ret)) return false;
+        self.account(memory.len, len);
+        return true;
+    }
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) ?[*]u8 {
+        const self: *Memory = @ptrCast(@alignCast(ctx));
+        if (!self.canGrow(memory.len, len)) return null;
+        const result = self.child.rawRemap(memory, alignment, len, ret) orelse return null;
+        self.account(memory.len, len);
+        return result;
+    }
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret: usize) void {
+        const self: *Memory = @ptrCast(@alignCast(ctx));
+        self.child.rawFree(memory, alignment, ret);
+        self.account(memory.len, 0);
+    }
+};
+
+const Scenario = enum { update, bindings, calls, aggregates, float_parsing, branches, specializations, specialization_reuse, resources, definitions, rejections, resets };
+const Modules = enum { minimal, core, prelude };
+
+fn elapsed(io: std.Io, start: i96) u64 {
+    return @intCast(@max(0, std.Io.Timestamp.now(io, .boot).nanoseconds - start));
+}
+fn ms(value: u64) f64 {
+    return @as(f64, @floatFromInt(value)) / 1_000_000;
+}
+fn mib(value: usize) f64 {
+    return @as(f64, @floatFromInt(value)) / (1024 * 1024);
+}
+
+// Diagnostic reachability only: inspect values held by live frames without
+// following storage references or treating dead IDs as reusable. Payload slices
+// can share backing, so these are visible cells, not reclaimable allocation bytes.
+fn reportBacking(session: *interactive.Interactive, commands: usize) !void {
+    const b = @import("5_codegen/bytecode/bytecode.zig");
+    const v = @import("5_codegen/bytecode/value.zig");
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const Key = struct { address: usize, length: usize, kind: enum { values, projections, virtual_ } };
+    var seen: std.AutoHashMapUnmanaged(Key, void) = .empty;
+    var pending: std.ArrayList(b.Value) = .empty;
+    var aggregate_cells: usize = 0;
+    var projection_cells: usize = 0;
+    var virtual_bytes: usize = 0;
+    for (session.runtime.context.storage.frames.items) |frame| {
+        if (!frame.alive) continue;
+        for (frame.values) |cell| if (cell) |value| try pending.append(a, value);
+        var partials = frame.partial_storage.valueIterator();
+        while (partials.next()) |partial| for (partial.values) |cell| if (cell) |value| try pending.append(a, value);
+    }
+    while (pending.pop()) |value| {
+        var elements: []const b.Value = &.{};
+        var path: []const v.Projection = &.{};
+        switch (value) {
+            .record => |fields| elements = fields,
+            .array => |items| elements = items,
+            .choice => |choice| if (choice.payload) |payload| {
+                elements = payload[0..1];
+            },
+            .reference => |reference| path = reference.path,
+            .virtual_ => |descriptor| {
+                const entry = try seen.getOrPut(a, .{ .address = @intFromPtr(descriptor), .length = 1, .kind = .virtual_ });
+                if (!entry.found_existing) {
+                    virtual_bytes += @sizeOf(v.Virtual);
+                    path = descriptor.receiver.path;
+                }
+            },
+            else => {},
+        }
+        if (elements.len != 0) {
+            const entry = try seen.getOrPut(a, .{ .address = @intFromPtr(elements.ptr), .length = elements.len, .kind = .values });
+            if (!entry.found_existing) {
+                aggregate_cells += elements.len;
+                try pending.appendSlice(a, elements);
+            }
+        }
+        if (path.len != 0) {
+            const entry = try seen.getOrPut(a, .{ .address = @intFromPtr(path.ptr), .length = path.len, .kind = .projections });
+            if (!entry.found_existing) projection_cells += path.len;
+        }
+    }
+    std.debug.print("# visible-backing,{d},{d},{d},{d}\n", .{ commands, aggregate_cells, projection_cells, virtual_bytes });
+}
+
+fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario, modules: Modules, commands: usize, total_ns: u64) !void {
+    const stats = session.runtime.stats;
+    const backend_ns = stats.lowering_ns + stats.verification_ns + stats.execution_ns;
+    const semantic_graph = session.compiler.semantic.relocation.graph.storageBytes();
+    var code: usize = 0;
+    for (session.runtime.units.items) |arena| code += arena.queryCapacity();
+    var summary_arenas: usize = 0;
+    var summary_entries = session.compiler.summary_cache.entries.valueIterator();
+    while (summary_entries.next()) |entry| summary_arenas += entry.*.arena.queryCapacity();
+    var body_arenas: usize = 0;
+    var body_entries = session.compiler.body_cache.entries.valueIterator();
+    while (body_entries.next()) |entry| body_arenas += entry.*.arena.queryCapacity();
+    var proofs: usize = 0;
+    var proof = session.compiler.temporal;
+    while (proof) |entry| : (proof = entry.parent) proofs += entry.arena.queryCapacity();
+    var dead_frames: usize = 0;
+    var dead_frame_slot_bytes: usize = 0;
+    var live_frame_slot_bytes: usize = 0;
+    var frame_identity_bytes: usize = 0;
+    var dead_cleanup_flag_bytes: usize = 0;
+    var live_cleanup_flag_bytes: usize = 0;
+    if (session.runtime.context.state != .fresh) {
+        const frames = session.runtime.context.storage.frames.items;
+        frame_identity_bytes = frames.len * @sizeOf(@TypeOf(frames[0]));
+        for (frames) |frame| {
+            const bytes = frame.values.len * @sizeOf(@TypeOf(frame.values[0]));
+            if (!frame.alive) {
+                dead_frames += 1;
+                dead_frame_slot_bytes += bytes;
+                dead_cleanup_flag_bytes += frame.cleanup_flags.len;
+            } else {
+                live_frame_slot_bytes += bytes;
+                live_cleanup_flag_bytes += frame.cleanup_flags.len;
+            }
+        }
+    }
+    var live_acquisitions: usize = 0;
+    var live_acquired_bytes: usize = 0;
+    var retained_acquired_bytes: usize = 0;
+    if (session.runtime.context.state != .fresh) {
+        for (session.runtime.context.storage.acquisitions.entries.items) |region| {
+            retained_acquired_bytes += region.bytes.len + region.initialized.len;
+            if (region.live) {
+                live_acquisitions += 1;
+                live_acquired_bytes += region.bytes.len;
+            }
+        }
+    }
+    if (scenario == .resources and live_acquisitions != commands) return error.InvalidBenchmarkAcquisitions;
+    const runtime = if (session.runtime.context.state == .fresh) 0 else session.runtime.context.arena.queryCapacity();
+    std.debug.print("{s},{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d:.3},{d}", .{
+        @tagName(scenario),                   @tagName(modules),                 commands,
+        ms(total_ns),                         ms(total_ns -| backend_ns),        ms(stats.lowering_ns),
+        ms(stats.verification_ns),            ms(stats.execution_ns),            mib(memory.live),
+        mib(memory.peak),                     mib(semantic_graph),               mib(code),
+        mib(proofs),                          mib(session.sources.arenaBytes()), mib(session.diagnostic_arena.queryCapacity()),
+        runtime,                              dead_frames,                       stats.compiled_functions,
+        stats.compiled_instructions,          dead_frame_slot_bytes,             live_frame_slot_bytes,
+        frame_identity_bytes,                 live_acquisitions,                 live_acquired_bytes,
+        retained_acquired_bytes,              dead_cleanup_flag_bytes,           live_cleanup_flag_bytes,
+        session.compiler.summary_evaluations, session.compiler.summary_reuses,   session.compiler.summary_cache.entries.count(),
+        mib(summary_arenas),                  stats.reused_functions,
+    });
+    std.debug.print(",{d},{d},{d},{d:.3},{d}\n", .{ session.compiler.bodies_checked, session.compiler.bodies_reused, session.compiler.body_cache.entries.count(), mib(body_arenas), session.runtime.context.retainedRuntimeBytes() - runtime });
+    if (session.runtime.context.allocation_profile) |counts| {
+        std.debug.print("# transfers,{d},{d},{d},{d}\n", .{ commands, counts.call_input_cells, counts.nested_output_cells, counts.write_destination_cells });
+        std.debug.print("# backing,{d},{d},{d},{d},{d}\n", .{ commands, counts.aggregate_cells, counts.partial_cells, counts.projection_cells, counts.virtual_bytes });
+        std.debug.print("# aggregate-sources,{d},{d},{d}\n", .{ commands, counts.aggregate_update_cells, counts.partial_snapshot_cells });
+        if (session.runtime.context.state != .fresh) try reportBacking(session, commands);
+    }
+    if (scenario == .specializations or scenario == .specialization_reuse) {
+        const graph = &session.compiler.semantic.relocation.graph;
+        var instances: usize = 0;
+        var statements: usize = 0;
+        for (graph.generic_function_instances.items) |instance| {
+            if (!std.mem.eql(u8, graph.familyDefinitionName(instance.parameterized_definition), "branch_workload")) continue;
+            instances += 1;
+            const body = graph.function(instance.function).body orelse return error.UnmaterializedBenchmarkBody;
+            statements += graph.blocks.items[@intFromEnum(body)].nodes.len;
+        }
+        const expected: usize = if (scenario == .specializations) commands else @intFromBool(commands != 0);
+        if (instances != expected) return error.UnexpectedBenchmarkSpecializations;
+        std.debug.print("# specializations,{d},{d},{d},{d},{d},{d}\n", .{ commands, instances, statements, graph.nodes.items.len, graph.bindings.items.len, graph.types.items.len });
+    }
+    if (scenario == .branches and commands != 0) {
+        const b = @import("5_codegen/bytecode/bytecode.zig");
+        var program: ?*const b.Program = null;
+        var bodies = session.runtime.bodies.entries.iterator();
+        while (bodies.next()) |entry| {
+            const graph = &session.compiler.semantic.relocation.graph;
+            const declaration = graph.declaration(graph.function(entry.key_ptr.*).declaration);
+            if (std.mem.eql(u8, graph.text(declaration.name), "branch_workload")) {
+                program = entry.value_ptr.origin.program();
+                break;
+            }
+        }
+        var verification_memory: Memory = .{ .limit = 128 * 1024 * 1024 };
+        var requested: u64 = 0;
+        var allocations: @import("1_base/profile.zig").AllocationCounter = .{ .child = verification_memory.allocator(), .requested_bytes = &requested };
+        try @import("5_codegen/bytecode/verify.zig").verify(allocations.allocator(), (program orelse return error.MissingBenchmarkProgram).*);
+        std.debug.print("# verifier,{d},{d},{d},{d}\n", .{ commands, requested, verification_memory.peak, verification_memory.live });
+        if (verification_memory.live != 0) return error.VerifierRetainedMemory;
+    }
+    // Check the actual retained value without adding a measurement submission.
+    const bindings = session.compiler.semantic.resolvers.expressions.session_bindings.items;
+    const binding = if (scenario == .float_parsing) named: {
+        const graph = &session.compiler.semantic.relocation.graph;
+        for (bindings) |id| {
+            if (std.mem.eql(u8, graph.text(graph.binding(id).name), "value")) break :named id;
+        }
+        return error.MissingBenchmarkBinding;
+    } else bindings[bindings.len - 1];
+    const frame = session.runtime.context.bindings.get(binding) orelse return error.MissingBenchmarkBinding;
+    const slots = try session.runtime.context.storage.slots(frame);
+    const retained = try slots.get(0);
+    if (scenario == .aggregates) {
+        if (retained != .array or retained.array.len != 16) return error.InvalidBenchmarkResult;
+        for (retained.array) |item| if (item != .integer or item.integer != 42) return error.InvalidBenchmarkResult;
+    } else if (retained != .integer or retained.integer != 42) return error.InvalidBenchmarkResult;
+}
+
+// Diagnostic-only attribution: count retained pool payload and reserved backing
+// independently. Nested slices and lookup/safety arenas are not part of these
+// columns and remain covered by the existing total allocation counters.
+fn reservedPoolBytes(value: anytype) usize {
+    var bytes: usize = 0;
+    inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |field| {
+        if (comptime switch (@typeInfo(field.type)) {
+            .@"struct" => @hasField(field.type, "items") and @hasField(field.type, "capacity"),
+            else => false,
+        }) {
+            const pool = @field(value, field.name);
+            bytes += pool.capacity * @sizeOf(std.meta.Elem(@TypeOf(pool.items)));
+        }
+    }
+    return bytes;
+}
+
+fn reportGraphPools(session: *const interactive.Interactive, commands: usize) void {
+    const Graph = @import("4_semantics/global/graph.zig").GlobalSemanticGraph;
+    inline for (@typeInfo(Graph).@"struct".fields) |field| {
+        if (comptime switch (@typeInfo(field.type)) {
+            .@"struct" => @hasField(field.type, "items") and @hasField(field.type, "capacity"),
+            else => false,
+        }) {
+            const pool = @field(session.compiler.semantic.relocation.graph, field.name);
+            const width = @sizeOf(std.meta.Elem(@TypeOf(pool.items)));
+            const payload = pool.items.len * width;
+            const reserved = pool.capacity * width;
+            if (reserved != 0) std.debug.print("# graph_pool,{d},{s},{d},{d}\n", .{ commands, field.name, payload, reserved });
+        }
+    }
+    const Module = @import("4_semantics/module/graph.zig").ModuleSemanticGraph;
+    var source_payload: usize = 0;
+    var source_pools: usize = 0;
+    for (session.sources.modules.items) |module| {
+        source_payload += module.storageBytes();
+        source_pools += module.module_dir.len + reservedPoolBytes(module.*) +
+            reservedPoolBytes(module.semantic) + reservedPoolBytes(module.semantic.parameterized_storage) +
+            reservedPoolBytes(module.semantic.parameterized_storage.ir);
+    }
+    const graph = &session.compiler.semantic.relocation.graph;
+    var safety_arenas: usize = 0;
+    for (graph.safety_batches.items) |arena| safety_arenas += arena.queryCapacity();
+    // Descriptors borrow the same underlying ModuleSG pools: count those pools
+    // once through their source owners, and descriptor allocations separately.
+    // This is partial attribution, not a complete additive heap census.
+    std.debug.print("# ownership,{d},module_descriptor_width,{d}\n", .{ commands, @sizeOf(Module) });
+    std.debug.print("# ownership,{d},source_module_count,{d}\n", .{ commands, session.sources.modules.items.len });
+    std.debug.print("# ownership,{d},source_module_payload_bytes,{d}\n", .{ commands, source_payload });
+    std.debug.print("# ownership,{d},source_module_pool_reserved_bytes,{d}\n", .{ commands, source_pools });
+    std.debug.print("# ownership,{d},source_module_objects_bytes,{d}\n", .{ commands, session.sources.modules.items.len * @sizeOf(Module) });
+    std.debug.print("# ownership,{d},source_module_pointer_reserved_bytes,{d}\n", .{ commands, session.sources.modules.capacity * @sizeOf(*Module) });
+    // Keep the retired staging counter so before/after ownership logs compare.
+    std.debug.print("# ownership,{d},source_module_views_reserved_bytes,0\n", .{commands});
+    std.debug.print("# ownership,{d},semantic_module_views_reserved_bytes,{d}\n", .{ commands, session.compiler.semantic.module_views.capacity * @sizeOf(Module) });
+    std.debug.print("# ownership,{d},global_pool_reserved_bytes,{d}\n", .{ commands, reservedPoolBytes(graph.*) + reservedPoolBytes(graph.construction) });
+    std.debug.print("# ownership,{d},global_safety_arena_bytes,{d}\n", .{ commands, safety_arenas });
+}
+
+// A reusable function with local slots and conditional writes exercises real
+// verifier joins, while subsequent commands also measure verified-body reuse.
+fn branchSource(allocator: std.mem.Allocator, parameterized: bool) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    try output.writer.writeAll("branch_workload := ");
+    if (parameterized) try output.writer.writeAll("#(.tag: UIntNative) ");
+    try output.writer.writeAll("(.condition: Bool) -> (.result: Int32 = 42) {\nif condition {\n");
+    for (0..32) |index| try output.writer.print(
+        "local_{d} :: Int32 = 42\nif condition {{ local_{d} = 1 }} else {{ local_{d} = 2 }}\nresult = local_{d}\n",
+        .{ index, index, index, index },
+    );
+    try output.writer.writeAll("result = 42\n}\n}\n");
+    return output.toOwnedSlice();
+}
+
+fn benchmarkResetCycles(session: *interactive.Interactive, memory: *Memory, io: std.Io, modules: Modules, count: usize) !void {
+    // Establish a post-reset baseline: initial preparation and retained core
+    // snapshots are deliberately outside the repeated-cycle measurements.
+    try session.reset();
+    const baseline = session.compiler.semantic.relocation.graph.checkpoint();
+    const source_modules = session.sources.modules.items.len;
+    const baseline_bytes = memory.live;
+    var minimum_bytes = baseline_bytes;
+    var maximum_bytes = baseline_bytes;
+    var work_ns: u64 = 0;
+    var reset_ns: u64 = 0;
+    var lowering_ns: u64 = 0;
+    var verification_ns: u64 = 0;
+    var execution_ns: u64 = 0;
+    std.debug.print("# resets,modules,cycles,work_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,reset_ms,baseline_bytes,post_reset_bytes,min_post_reset_bytes,max_post_reset_bytes,peak_bytes\n", .{});
+    for (1..count + 1) |index| {
+        session.runtime.profile_io = io;
+        session.runtime.stats = .{};
+        const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+        try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
+        try session.submitStatements("value :: Int32 = 42\nreference ::= &value");
+        if (modules == .prelude)
+            try session.submitStatements("text ::= unwrap_or_abort(.value = String(.length = 64))");
+        const result = (try session.submitInput("identity(.value = reference&)")) orelse return error.MissingBenchmarkResult;
+        if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
+        const revision = session.compiler.revision;
+        const checkpoint = session.compiler.semantic.relocation.graph.checkpoint();
+        session.submitStatements("missing_function()") catch |err| {
+            if (err != error.Reported) return err;
+        };
+        if (revision != session.compiler.revision or !std.meta.eql(checkpoint, session.compiler.semantic.relocation.graph.checkpoint())) return error.RejectedSubmissionChangedState;
+        // Rejection must leave earlier values usable, not merely preserve IDs.
+        const recovered = (try session.submitInput("identity(.value = reference&)")) orelse return error.MissingBenchmarkResult;
+        if (recovered.value != .runtime or recovered.value.runtime != .integer or recovered.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
+        work_ns += elapsed(io, start);
+        lowering_ns += session.runtime.stats.lowering_ns;
+        verification_ns += session.runtime.stats.verification_ns;
+        execution_ns += session.runtime.stats.execution_ns;
+        const reset_start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+        try session.reset();
+        reset_ns += elapsed(io, reset_start);
+        const current = session.compiler.semantic.relocation.graph.checkpoint();
+        // Across reset, compare retained pool lengths, not checkpoint arena
+        // pointers: the previous compilation and its arenas have been freed.
+        if (session.result_sequence != 0 or session.sources.modules.items.len != source_modules or
+            !std.meta.eql(baseline.pool_lengths, current.pool_lengths)) return error.ResetRetainedSubmissionState;
+        minimum_bytes = @min(minimum_bytes, memory.live);
+        maximum_bytes = @max(maximum_bytes, memory.live);
+        if (index == 10 or index == 100 or index == 1000 or index == count) {
+            const backend_ns = lowering_ns + verification_ns + execution_ns;
+            std.debug.print("# resets,{s},{d},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d},{d},{d}\n", .{ @tagName(modules), index, ms(work_ns), ms(work_ns -| backend_ns), ms(lowering_ns), ms(verification_ns), ms(execution_ns), ms(reset_ns), baseline_bytes, memory.live, minimum_bytes, maximum_bytes, memory.peak });
+        }
+    }
+}
+
+fn run(backing_allocator: std.mem.Allocator, io: std.Io, count: usize, modules: Modules, scenario: Scenario, limit: usize, graph_pools: bool, resolution_profile: bool) !void {
+    var memory: Memory = .{ .child = backing_allocator, .limit = limit };
+    const allocator = memory.allocator();
+    {
+        var initial_arena = std.heap.ArenaAllocator.init(allocator);
+        defer initial_arena.deinit();
+        const a = initial_arena.allocator();
+        var session: interactive.Interactive = undefined;
+        if (modules != .minimal) {
+            const files = try sf.collectCoreWithOptions(&a, io, .{ .fallback_core_dir = "core" });
+            const diagnostics = try a.create(diagnostics_mod.Diagnostics);
+            diagnostics.* = try .init(&a, files.items);
+            const pipeline = try a.create(frontend.FrontendPipeline);
+            pipeline.* = .init(a, io, diagnostics, .{ .module_jobs = 1 });
+            const prepared = pipeline.prepareSessionFiles(files.items) catch |err| {
+                try diagnostics.dump();
+                return err;
+            };
+            try session.initPrepared(allocator, diagnostics.source_files, prepared, .{});
+        } else try session.init(allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+        defer session.deinit();
+        var allocation_profile: @import("execution/vm.zig").AllocationProfile = .{};
+        session.runtime.context.allocation_profile = &allocation_profile;
+        var unavailable: std.Io.Writer = .failing;
+        var output: @import("execution/host_output.zig").Output = .{ .writer = &unavailable, .error_writer = &unavailable };
+        const host_bindings = output.bindings();
+        if (modules == .prelude) {
+            session.runtime.context.host_bindings = &host_bindings;
+            session.initializePrelude(@embedFile("0_commands/repl_prelude.rg")) catch |err| {
+                try session.diagnostics.dump();
+                return err;
+            };
+        }
+        if (scenario == .resets) {
+            try benchmarkResetCycles(&session, &memory, io, modules, count);
+            if (graph_pools) reportGraphPools(&session, count);
+        } else {
+            if (scenario == .calls) try session.submitDefinitions("identity := (.value: Int32) -> (.result: Int32) { result = value }");
+            if (scenario == .branches or scenario == .specializations or scenario == .specialization_reuse) {
+                const definition = try branchSource(allocator, scenario != .branches);
+                defer allocator.free(definition);
+                try session.submitDefinitions(definition);
+                try session.submitStatements("condition :: Bool = true");
+            }
+            if (scenario == .aggregates) {
+                try session.submitDefinitions("make_array := (.value: Int32) -> (.result: [16]Int32) { result = (value, value, value, value, value, value, value, value, value, value, value, value, value, value, value, value) }");
+                try session.submitStatements("value :: [16]Int32 = make_array(42)");
+            } else try session.submitStatements("value :: Int32 = 42");
+            var scans: @import("4_semantics/global/resolution_profile.zig").Profile = .{ .io = io };
+            if (resolution_profile) session.compiler.semantic.resolvers.core.scan_profile = &scans;
+            session.runtime.profile_io = io;
+            session.runtime.stats = .{};
+            session.compiler.summary_evaluations = 0;
+            session.compiler.summary_reuses = 0;
+            session.compiler.bodies_checked = 0;
+            session.compiler.bodies_reused = 0;
+            // Benchmark-only samples stay outside the session's memory account.
+            // Sort completed windows after timing, preserving the cumulative
+            // phase counters and avoiding instrumentation in production code.
+            const latencies = try backing_allocator.alloc(u64, count);
+            defer backing_allocator.free(latencies);
+            var window_start: usize = 0;
+            var total_ns: u64 = 0;
+            try report(&session, &memory, scenario, modules, 0, total_ns);
+            for (1..count + 1) |index| {
+                const source = switch (scenario) {
+                    .resets => unreachable,
+                    .update => try allocator.dupe(u8, "value = 42"),
+                    .calls => try allocator.dupe(u8, "value = identity(.value = 42)"),
+                    .aggregates => try allocator.dupe(u8, "value = make_array(42)"),
+                    .float_parsing => try allocator.dupe(u8, "if unwrap_or_abort(.value = parse_float64(.text = \"42.0\")).result != 42.0 { abort }"),
+                    .branches => try allocator.dupe(u8, "value = branch_workload(.condition = condition)"),
+                    .specializations, .specialization_reuse => try std.fmt.allocPrint(allocator, "value = branch_workload#(.tag = {d})(.condition = condition)", .{if (scenario == .specializations) index else @as(usize, 0)}),
+                    .rejections => try allocator.dupe(u8, "value = 42\nmissing_function()"),
+                    .definitions => try std.fmt.allocPrint(allocator, "function_{d} := () -> (.result: Int32) {{ result = 42 }}", .{index}),
+                    .bindings => try std.fmt.allocPrint(allocator, "value_{d} :: Int32 = 42", .{index}),
+                    .resources => try std.fmt.allocPrint(allocator, "text_{d} ::= unwrap_or_abort(.value = String(.length = 32))\nvalue_{d} :: Int32 = 42", .{ index, index }),
+                };
+                defer allocator.free(source);
+                const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+                const submitted = if (scenario == .rejections) rejected: {
+                    const revision = session.compiler.revision;
+                    const saved = session.compiler.semantic.relocation.graph.checkpoint();
+                    session.submitStatements(source) catch |err| {
+                        if (err != error.Reported) return err;
+                        if (revision != session.compiler.revision or !std.meta.eql(saved, session.compiler.semantic.relocation.graph.checkpoint())) return error.RejectedSubmissionChangedState;
+                        break :rejected;
+                    };
+                    return error.RejectedSubmissionAccepted;
+                } else if (scenario == .definitions) session.submitDefinitions(source) else session.submitStatements(source);
+                submitted catch |err| {
+                    std.debug.print("Stopped after {d} commands: {s}; retained {d:.3} MiB, peak {d:.3} MiB\n", .{ index - 1, @errorName(err), mib(memory.live), mib(memory.peak) });
+                    if (session.runtime.context.state != .fresh) {
+                        std.debug.print("# stopped_aggregate_sources,updates={d},partial_snapshots={d}\n", .{ allocation_profile.aggregate_update_cells, allocation_profile.partial_snapshot_cells });
+                        std.debug.print("# stopped_runtime,cells={d},frames={d},arena_bytes={d},aggregate_cells={d},partial_cells={d},projection_cells={d}\n", .{
+                            session.runtime.context.storage.cells,
+                            session.runtime.context.storage.frames.items.len,
+                            session.runtime.context.arena.queryCapacity(),
+                            allocation_profile.aggregate_cells,
+                            allocation_profile.partial_cells,
+                            allocation_profile.projection_cells,
+                        });
+                    }
+                    try session.diagnostics.dump();
+                    return err;
+                };
+                latencies[index - 1] = elapsed(io, start);
+                total_ns += latencies[index - 1];
+                if (index == 10 or index == 100 or index == 1000 or index == count) {
+                    try report(&session, &memory, scenario, modules, index, total_ns);
+                    const window = latencies[window_start..index];
+                    std.mem.sort(u64, window, {}, std.sort.asc(u64));
+                    std.debug.print("# latency,{d},{d},{d:.3},{d:.3},{d:.3}\n", .{
+                        index,
+                        window.len,
+                        ms(window[(window.len - 1) / 2]),
+                        ms(window[window.len - 1 - window.len / 20]),
+                        ms(window[window.len - 1]),
+                    });
+                    window_start = index;
+                    if (resolution_profile) {
+                        for (std.enums.values(@import("4_semantics/global/resolution_profile.zig").Pass), scans.entries) |pass, entry| {
+                            std.debug.print("# resolution,{d},{s},{d},{d},{d},{d:.3},{d}\n", .{ index, @tagName(pass), entry.calls, entry.visits, entry.changed, ms(entry.ns), scans.rounds });
+                        }
+                    }
+                }
+            }
+            if (scenario == .definitions) {
+                const call = try std.fmt.allocPrint(allocator, "function_{d}()", .{count});
+                defer allocator.free(call);
+                const result = (try session.submitInput(call)) orelse return error.MissingBenchmarkResult;
+                if (result.value != .runtime or result.value.runtime != .integer or result.value.runtime.integer != 42) return error.InvalidBenchmarkResult;
+            }
+            if (graph_pools) reportGraphPools(&session, count);
+        }
+        // Report cleanup separately: a completed command workload is not an
+        // acceptance pass when releasing its live resources fails afterwards.
+        const cleanup_start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+        const before_cleanup = session.runtime.stats;
+        const cleanup = session.close();
+        std.debug.print("# cleanup,total_ms={d:.3},lowering_ms={d:.3},verification_ms={d:.3},execution_ms={d:.3},live_MiB={d:.3},peak_MiB={d:.3},status={s}\n", .{
+            ms(elapsed(io, cleanup_start)),
+            ms(session.runtime.stats.lowering_ns - before_cleanup.lowering_ns),
+            ms(session.runtime.stats.verification_ns - before_cleanup.verification_ns),
+            ms(session.runtime.stats.execution_ns - before_cleanup.execution_ns),
+            mib(memory.live),
+            mib(memory.peak),
+            if (cleanup) |_| "ok" else |err| @errorName(err),
+        });
+        try cleanup;
+    }
+    if (memory.live != 0) {
+        std.debug.print("Benchmark teardown retained {d} requested bytes\n", .{memory.live});
+        return error.BenchmarkMemoryLeak;
+    }
+}
+
+// Isolate verifier allocations from graph construction and session retention.
+// Diamonds retain one join per block; linear code has the same slot count.
+fn benchmarkVerifier(io: std.Io) !void {
+    const b = @import("5_codegen/bytecode/bytecode.zig");
+    const g = @import("4_semantics/global/graph.zig");
+    const verify = @import("5_codegen/bytecode/verify.zig").verify;
+    const a = std.heap.page_allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    const source = @import("4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    std.debug.print("shape,slots,instructions,verification_ms,requested_bytes,peak_bytes,retained_bytes\n", .{});
+    for ([_]usize{ 10, 100, 1000 }) |count| {
+        const slots = try a.alloc(b.Type, count);
+        defer a.free(slots);
+        @memset(slots, @enumFromInt(0));
+        for ([_]bool{ false, true }) |diamonds| {
+            const code = try a.alloc(b.Instruction, (if (diamonds) count * 3 else count) + 1);
+            defer a.free(code);
+            if (diamonds) {
+                for (0..count) |index| {
+                    const pc: u32 = @intCast(index * 3);
+                    code[pc] = .{ .source = source, .op = .{ .branch = .{ .condition = 0, .yes = pc + 1, .no = pc + 2 } } };
+                    code[pc + 1] = .{ .source = source, .op = .{ .jump = pc + 3 } };
+                    code[pc + 2] = .{ .source = source, .op = .{ .jump = pc + 3 } };
+                }
+            } else {
+                for (code[0..count], 0..) |*instruction, index| {
+                    instruction.* = .{ .source = source, .op = .{ .constant = .{ .dst = @intCast(index), .value = .{ .boolean = true } } } };
+                }
+            }
+            code[code.len - 1] = .{ .source = source, .op = .{ .ret = &.{0} } };
+            const function = b.Function{ .slots = slots, .inputs = &.{0}, .outputs = &.{0}, .code = code };
+            var memory: Memory = .{ .limit = 128 * 1024 * 1024 };
+            var requested: u64 = 0;
+            var allocations = @import("1_base/profile.zig").AllocationCounter{ .child = memory.allocator(), .requested_bytes = &requested };
+            const start = std.Io.Timestamp.now(io, .boot).nanoseconds;
+            try verify(allocations.allocator(), .{ .graph = &graph, .functions = &.{}, .expression = &function });
+            const duration = elapsed(io, start);
+            std.debug.print("{s},{d},{d},{d:.3},{d},{d},{d}\n", .{ if (diamonds) "diamonds" else "linear", count, code.len, ms(duration), requested, memory.peak, memory.live });
+            if (memory.live != 0) return error.VerifierRetainedMemory;
+        }
+    }
+}
+
+pub fn main(init: std.process.Init) !void {
+    const raw_args = try init.minimal.args.toSlice(init.arena.allocator());
+    var graph_pools = false;
+    var resolution_profile = false;
+    var end = raw_args.len;
+    while (end > 1) {
+        if (std.mem.eql(u8, raw_args[end - 1], "--graph-pools")) graph_pools = true else if (std.mem.eql(u8, raw_args[end - 1], "--resolution-profile")) resolution_profile = true else break;
+        end -= 1;
+    }
+    const args = raw_args[0..end];
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--verifier")) return benchmarkVerifier(init.io);
+    if (args.len > 5) return error.InvalidArguments;
+    const count = if (args.len >= 2) try std.fmt.parseInt(usize, args[1], 10) else 1000;
+    if (count == 0 or count == std.math.maxInt(usize)) return error.InvalidArguments;
+    const modules = if (args.len >= 3) std.meta.stringToEnum(Modules, args[2]) orelse return error.InvalidArguments else .minimal;
+    const scenario = if (args.len >= 4) std.meta.stringToEnum(Scenario, args[3]) orelse return error.InvalidArguments else .update;
+    if (scenario == .resources and modules != .prelude) return error.ResourcesRequirePrelude;
+    if (scenario == .float_parsing and modules == .minimal) return error.FloatParsingRequiresCore;
+    if (scenario == .resets and resolution_profile) return error.ResetResolutionProfileUnsupported;
+    const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
+    const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
+    std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|aggregates|float_parsing|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
+    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB,runtime_payload_bytes\n", .{});
+    std.debug.print("# latency,commands,window_commands,p50_ms,p95_ms,max_ms\n", .{});
+    if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
+    if (scenario == .specializations or scenario == .specialization_reuse) std.debug.print("# specializations,commands,instances,body_top_level_statements,graph_nodes,graph_bindings,graph_types\n", .{});
+    try run(init.gpa, init.io, count, modules, scenario, limit, graph_pools, resolution_profile);
+}

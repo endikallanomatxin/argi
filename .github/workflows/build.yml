@@ -66,9 +66,52 @@ jobs:
         timeout-minutes: 45
         run: zig build test-internal -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
 
+      - name: Sweep resource-prelude allocation failures (0–8192)
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 45
+        run: zig build test-internal -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true -Dtest-extended-allocation-sweeps=true -Dtest-allocation-failure-start=0 -Dtest-allocation-failure-end=8192 -Dtest-filter='REPL resource prelude releases failed source' --summary all
+
+      - name: Sweep resource-prelude allocation failures (8192–16384)
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 45
+        run: zig build test-internal -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true -Dtest-extended-allocation-sweeps=true -Dtest-allocation-failure-start=8192 -Dtest-allocation-failure-end=16384 -Dtest-filter='REPL resource prelude releases failed source' --summary all
+
+      - name: Sweep resource-prelude allocation failures (16384–24576)
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 45
+        run: zig build test-internal -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true -Dtest-extended-allocation-sweeps=true -Dtest-allocation-failure-start=16384 -Dtest-allocation-failure-end=24576 -Dtest-filter='REPL resource prelude releases failed source' --summary all
+
+      - name: Sweep resource-prelude allocation failures (24576–end)
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 45
+        run: zig build test-internal -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true -Dtest-extended-allocation-sweeps=true -Dtest-allocation-failure-start=24576 -Dtest-filter='REPL resource prelude releases failed source' --summary all
+
       - name: Run program fixtures with the optimized compiler
         timeout-minutes: 45
         run: zig build test-programs -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
+
+      - name: Validate bounded persistent REPL sessions
+        if: matrix.target == 'linux-x86_64'
+        timeout-minutes: 15
+        run: |
+          zig build build-execution-benchmark -Doptimize=ReleaseSafe -j2 --summary all
+          mkdir -p .zig-cache/repl-acceptance
+          for scenario in calls resources definitions rejections; do
+            report=".zig-cache/repl-acceptance/$scenario.csv"
+            if ! ./zig-out/bin/execution-benchmark 1000 prelude "$scenario" 512 > "$report" 2>&1; then
+              cat "$report"
+              exit 1
+            fi
+            tail -n 1 "$report"
+          done
+
+      - name: Upload REPL resource and latency reports
+        if: always() && matrix.target == 'linux-x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: repl-acceptance-${{ matrix.target }}
+          path: .zig-cache/repl-acceptance/
+          if-no-files-found: ignore
 
       - name: Upload program test logs
         if: always()

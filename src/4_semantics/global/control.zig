@@ -9,7 +9,7 @@ const generic_functions_mod = @import("generic_functions.zig");
 const contract_mod = @import("contracts.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
-const reach_context = @import("reach_context.zig");
+const call_context = @import("call_context.zig");
 
 pub const Stats = struct {
     choices: u32 = 0,
@@ -20,7 +20,7 @@ pub const Stats = struct {
 
 pub const ForEachFailure = struct {
     source: primitives.SourceRef,
-    actual: global_sg.GlobalTypeId,
+    actual_name: []const u8,
     contract_name: []const u8,
 };
 
@@ -34,6 +34,31 @@ pub const Resolver = struct {
     contracts: ?*contract_mod.Resolver = null,
     stats: Stats = .{},
     for_each_failure: ?ForEachFailure = null,
+
+    pub fn deinit(self: *Resolver) void {
+        self.restoreForEachFailure(null);
+    }
+
+    /// Failure text owns no graph IDs: iterator types can be rolled back before
+    /// the coordinator reports a rejected protocol. Keep the first explanation.
+    fn recordForEachFailure(self: *Resolver, source: primitives.SourceRef, actual: global_sg.GlobalTypeId, contract_name: []const u8) !void {
+        if (self.for_each_failure != null) return;
+        var name = std.array_list.Managed(u8).init(self.allocator);
+        defer name.deinit();
+        try @import("type_names.zig").appendTypeName(&name, self.graph, actual);
+        const text = try name.toOwnedSlice();
+        self.for_each_failure = .{ .source = source, .actual_name = text, .contract_name = contract_name };
+    }
+
+    /// Checkpoints borrow the existing immutable explanation. Only a failure
+    /// created after a previously empty checkpoint needs releasing on rollback.
+    pub fn restoreForEachFailure(self: *Resolver, saved: ?ForEachFailure) void {
+        if (self.for_each_failure) |current| {
+            if (saved == null or current.actual_name.ptr != saved.?.actual_name.ptr)
+                self.allocator.free(current.actual_name);
+        }
+        self.for_each_failure = saved;
+    }
 
     pub fn materializeSugarTypes(self: *Resolver) !bool {
         // Work over the original length: materializing nullable payload structs
@@ -72,45 +97,54 @@ pub const Resolver = struct {
             .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
             .resolve_match => |value| try self.resolveMatch(module, o, value),
             .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
-            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),
+            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value, call_context.Context.fromModule(o, value.owner_function)),
             else => .not_applicable,
         };
     }
 
-    pub fn annotateChoiceTests(self: *Resolver) void {
-        for (self.graph.nodes.items) |*node| switch (node.content) {
-            .if_statement => |*statement| {
-                const condition = self.graph.nodes.items[@intFromEnum(statement.condition)];
-                const comparison = switch (condition.content) {
-                    .comparison => |value| value,
-                    else => continue,
-                };
-                if (comparison.operator != .equal and comparison.operator != .not_equal) continue;
-                const left = self.graph.nodes.items[@intFromEnum(comparison.left)];
-                const right = self.graph.nodes.items[@intFromEnum(comparison.right)];
-                const choice_ty = left.ty orelse continue;
-                const variants = types.variants(self.graph, choice_ty) orelse continue;
-                const tag = switch (right.content) {
-                    .int_literal => |value| value,
-                    else => continue,
-                };
-                var variant_id: ?global_sg.GlobalVariantId = null;
-                for (0..variants.len) |index| {
-                    const raw = variants.start + @as(u32, @intCast(index));
-                    if (self.choiceVariantTag(choice_ty, @enumFromInt(raw)) == tag) {
-                        variant_id = @enumFromInt(raw);
-                        break;
+    pub fn annotateChoiceTests(self: *Resolver) !void {
+        for (self.graph.nodes.items, 0..) |original, node_index| {
+            switch (original.content) {
+                .if_statement => |statement| {
+                    const condition = self.graph.nodes.items[@intFromEnum(statement.condition)];
+                    const comparison = switch (condition.content) {
+                        .comparison => |value| value,
+                        else => continue,
+                    };
+                    if (comparison.operator != .equal and comparison.operator != .not_equal) continue;
+                    const left = self.graph.nodes.items[@intFromEnum(comparison.left)];
+                    const right = self.graph.nodes.items[@intFromEnum(comparison.right)];
+                    const choice_ty = left.ty orelse continue;
+                    const variants = types.variants(self.graph, choice_ty) orelse continue;
+                    const tag = switch (right.content) {
+                        .int_literal => |value| value,
+                        else => continue,
+                    };
+                    var variant_id: ?global_sg.GlobalVariantId = null;
+                    for (0..variants.len) |index| {
+                        const raw = variants.start + @as(u32, @intCast(index));
+                        if (self.choiceVariantTag(choice_ty, @enumFromInt(raw)) == tag) {
+                            variant_id = @enumFromInt(raw);
+                            break;
+                        }
                     }
-                }
-                if (variant_id) |variant| statement.choice_test = .{
-                    .choice_value = comparison.left,
-                    .choice_type = choice_ty,
-                    .variant = variant,
-                    .then_has_variant = comparison.operator == .equal,
-                };
-            },
-            else => {},
-        };
+                    if (variant_id) |variant| {
+                        const annotation: @TypeOf(statement.choice_test) = .{
+                            .choice_value = comparison.left,
+                            .choice_type = choice_ty,
+                            .variant = variant,
+                            .then_has_variant = comparison.operator == .equal,
+                        };
+                        if (!std.meta.eql(statement.choice_test, annotation)) {
+                            var annotated = original;
+                            annotated.content.if_statement.choice_test = annotation;
+                            try self.graph.setNode(self.allocator, @enumFromInt(node_index), annotated);
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
     }
 
     fn materializeNullable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
@@ -118,24 +152,48 @@ pub const Resolver = struct {
         self.stats.nullable += 1;
     }
 
-    pub fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, child: global_sg.GlobalTypeId) !void {
+    pub fn materializeInferredErrable(self: *Resolver, id: global_sg.GlobalTypeId, inferred: anytype) !void {
+        const child = inferred.child;
         const ok_name = try self.graph.addString(self.allocator, "ok");
         const error_name = try self.graph.addString(self.allocator, "error");
         const reason_name = try self.graph.addString(self.allocator, "reason");
         const trace_name = try self.graph.addString(self.allocator, "tracer");
         const source = self.syntheticSource();
-        const trace_ty = try self.errorTracerType();
         const reasons_ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, .{ .inferred_choice = .{
             .identity = @intFromEnum(id),
             .kind = .reasons,
             .variants = .{ .start = @intCast(self.graph.variants.items.len), .len = 0 },
         } });
-        const field_start: u32 = @intCast(self.graph.fields.items.len);
-        try self.graph.fields.append(self.allocator, .{ .name = reason_name, .ty = reasons_ty, .source = source });
-        try self.graph.fields.append(self.allocator, .{ .name = trace_name, .ty = trace_ty, .source = source });
-        const error_payload: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
-        try self.graph.types.append(self.allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = 2 } } });
+        const error_payload = if (try self.errorPayloadType(reasons_ty, inferred.traced)) |canonical| canonical else fallback: {
+            const trace_ty = if (inferred.traced) try self.errorTracerType() else null;
+            const field_start: u32 = @intCast(self.graph.fields.items.len);
+            try self.graph.fields.append(self.allocator, .{ .name = reason_name, .ty = reasons_ty, .source = source });
+            if (trace_ty) |ty| try self.graph.fields.append(self.allocator, .{ .name = trace_name, .ty = ty, .source = source });
+            const structural: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+            try self.graph.types.append(self.allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = if (inferred.traced) 2 else 1 } } });
+            break :fallback structural;
+        };
+        if (self.generic_functions) |functions| {
+            for (self.graph.declarations.items) |declaration| {
+                if (!std.mem.eql(u8, self.graph.text(declaration.name), "Errable")) continue;
+                const family = declaration.family_definition orelse continue;
+                const owner = self.graph.moduleForFamilyDefinition(family) orelse continue;
+                if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+                const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+                try self.graph.generic_arguments.appendSlice(self.allocator, &.{
+                    .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = child } },
+                    .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = reasons_ty } },
+                    .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = error_payload } },
+                });
+                try self.graph.resolveType(self.allocator, id, .{ .generic = .{
+                    .base = family,
+                    .arguments = .{ .start = start, .len = 3 },
+                } });
+                _ = try functions.generics.ensureGenericInstance(id);
+                return;
+            }
+        }
         const variant_start: u32 = @intCast(self.graph.variants.items.len);
         try self.graph.variants.append(self.allocator, .{
             .name = ok_name,
@@ -149,18 +207,42 @@ pub const Resolver = struct {
             .source = source,
             .value = 1,
         });
-        try self.graph.resolveType(id, .{ .inferred_choice = .{
+        try self.graph.resolveType(self.allocator, id, .{ .inferred_choice = .{
             .identity = @intFromEnum(id),
             .kind = .errable,
             .variants = .{ .start = variant_start, .len = 2 },
         } });
     }
 
+    /// The inferred reason set is compiler-owned; its payload uses the same
+    /// ordinary definition and defaults as an explicitly written error type.
+    fn errorPayloadType(self: *Resolver, reasons: global_sg.GlobalTypeId, traced: bool) !?global_sg.GlobalTypeId {
+        const functions = self.generic_functions orelse return null;
+        const name = if (traced) "ErrorWithTrace" else "Error";
+        for (self.graph.declarations.items) |declaration| {
+            if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const family = declaration.family_definition orelse continue;
+            const owner = self.graph.moduleForFamilyDefinition(family) orelse continue;
+            if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
+            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+            try self.graph.generic_arguments.append(self.allocator, .{
+                .name = .{ .start = 0, .len = 0 },
+                .value = .{ .type = reasons },
+            });
+            const payload = try functions.generics.internType(.{ .generic = .{
+                .base = family,
+                .arguments = .{ .start = start, .len = 1 },
+            } });
+            _ = try functions.generics.ensureGenericInstance(payload);
+            return payload;
+        }
+        return null;
+    }
+
     fn errorTracerType(self: *Resolver) !global_sg.GlobalTypeId {
-        for (self.graph.declarations.items, 0..) |declaration, index| {
+        for (self.graph.declarations.items) |declaration| {
             if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTracer")) continue;
-            const contract: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
-            try self.graph.types.append(self.allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
+            const contract = try types.definitionClass(self.allocator, self.graph, declaration.family_definition orelse continue);
             const handle: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
             try self.graph.types.append(self.allocator, .{ .virtual = contract });
             const reference: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
@@ -192,7 +274,12 @@ pub const Resolver = struct {
                         if (payload) |payload_node| if (hit.variant.payload_type) |expected_payload| {
                             const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
                             payload = normalized;
-                            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+                            if (self.core) |core| {
+                                _ = try core.coerceContextualValue(normalized, expected_payload);
+                                if (self.graph.node(normalized).content == .struct_value_literal and types.fields(self.graph, expected_payload) != null) {
+                                    if (!try core.completeRecordValue(expected_payload, normalized, call_context.Context.fromGlobal(&.{}, null))) return .deferred;
+                                }
+                            }
                             payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
                         };
                         if (!self.payloadCompatible(hit.variant.payload_type, payload_ty)) return .deferred;
@@ -208,11 +295,16 @@ pub const Resolver = struct {
         if (payload) |payload_node| if (variant.variant.payload_type) |expected_payload| {
             const normalized = self.normalizeChoicePayload(payload_node, expected_payload);
             payload = normalized;
-            if (self.core) |core| _ = core.coerceContextualValue(normalized, expected_payload);
+            if (self.core) |core| {
+                _ = try core.coerceContextualValue(normalized, expected_payload);
+                if (self.graph.node(normalized).content == .struct_value_literal and types.fields(self.graph, expected_payload) != null) {
+                    if (!try core.completeRecordValue(expected_payload, normalized, call_context.Context.fromGlobal(&.{}, null))) return .deferred;
+                }
+            }
             payload_ty = self.graph.nodes.items[@intFromEnum(normalized)].ty;
         };
         if (!self.payloadCompatible(variant.variant.payload_type, payload_ty)) return .deferred;
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.sourceFor(reference.source, o),
             .ty = choice_ty,
             .content = .{ .choice_literal = .{
@@ -220,7 +312,7 @@ pub const Resolver = struct {
                 .variant = variant.id,
                 .payload = payload,
             } },
-        };
+        });
         self.stats.choices += 1;
         return .resolved;
     }
@@ -245,7 +337,7 @@ pub const Resolver = struct {
         return field.value;
     }
 
-    fn ensureInferredReasonVariant(self: *Resolver, ty: global_sg.GlobalTypeId, name: []const u8, source: primitives.SourceRef) !void {
+    pub fn ensureInferredReasonVariant(self: *Resolver, ty: global_sg.GlobalTypeId, name: []const u8, source: primitives.SourceRef) !void {
         const choice = switch (self.graph.types.items[@intFromEnum(ty)]) {
             .inferred_choice => |value| if (value.kind == .reasons) value else return,
             else => return,
@@ -259,7 +351,9 @@ pub const Resolver = struct {
             .source = source,
             .value = @intCast(choice.variants.len),
         });
-        self.graph.types.items[@intFromEnum(ty)].inferred_choice.variants = .{ .start = start, .len = choice.variants.len + 1 };
+        var completed = self.graph.semanticType(ty);
+        completed.inferred_choice.variants = .{ .start = start, .len = choice.variants.len + 1 };
+        try self.graph.resolveType(self.allocator, ty, completed);
     }
 
     fn resolveChoiceTest(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
@@ -297,17 +391,17 @@ pub const Resolver = struct {
             else => {},
         };
         const variant = types.findVariant(self.graph, choice_ty, option_name orelse return .deferred) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(tag)] = .{
+        try self.graph.setNode(self.allocator, tag, .{
             .source = option_source orelse return .deferred,
             .ty = try self.builtin(.Int32),
             .content = .{ .int_literal = self.choiceVariantTag(choice_ty, variant.id) },
-        };
+        });
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.sourceFor(reference.source, o),
             .ty = try self.builtin(.Bool),
             .content = .{ .comparison = .{ .operator = .equal, .left = choice, .right = tag } },
-        };
+        });
         return .resolved;
     }
 
@@ -320,7 +414,7 @@ pub const Resolver = struct {
         const hit = types.findVariant(self.graph, choice_ty, name) orelse return .deferred;
         const payload_ty = hit.variant.payload_type orelse return .invalid;
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.sourceFor(value.source, o),
             .ty = payload_ty,
             .content = .{ .choice_payload_access = .{
@@ -328,7 +422,7 @@ pub const Resolver = struct {
                 .variant = hit.id,
                 .payload_type = payload_ty,
             } },
-        };
+        });
         self.stats.choices += 1;
         return .resolved;
     }
@@ -353,11 +447,11 @@ pub const Resolver = struct {
             .result_type = result_ty,
         });
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(nullable)].source,
             .ty = result_ty,
             .content = .{ .nullable_unwrap_or = unwrap_id },
-        };
+        });
         self.stats.nullable += 1;
         return true;
     }
@@ -375,7 +469,7 @@ pub const Resolver = struct {
             .content = .{ .int_literal = self.choiceVariantTag(choice_ty, some.id) },
         });
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(source)].source,
             .ty = bool_ty,
             // Final codegen treats choice-vs-tag comparison as a tag compare;
@@ -385,7 +479,7 @@ pub const Resolver = struct {
                 .left = source,
                 .right = tag_node,
             } },
-        };
+        });
         self.stats.nullable += 1;
         return true;
     }
@@ -398,7 +492,7 @@ pub const Resolver = struct {
 
     fn choiceUsesDeclaredTags(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
         return switch (self.graph.resolvedSemanticType(ty) orelse return false) {
-            .declared => |declaration| self.graph.declaration(declaration).choice_layout == .c_enum,
+            .nominal => |declaration| self.graph.typeDefinition(declaration).choice_layout == .c_enum,
             .structural_choice => |shape| shape.layout == .c_enum,
             .generic => if (types.genericInstance(self.graph, ty)) |instance| switch (instance.shape) {
                 .choice => |shape| shape.layout == .c_enum,
@@ -453,7 +547,7 @@ pub const Resolver = struct {
             if (case.payload_binding) |local_binding| {
                 const payload_ty = hit.variant.payload_type.?;
                 const binding = globalizer.globalBinding(o, local_binding);
-                try self.graph.resolveBindingType(binding, try self.matchBindingType(payload_ty, case.mode));
+                try self.graph.resolveBindingType(self.allocator, binding, try self.matchBindingType(payload_ty, case.mode));
             }
 
             const tag = try self.appendIntNode(types.variantTag(self.graph, choice_ty, hit), self.sourceFor(option_ref.source, o));
@@ -465,11 +559,11 @@ pub const Resolver = struct {
                 .payload_mode = case.mode,
             });
             const global_case_node = globalizer.globalNode(o, case.node);
-            self.graph.nodes.items[@intFromEnum(global_case_node)] = .{
+            try self.graph.setNode(self.allocator, global_case_node, .{
                 .source = self.sourceFor(option_ref.source, o),
                 .ty = try self.builtin(.Void),
                 .content = .{ .code_block = globalizer.globalBlock(o, case.body) },
-            };
+            });
         }
 
         const switch_id: global_sg.GlobalSwitchId = @enumFromInt(@as(u32, @intCast(self.graph.switches.items.len)));
@@ -480,11 +574,11 @@ pub const Resolver = struct {
             .exhaustive = local_cases.len == variants.len,
         });
         const target = globalizer.globalNode(o, value.node);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.setNode(self.allocator, target, .{
             .source = self.graph.nodes.items[@intFromEnum(expression)].source,
             .ty = try self.builtin(.Void),
             .content = .{ .switch_statement = switch_id },
-        };
+        });
         self.stats.matches += 1;
         return .resolved;
     }
@@ -504,7 +598,7 @@ pub const Resolver = struct {
         call: global_sg.GlobalNodeId,
     };
 
-    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, context: call_context.Context) !resolution.Result {
         @setEvalBranchQuota(5000);
         const generic_functions = self.generic_functions orelse return .deferred;
         const contracts = self.contracts orelse return .deferred;
@@ -515,13 +609,8 @@ pub const Resolver = struct {
         // Desugaring is speculative while downstream types/functions may still
         // be unresolved. Roll every append-only GlobalSG pool back unless the
         // complete iterator loop can be published atomically.
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = generic_functions.checkpointSideEffects();
-        var committed = false;
-        defer if (!committed) {
-            self.graph.rollback(checkpoint);
-            generic_functions.rollbackSideEffects(side_effect_checkpoint);
-        };
+        var scope = generic_functions.beginSpeculation();
+        defer scope.deinit();
 
         const ForProtocol = struct {
             iterable_contract: []const u8,
@@ -529,10 +618,10 @@ pub const Resolver = struct {
             mutable: bool,
         };
         const protocol: ForProtocol = switch (value.mode) {
-            .move => .{ .iterable_contract = "OwningIterable", .conversion = "to_owning_iterator", .mutable = false },
+            .move => .{ .iterable_contract = "MovingIterable", .conversion = "to_moving_iterator", .mutable = false },
             .value => .{ .iterable_contract = "Iterable", .conversion = "to_iterator", .mutable = false },
-            .borrow => .{ .iterable_contract = "ROPointerIterable", .conversion = "to_ro_pointer_iterator", .mutable = false },
-            .mut_borrow => .{ .iterable_contract = "RWPointerIterable", .conversion = "to_rw_pointer_iterator", .mutable = true },
+            .borrow => .{ .iterable_contract = "ReferenceIterable", .conversion = "to_reference_iterator", .mutable = false },
+            .mut_borrow => .{ .iterable_contract = "MutableReferenceIterable", .conversion = "to_mutable_reference_iterator", .mutable = true },
         };
         const iterable_contract_name = protocol.iterable_contract;
         const conversion_name = protocol.conversion;
@@ -544,11 +633,7 @@ pub const Resolver = struct {
         const contract_ty = if (existing_reference) |pointer_type| pointer_type.child else iterable_ty;
         const iterable_contract = self.visibleContract(module_index, iterable_contract_name) orelse return .deferred;
         if (!try contracts.implements(contract_ty, iterable_contract)) {
-            if (self.for_each_failure == null) self.for_each_failure = .{
-                .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
-                .actual = iterable_ty,
-                .contract_name = iterable_contract_name,
-            };
+            try self.recordForEachFailure(.{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset }, iterable_ty, iterable_contract_name);
             return .invalid;
         }
 
@@ -574,7 +659,7 @@ pub const Resolver = struct {
             iterable_place
         else
             try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
-        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source);
+        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, context, source);
         const iterator_value = switch (conversion) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -584,11 +669,7 @@ pub const Resolver = struct {
         if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
         const iterator_contract = self.visibleContract(module_index, "Iterator") orelse return .deferred;
         if (!try contracts.implements(iterator_ty, iterator_contract)) {
-            if (self.for_each_failure == null) self.for_each_failure = .{
-                .source = source,
-                .actual = iterator_ty,
-                .contract_name = "Iterator",
-            };
+            try self.recordForEachFailure(source, iterator_ty, "Iterator");
             return .invalid;
         }
 
@@ -605,7 +686,7 @@ pub const Resolver = struct {
 
         const condition_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
         const condition_self = try self.appendAddress(condition_iterator, iterator_ty, false, source);
-        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source);
+        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, context, source);
         const condition = switch (condition_result) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -617,7 +698,7 @@ pub const Resolver = struct {
 
         const next_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
         const next_self = try self.appendAddress(next_iterator, iterator_ty, true, source);
-        const next_result = try self.syntheticCall(module_index, "next", next_self, source);
+        const next_result = try self.syntheticCall(module_index, "next", next_self, context, source);
         const next_value = switch (next_result) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -651,8 +732,8 @@ pub const Resolver = struct {
 
         const target = globalizer.globalNode(o, value.node);
         const void_ty = try self.builtin(.Void);
-        try self.graph.resolveBindingType(item_binding, element_ty);
-        self.graph.nodes.items[@intFromEnum(target)] = .{
+        try self.graph.resolveBindingType(self.allocator, item_binding, element_ty);
+        try self.graph.setNode(self.allocator, target, .{
             .source = source,
             .ty = void_ty,
             .content = .{ .for_statement = .{
@@ -661,7 +742,7 @@ pub const Resolver = struct {
                 .increment = null,
                 .body = body_id,
             } },
-        };
+        });
         // Synthetic declarations belong to the loop's surrounding scope, not
         // its expression-valued init slot. This retains computed collections
         // and iterator loans throughout traversal, and lets ordinary block
@@ -677,9 +758,11 @@ pub const Resolver = struct {
             .nodes = .{ .start = wrapper_start, .len = if (iterable_declaration != null) 3 else 2 },
             .ret_val = null,
         });
-        self.graph.nodes.items[@intFromEnum(target)].content = .{ .code_block = wrapper };
+        var wrapped = self.graph.node(target);
+        wrapped.content = .{ .code_block = wrapper };
+        try self.graph.setNode(self.allocator, target, wrapped);
         self.stats.for_loops += 1;
-        committed = true;
+        scope.commit();
         return .resolved;
     }
 
@@ -688,16 +771,18 @@ pub const Resolver = struct {
         module_index: usize,
         name: []const u8,
         argument: global_sg.GlobalNodeId,
+        context: call_context.Context,
         source: primitives.SourceRef,
     ) !SyntheticCallResult {
         const input = try self.positionalInput(argument, source);
-        const contract_name = if (std.mem.eql(u8, name, "has_next") or std.mem.eql(u8, name, "next")) "Iterator" else if (std.mem.eql(u8, name, "to_iterator")) "Iterable" else if (std.mem.eql(u8, name, "to_ro_pointer_iterator")) "ROPointerIterable" else if (std.mem.eql(u8, name, "to_rw_pointer_iterator")) "RWPointerIterable" else "OwningIterable";
+        const contract_name = if (std.mem.eql(u8, name, "has_next") or std.mem.eql(u8, name, "next")) "Iterator" else if (std.mem.eql(u8, name, "to_iterator")) "Iterable" else if (std.mem.eql(u8, name, "to_reference_iterator")) "ReferenceIterable" else if (std.mem.eql(u8, name, "to_mutable_reference_iterator")) "MutableReferenceIterable" else "MovingIterable";
         const declaration = self.visibleContract(module_index, contract_name) orelse return .deferred;
         const ty = self.graph.node(argument).ty orelse return .deferred;
         const participant = if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty;
         const contracts = self.contracts orelse return .deferred;
         var participants = [_]global_sg.GlobalTypeId{participant};
-        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, reach_context.Context.fromGlobal(&.{}, null), source) orelse return .deferred;
+        // Generated protocol calls use the loop's ordinary lexical assumptions.
+        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = .{ .stable = &participants } }, name, input, context, source) orelse return .deferred;
         const value = try self.appendNode(source, node.ty orelse return .deferred, node.content);
         return .{ .call = value };
     }
@@ -720,15 +805,15 @@ pub const Resolver = struct {
         return input;
     }
 
-    fn visibleContract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
+    fn visibleContract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalFamilyDefinitionId {
         const core = self.core orelse return null;
-        var found: ?global_sg.GlobalDeclId = null;
+        var found: ?global_sg.GlobalFamilyDefinitionId = null;
         for (self.graph.declarations.items, 0..) |declaration, raw| {
             if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             if (!core.declarationVisible(module_index, id, null)) continue;
             if (found != null) return null;
-            found = id;
+            found = declaration.family_definition;
         }
         return found;
     }
@@ -765,14 +850,6 @@ pub const Resolver = struct {
     }
 
     fn matchBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.MatchCaseMode) !global_sg.GlobalTypeId {
-        return switch (mode) {
-            .value, .move => payload,
-            .borrow => self.pointer(payload, .read_only),
-            .mut_borrow => self.pointer(payload, .read_write),
-        };
-    }
-
-    fn forBindingType(self: *Resolver, payload: global_sg.GlobalTypeId, mode: primitives.ForMode) !global_sg.GlobalTypeId {
         return switch (mode) {
             .value, .move => payload,
             .borrow => self.pointer(payload, .read_only),
@@ -845,30 +922,57 @@ test "global control resolver materializes nullable into an explicit choice shap
     try std.testing.expectEqualStrings("some", graph.text(graph.variants.items[variants.start + 1].name));
 }
 
-test "inferred errable keeps an open reason choice and direct tracer reference" {
-    const allocator = std.testing.allocator;
+test "inferred errors keep open reasons and select their trace mode" {
+    for ([_]bool{ false, true }) |traced| {
+        const allocator = std.testing.allocator;
+        var graph: global_sg.GlobalSemanticGraph = .{};
+        defer graph.deinit(allocator);
+        const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+        try graph.types.append(allocator, .{ .builtin = .Int32 });
+        try graph.types.append(allocator, .{ .definition = @enumFromInt(0) });
+        try graph.types.append(allocator, .{ .inferred_errable = .{ .child = @enumFromInt(0), .traced = traced } });
+        try graph.declarations.append(allocator, .{
+            .kind = .contract_type,
+            .name = try graph.addString(allocator, "ErrorTracer"),
+            .source = source,
+            .type_id = @enumFromInt(1),
+            .family_definition = @enumFromInt(0),
+        });
+        try graph.family_definitions.append(allocator, .{ .source = source, .kind = .contract, .parameter_count = 1, .declaration = @enumFromInt(0) });
+        var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+        _ = try resolver.materializeSugarTypes();
+        const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;
+        const payload_ty = error_variant.variant.payload_type.?;
+        const reason = types.findField(&graph, payload_ty, "reason").?;
+        const trace = types.findField(&graph, payload_ty, "tracer");
+        try std.testing.expectEqual(traced, trace != null);
+        if (trace) |field| try std.testing.expectEqual(.read_write, graph.semanticType(field.field.ty).pointer.mutability);
+        try std.testing.expectEqual(primitives.InferredChoiceKind.reasons, graph.types.items[@intFromEnum(reason.field.ty)].inferred_choice.kind);
+        try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
+        try resolver.ensureInferredReasonVariant(reason.field.ty, "second", source);
+        try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
+        try std.testing.expectEqual(@as(u32, 2), types.variants(&graph, reason.field.ty).?.len);
+    }
+}
+
+test "for protocol failures retain type names across speculative rollback" {
+    const a = std.testing.allocator;
     var graph: global_sg.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
-    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
-    try graph.types.append(allocator, .{ .builtin = .Int32 });
-    try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
-    try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
-    try graph.declarations.append(allocator, .{
-        .kind = .contract_type,
-        .name = try graph.addString(allocator, "ErrorTracer"),
-        .source = source,
-        .type_id = @enumFromInt(1),
-    });
-    var resolver = Resolver{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
-    _ = try resolver.materializeSugarTypes();
-    const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;
-    const payload_ty = error_variant.variant.payload_type.?;
-    const reason = types.findField(&graph, payload_ty, "reason").?;
-    const trace = types.findField(&graph, payload_ty, "tracer").?;
-    try std.testing.expectEqual(.read_write, graph.semanticType(trace.field.ty).pointer.mutability);
-    try std.testing.expectEqual(primitives.InferredChoiceKind.reasons, graph.types.items[@intFromEnum(reason.field.ty)].inferred_choice.kind);
-    try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
-    try resolver.ensureInferredReasonVariant(reason.field.ty, "second", source);
-    try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
-    try std.testing.expectEqual(@as(u32, 2), types.variants(&graph, reason.field.ty).?.len);
+    defer graph.deinit(a);
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer resolver.deinit();
+    const saved = graph.checkpoint();
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try resolver.recordForEachFailure(.{ .file_index = 0, .offset = 0 }, @enumFromInt(0), "Iterator");
+    graph.rollback(a, saved);
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try std.testing.expectEqualStrings("Int32", resolver.for_each_failure.?.actual_name);
+    const failure = resolver.for_each_failure;
+    try resolver.recordForEachFailure(.{ .file_index = 0, .offset = 1 }, @enumFromInt(0), "Iterable");
+    resolver.restoreForEachFailure(failure);
+    try std.testing.expectEqualStrings("Int32", resolver.for_each_failure.?.actual_name);
+    resolver.restoreForEachFailure(null);
+    try std.testing.expect(resolver.for_each_failure == null);
+    try resolver.recordForEachFailure(.{ .file_index = 0, .offset = 2 }, @enumFromInt(0), "Iterator");
+    try std.testing.expectEqualStrings("Bool", resolver.for_each_failure.?.actual_name);
 }

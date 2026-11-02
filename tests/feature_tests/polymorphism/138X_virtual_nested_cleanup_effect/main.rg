@@ -1,12 +1,12 @@
 Action#(.Participant: Type): Contract = (
-    .run: (.self: &Participant, .target: $&Int32) -> () where {}
+    .run : (.self: &Participant, .target: $&Int32) -> () where {}
 )
 
-Cell: Type = (.unused: Int32)
+Cell := (.unused: Int32)
 
 implement Action#(Cell) (.run = _impl_run_Cell)
 
-Change: Type = (.target: $&Int32)
+Change := (.target: $&Int32)
 
 implement Deinit#(Change) (
     .deinit = (.self: $&Change) -> () {
@@ -14,13 +14,13 @@ implement Deinit#(Change) (
     }
 )
 
-_impl_run_Cell := (.self: &Cell, .target: $&Int32) -> ()  {
+_impl_run_Cell := (.self: &Cell, .target: $&Int32) -> () {
     if true {
         discarded :: ?Change = ..some(.value = Change(target))
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     action ::= to_virtual#(Action)(&cell)
     value :: Int32 = 0

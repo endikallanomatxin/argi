@@ -1,17 +1,20 @@
 SmallOrder: Type = ()
+
 implement OrderPolicy#(SmallOrder, UInt8) (
-    .less = (.self: &SmallOrder, .left: UInt8, .right: UInt8) -> (.ok: Bool) {
-        ok = left < right
+    .less = (.self: &SmallOrder, .left: &UInt8, .right: &UInt8) -> (.ok: Bool) {
+        ok = left&< right&
     }
 )
 
-take_queue#(.Collection: Type: Queue#(Collection)) := (
-    .self: $&Collection
-) -> (.result: Queue#(Collection).Result) {
+take_queue := #(.Collection: Type: Queue#(Collection)) (.self: $&Collection) -> (
+    .result : Queue#(Collection).Result
+) {
+
     result = ~Queue#(Collection).pop(.self = self)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+
     assume allocator := system.page_allocator
     ring ::= unwrap_or_abort(.value = RingBuffer#(UInt8)(.capacity = 1, .allocator = allocator))
     unwrap_or_abort(.value = push(.self = $&ring, .value = 250))
@@ -26,7 +29,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     }
 
     order ::= SmallOrder()
-    heap ::= unwrap_or_abort(.value = PriorityQueue#(UInt8, SmallOrder)(.order = &order, .allocator = allocator, .capacity = 1))
+    heap ::= unwrap_or_abort(
+        .value = PriorityQueue#(UInt8, SmallOrder)(
+            .order = &order, .allocator = allocator, .capacity = 1
+        )
+    )
     unwrap_or_abort(.value = push(.self = $&heap, .value = 250))
     unwrap_or_abort(.value = push(.self = $&heap, .value = 5))
     match take_queue(.self = $&heap) {

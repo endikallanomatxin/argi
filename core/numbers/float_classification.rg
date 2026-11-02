@@ -4,7 +4,7 @@ implement ImplicitlyCopyable#(FloatClass) ()
 
 -- Inspect IEEE fields rather than comparing values: NaN comparisons and
 -- negative zero must not erase the classification or sign bit.
-classify_float#(.t: Type: Float)(.value: t) -> (.classification: FloatClass) := {
+classify_float := #(.t: Type: Float) (.value: t) -> (.classification: FloatClass) {
     encoding ::= _float_encoding(.value = value).encoding
     magnitude ::= encoding.bits % [encoding.fraction_unit * encoding.exponent_limit]
     exponent ::= magnitude / encoding.fraction_unit
@@ -25,12 +25,12 @@ classify_float#(.t: Type: Float)(.value: t) -> (.classification: FloatClass) := 
     classification = ..normal
 }
 
-float_sign_bit#(.t: Type: Float)(.value: t) -> (.negative: Bool) := {
+float_sign_bit := #(.t: Type: Float) (.value: t) -> (.negative: Bool) {
     encoding ::= _float_encoding(.value = value).encoding
     negative = encoding.bits >= encoding.fraction_unit * encoding.exponent_limit
 }
 
-is_finite#(.t: Type: Float)(.value: t) -> (.ok: Bool) := {
+is_finite := #(.t: Type: Float) (.value: t) -> (.ok: Bool) {
     match classify_float#(.t: t)(.value = value).classification {
         ..zero { ok = true }
         ..subnormal { ok = true }
@@ -40,7 +40,7 @@ is_finite#(.t: Type: Float)(.value: t) -> (.ok: Bool) := {
     }
 }
 
-is_nan#(.t: Type: Float)(.value: t) -> (.ok: Bool) := {
+is_nan := #(.t: Type: Float) (.value: t) -> (.ok: Bool) {
     match classify_float#(.t: t)(.value = value).classification {
         ..nan { ok = true }
         ..zero { ok = false }
@@ -50,7 +50,7 @@ is_nan#(.t: Type: Float)(.value: t) -> (.ok: Bool) := {
     }
 }
 
-is_infinite#(.t: Type: Float)(.value: t) -> (.ok: Bool) := {
+is_infinite := #(.t: Type: Float) (.value: t) -> (.ok: Bool) {
     match classify_float#(.t: t)(.value = value).classification {
         ..infinity { ok = true }
         ..zero { ok = false }

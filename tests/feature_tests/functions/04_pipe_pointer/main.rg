@@ -1,15 +1,15 @@
-increment_in_place (.value: $&Int32) -> (.done: Int32) := {
-    value& = value& + 1
+increment_in_place := (.value: $&Int32) -> (.done: Int32) {
+    value&= value&+ 1
     done = 1
 }
 
-read_value (.value: &Int32) -> (.r: Int32) := {
+read_value := (.value: &Int32) -> (.r: Int32) {
     r = value&
 }
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: Int32 = 41
-    done : Int32 = value | increment_in_place(.value = $&_)
+    done: Int32 = value | increment_in_place(.value = $&_)
 
     if done != 1 {
         status_code = 1

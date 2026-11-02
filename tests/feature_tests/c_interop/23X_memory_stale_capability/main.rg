@@ -1,4 +1,5 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
+
     storage ::= ForeignFunctionInterface()
     memory ::= Memory(.ffi = $&storage)
     moved ::= ~storage

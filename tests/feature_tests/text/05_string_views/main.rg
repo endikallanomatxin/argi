@@ -1,21 +1,24 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     text ::= unwrap_or_abort(.value = String(.length = 3))
-    bytes_set(.string = $&text, .index = 0, .value = 65)
-    bytes_set(.string = $&text, .index = 1, .value = 114)
-    bytes_set(.string = $&text, .index = 2, .value = 103)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
 
-    nul ::= bytes_get(.view = &text, .index = 3).byte
-    if nul != 0 {
+    nul_rejected ::= is(.value = bytes_get(.view = &text, .index = 3), .variant = ..error)
+    if nul_rejected == false {
         status_code = 1
         return
     }
 
-    view ::= as_view(.self = &text)
-    if bytes_get(.view = &view, .index = 0).byte != 65 {
+    view ::= view(.self = &text)
+    if unwrap_or_abort(.value = bytes_get(.view = &view, .index = 0)) != 65 {
         status_code = 2
         return
     }

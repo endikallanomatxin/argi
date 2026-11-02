@@ -67,7 +67,7 @@ def main():
     sys_module ::= unwrap_or_abort(.value = python.import_module(.self = &interpreter, .name = "sys")).result
     prefix_object ::= unwrap_or_abort(.value = python.attribute(.self = &sys_module, .name = "prefix")).result
     prefix_text ::= unwrap_or_abort(.value = python.to_string(.self = &prefix_object, .allocator = system.page_allocator)).result
-    if contains(.self = as_view(.self = &prefix_text).view, .pattern = {expected}).ok == false {{ abort }}
+    if contains(.self = view(.self = &prefix_text).view, .pattern = {expected}).ok == false {{ abort }}
 ''' + source[insertion:]
         (consumer / "main.rg").write_text(source, encoding="utf-8")
         output = root / ("environment.exe" if os.name == "nt" else "environment-app")

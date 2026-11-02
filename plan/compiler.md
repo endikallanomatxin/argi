@@ -1,0 +1,53 @@
+# Compiler follow-ups
+
+REPL guarantees and acceptance evidence are recorded in
+[the acceptance notes](../docs/repl-acceptance.md). Prioritize demonstrated
+correctness or cost issues in the follow-ups below.
+
+## Resolution
+
+- Replace temporary resolver communication state with explicit results. Preserve
+  useful diagnostics across speculative rollback, including readonly generic
+  virtual conversions.
+- Reduce remaining unresolved-binding inference and Safety sweeps in
+  specialization workloads. Retained expression/reference propagation now skips
+  certified prefixes and revisits older entities when their facts change;
+  ownership still needs operands outside execution reachability.
+
+## Safety
+
+- Extend conditional storage effects through stored results, indirect outputs
+  and loops, preserving intervening writes and caller identities.
+- Extend hidden retention/replacement and grouped opaque mappings through output
+  fields when a consumer needs them.
+- Represent hidden storage and cleanup identities before virtualizing Resizable.
+- Extend post-call virtual capture proofs to conditional/loop initialization,
+  mutable receiver aliases, nested virtual receivers and active structural
+  fallback cleanup. Straight-line definite initialization uses explicit capture
+  phases and planned post-state identities; unproved ordering stays rejected.
+
+## Performance validation
+
+- Extend compilation and allocation-runtime benchmarks to larger consumers.
+  Compare equivalent virtual capability setup with fixed compiler optimization,
+  frontend workers and cache policy. Alternate samples and record generated IR
+  and generic-body counts; distinguish dispatch costs from short-run variance.
+
+## Execution
+
+- Track external compile-time reads in build dependencies/cache identity.
+- Separate host execution from target semantics for cross-compilation.
+- Reduce remaining execution metadata retention and collection traversal cost
+  when long sessions justify it. Immutable payloads are reclaimed between
+  successful invocations; public snapshots, frame identities, literal backing
+  and acquisition metadata retain their existing lifetimes. Use `aggregates`
+  and `float_parsing` as controls; report payload backing separately from the
+  metadata arena. Baselines and reproduction commands belong in the
+  [performance notes](../docs/compiler-performance.md).
+
+Validate with growing sessions, allocation failures, rollback and native/VM
+comparisons. Safety extensions need aliasing and duplicate-cleanup rejections.
+
+References: [resolution boundaries](../docs/semantic-resolution.md),
+[Safety](../description/34_safety_model.md#precision-of-safety-effects),
+[virtual contracts](../description/134_virtual_types.md).

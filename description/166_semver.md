@@ -5,7 +5,7 @@ The explicit `semver` module implements the syntax and precedence of
 
 ```rg
 semver := import("semver")
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     first ::= unwrap_or_abort(.value = semver.VersionView(.text = "1.2.3-rc.1")).result
     second ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3+build.001")).result
     if semver.compare(.left = &first, .right = &second).order >= 0 { abort }
@@ -28,7 +28,7 @@ ASCII digits. Only the source view's native length bounds their size. Private
 validated state prevents external modules from forging component boundaries.
 The source bytes must stay alive and unchanged while the version is used.
 
-`as_view(.self: &VersionView)` returns the full `.view: StringView` through TextViewOf.
+`view(.self: &VersionView)` returns the full `.view: StringView` through Viewable.
 `major`, `minor`, `patch`, `pre_release`, and `build_metadata` return component
 text without separators. Missing prerelease or build metadata is an empty view.
 These accessors preserve borrowing; they do not allocate or parse again.
@@ -46,8 +46,8 @@ text, including build metadata; equal precedence does not imply exact equality.
 `Errable#(String, (..out_of_memory))`. It copies the exact validated spelling,
 including metadata. `format_into(.out = $&text, .value = &version,
 .allocator = allocator)` appends that spelling; reserved capacity avoids further
-allocation. Both use the shared StringFormatting contract with a static allocator
-Provider. They are the ordinary core functions, not semver-local overloads.
+allocation. Both use the shared StringFormatting contract with a virtual allocator
+capability. They are the ordinary core functions, not semver-local overloads.
 
 `write(.self = writer, .value = &version)` uses WriteValue and the destination's
 selected StringView result. A Writer reports the existing stream_write_failed or
@@ -55,5 +55,5 @@ stream_flush_failed errors; custom destinations can return counts. The version a
 no allocation, flush or newline. As with ordinary string append, the source
 view must not borrow a destination buffer whose growth could invalidate it.
 
-Version range selection, package resolution, and compatibility policies are
+Version range selection, distribution resolution, and compatibility policies are
 separate from this strict version-value module.

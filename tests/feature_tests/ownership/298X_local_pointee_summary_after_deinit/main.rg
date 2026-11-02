@@ -1,24 +1,31 @@
-Owner : Type = (.value: Int32)
+Owner := (.value: Int32)
+
 implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () {
 
     }
 )
-Holder : Type = (.reference: ?&Int32)
+
+Holder := (.reference: ?&Int32)
+
 implement ImplicitlyCopyable#(Holder) ()
-extract(.holder: &Holder) -> (.reference: &Int32) := {
+
+extract := (.holder: &Holder) -> (.reference: &Int32) {
     match holder&.reference {
         ..none { abort }
         ..some payload { reference = payload.value }
     }
 }
-forward(.reference: &Int32) -> (.result: &Int32) := {
+
+forward := (.reference: &Int32) -> (.result: &Int32) {
     local :: Holder = (.reference = ..some(.value = reference))
     alias ::= &local
     result = extract(.holder = alias).reference
 }
-read(.reference: &Int32) -> (.value: Int32) := { value = reference& }
-main() -> (.status_code: Int32 = 0) := {
+
+read := (.reference: &Int32) -> (.value: Int32) { value = reference&}
+
+main := () -> (.status_code: Int32 = 0) {
     owner :: Owner = (.value = 7)
     borrowed ::= forward(.reference = &owner.value).result
     deinit(.self = $&owner)

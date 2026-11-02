@@ -10,27 +10,34 @@
 
 ### Declaration
 
-Use `#( … )` to **declare** generic parameters. The binder can appear in:
-
-* declarations of **types**, **contracts**, and **functions**,
-* **implement** declarations, with the binder immediately after `implement`.
+Type and function parameters belong to their definition expression, after `:=`.
+Specializing a definition binds compile-time arguments; it does not execute an
+ordinary function. An alias retains the same definition identity.
 
 ```argi
--- Generic type
-Vec#(.t: Type, .n: UIntNative) : Type = ( ... )
+Vec := #(.Element: Type, .count: UIntNative) (.values: [count]Element)
 
--- Generic function
-max#(.t: Type) (.a: t, .b: t) -> (.result: t) := {
+max := #(.t: Type) (.a: t, .b: t) -> (.result: t) {
     if a > b { result = a } else { result = b }
 }
+
+Vector := Vec
+```
+
+Contract participants remain on the contract declaration. An implementation's
+parameters appear immediately after `implement`:
+
+```argi
+Copyable#(.Value: Type): Contract = (.copy: (.value: &Value) -> (.result: Value))
+implement#(.T: Type) Copyable#(Box#(T)) (.copy = copy_box)
 ```
 
 ### Usage
 
 ```argi
-let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
+v: Vec#(.Element: Float32, .count = 3) = (.values = (1.0, 2.0, 3.0))
 
-let r := max#(.t: Int)(.a = x, .b = y)
+r := max#(.t: Int32)(.a = x, .b = y)
 ```
 
 Type applications accept positional arguments in declaration order. Positional
@@ -46,6 +53,11 @@ pair: Pair#(Int32, .right: Bool) = (.left = 1, .right = true)
 bytes: Array#(4, UInt8) = (0, 0, 0, 0)
 ```
 
+Array dimensions can use an integer specialization parameter or a named
+compile-time constant: `[count]Element` and `Array#(.n = count, .t: Element)`
+resolve through the same compile-time rules. Mutable runtime values cannot
+determine a type's layout.
+
 A positional type argument is written directly; a named type argument uses
 `.name: Type`. In type applications, positional integer expressions begin with a literal or
 a sign; use the
@@ -57,7 +69,7 @@ has an inferred error set. Supplying a reasons type retains an explicit set.
 ### Bounds
 
 ```argi
-sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+sum := #(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
 -- t must satisfy the Number contract
 ```
 
@@ -76,8 +88,8 @@ The intended order is:
 This is the compact system:
 
 ```argi
-sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
-BufferedReader#(.base_type: Type: Reader#(base_type)) : Type = ...
+sum := #(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+BufferedReader := #(.base_type: Type: Reader#(base_type)) (...)
 ```
 
 Meaning:
@@ -103,7 +115,7 @@ constraint syntax at all. They can already be expressed by reusing the same
 comptime parameters directly in the signature:
 
 ```argi
-multiply#(
+multiply := #(
     .t: Type,
     .left_rows: UIntNative,
     .shared: UIntNative,
@@ -188,12 +200,32 @@ most specific implementation. See [Contract dispatch](131_multiple_dispatch.md).
 
 ## Constructor parameters
 
-`implement#(.t: Type) Init#(Box#(.t: t), (.value: t))` declares t in the
-implementation scope. The target pattern and Args record select its bindings;
+`implement#(.t: Type) Init#(Box#(.t: t), BoxArgs#(t))` declares t in the
+implementation scope, where BoxArgs is a nominal argument family. The target pattern and Args record select its bindings;
 the requested target supplies known parameters and inputs infer remaining ones.
 Implementation constraints validate those bindings. A bare `Box(.value = value)`
 can infer its target parameters from Args, while Result never supplies missing
 parameters or selects an implementation.
+
+## Omitted compile-time parameters
+
+Compile-time type and integer parameters may declare defaults, including references
+to earlier parameters: `Pair#(.Left: Type, .Right: Type = Left)`.
+Explicit arguments take precedence. In calls, input types infer omitted bindings
+before defaults fill the remaining parameters; associated results never infer them.
+Partial constructor arguments use the same Init evidence selection as complete
+and fully inferred calls. Type annotations apply defaults directly. Completed
+arguments retain declaration order and share identity with an explicit spelling.
+
+In a family application used as an input or conformance pattern, written
+arguments infer the enclosing parameters first. Omitted family arguments then
+use that family's defaults and must match the actual specialization. They are
+not wildcards: if `Box` defaults its length to 4, a pattern `Box#(T)` does not
+accept `Box#(Int32, 3)`. Defaults referring to earlier type parameters follow
+the same rule.
+Defaults evaluated through `#run` can suspend constructor selection until their
+compile-time dependencies are ready. Retrying selection preserves the ordinary
+default and nominal identity rules; the expected result never supplies bindings.
 
 ## Interaction with Virtual types
 

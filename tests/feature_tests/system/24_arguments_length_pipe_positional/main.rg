@@ -1,4 +1,5 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     argc ::= system.args | length(&_) | _.count
 
     if argc < 1 {

@@ -197,8 +197,8 @@ pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange
         }
     }
     for (contract.dependencies) |dependency| {
-        if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) {
-            reason = "error_tracer is only implicit for fallible contract operations";
+        if (dependency.input_index >= inputs.len) {
+            reason = "dependency names an unknown input";
             break;
         }
     }
@@ -280,7 +280,7 @@ pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange
             break;
         }
         switch (child.builtin) {
-            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => {},
+            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Bool => {},
             else => {
                 reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
                 break;
@@ -369,7 +369,8 @@ fn containsErasedParticipantVisited(self: *Resolver, ty: global_sg.GlobalTypeId,
     try visited.put(ty, {});
     switch (self.graph.semanticType(ty)) {
         .pointer => |pointer| return containsErasedParticipantVisited(self, pointer.child, erased, visited),
-        .nullable, .inferred_errable => |child| return containsErasedParticipantVisited(self, child, erased, visited),
+        .nullable => |child| return containsErasedParticipantVisited(self, child, erased, visited),
+        .inferred_errable => |value| return containsErasedParticipantVisited(self, value.child, erased, visited),
         .array => |array| return containsErasedParticipantVisited(self, array.element, erased, visited),
         .generic => |generic| {
             for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
@@ -398,7 +399,7 @@ fn globalSafetyOutcome(self: *Resolver, module_index: usize, outcome: *primitive
     outcome.variant_index = hit.index;
     outcome.variant = hit.variant.name;
     outcome.source = self.sourceFor(module_index, outcome.source);
-    const children = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
+    const children = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
     for (children, 0..) |*child, index| {
         if (child.output_index != outcome.output_index) return error.InvalidOutcomeContract;
         try globalSafetyOutcome(self, module_index, child, hit.variant.payload_type orelse return error.InvalidOutcomeContract);
@@ -442,10 +443,10 @@ fn globalGeneralOutcome(self: *Resolver, module_index: usize, outcome: *primitiv
         .input_index = outcome.input_index,
         .output_index = outcome.output_index,
         .payload = hit.variant.payload_type,
-        .variants = try std.mem.concat(self.allocator, u32, &.{ ancestors, &.{hit.index} }),
+        .variants = try std.mem.concat(try self.graph.safetyAllocator(self.allocator), u32, &.{ ancestors, &.{hit.index} }),
     };
-    const context = try std.mem.concat(self.allocator, SelectedContractChoice, &.{ parents, &.{selected} });
-    const children = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
+    const context = try std.mem.concat(try self.graph.safetyAllocator(self.allocator), SelectedContractChoice, &.{ parents, &.{selected} });
+    const children = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
     for (children, 0..) |*child, child_index| {
         try globalGeneralOutcome(self, module_index, child, inputs, outputs, context);
         for (children[0..child_index]) |previous| if (previous.input_index == child.input_index and previous.output_index == child.output_index and previous.variant_index == child.variant_index) return error.DuplicateOutcomeContract;
@@ -458,7 +459,7 @@ pub fn globalSafetyContract(self: *Resolver, module_index: usize, declared: prim
     contract.source = self.sourceFor(module_index, contract.source);
     if (declared.outcomes.len != 0) {
         const fields = global_types.fields(self.graph, output_type) orelse return error.InvalidContractRequirementOutput;
-        const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
+        const outcomes = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
         for (outcomes, 0..) |*outcome, index| {
             if (declared.general_conditions) {
                 try globalGeneralOutcome(self, module_index, outcome, inputs, fields, &.{});

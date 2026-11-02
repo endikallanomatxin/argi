@@ -1,20 +1,21 @@
-Token#(.t: Type) : Type = (
-    .tag: Int32
+Token := #(.t: Type) (
+    .tag : Int32
 )
 
-implement#(.t: Type) Init#(Token#(.t: t), (.sample: t)) (
-    .Result: Type = Token#(.t: t)
-    .init = (.args: (.sample: t)) -> (.result: Result) {
-        sample ::= ~args.sample
+TokenInitArgs: Type = #(.t: Type) (.sample: t)
 
-        _ ::= sample
-        result = (
-            .tag = 1
-        )
+implement#(.t: Type) Init#(Token#(.t: t), TokenInitArgs#(t)) (
+    .Result : Type = Token#(.t: t)
+
+    .init = TokenInitArgs#(t) -> (.result: Result) {
+        _init_sample ::= ~sample
+
+        _ ::= _init_sample
+        result = (.tag = 1)
     }
 )
 
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     int_token ::= Token(.sample = 5)
     char_token ::= Token(.sample = 'a')
 

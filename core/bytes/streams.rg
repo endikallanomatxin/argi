@@ -2,12 +2,15 @@
 -- or storage. They retain the same backing-view lifetime as binary operations.
 implement Reader#(ByteReader) (
     .read_byte = (.self: $&ByteReader) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+
         if remaining(self).count == 0 {
             result = ..ok ..end
             return
         }
 
-        byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
+        byte ::= unwrap_or_abort(
+            .value = get_reference(&self&._bytes, .index = self&._position)
+        )
         self&._position = self&._position + 1
 
         result = ..ok ..ok byte&
@@ -15,9 +18,10 @@ implement Reader#(ByteReader) (
 )
 
 implement BlockReader#(ByteReader) (
-    .read_block = (.self: $&ByteReader, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&ByteReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) {
+
         count ::= remaining(self).count
         size ::= length(&buffer).count
 
@@ -26,9 +30,9 @@ implement BlockReader#(ByteReader) (
 
         while index < count {
             source ::= unwrap_or_abort(
-                .value = get_ro_ref(&self&._bytes, .index = [self&._position + index])
+                .value = get_reference(&self&._bytes, .index = [self&._position + index])
             )
-            target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = index))
+            target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = index))
             target&= source&
             index = index + 1
         }
@@ -40,9 +44,10 @@ implement BlockReader#(ByteReader) (
 )
 
 implement BlockWriter#(ByteWriter) (
-    .write_block = (.self: $&ByteWriter, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+    .write_block = (.self: $&ByteWriter, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) {
+
         count ::= remaining(self).count
         size ::= length(&buffer).count
 
@@ -55,9 +60,11 @@ implement BlockWriter#(ByteWriter) (
         index :: UIntNative = 0
 
         while index < count {
-            source ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = index))
+            source ::= unwrap_or_abort(.value = get_reference(&buffer, .index = index))
             target ::= unwrap_or_abort(
-                .value = get_rw_ref($&self&._bytes, .index = [self&._position + index])
+                .value = get_mutable_reference(
+                    $&self&._bytes, .index = [self&._position + index]
+                )
             )
             target&= source&
             index = index + 1
@@ -73,13 +80,14 @@ implement Writer#(ByteWriter) (
     .write_byte = (.self: $&ByteWriter, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) {
+
         if remaining(self).count == 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
         }
 
         target ::= unwrap_or_abort(
-            .value = get_rw_ref($&self&._bytes, .index = self&._position)
+            .value = get_mutable_reference($&self&._bytes, .index = self&._position)
         )
         target&= byte
         self&._position = self&._position + 1
@@ -87,5 +95,7 @@ implement Writer#(ByteWriter) (
 
     .flush = (.self: $&ByteWriter) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-    ) {}
+    ) {
+
+    }
 )

@@ -1,5 +1,5 @@
-Thing : Type = (
-    .value: Int32
+Thing := (
+    .value : Int32
 )
 
 implement Deinit#(Thing) (
@@ -8,12 +8,12 @@ implement Deinit#(Thing) (
     }
 )
 
-Pair : Type = (
-    .left: Thing
-    .right: Int32
+Pair := (
+    .left  : Thing
+    .right : Int32
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     pair :: Pair = (.left = Thing(.value = 1), .right = 2)
     deinit(.self = $&pair.left)
     copied ::= ~pair

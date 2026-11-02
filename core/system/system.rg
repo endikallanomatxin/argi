@@ -1,14 +1,14 @@
 -- References to resources owned by the checked program entry scope.
-System: Type = (
+System := (
     .memory         : $&Memory
-    .page_allocator : $&PageAllocator
+    .page_allocator : Virtual#(Allocator)
     .terminal       : $&Terminal
-    .args : $&Arguments
+    .args           : $&Arguments
     .env_vars       : $&EnvironmentVariables
     .file_system    : $&FileSystem
     .network        : $&Network
     .proc_man       : $&ProcessManager
-    .clock : $&Clock
+    .clock          : $&Clock
     .rand_gen       : $&RandomNumberGenerator
-    .ffi : $&ForeignFunctionInterface
+    .ffi            : $&ForeignFunctionInterface
 )

@@ -1,8 +1,8 @@
-Value : Type = (
-    .items: [2]Int32
+Value := (
+    .items : [2]Int32
 )
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     value :: Value = (.items = (7, 8))
     pointer ::= $&value
 

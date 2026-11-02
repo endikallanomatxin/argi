@@ -1,8 +1,8 @@
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     assume ffi := system.ffi
     assume writer ::= $&system.terminal&.stdout
 
-    literal ::= from_literal(.data = "string view output")
-    text ::= as_view(.self = literal)
+    text ::= "string view output"
     print(.value = text)
 }

@@ -2,7 +2,7 @@
 
 Import `network/uri` to parse and recompose encoded URI references. The module
 uses RFC 3986 generic syntax, independently of networking or HTTP. `parse`
-returns an `Errable<UriView, invalid_input>` containing borrowed `scheme`,
+returns an `Errable#(UriView, invalid_input)` containing borrowed `scheme`,
 `authority`, `path`, `query`, and `fragment` components. Optional components
 preserve absent versus present-empty values. Source storage must outlive them.
 
@@ -29,7 +29,7 @@ operations and are not provided by this module.
 
 ```rg
 uri := import("network/uri")
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0)  {
     parsed ::= unwrap_or_abort(.value = uri.parse(.text = "https://example.com/a?x=1")).result
     text ::= unwrap_or_abort(.value = uri.build(.value = parsed,
         .allocator = system.page_allocator)).result

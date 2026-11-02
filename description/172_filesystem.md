@@ -2,7 +2,7 @@
 
 `create_directory(.path, .self)` creates one directory, and
 `remove_directory(.path, .self)` removes an empty directory. Paths are bounded
-`StringView` inputs; `.self` defaults to reached `file_system`. Empty paths and
+`StringView` inputs; `.self` is an ordinary filesystem capability input. Empty paths and
 embedded NUL bytes are rejected as `invalid_path`. POSIX paths use native bytes;
 Windows paths are converted from UTF-8 to wide native paths.
 
@@ -32,6 +32,20 @@ iterator contract. It is not a snapshot of concurrent directory changes.
 Allocation failure after native advancement consumes that entry. End is sticky:
 subsequent calls return none. Cleanup closes the native handle exactly once;
 copying a Directory or using it after cleanup is rejected.
+
+`DirectoryWalker(.path, .maximum_depth, .self, .allocator)` performs depth-first
+enumeration and returns owning `WalkEntry` values with path, metadata and depth.
+It keeps one directory handle per active level, up to `maximum_depth` (64 by
+default). Depth zero visits nothing and need not resolve the path. Links and
+reparse points are not deliberately followed; path lookup races still make this
+unsuitable as a security boundary.
+
+Traversal has no filesystem snapshot: renames or removals can make a later
+metadata lookup fail. The first error is reported, further `next` calls return
+none, and the walker retains its owners for cleanup. Native directory-open
+failures, including descriptor exhaustion, publish no directory handle.
+Allocation failures during enumeration follow the same terminal-error rule;
+cleanup still closes every active directory level.
 
 ## File positions
 

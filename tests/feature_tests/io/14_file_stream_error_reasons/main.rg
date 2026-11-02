@@ -1,6 +1,7 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     assume ffi := system.ffi
-    file ::= File(.stream_address = 0, .should_close = 0 == 1)
+    file ::= File()
 
     read_result ::= Reader#().read_byte(.self = $&file)
     if is(.value = read_result, .variant = ..error) {

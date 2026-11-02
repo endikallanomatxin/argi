@@ -1,17 +1,19 @@
-test view_mismatch(.system: System) -> !() := {
+test view_mismatch := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
+    assume error_tracer
+
     expected :: [3]Int32 = (1, 2, 3)
     actual :: [3]Int32 = (1, 9, 3)
-    testing.expect_equal_views(
-        .expected = view(.array = &expected)
-        .actual   = view(.array = &actual)
+    testing.expect_equal_views_with_trace(
+        .expected = view(.self = &expected), .actual = view(.self = &actual)
     )!
 }
 
-test byte_prefix(.system: System) -> !() := {
+test byte_prefix := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
+    assume error_tracer
+
     expected :: [2]UInt8 = (1, 2)
     actual :: [1]UInt8 = (1)
-    testing.expect_equal_bytes(
-        .expected = view(.array = &expected)
-        .actual   = view(.array = &actual)
+    testing.expect_equal_bytes_with_trace(
+        .expected = view(.self = &expected), .actual = view(.self = &actual)
     )!
 }

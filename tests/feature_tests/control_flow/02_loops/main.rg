@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     i :: Int32 = 5
     sum :: Int32 = 0
 

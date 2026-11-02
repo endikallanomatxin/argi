@@ -12,6 +12,7 @@ const value_state = @import("value_state.zig");
 const primitive_transfer = @import("../primitives/registry.zig");
 const initializer_contract = @import("../global/initializer_contract.zig");
 const primitives = @import("../primitives/schema.zig");
+const checked_replacement = @import("../global/replacement.zig");
 
 /// Indexed temporal checker. Program identity is exclusively Global*Id; no
 /// pointer identity or pointer-based semantic object participates in state.
@@ -39,6 +40,9 @@ pub const SafetyChecker = struct {
         virtual_summary_ns: u64 = 0,
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
+        summary_reused: usize = 0,
+        bodies_checked: usize = 0,
+        bodies_reused: usize = 0,
         functions: usize = 0,
         calls: usize = 0,
         state_clones: u64 = 0,
@@ -47,100 +51,78 @@ pub const SafetyChecker = struct {
         recursive_edges: usize = 0,
     };
 
-    const StorageCapabilityState = enum { available, conditional, maybe_consumed, consumed };
-    const OwnershipEdge = struct { owner: facts.ValidityRootId, owned: facts.ValidityRootId };
-    const StorageGeneration = struct {
-        storage: facts.Place,
-        generation: facts.ValidityRootId,
-        needs_current_generation: bool = false,
+    const state_mod = @import("state.zig");
+    const PostCapture = struct {
+        placeholder: facts.ValidityRootId,
+        storage: ?facts.Place,
+        symbolic: ?facts.SymbolicPointeeId,
+        entry_generation: ?facts.ValidityRootId,
+        input_index: u32,
+        dependencies: []const facts.ValidityDependency = &.{},
     };
-    const OpaqueStorage = struct {
-        storage: facts.Place,
-        hidden_dependencies: []const facts.ValidityRootId,
-        outcome_guard: u64 = 0,
-        // Identity only: a moved owner's slot can disappear before output
-        // checks. These roots associate hidden contents without keeping any
-        // resource or lexical generation alive.
-        owner_roots: []const facts.ValidityRootId = &.{},
-    };
-    const ChoiceActive = struct { storage: facts.Place, variant_index: u32 };
-    const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
-    const ChoiceTemporaryActive = struct { expression: graph_mod.GlobalNodeId, variant_index: u32 };
+    const CaptureWrite = struct { path: facts.InputPath, storage: facts.Place };
+    const FunctionState = state_mod.State;
+    const StorageCapabilityState = state_mod.StorageCapabilityState;
+    const StorageGeneration = state_mod.StorageGeneration;
+    const OpaqueStorage = state_mod.OpaqueStorage;
+    const SymbolicPointeeState = state_mod.SymbolicPointeeState;
+    const SymbolicStoredValue = state_mod.SymbolicStoredValue;
 
-    const SymbolicPointeeState = struct { identity: graph_mod.GlobalBindingId, initializedness: value_state.Initializedness };
+    /// Retained temporal proof state for checked command continuations. Fact
+    /// slices are immutable and borrow the proof allocator's lifetime, just as
+    /// branch states do; keep that arena and referenced graph identities alive.
+    /// Initialize in final storage. Forks own mutable tables and borrow incoming
+    /// facts; snapshot() owns its final fact graph independently of those arenas.
+    pub const ContinuationState = struct {
+        namespace: facts.Tracker.RootNamespace = .{},
+        state: FunctionState,
 
-    const FunctionState = struct {
-        tracker: facts.Tracker,
-        places: std.array_list.Managed(facts.PlaceFacts),
-        symbolic_pointees: std.array_list.Managed(SymbolicPointeeState),
-        // TODO: Give branch-created acquisition capabilities distinct shared
-        // identities as well; validity roots already use the joint namespace.
-        storage_capabilities: std.array_list.Managed(StorageCapabilityState),
-        ownership_edges: std.array_list.Managed(OwnershipEdge),
-        storage_generations: std.array_list.Managed(StorageGeneration),
-        lexical_storage_generations: std.array_list.Managed(facts.ValidityRootId),
-        opaque_storages: std.array_list.Managed(OpaqueStorage),
-        choice_active: std.array_list.Managed(ChoiceActive),
-        choice_rejected: std.array_list.Managed(ChoiceRejected),
-        choice_temporary_active: std.array_list.Managed(ChoiceTemporaryActive),
-        reachable: bool = true,
-
-        fn init(allocator: std.mem.Allocator) FunctionState {
-            return .{
-                .tracker = facts.Tracker.init(allocator),
-                .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
-                .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
-                .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
-                .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
-                .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
-                .lexical_storage_generations = std.array_list.Managed(facts.ValidityRootId).init(allocator),
-                .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
-                .choice_active = std.array_list.Managed(ChoiceActive).init(allocator),
-                .choice_rejected = std.array_list.Managed(ChoiceRejected).init(allocator),
-                .choice_temporary_active = std.array_list.Managed(ChoiceTemporaryActive).init(allocator),
-            };
+        pub fn init(self: *ContinuationState, allocator: std.mem.Allocator) void {
+            self.* = .{ .state = FunctionState.init(allocator) };
+            self.state.tracker.namespace = &self.namespace;
         }
-
-        fn deinit(self: *FunctionState) void {
-            self.tracker.deinit();
-            self.places.deinit();
-            self.symbolic_pointees.deinit();
-            self.storage_capabilities.deinit();
-            self.ownership_edges.deinit();
-            self.storage_generations.deinit();
-            self.lexical_storage_generations.deinit();
-            self.opaque_storages.deinit();
-            self.choice_active.deinit();
-            self.choice_rejected.deinit();
-            self.choice_temporary_active.deinit();
+        pub fn fork(self: *const ContinuationState, destination: *ContinuationState, allocator: std.mem.Allocator) !void {
+            if (self == destination) return error.InvalidSafetyContinuation;
+            destination.* = .{ .state = try self.state.clone(allocator) };
+            errdefer destination.state.deinit();
+            destination.namespace = try self.namespace.clone(allocator);
+            destination.state.tracker.namespace = &destination.namespace;
         }
-
-        fn clone(self: *const FunctionState, allocator: std.mem.Allocator, stats: ?*Stats) !FunctionState {
-            const io = if (stats) |s| s.timing_io else null;
-            const start = profile.timestamp(io);
-            defer if (stats) |s| profile.accumulate(io, start, &s.state_copy_ns);
-            var out = FunctionState.init(allocator);
-            errdefer out.deinit();
-            out.tracker.namespace = self.tracker.namespace;
-            try out.tracker.roots.appendSlice(self.tracker.roots.items);
-            try out.places.appendSlice(self.places.items);
-            try out.symbolic_pointees.appendSlice(self.symbolic_pointees.items);
-            try out.storage_capabilities.appendSlice(self.storage_capabilities.items);
-            try out.ownership_edges.appendSlice(self.ownership_edges.items);
-            try out.storage_generations.appendSlice(self.storage_generations.items);
-            try out.lexical_storage_generations.appendSlice(self.lexical_storage_generations.items);
-            try out.opaque_storages.appendSlice(self.opaque_storages.items);
-            try out.choice_active.appendSlice(self.choice_active.items);
-            try out.choice_rejected.appendSlice(self.choice_rejected.items);
-            try out.choice_temporary_active.appendSlice(self.choice_temporary_active.items);
-            out.reachable = self.reachable;
-            if (stats) |s| {
-                s.state_clones += 1;
-                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.symbolic_pointees.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
-            }
-            return out;
+        /// Publish an independent immutable fact graph, excluding analysis
+        /// worklists, discarded branch states and superseded approximations.
+        pub fn snapshot(self: *const ContinuationState, destination: *ContinuationState, allocator: std.mem.Allocator, scratch: std.mem.Allocator) !void {
+            try self.fork(destination, allocator);
+            errdefer destination.deinit();
+            var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = allocator, .scratch = scratch };
+            defer copy.deinit();
+            try destination.state.snapshotFacts(&copy);
+            for (destination.namespace.initial_storage.items) |*item| item.* = try copy.value(@TypeOf(item.*), item.*);
+            // Projected symbolic identities contain scalar IDs and projections.
+        }
+        /// Reconnect managed tables after moving their backing arena object.
+        /// The allocator must still own these same buffers.
+        pub fn rebindAllocator(self: *ContinuationState, allocator: std.mem.Allocator) void {
+            self.state.rebindAllocator(allocator);
+            self.state.tracker.namespace = &self.namespace;
+        }
+        pub fn deinit(self: *ContinuationState) void {
+            self.namespace.deinit(self.state.tracker.allocator);
+            self.state.deinit();
+            self.* = undefined;
         }
     };
+
+    fn cloneState(self: *SafetyChecker, state: *const FunctionState) !FunctionState {
+        const io = if (self.collect_stats) self.stats.timing_io else null;
+        const start = profile.timestamp(io);
+        defer if (self.collect_stats) profile.accumulate(io, start, &self.stats.state_copy_ns);
+        const result = try state.cloneWithAllocators(self.allocator, self.state_allocator);
+        if (self.collect_stats) {
+            self.stats.state_clones += 1;
+            self.stats.state_elements_copied += @intCast(state.elementCount());
+        }
+        return result;
+    }
 
     const LoopTransfers = struct {
         break_state: ?FunctionState = null,
@@ -159,29 +141,50 @@ pub const SafetyChecker = struct {
 
     const LoopJoinContext = struct {
         roots: std.array_list.Managed(LoopRootPhi),
+        symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
 
         fn init(allocator: std.mem.Allocator) LoopJoinContext {
-            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator) };
+            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator) };
         }
 
         fn deinit(self: *LoopJoinContext) void {
             self.roots.deinit();
+            self.symbolic.deinit();
         }
     };
 
+    unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
     allocator: std.mem.Allocator,
+    // Branch tables are disposable; their backing must not accumulate in the
+    // arena retaining immutable facts and annotations for the checked unit.
+    state_allocator: std.mem.Allocator,
+    // Graph pools retain their own allocator; facts and annotation slices may
+    // live in a publication/proof arena with a different lifetime.
+    graph_allocator: ?std.mem.Allocator = null,
     diagnostics: *diagnostics.Diagnostics,
     graph: *graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
+    cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     active_summaries: ?*summary_engine.Engine = null,
     // Outputs and input post-states of one call share acquisition identities.
     // Nested calls install their own map so repeated acquisitions stay distinct.
     next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
+    active_post_captures: ?*std.array_list.Managed(PostCapture) = null,
+    active_entry_generations: []const state_mod.StorageGeneration = &.{},
+    active_entry_symbolic: []const state_mod.SymbolicPointeeState = &.{},
+    active_capture_writes: []const CaptureWrite = &.{},
     active_summary_inference: ?*summary_infer.Infer = null,
+    continuation: ?struct { function: graph_mod.GlobalFunctionId, state: *ContinuationState } = null,
     collect_stats: bool = false,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
+    active_replacement: ?struct { plan: checked_replacement.Plan, pointer: ?facts.ValueFacts = null } = null,
+    annotations: @import("annotations.zig").Annotations = .{},
+    summary_cache: ?*const @import("summary_cache.zig").Store = null,
+    summary_publication: ?*@import("summary_cache.zig").Batch = null,
+    body_cache: ?*const @import("body_cache.zig").Store = null,
+    body_publication: ?*@import("body_cache.zig").Batch = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -190,6 +193,7 @@ pub const SafetyChecker = struct {
     ) SafetyChecker {
         return .{
             .allocator = allocator,
+            .state_allocator = allocator,
             .diagnostics = diags,
             .graph = graph,
             .call_stack = std.array_list.Managed(graph_mod.GlobalFunctionId).init(allocator),
@@ -198,6 +202,7 @@ pub const SafetyChecker = struct {
 
     pub fn deinit(self: *SafetyChecker) void {
         self.call_stack.deinit();
+        self.annotations.deinit(self.allocator);
     }
 
     pub fn enableStats(self: *SafetyChecker, io: std.Io) void {
@@ -205,9 +210,42 @@ pub const SafetyChecker = struct {
         self.profile_io = io;
     }
 
+    // Use the same summary fixed point and temporal proof for a closed unit.
+    // The graph must contain finalized checked semantics for its dependencies;
+    // this does not resolve missing bodies or grant evaluator capabilities.
+    pub fn analyzeUnit(self: *SafetyChecker, roots: []const graph_mod.GlobalFunctionId) !void {
+        var unit = try @import("../global/reachability.zig").dependencyUnit(self.allocator, self.graph, roots);
+        defer unit.deinit();
+        try @import("../global/record_literals.zig").checkRequiredFields(self.graph, &unit, self.diagnostics);
+        const previous = self.unit;
+        self.unit = &unit;
+        defer self.unit = previous;
+        try self.analyze();
+    }
+
+    /// Check a candidate command with retained caller-relative temporal facts.
+    /// The command is an input/output-free checked block, not a function whose
+    /// local owners are allowed to escape. Scope cleanup is supplied by its
+    /// checked graph. Rejecting the candidate requires discarding its fork.
+    pub fn analyzeContinuation(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, retained: *ContinuationState) !void {
+        if (self.continuation != null or @intFromEnum(function) >= self.graph.functions.items.len or !retained.state.reachable)
+            return error.InvalidSafetyContinuation;
+        const target = self.graph.function(function);
+        if (target.body == null or target.input.len != 0 or target.output.len != 0 or target.safety_primitive != .none)
+            return error.InvalidSafetyContinuation;
+        if (self.unit) |unit| if (!unit.contains(function)) return error.InvalidSafetyContinuation;
+        self.continuation = .{ .function = function, .state = retained };
+        defer self.continuation = null;
+        if (self.unit == null) {
+            try self.analyzeUnit(&.{function});
+        } else try self.analyze();
+    }
+
     pub fn analyze(self: *SafetyChecker) !void {
+        try self.cancellation.check();
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
+        self.annotations.clear(self.allocator);
         try self.validateNominalChoiceLayouts();
         try self.validateForeignSignatures();
 
@@ -217,12 +255,18 @@ pub const SafetyChecker = struct {
         defer engine.deinit();
         var inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
         defer inference.deinit();
+        var scratch_allocations = profile.AllocationCounter{ .child = self.state_allocator, .requested_bytes = &self.stats.summary_allocated_bytes };
+        inference.scratch_allocator = if (self.collect_stats) scratch_allocations.allocator() else self.state_allocator;
         inference.profile_io = self.profile_io;
+        inference.unit = self.unit;
+        inference.cancellation = self.cancellation;
+        inference.cache = self.summary_cache;
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
+        self.stats.summary_evaluations = inference.evaluations;
+        self.stats.summary_reused = inference.cache_reused.count();
         if (self.collect_stats) {
-            self.stats.summary_evaluations = inference.evaluations;
             self.stats.summary_changes = inference.summary_changes;
             self.stats.summary_worklist_bytes = @intCast(engine.worklist.capacity * @sizeOf(graph_mod.GlobalFunctionId));
             self.stats.output_inference_ns = inference.output_ns;
@@ -235,53 +279,109 @@ pub const SafetyChecker = struct {
             self.stats.guard_inference_ns = inference.guards_ns;
         }
         try self.validateInitializerContracts(&engine);
-        try self.validateVirtualSafetyContracts(&inference);
+        try self.validateSelectedSafetyContracts(&inference);
         self.active_summaries = &engine;
         self.active_summary_inference = &inference;
         defer self.active_summary_inference = null;
         defer self.active_summaries = null;
 
         for (self.graph.functions.items, 0..) |function, raw| {
+            try self.cancellation.check();
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            var namespace: facts.Tracker.RootNamespace = .{};
-            defer namespace.initial_storage.deinit(self.allocator);
-            var state = FunctionState.init(self.allocator);
-            state.tracker.namespace = &namespace;
-            defer state.deinit();
-            try self.seedFunctionInputs(function, &state);
-            try self.call_stack.append(id);
-            defer _ = self.call_stack.pop();
-            try self.validateBlock(id, function.body.?, &state, null);
-            if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
-            if (self.collect_stats) self.stats.functions += 1;
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
+            if (self.continuation) |continuation| if (continuation.function == id) {
+                // Candidate temporal state is isolated from accepted caller facts.
+                // Use the same body visitor and converged call summaries.
+                try self.call_stack.append(id);
+                defer _ = self.call_stack.pop();
+                try self.validateBlock(id, function.body.?, &continuation.state.state, null);
+                if (self.collect_stats) self.stats.functions += 1;
+                continue;
+            };
+            try self.checkIndependentBody(id, function, &engine);
         }
         if (self.collect_stats) {
             self.stats.virtual_summary_ns = inference.virtual_summary_ns;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
+        if (self.summary_publication) |batch| {
+            const cache = self.summary_cache orelse return error.MissingSafetySummaryCache;
+            try cache.stage(batch, &engine, &inference.requested_selectors, &inference.cache_reused);
+        }
     }
 
-    fn validateVirtualSafetyContracts(self: *SafetyChecker, inference: *summary_infer.Infer) !void {
-        // Conformance uses converged concrete summaries. Static selections and
-        // virtual table slots share the same proof obligations; neither can
-        // weaken a declaration by choosing a different dispatch mechanism.
-        for (self.graph.contract_safety_conformances.items) |conformance| {
-            if (!conformance.safety_required) continue;
-            try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
+    fn checkIndependentBody(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, engine: *summary_engine.Engine) !void {
+        if (self.body_cache) |cache| {
+            if (cache.graph != self.graph) return error.ForeignSafetyBodyCache;
+            if (cache.lookup(id, engine)) |proof| {
+                if (self.body_publication) |batch| try batch.reused.put(cache.allocator, id, proof.revision);
+                try self.annotations.merge(self.allocator, &proof.annotations);
+                self.stats.bodies_reused += 1;
+                return;
+            }
         }
-        for (self.graph.virtualizes.items) |virtualize| {
-            if (!virtualize.safety_required) continue;
+        // A body's transient facts are not part of another body's state.
+        // Publish only its annotations/proof, then release its branch history.
+        const parent = self.allocator;
+        const graph_allocator = self.graph_allocator;
+        var arena = std.heap.ArenaAllocator.init(self.state_allocator);
+        defer arena.deinit();
+        self.allocator = arena.allocator();
+        self.graph_allocator = graph_allocator orelse parent;
+        defer {
+            self.allocator = parent;
+            self.graph_allocator = graph_allocator;
+        }
+        var outer = self.annotations;
+        self.annotations = .{};
+        if (self.body_cache != null) engine.beginInference(id);
+        defer {
+            self.annotations.deinit(self.allocator);
+            self.annotations = outer;
+            if (self.body_cache != null) engine.current = null;
+        }
+        var namespace: facts.Tracker.RootNamespace = .{};
+        defer namespace.deinit(self.allocator);
+        var state = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
+        state.tracker.namespace = &namespace;
+        defer state.deinit();
+        const before = self.diagnostics.list.items.len;
+        try self.seedFunctionInputs(id, function, &state);
+        try self.call_stack.append(id);
+        defer _ = self.call_stack.pop();
+        try self.validateBlock(id, function.body.?, &state, null);
+        if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
+        if (self.body_cache != null) try engine.endInference();
+        if (self.diagnostics.list.items.len == before) if (self.body_publication) |batch| {
+            const cache = self.body_cache orelse return error.MissingSafetyBodyCache;
+            if (!function.flags.is_comptime_entry) try cache.stage(batch, id, engine, &self.annotations);
+        };
+        try outer.merge(parent, &self.annotations);
+        self.stats.bodies_checked += 1;
+        if (self.collect_stats) self.stats.functions += 1;
+    }
+
+    fn validateSelectedSafetyContracts(self: *SafetyChecker, inference: *summary_infer.Infer) !void {
+        // Both selections preserve the declared guarantees. Concrete calls also
+        // retain inferred alias obligations at their actual arguments; erased
+        // calls must be justified by the published interface alone.
+        for (self.graph.contract_safety_conformances.items) |conformance| {
+            if (self.unit) |unit| if (!unit.requiresConformance(self.graph, conformance)) continue;
+            try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source, .concrete);
+        }
+        for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
+            if (self.unit) |unit| if (!unit.virtualizes.contains(@enumFromInt(raw))) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
                 const method = self.graph.function_refs.items[virtualize.methods.start + index];
-                try self.validateContractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source);
+                try self.validateContractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source, .erased);
             }
         }
     }
 
-    fn validateContractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
+    fn validateContractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef, dispatch: enum { concrete, erased }) !void {
         const contracts = @import("contracts.zig");
         var contract = try contracts.fromDeclaration(self.allocator, declared);
         if (!try self.resolveContractOpaqueStorage(&contract, domains, method, source)) return;
@@ -325,8 +425,10 @@ pub const SafetyChecker = struct {
         // general proof conversion. Raw payload views are not interchangeable
         // with complete conditional contracts.
         contract = try contracts.withOutcomeGuards(self.allocator, contract);
-        summary = try summary_engine.refreshOutcomeGuards(self.allocator, summary);
-        if (contracts.check(contract, summary)) |failure| {
+        var check_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer check_arena.deinit();
+        const violation = if (dispatch == .concrete) try contracts.checkStatic(check_arena.allocator(), contract, summary) else try contracts.check(check_arena.allocator(), contract, summary);
+        if (violation) |failure| {
             const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
             if (failure.input) |path| {
                 const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
@@ -443,50 +545,8 @@ pub const SafetyChecker = struct {
         return self.provesLexicalContractForwarding(function, referent, false);
     }
 
-    /// A may-dependency summary cannot establish exact identity. Follow only
-    /// ordered lexical links, independently of the converged effect check.
-    /// Every ownership link moves the value; unknown effects or control flow
-    /// cannot certify that a later result retains the declared identity.
     fn provesLexicalContractForwarding(self: *SafetyChecker, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool) !bool {
-        const block = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
-        if (relation.input_index >= function.input_bindings.len or relation.output_index >= function.output_bindings.len) return false;
-        const input = self.graph.binding_refs.items[function.input_bindings.start + relation.input_index];
-        const output = self.graph.binding_refs.items[function.output_bindings.start + relation.output_index];
-        var links = std.array_list.Managed(graph_mod.GlobalBindingId).init(self.allocator);
-        defer links.deinit();
-        try links.append(input);
-        var assigned = false;
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
-            .binding_declaration => |binding| {
-                const record = self.graph.binding(binding);
-                if (record.deferred_initialization or binding == output or linksContains(links.items, binding)) return false;
-                const initializer = record.initialization orelse return false;
-                if (!self.isForwardingLink(initializer, links.items, owning)) return false;
-                try links.append(binding);
-            },
-            .assignment => |assignment| {
-                if (assignment.binding != output or assigned) return false;
-                if (!self.isForwardingLink(assignment.value, links.items, owning)) return false;
-                assigned = true;
-            },
-            .auto_deinit_binding => {},
-            .return_statement => |ret| return ret.expression == null and assigned,
-            else => return false,
-        };
-        return assigned;
-    }
-
-    fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.GlobalBindingId) bool {
-        return std.mem.indexOfScalar(graph_mod.GlobalBindingId, links, binding) != null;
-    }
-
-    fn isForwardingLink(self: *SafetyChecker, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool) bool {
-        var expression = self.graph.node(id).content;
-        if (owning) {
-            if (expression != .move_value) return false;
-            expression = self.graph.node(expression.move_value).content;
-        }
-        return expression == .binding_use and linksContains(links, expression.binding_use);
+        return @import("lexical_forwarding.zig").proves(self.allocator, self.graph, function, relation, owning);
     }
 
     fn validateInitializerContracts(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
@@ -496,6 +556,7 @@ pub const SafetyChecker = struct {
             const declaration = self.graph.declaration(function.declaration);
 
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
             if (standard_contracts.initializedType(self.graph, id) == null) continue;
             if (initializer_contract.classify(self.graph, id) == .invalid)
                 try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});
@@ -523,25 +584,33 @@ pub const SafetyChecker = struct {
         return .{ .input_index = path.input_index, .projections = projections };
     }
 
+    fn validateStorageRepresentation(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, source: primitives.SourceRef) !bool {
+        if (types.incompleteDeclaration(self.graph, ty)) |id| {
+            try self.report(source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+            return false;
+        }
+        if (self.graph.resolvedSemanticType(ty)) |semantic| if (semantic == .pointer) {
+            if (types.incompleteDeclaration(self.graph, semantic.pointer.child)) |id| {
+                try self.report(source, "cannot form a safe reference to CIncomplete type '{s}'; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
+                return false;
+            }
+        };
+        return true;
+    }
+
     fn validateForeignSignatures(self: *SafetyChecker) !void {
         const c_abi = @import("../global/c_abi.zig");
-        for (self.graph.bindings.items) |binding| {
-            if (types.incompleteDeclaration(self.graph, binding.ty)) |id|
-                try self.report(binding.source, "CIncomplete type '{s}' has no value representation; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
-            if (self.graph.resolvedSemanticType(binding.ty)) |semantic| {
-                if (semantic == .pointer) {
-                    if (types.incompleteDeclaration(self.graph, semantic.pointer.child)) |id|
-                        try self.report(binding.source, "cannot form a safe reference to CIncomplete type '{s}'; use RawPointer for foreign handles", .{self.graph.text(self.graph.declaration(id).name)});
-                }
-            }
+        for (self.graph.bindings.items, 0..) |binding, raw| {
+            if (self.unit) |unit| if (!unit.containsBinding(@enumFromInt(raw))) continue;
+            _ = try self.validateStorageRepresentation(binding.ty, binding.source);
         }
-        for (self.graph.declarations.items) |declaration| {
+        for (self.graph.type_definitions.items, 0..) |declaration, raw| {
             if (declaration.struct_layout != .c_struct) continue;
             const fields = declaration.struct_fields orelse continue;
-            if (fields.len == 0) try self.report(declaration.source, "CStruct '{s}' must contain at least one field", .{self.graph.text(declaration.name)});
+            if (fields.len == 0) try self.report(declaration.source, "CStruct '{s}' must contain at least one field", .{self.graph.typeDefinitionName(@enumFromInt(@as(u32, @intCast(raw))))});
             for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
                 if (!c_abi.supportsRepresentation(self.graph, field.ty))
-                    try self.report(field.source, "CStruct '{s}' field '{s}' has no supported C representation", .{ self.graph.text(declaration.name), self.graph.text(field.name) });
+                    try self.report(field.source, "CStruct '{s}' field '{s}' has no supported C representation", .{ self.graph.typeDefinitionName(@enumFromInt(@as(u32, @intCast(raw)))), self.graph.text(field.name) });
             }
         }
         for (self.graph.generic_instances.items) |instance| {
@@ -550,12 +619,14 @@ pub const SafetyChecker = struct {
                 else => continue,
             };
             if (shape.layout != .c_struct) continue;
-            if (shape.fields.len == 0) try self.report(self.graph.declaration(self.graph.types.items[@intFromEnum(instance.type_id)].generic.base).source, "CStruct must contain at least one field", .{});
+            if (shape.fields.len == 0) try self.report(self.graph.familyDefinition(self.graph.types.items[@intFromEnum(instance.type_id)].generic.base).source, "CStruct must contain at least one field", .{});
             for (self.graph.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
                 if (!c_abi.supportsRepresentation(self.graph, field.ty))
                     try self.report(field.source, "CStruct field '{s}' has no supported C representation", .{self.graph.text(field.name)});
             }
         }
+        // Foreign declarations promise a valid ABI even when this unit does
+        // not execute them. Body reachability only limits body verification.
         for (self.graph.functions.items) |function| {
             if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
             const declaration = self.graph.declaration(function.declaration);
@@ -564,12 +635,14 @@ pub const SafetyChecker = struct {
                 try self.report(declaration.source, "C function '{s}' must have zero or one output; use explicit pointer parameters for additional results", .{name});
             }
             for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
+                if (!try self.validateStorageRepresentation(field.ty, field.source)) continue;
                 if (function.flags.is_c_function_pointer and index < c_abi.physicalInputCount(function) and c_abi.isSafeReferenceValue(self.graph, field.ty))
                     try self.report(field.source, "CFunctionPointer parameters require RawPointer instead of safe references", .{});
                 if (!c_abi.supportsCValue(self.graph, field.ty))
                     try self.report(field.source, "C function '{s}' input '{s}' has an unsupported C ABI type; aggregate arguments require target-specific lowering", .{ name, self.graph.text(field.name) });
             }
             for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                if (!try self.validateStorageRepresentation(field.ty, field.source)) continue;
                 if (function.flags.is_c_function_pointer and c_abi.isSafeReferenceValue(self.graph, field.ty))
                     try self.report(field.source, "CFunctionPointer results require RawPointer instead of safe references", .{});
                 if (!c_abi.supportsCValue(self.graph, field.ty))
@@ -579,7 +652,7 @@ pub const SafetyChecker = struct {
     }
 
     fn validateNominalChoiceLayouts(self: *SafetyChecker) !void {
-        for (self.graph.declarations.items) |declaration| {
+        for (self.graph.type_definitions.items) |declaration| {
             if (declaration.choice_layout != .c_enum) continue;
             const variants = declaration.choice_variants orelse continue;
             for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| {
@@ -589,41 +662,117 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn seedFunctionInputs(self: *SafetyChecker, function: graph_mod.Function, state: *FunctionState) !void {
+    fn seedInputValue(
+        self: *SafetyChecker,
+        ty: graph_mod.GlobalTypeId,
+        state: *FunctionState,
+        shared_backing: *?facts.ValidityRootId,
+        shared_generation: *?facts.ValidityRootId,
+        summary: ?*const facts.SafetySummary,
+        prefix: facts.InputPath,
+    ) anyerror!facts.ValueFacts {
+        if (isPointer(self.graph, ty)) {
+            const dependencies = try self.allocator.alloc(facts.ValidityDependency, 2);
+            const identities = try self.allocator.alloc(facts.SymbolicPointeeId, 1);
+            const input = try state.establishSymbolicInput(self.graph.semanticType(ty).pointer.child, shared_backing.*);
+            shared_backing.* = input.backing;
+            shared_generation.* = input.generation;
+            dependencies[0] = .{ .root = input.backing.? };
+            dependencies[1] = .{ .root = input.generation.? };
+            identities[0] = input.identity;
+            return .{ .dependencies = dependencies, .symbolic_pointees = identities };
+        }
+
+        if (types.arrayElement(self.graph, ty)) |element| {
+            if (!self.inputTypeHasReferences(element, 0)) return .{};
+            const selected = summary orelse return .{};
+            const indices = try @import("input_demands.zig").arrayIndices(self.allocator, selected, prefix, types.arrayLength(self.graph, ty).?);
+            defer self.allocator.free(indices);
+            const fields = try self.allocator.alloc(facts.FieldFacts, indices.len);
+            var result: facts.ValueFacts = .{};
+            for (fields, indices) |*field, index| {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                const nested = try self.appendInputProjection(prefix, .{ .static_index = index });
+                stored.* = try self.seedInputValue(element, state, shared_backing, shared_generation, summary, nested);
+                field.* = .{ .index = index, .value = stored };
+                result = try self.mergeValueFacts(result, stored.*);
+            }
+            result.fields = fields;
+            result.symbolic_pointees = &.{};
+            return result;
+        }
+        // Copied input records retain one identity per reference leaf. Empty
+        // siblings remain explicit so projection never inherits another leaf's
+        // facts. Plain scalar records allocate no field facts.
+        const range = types.fields(self.graph, ty) orelse return .{};
+        var fields: ?[]facts.FieldFacts = null;
+        var result: facts.ValueFacts = .{};
+        for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
+            const aggregate = types.arrayElement(self.graph, field.ty) != null or types.fields(self.graph, field.ty) != null;
+            const nested = if (aggregate) try self.appendInputProjection(prefix, .{ .field = @intCast(index) }) else prefix;
+            const child = try self.seedInputValue(field.ty, state, shared_backing, shared_generation, summary, nested);
+            if (facts.isEmptyValue(child)) continue;
+            if (fields == null) {
+                fields = try self.allocator.alloc(facts.FieldFacts, range.len);
+                for (fields.?, 0..) |*entry, offset| entry.* = .{ .index = @intCast(offset), .value = &facts.empty_value_facts };
+            }
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = child;
+            fields.?[index].value = stored;
+            result = try self.mergeValueFacts(result, child);
+        }
+        result.fields = fields orelse &.{};
+        // Dependencies belong to the aggregate envelope; consumption identities
+        // belong only to its selected whole reference leaves.
+        result.symbolic_pointees = &.{};
+        return result;
+    }
+
+    fn inputTypeHasReferences(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        if (depth > 64) return true;
+        if (isPointer(self.graph, ty)) return true;
+        if (types.arrayElement(self.graph, ty)) |element| return self.inputTypeHasReferences(element, depth + 1);
+        const fields = types.fields(self.graph, ty) orelse return false;
+        for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (self.inputTypeHasReferences(field.ty, depth + 1)) return true;
+        return false;
+    }
+
+    fn seedFunctionInputs(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, state: *FunctionState) !void {
         var shared_pointer_root: ?facts.ValidityRootId = null;
-        for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding| {
+        var shared_value_generation: ?facts.ValidityRootId = null;
+        const summary = if (self.active_summaries) |engine| engine.summaryFor(id) else null;
+        const demand: ?*const facts.SafetySummary = if (summary) |*value| value else null;
+        for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, index| {
             const record = self.graph.bindings.items[@intFromEnum(binding)];
-            var value: facts.ValueFacts = if (isPointer(self.graph, record.ty)) blk: {
-                const root = shared_pointer_root orelse root_blk: {
-                    const created = try state.tracker.establish(.fresh);
-                    shared_pointer_root = created;
-                    break :root_blk created;
-                };
-                try state.symbolic_pointees.append(.{ .identity = binding, .initializedness = .initialized });
-                break :blk .{ .dependencies = try self.oneDependency(root), .symbolic_pointees = try self.allocator.dupe(graph_mod.GlobalBindingId, &.{binding}) };
-            } else .{};
+            var value = self.seedInputValue(record.ty, state, &shared_pointer_root, &shared_value_generation, demand, .{ .input_index = @intCast(index) }) catch |err| {
+                if (err == error.UnsupportedInputReferenceIndex) {
+                    try self.report(record.source, "array reference input index exceeds the supported safety fact range", .{});
+                    return error.Reported;
+                }
+                return err;
+            };
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
-                for (self.graph.virtualizes.items) |virtualize| {
-                    if (!types.equal(self.graph, ty, virtualize.virtual_type) or virtualize.domains.len == 0) continue;
-                    const domains = try self.allocator.alloc(facts.DomainFacts, virtualize.domains.len);
-                    for (virtualize.domains, domains) |mapping, *domain| {
-                        const storage = try self.project(.{ .root = binding }, .{ .field = mapping.domain_index });
-                        _ = try self.storageGeneration(state, storage);
-                        const places = try self.allocator.alloc(facts.Place, 1);
-                        places[0] = storage;
-                        domain.* = .{ .domain_index = mapping.domain_index, .storages = places };
-                    }
-                    value.domains = domains;
-                    break;
+                const contract_type = self.graph.semanticType(ty).virtual;
+                const declaration = @import("../global/contract_evidence.zig").contractDefinition(self.graph, contract_type) orelse
+                    return error.InvalidVirtualContractType;
+                const count = self.graph.familyDefinition(declaration).domain_count;
+                const domains = try self.allocator.alloc(facts.DomainFacts, count);
+                for (domains, 0..) |*domain, domain_index| {
+                    const storage = try self.project(.{ .root = binding }, .{ .field = @intCast(domain_index) });
+                    _ = try state.storageGeneration(storage);
+                    const places = try self.allocator.alloc(facts.Place, 1);
+                    places[0] = storage;
+                    domain.* = .{ .domain_index = @intCast(domain_index), .storages = places };
                 }
+                value.domains = domains;
             }
-            try self.setPlace(state, .{ .root = binding }, .initialized, value);
+            try state.setPlace(.{ .root = binding }, .initialized, value);
         }
-        // Outputs without defaults are storage to be filled by the body.
+        // Output defaults are explicit first writes in the checked body.
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
-            const record = self.graph.binding(binding);
-            try self.setPlace(state, .{ .root = binding }, if (record.initialization == null) .deinitialized else .initialized, .{});
+            if (self.graph.binding(binding).initialization != null) return error.UnmaterializedOutputInitializers;
+            try state.setPlace(.{ .root = binding }, .deinitialized, .{});
         }
     }
 
@@ -648,23 +797,24 @@ pub const SafetyChecker = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
         for (nodes, 0..) |node_id, node_index| {
+            try self.cancellation.check();
             if (!state.reachable) break;
             const node = self.graph.nodes.items[@intFromEnum(node_id)];
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
                     const storage = facts.Place{ .root = binding };
-                    try self.beginLexicalStorage(state, storage);
+                    try state.beginLexicalStorage(storage);
                     const value = if (!record.deferred_initialization) if (record.initialization) |initialization| blk: {
                         try self.validateContextualIntegerLiteral(initialization, record.ty);
                         break :blk try self.evaluate(function, initialization, state);
                     } else facts.ValueFacts{} else facts.ValueFacts{};
-                    try self.setPlace(state, .{ .root = binding }, if (record.initialization != null and !record.deferred_initialization) .initialized else .deinitialized, value);
+                    try state.setPlace(.{ .root = binding }, if (record.initialization != null and !record.deferred_initialization) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
                     const binding = self.graph.binding(assignment.binding);
                     const storage = facts.Place{ .root = assignment.binding };
-                    const previous_state = self.initializednessAtPlace(state, storage);
+                    const previous_state = state.initializednessAtPlace(storage);
                     if (previous_state == .moved)
                         try self.reportMovedReassignment(node.source, storage, state);
                     if (binding.mutability == .constant and previous_state == .initialized)
@@ -673,7 +823,11 @@ pub const SafetyChecker = struct {
                         try self.refreshStorageGenerationChecked(node.source, state, storage);
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
-                    try self.setPlace(state, .{ .root = assignment.binding }, .initialized, value);
+                    // Replacement cleanup may end the old value while evaluating
+                    // the RHS sequence. Its new value starts a fresh generation.
+                    if (previous_state != .deinitialized and state.initializednessAtPlace(storage) == .deinitialized)
+                        try self.refreshStorageGenerationChecked(node.source, state, storage);
+                    try state.setPlace(.{ .root = assignment.binding }, .initialized, value);
                 },
                 .auto_deinit_binding => |auto_id| {
                     if (self.graph.function(function).body == block_id) {
@@ -688,51 +842,93 @@ pub const SafetyChecker = struct {
                 },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
+                    const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (try self.resolvePlace(store.struct_ptr, state)) |base|
-                        try self.setPlace(state, try self.project(base, .{ .field = store.field_index }), .initialized, value);
+                    if (pointer.referenced_place) |base| {
+                        const target = try self.project(base, .{ .field = store.field_index });
+                        if (state.initializednessAtPlace(target) == .deinitialized)
+                            try self.refreshStorageGenerationChecked(node.source, state, target);
+                        try state.setPlace(target, .initialized, value);
+                    } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
                 },
                 .array_store => |store| {
-                    const pointer = try self.evaluatePointerUse(function, node.source, store.array_ptr, state) orelse continue;
+                    const pointer = try self.evaluateArrayStorage(function, node.source, store.array_ptr, state) orelse continue;
                     _ = try self.evaluate(function, store.index, state);
+                    const symbolic = if (pointer.referenced_place == null) blk: {
+                        const index = self.staticIndex(store.index) orelse break :blk null;
+                        break :blk try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state);
+                    } else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (try self.resolvePlace(store.array_ptr, state)) |base| {
+                    if (pointer.referenced_place) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
-                        try self.setPlace(state, try self.project(base, projection), .initialized, value);
-                    }
+                        try state.setPlace(try self.project(base, projection), .initialized, value);
+                    } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
                 },
                 .pointer_assignment => |assignment| {
-                    const pointer_node = self.graph.node(assignment.pointer);
-                    var pointer = switch (pointer_node.content) {
-                        .address_of => |child| try self.evaluateAddress(function, pointer_node.source, child, state, true),
-                        else => try self.evaluate(function, assignment.pointer, state),
-                    };
+                    const operand = try self.evaluateWritePointer(function, assignment.pointer, state);
+                    var pointer = operand.value;
+                    const was_deinitialized = if (pointer.referenced_place) |target|
+                        state.initializednessAtPlace(target) == .deinitialized
+                    else
+                        false;
+                    const symbolic_renewal = if (pointer.referenced_place == null and operand.renewable)
+                        try state.renewSymbolicAccess(pointer)
+                    else
+                        null;
+                    const initializes = was_deinitialized or symbolic_renewal != null;
+                    try self.annotations.recordInitialization(self.allocator, node_id, initializes);
+                    if (symbolic_renewal) |renewed| pointer = renewed;
                     if (pointer.referenced_place) |target| {
-                        if (self.initializednessAtPlace(state, target) == .deinitialized and pointer.opaque_provenance.len == 0) {
-                            const old_generation = try self.storageGeneration(state, target);
+                        if (was_deinitialized and pointer.opaque_provenance.len == 0) {
+                            const old_generation = try state.storageGeneration(target);
                             try self.refreshStorageGenerationChecked(node.source, state, target);
-                            const generation = try self.storageGeneration(state, target);
+                            const generation = try state.storageGeneration(target);
                             // Only the precise pointer used to initialize storage
                             // follows its new generation; historical aliases do not.
-                            pointer = try self.replaceValueRoots(pointer, &.{old_generation}, generation);
-                            if (try self.resolvePlace(assignment.pointer, state)) |pointer_storage|
-                                try self.setPlace(state, pointer_storage, .initialized, pointer);
+                            pointer = try facts.replaceValueRoots(self.allocator, pointer, &.{old_generation}, generation);
+                            if (operand.slot) |pointer_storage|
+                                try state.setPlace(pointer_storage, .initialized, pointer);
                         }
                     }
                     try self.requireLive(function, node.source, pointer, state);
+                    if (self.active_replacement) |*active| if (active.plan.write == node_id) {
+                        active.pointer = pointer;
+                    };
                     const value = try self.evaluate(function, assignment.value, state);
+                    if (pointer.referenced_place) |target| {
+                        if (!was_deinitialized and state.initializednessAtPlace(target) == .deinitialized and pointer.opaque_provenance.len == 0) {
+                            const old_generation = try state.storageGeneration(target);
+                            try self.refreshStorageGenerationChecked(node.source, state, target);
+                            pointer = try facts.replaceValueRoots(self.allocator, pointer, &.{old_generation}, try state.storageGeneration(target));
+                            try self.renewWriteReferenceSlot(state, operand, pointer);
+                        }
+                    }
+                    if (pointer.referenced_place == null and !state.tracker.dependenciesAreAlive(pointer) and
+                        (operand.renewable or (self.active_replacement != null and self.active_replacement.?.plan.write == node_id)))
+                    {
+                        if (try state.renewSymbolicAccess(pointer)) |renewed| {
+                            pointer = renewed;
+                            try self.renewWriteReferenceSlot(state, operand, pointer);
+                        }
+                    }
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
+                    if (pointer.referenced_place) |target| {
+                        try state.setPlace(target, .initialized, value);
+                    } else try self.storeSymbolicValue(state, pointer, value, true);
+                    if (symbolic_renewal != null) {
+                        try self.renewWriteReferenceSlot(state, operand, pointer);
+                    }
+                    if (pointer.referenced_place == null) state.initializeLiveSymbolicTargets(pointer);
                 },
                 .if_statement => |statement| {
                     _ = try self.evaluate(function, statement.condition, state);
-                    var then_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                    var then_state = try self.cloneState(state);
                     defer then_state.deinit();
                     if (statement.choice_test) |choice_test| try self.refineChoice(&then_state, choice_test.choice_value, choice_test.variant, choice_test.then_has_variant);
                     try self.validateBlock(function, statement.then_block, &then_state, loop_transfers);
-                    var else_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                    var else_state = try self.cloneState(state);
                     defer else_state.deinit();
                     if (statement.choice_test) |choice_test| try self.refineChoice(&else_state, choice_test.choice_value, choice_test.variant, !choice_test.then_has_variant);
                     if (statement.else_block) |child| try self.validateBlock(function, child, &else_state, loop_transfers);
@@ -775,7 +971,6 @@ pub const SafetyChecker = struct {
                     };
                 },
             }
-            try self.validateUniqueOwnership(function, node.source, state);
             if (!state.reachable) {
                 try self.endBlockStorage(block_id, state);
                 if (loop_transfers) |transfers| {
@@ -796,46 +991,87 @@ pub const SafetyChecker = struct {
         loop_transfers: ?*LoopTransfers,
     ) !void {
         const sw = self.graph.switches.items[@intFromEnum(switch_id)];
-        const choice = try self.evaluate(function, sw.expression, state);
+        const source = self.graph.node(sw.expression);
+        var captured: EvaluatedAccess = .{};
+        var choice: facts.ValueFacts = .{};
+        var prepared: ?PreparedCallArguments = null;
+        defer if (prepared) |arguments| self.allocator.free(arguments.values);
+        var call_state: ?FunctionState = null;
+        defer if (call_state) |*candidate| candidate.deinit();
+        const split_call = source.content == .function_call and sw.exhaustive and sw.default_block == null and blk: {
+            const callee = self.graph.function(source.content.function_call.callee);
+            break :blk callee.body != null and callee.safety_primitive == .none and callee.output.len == 1;
+        };
+        if (split_call) {
+            // Fork at the call itself, after evaluating its inputs once. No
+            // effects of this call have been applied to the parent state yet.
+            const candidate = try self.cloneState(state);
+            call_state = candidate;
+            const diagnostic_count = self.diagnostics.list.items.len;
+            const call = source.content.function_call;
+            if (call.callee_value) |value| _ = try self.evaluate(function, value, &call_state.?);
+            prepared = try self.prepareCallArguments(function, call, &call_state.?);
+            if (self.diagnostics.list.items.len != diagnostic_count) return;
+            if (self.collect_stats) self.stats.calls += 1;
+        } else {
+            captured = try self.evaluateAccess(function, sw.expression, state);
+            // Binding reads retain dependency checks and active-tag refinement.
+            choice = if (source.content == .binding_use)
+                try self.evaluate(function, sw.expression, state)
+            else
+                try self.readEvaluatedAccess(function, source.source, source.ty, captured, state);
+        }
         var joined: ?FunctionState = null;
         defer if (joined) |*value| value.deinit();
         for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
-            var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            var branch = try self.cloneState(if (call_state) |*candidate| candidate else state);
             defer branch.deinit();
-            try self.refineChoice(&branch, sw.expression, case.variant, true);
+            const wanted = variantIndex(self.graph, source.ty.?, case.variant) orelse 0;
+            const diagnostic_count = self.diagnostics.list.items.len;
+            const branch_choice = if (prepared) |arguments|
+                (try self.applyFunctionSummaryWithOutcome(self.graph.node(source.content.function_call.input).source, sw.expression, source.content.function_call.callee, arguments.nodes, arguments.values, &branch, wanted)) orelse facts.ValueFacts{}
+            else
+                choice;
+            if (prepared != null and self.diagnostics.list.items.len != diagnostic_count) return;
+            try self.refineChoiceStorage(&branch, sw.expression, source.ty.?, wanted, true, captured.storage);
+            if (captured.storage == null) if (captured.pointer) |pointer|
+                try self.setSymbolicVariant(&branch, pointer, wanted);
+            var payload: facts.ValueFacts = .{};
+            for (branch_choice.variants) |variant| if (variant.index == wanted) {
+                payload = variant.value.*;
+                break;
+            };
+            try self.activate_conditional_resources(&branch, payload);
             if (case.payload_binding) |binding| {
-                const wanted = variantIndex(self.graph, self.graph.nodes.items[@intFromEnum(sw.expression)].ty.?, case.variant) orelse 0;
-                var payload: facts.ValueFacts = .{};
-                for (choice.variants) |variant| if (variant.index == wanted) {
-                    payload = variant.value.*;
-                    break;
-                };
-                try self.activate_conditional_resources(&branch, payload);
-                try self.beginLexicalStorage(&branch, .{ .root = binding });
-                try self.setPlace(&branch, .{ .root = binding }, .initialized, switch (case.payload_mode) {
+                var borrowed = payload.referenceCopy();
+                if (case.payload_mode == .borrow or case.payload_mode == .mut_borrow) {
+                    if (captured.pointer) |pointer| if (captured.storage == null) {
+                        if (try self.projectSymbolicStorage(pointer, .{ .variant = wanted }, &branch)) |projected| {
+                            borrowed = projected;
+                            if (!facts.isEmptyValue(payload)) try self.storeSymbolicValue(&branch, projected, payload, true);
+                        }
+                    };
+                }
+                try branch.beginLexicalStorage(.{ .root = binding });
+                try branch.setPlace(.{ .root = binding }, .initialized, switch (case.payload_mode) {
                     .value, .move => payload,
-                    .borrow, .mut_borrow => payload.referenceCopy(),
+                    .borrow, .mut_borrow => borrowed,
                 });
-                if (case.payload_mode == .move) if (try self.resolvePlace(sw.expression, &branch)) |storage| {
+                if (case.payload_mode == .move) if (captured.storage) |storage| {
                     // Moving a choice payload consumes the discriminated value.
                     // Keeping the aggregate initialized would allow another
                     // branch-sensitive read to observe the transferred payload.
-                    try self.markMoved(&branch, storage, .{}, self.graph.node(sw.expression).source);
+                    try branch.markMoved(storage, .{}, self.graph.node(sw.expression).source);
                 };
             }
             try self.validateBlock(function, case.body, &branch, loop_transfers);
-            if (joined) |*existing| {
-                var combined = try existing.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                try self.joinState(&combined, existing, &branch);
-                existing.deinit();
-                existing.* = combined;
-            } else joined = try branch.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try self.cloneState(&branch);
         }
         if (sw.default_block) |child| {
-            var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            var branch = try self.cloneState(state);
             defer branch.deinit();
             try self.validateBlock(function, child, &branch, loop_transfers);
-            if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try branch.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try self.cloneState(&branch);
         }
         if (joined) |*result| try self.copyState(state, result);
     }
@@ -850,11 +1086,11 @@ pub const SafetyChecker = struct {
         return switch (node.content) {
             .binding_use => |binding| blk: {
                 const storage = facts.Place{ .root = binding };
-                const place = self.getPlace(state, storage) orelse break :blk .{};
+                const place = state.getPlace(storage) orelse break :blk .{};
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
                 try self.requireDescendantsInitialized(function, node.source, storage, state);
                 var value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, place.value), state);
-                value.known_choice_variant = self.activeVariant(state, storage) orelse value.known_choice_variant;
+                value.known_choice_variant = state.activeVariant(storage) orelse value.known_choice_variant;
                 if (valueHasDeadExplicitDependencyForUse(value, state, isPointer(self.graph, self.graph.binding(binding).ty)))
                     try self.report(node.source, "{s} depends on a root that has ended", .{if (isPointer(self.graph, self.graph.binding(binding).ty)) "reference" else "value"});
                 break :blk value;
@@ -862,8 +1098,8 @@ pub const SafetyChecker = struct {
             .move_value => |child| blk: {
                 const value = try self.evaluate(function, child, state);
                 if (try self.resolvePlace(child, state)) |storage| {
-                    try self.requirePlaceInitialized(function, node.source, storage, self.initializednessAtPlace(state, storage), state);
-                    try self.markMoved(state, storage, value, node.source);
+                    try self.requirePlaceInitialized(function, node.source, storage, state.initializednessAtPlace(storage), state);
+                    try state.markMoved(storage, value, node.source);
                 }
                 break :blk value;
             },
@@ -883,44 +1119,15 @@ pub const SafetyChecker = struct {
                 const pointer = try self.evaluatePointerUse(function, node.source, deref.pointer, state) orelse break :blk .{};
                 var value: facts.ValueFacts = .{};
                 if (pointer.referenced_place) |storage| {
-                    const initializedness = self.initializednessAtPlace(state, storage);
-                    try self.requireInitialized(function, node.source, initializedness);
-                    try self.requireDescendantsInitialized(function, node.source, storage, state);
-                    value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
-                }
-                break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
-            },
-            .struct_field_access => |access| blk: {
-                const diagnostic_count = self.diagnostics.list.items.len;
-                try self.validateAddressAccess(function, node.source, access.value, state);
-                if (self.diagnostics.list.items.len != diagnostic_count) break :blk .{};
-                if (try self.resolvePlace(node_id, state)) |storage| {
-                    const initializedness = self.initializednessAtPlace(state, storage);
-                    try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
-                    if (self.valueAtPlace(state, storage)) |value| {
-                        try self.requireDescendantsInitialized(function, node.source, storage, state);
-                        const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
-                        break :blk try self.addOpaqueReadEnvelope(try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, value), state), node.ty, provenance);
-                    }
-                }
-                const aggregate = try self.evaluate(function, access.value, state);
-                for (aggregate.fields) |field| if (field.index == access.field_index) break :blk field.value.*;
-                break :blk aggregate;
-            },
-            .array_index => |access| blk: {
-                const pointer = try self.evaluatePointerUse(function, node.source, access.array_ptr, state) orelse break :blk .{};
-                _ = try self.evaluate(function, access.index, state);
-                var value: facts.ValueFacts = .{};
-                if (pointer.referenced_place) |base| {
-                    const projection: facts.Projection = if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index;
-                    const storage = try self.project(base, projection);
-                    const initializedness = self.initializednessAtPlace(state, storage);
+                    const initializedness = state.initializednessAtPlace(storage);
                     try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     try self.requireDescendantsInitialized(function, node.source, storage, state);
                     value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
                 }
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
+            .struct_field_access => try self.readEvaluatedAccess(function, node.source, node.ty, try self.evaluateAccess(function, node_id, state), state),
+            .array_index => try self.readEvaluatedAccess(function, node.source, node.ty, try self.evaluateAccess(function, node_id, state), state),
             .struct_value_literal => |literal| try self.evaluateStruct(function, literal, state),
             .list_literal => |literal| try self.evaluateList(function, literal, state),
             .array_literal => |literal| try self.evaluateArray(function, literal, state),
@@ -945,7 +1152,7 @@ pub const SafetyChecker = struct {
                             // dereference path for their domain generations.
                             const receiver = try self.project(slot, .dereference);
                             const contents = try self.initializedValueAtPlace(state, receiver, virtualize.concrete_type);
-                            try self.setPlace(state, receiver, .initialized, contents);
+                            try state.setPlace(receiver, .initialized, contents);
                             value.referenced_place = receiver;
                         }
                     }
@@ -976,7 +1183,7 @@ pub const SafetyChecker = struct {
                             try self.captureContractStorage(function, virtualize.source, state, storage, ty, &dependencies, &visited);
                         }
                         const roots = try self.allocator.alloc(facts.ValidityRootId, visited.items.len);
-                        for (visited.items, roots) |storage, *root| root.* = try self.storageGeneration(state, storage);
+                        for (visited.items, roots) |storage, *root| root.* = try state.storageGeneration(storage);
                         try captured.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .generations = roots });
                         try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator) });
                     }
@@ -1006,23 +1213,12 @@ pub const SafetyChecker = struct {
                 // Cleanup belongs to the propagation's error exit. Validate it
                 // on a branch state so its mutations cannot affect the success
                 // continuation that receives the unwrapped value.
-                var error_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                var error_state = try self.cloneState(state);
                 defer error_state.deinit();
                 try self.rejectPropagatedLocalError(function, node.source, prop.errable_value, prop.error_variant, value, &error_state);
                 for (self.graph.node_refs.items[prop.cleanup_nodes.start..][0..prop.cleanup_nodes.len]) |cleanup|
                     _ = try self.evaluate(function, cleanup, &error_state);
                 break :blk try self.error_success_facts(prop.errable_value, prop.ok_variant, prop.ok_value_field_index, value, state);
-            },
-            .error_context => |ctx_id| blk: {
-                const ctx = self.graph.error_contexts.items[@intFromEnum(ctx_id)];
-                const value = try self.evaluate(function, ctx.errable_value, state);
-                var error_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                defer error_state.deinit();
-                try self.rejectPropagatedLocalError(function, node.source, ctx.errable_value, ctx.error_variant, value, &error_state);
-                _ = try self.evaluate(function, ctx.context, &error_state);
-                for (self.graph.node_refs.items[ctx.cleanup_nodes.start..][0..ctx.cleanup_nodes.len]) |cleanup|
-                    _ = try self.evaluate(function, cleanup, &error_state);
-                break :blk try self.error_success_facts(ctx.errable_value, ctx.ok_variant, ctx.ok_value_field_index, value, state);
             },
             .auto_deinit_binding => |auto_id| blk: {
                 try self.applyAutoDeinit(function, auto_id, state);
@@ -1054,7 +1250,7 @@ pub const SafetyChecker = struct {
             },
             .logical_operation => |logic| blk: {
                 _ = try self.evaluate(function, logic.left, state);
-                var right_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                var right_state = try self.cloneState(state);
                 defer right_state.deinit();
                 if (self.choiceTestFromCondition(logic.left)) |choice_test| {
                     const left_has_variant = logic.operator == .and_;
@@ -1069,6 +1265,14 @@ pub const SafetyChecker = struct {
                 try self.joinState(state, state, &right_state);
                 break :blk .{};
             },
+            .replacement => |block| blk: {
+                const previous = self.active_replacement;
+                self.active_replacement = .{ .plan = try checked_replacement.plan(self.graph, node_id) };
+                defer self.active_replacement = previous;
+                var value: facts.ValueFacts = .{};
+                try self.validateBlockWithResult(function, block, state, null, &value);
+                break :blk value;
+            },
             .value_sequence => |block| blk: {
                 var value: facts.ValueFacts = .{};
                 try self.validateBlockWithResult(function, block, state, null, &value);
@@ -1082,15 +1286,8 @@ pub const SafetyChecker = struct {
                 try self.validateIntegerLiteral(node.source, node.ty, value);
                 break :blk .{};
             },
-            .testing_expect_error => |id| blk: {
-                const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
-                _ = try self.evaluate(function, expect.expected_reason, state);
-                _ = try self.evaluate(function, expect.actual_result, state);
-                const input = expect.test_fail_input orelse break :blk .{};
-                break :blk try self.evaluateCall(function, node_id, .{ .callee = expect.test_fail_function, .input = input }, state);
-            },
 
-            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
+            .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
     }
@@ -1154,7 +1351,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !facts.ValueFacts {
         if (self.collect_stats) self.stats.calls += 1;
-        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        var candidate = try self.cloneState(state);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
         if (@hasField(@TypeOf(call), "callee_value")) {
@@ -1166,14 +1363,13 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn evaluateCallCandidate(
-        self: *SafetyChecker,
-        caller: graph_mod.GlobalFunctionId,
-        call_node: ?graph_mod.GlobalNodeId,
-        call: anytype,
-        state: *FunctionState,
-    ) !facts.ValueFacts {
-        const callee = self.graph.functions.items[@intFromEnum(call.callee)];
+    const PreparedCallArguments = struct {
+        nodes: []const graph_mod.GlobalValueFieldId,
+        values: []facts.ValueFacts,
+    };
+
+    fn prepareCallArguments(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, call: anytype, state: *FunctionState) !PreparedCallArguments {
+        const callee = self.graph.function(call.callee);
         var argument_nodes: []const graph_mod.GlobalValueFieldId = &.{};
         const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
         if (input_node.content == .struct_value_literal) {
@@ -1182,7 +1378,7 @@ pub const SafetyChecker = struct {
         }
 
         var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
-        defer self.allocator.free(values);
+        errdefer self.allocator.free(values);
         for (argument_nodes, 0..) |field_id, index| {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
             const summary = if (self.active_summaries) |engine| engine.summaryFor(call.callee) else null;
@@ -1194,6 +1390,23 @@ pub const SafetyChecker = struct {
                 try self.evaluate(caller, field.value, state);
         }
 
+        return .{ .nodes = argument_nodes, .values = values };
+    }
+
+    fn evaluateCallCandidate(
+        self: *SafetyChecker,
+        caller: graph_mod.GlobalFunctionId,
+        call_node: ?graph_mod.GlobalNodeId,
+        call: anytype,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        const callee = self.graph.function(call.callee);
+        const prepared = try self.prepareCallArguments(caller, call, state);
+        defer self.allocator.free(prepared.values);
+        const argument_nodes = prepared.nodes;
+        const values = prepared.values;
+        const input_node = self.graph.node(call.input);
+
         if (callee.flags.has_foreign_capability) {
             const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
             if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, state)) return .{};
@@ -1204,7 +1417,7 @@ pub const SafetyChecker = struct {
                 if (!try self.validateSummaryRequiredOpaque(input_node.source, summary, values, state)) return .{};
             };
             if (self.collect_stats) self.stats.primitive_calls += 1;
-            return self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, state, input_node.source);
+            return self.evaluatePrimitive(caller, call.callee, callee.safety_primitive, argument_nodes, values, state, input_node.source);
         }
         if (callee.body == null) {
             // Argument evaluation is still part of the successful call and is
@@ -1228,6 +1441,19 @@ pub const SafetyChecker = struct {
         values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !?facts.ValueFacts {
+        return self.applyFunctionSummaryWithOutcome(source, call_node, callee, argument_nodes, values, state, null);
+    }
+
+    fn applyFunctionSummaryWithOutcome(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        call_node: ?graph_mod.GlobalNodeId,
+        callee: graph_mod.GlobalFunctionId,
+        argument_nodes: []const graph_mod.GlobalValueFieldId,
+        values: []const facts.ValueFacts,
+        state: *FunctionState,
+        outcome: ?u32,
+    ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
         const summary = try self.selectEntryGuardedSummary(engine.summaryFor(callee) orelse return null, values, state);
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
@@ -1235,12 +1461,118 @@ pub const SafetyChecker = struct {
         const previous_capabilities = self.active_fresh_capabilities;
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
+        const saved_generations = self.active_entry_generations;
+        const saved_symbolic = self.active_entry_symbolic;
+        const saved_capture_writes = self.active_capture_writes;
+        defer self.active_capture_writes = saved_capture_writes;
+        self.active_capture_writes = &.{};
+        defer self.active_entry_generations = saved_generations;
+        defer self.active_entry_symbolic = saved_symbolic;
+        self.active_entry_generations = &.{};
+        self.active_entry_symbolic = &.{};
+        if (summaryHasPostCaptures(summary)) {
+            self.active_capture_writes = try self.captureWrites(summary, argument_nodes, values, state);
+            self.active_entry_generations = try self.allocator.dupe(state_mod.StorageGeneration, state.storage_generations.items);
+            self.active_entry_symbolic = try self.allocator.dupe(state_mod.SymbolicPointeeState, state.symbolic_pointees.items);
+        }
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
         if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
         const prepared = try self.prepareGeneralValueGuards(summary, values, state);
-        const result = try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+        var effects = summary;
+        if (outcome) |wanted| for (summary.outcome_post_states) |selected| {
+            if (selected.output_index != 0 or selected.parent_variants.len != 0 or selected.variant_index != wanted) continue;
+            effects.input_post_states = selected.input_post_states;
+            effects.invalidated_domains = selected.invalidated_domains;
+            effects.opaque_storage_empties = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.opaque_storage_empties, selected.opaque_storage_empties });
+            effects.outcome_post_states = &.{};
+            break;
+        };
+        const result = try self.applyOutcomeSummary(source, effects, argument_nodes, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);
+    }
+
+    fn valueHasPostCaptures(value: facts.ValueEffect) bool {
+        for (value.input_captured_storages) |capture| if (capture.phase == .post) return true;
+        for (value.fields) |field| if (valueHasPostCaptures(field.value.*)) return true;
+        for (value.variants) |variant| if (valueHasPostCaptures(variant.value.*)) return true;
+        return false;
+    }
+
+    fn summaryHasPostCaptures(summary: facts.SafetySummary) bool {
+        for (summary.outputs) |output| if (valueHasPostCaptures(output)) return true;
+        for (summary.input_post_states) |post| if (valueHasPostCaptures(post.value)) return true;
+        for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |post| {
+            if (valueHasPostCaptures(post.value)) return true;
+        };
+        return false;
+    }
+
+    fn captureWrites(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const CaptureWrite {
+        var writes = std.array_list.Managed(CaptureWrite).init(self.allocator);
+        for (summary.input_post_states) |post| {
+            if (post.initialization == .preserved and !post.ends_previous_roots and !post.refreshes_storage_generation) continue;
+            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |storage|
+                try writes.append(.{ .path = post.target, .storage = storage });
+        }
+        return writes.toOwnedSlice();
+    }
+
+    fn validatePostCaptureWrites(self: *SafetyChecker, source: primitives.SourceRef, input: u32, visited: []const facts.Place) !void {
+        for (self.active_capture_writes) |write| {
+            if (write.path.input_index == input) continue;
+            for (visited) |storage| if (storage.isPrefixOf(write.storage) or write.storage.isPrefixOf(storage)) {
+                try self.report(source, "post-call virtual capture overlaps another initialized destination", .{});
+                break;
+            };
+        }
+    }
+
+    fn renewPostCaptureInput(self: *SafetyChecker, input: facts.ValueFacts, path: facts.InputPath, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var post = false;
+        for (effect.input_captured_storages) |capture| if (sameInputPath(capture.path, path)) {
+            if (capture.phase != .post) return input;
+            post = true;
+        };
+        if (!post) return input;
+        const storage = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
+        var old: ?facts.ValidityRootId = null;
+        var new: ?facts.ValidityRootId = null;
+        if (storage) |place| {
+            for (self.active_entry_generations) |entry| if (entry.storage.eql(place)) {
+                old = entry.generation;
+                break;
+            };
+            if (self.active_post_captures) |planned| {
+                for (planned.items) |capture| if (capture.storage) |captured| {
+                    if (!captured.eql(place)) continue;
+                    old = capture.entry_generation;
+                    new = capture.placeholder;
+                    break;
+                };
+            }
+            if (new == null) new = try state.storageGeneration(place);
+        } else if (input.symbolic_pointees.len == 1) {
+            const identity = input.symbolic_pointees[0];
+            for (self.active_entry_symbolic) |entry| if (entry.identity == identity) {
+                old = entry.generation;
+                break;
+            };
+            if (self.active_post_captures) |planned| {
+                for (planned.items) |capture| if (capture.symbolic == identity) {
+                    old = capture.entry_generation;
+                    new = capture.placeholder;
+                    break;
+                };
+            }
+            if (new == null) for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
+                new = entry.generation;
+                break;
+            };
+        }
+        if (old != null and new != null and old.? != new.?)
+            return facts.replaceValueRoots(self.allocator, input, &.{old.?}, new.?);
+        return input;
     }
 
     /// Input conditions are evaluated before applying any call effect. Reading
@@ -1278,10 +1610,10 @@ pub const SafetyChecker = struct {
             .dereference => {
                 if (!state.tracker.dependenciesAreAlive(value)) return null;
                 const target = value.referenced_place orelse return null;
-                if (self.initializednessAtPlace(state, target) != .initialized) return null;
+                if (state.initializednessAtPlace(target) != .initialized) return null;
                 const stored = self.valueAtPlace(state, target) orelse return null;
                 value = try self.reconstructPlaceValue(state, target, stored);
-                value.known_choice_variant = self.activeVariant(state, target) orelse value.known_choice_variant;
+                value.known_choice_variant = state.activeVariant(target) orelse value.known_choice_variant;
             },
             .field, .static_index => {
                 const index: usize = if (projection == .field) projection.field else projection.static_index;
@@ -1315,7 +1647,7 @@ pub const SafetyChecker = struct {
         const call = self.next_outcome_guard;
         self.next_outcome_guard += 1;
         for (summary.guarded_effects) |guarded| {
-            if (guarded.origin != .general or guarded.conditions.impossible) continue;
+            if (guarded.conditions.impossible) continue;
             var known: std.ArrayList(facts.ChoiceCondition) = .empty;
             defer known.deinit(self.allocator);
             for (guarded.conditions.terms) |condition| {
@@ -1400,9 +1732,9 @@ pub const SafetyChecker = struct {
     }
 
     fn collectCallChoiceFacts(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, value: facts.ValueFacts, call: u64, terms: *std.ArrayList(facts.ChoiceCondition)) anyerror!void {
-        if (self.initializednessAtPlace(state, storage) != .initialized) return;
+        if (state.initializednessAtPlace(storage) != .initialized) return;
         for (value.choice_observations) |observation| if (observation.call == call) try terms.append(self.allocator, observation.selector);
-        const active = self.activeVariant(state, storage) orelse value.known_choice_variant;
+        const active = state.activeVariant(storage) orelse value.known_choice_variant;
         if (active) |variant| {
             for (value.choice_selectors) |selector| if (selector.call == call) {
                 var observed = selector.selector;
@@ -1468,20 +1800,22 @@ pub const SafetyChecker = struct {
         const consumed = try self.callCleanupNodes(summary, argument_ids, arguments, state, false);
         const initialized = try self.callCleanupNodes(summary, argument_ids, arguments, state, true);
         const outcomes = try self.callOutcomeCleanups(summary, argument_ids, arguments, state);
-        const node = &self.graph.nodes.items[@intFromEnum(call_node)];
-        if (node.content != .function_call) return;
-        node.content.function_call.consumed_auto_deinits = consumed;
-        node.content.function_call.initialized_auto_deinits = initialized;
-        node.content.function_call.outcome_cleanups = outcomes;
+        if (self.graph.node(call_node).content != .function_call) return;
+        var effects: @import("annotations.zig").CallEffects = .{
+            .consumed_auto_deinits = consumed,
+            .initialized_auto_deinits = initialized,
+            .outcome_cleanups = outcomes,
+        };
         for (summary.input_post_states) |post_state| {
             if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
             const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
             if (self.graph.nodes.items[@intFromEnum(field.value)].content != .address_of or self.rootBinding(field.value) == null) continue;
             if (post_state.requires_available_destination and post_state.initializedness == .initialized)
-                node.content.function_call.initializes_auto_deinit = field.value;
+                effects.initializes_auto_deinit = field.value;
             if (post_state.initializedness == .deinitialized or post_state.initializedness == .moved)
-                node.content.function_call.consumes_auto_deinit = field.value;
+                effects.consumes_auto_deinit = field.value;
         }
+        try self.annotations.setCall(self.allocator, call_node, effects);
     }
 
     fn initializesInput(summary: facts.SafetySummary, index: usize) bool {
@@ -1493,21 +1827,27 @@ pub const SafetyChecker = struct {
     /// A represented exit can disable source cleanup or enable destination
     /// cleanup. Possible transitions in the fallback cannot select either flag.
     fn callOutcomeCleanups(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const primitives.OutcomeCleanup(graph_mod.Ids) {
-        var result = std.array_list.Managed(primitives.OutcomeCleanup(graph_mod.Ids)).init(self.allocator);
+        const annotation_allocator = try self.annotations.storageAllocator(self.allocator);
+        var result = std.array_list.Managed(primitives.OutcomeCleanup(graph_mod.Ids)).init(annotation_allocator);
         // A possible consumption without an exact result partition cannot be
         // implemented by either always keeping or always disabling cleanup.
         // Projected may-states also describe opaque backing-storage replacement;
         // they do not establish consumption of the whole input owner.
         for (summary.input_post_states) |post| {
-            if (post.initializedness != .maybe_initialized or post.target.projections.len != 0) continue;
+            const possible_initialization = post.initialization == .possible;
+            if (post.initializedness != .maybe_initialized and !possible_initialization) continue;
+            if (post.target.projections.len != 0 and !possible_initialization) continue;
             var relocation_source = false;
             for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |selected| {
                 if (sameInputPath(selected.target, post.target) and selected.initializedness == .moved) relocation_source = true;
             };
-            if (!post.ends_previous_roots and !post.requires_available_destination and !relocation_source) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+            const initializing_unavailable = possible_initialization and state.initializednessAtPlace(target) != .initialized;
+            if (!initializing_unavailable and
+                (post.initializedness != .maybe_initialized or post.target.projections.len != 0)) continue;
+            if (!post.ends_previous_roots and !post.requires_available_destination and !relocation_source and !initializing_unavailable) continue;
             var owns_cleanup = false;
-            for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+            for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                 owns_cleanup = true;
                 break;
             };
@@ -1520,9 +1860,11 @@ pub const SafetyChecker = struct {
                     if (outcome.output_index != candidate.output_index) continue;
                     for (outcome.input_post_states) |selected| {
                         if (!sameInputPath(selected.target, post.target)) continue;
-                        ambiguous = ambiguous or selected.initializedness == .maybe_initialized;
+                        ambiguous = ambiguous or selected.initializedness == .maybe_initialized or
+                            (initializing_unavailable and selected.initialization == .possible);
                         definite = definite or selected.initializedness == .moved or
-                            (selected.initializedness == .initialized and selected.requires_available_destination) or
+                            (selected.initializedness == .initialized and (selected.requires_available_destination or
+                                (initializing_unavailable and selected.initialization == .definite))) or
                             (selected.initializedness == .deinitialized and selected.ends_previous_roots);
                     }
                 }
@@ -1534,18 +1876,23 @@ pub const SafetyChecker = struct {
             if (!represented) {
                 if (post.requires_available_destination or relocation_source) {
                     try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional relocation; return a distinct result variant on each relocating or preserving path", .{});
+                } else if (initializing_unavailable) {
+                    try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional initialization; return from each initializing or preserving path with distinct result variants", .{});
                 } else try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional consumption; return a distinct result variant on each consuming or preserving path, or consume a moved lexical owner", .{});
             }
         }
         for (summary.outcome_post_states) |outcome| {
             for (outcome.input_post_states) |post| {
-                const initializing = post.requires_available_destination and post.initializedness == .initialized;
+                const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+                const initializing = post.initializedness == .initialized and (post.requires_available_destination or
+                    (post.initialization == .definite and state.initializednessAtPlace(target) != .initialized));
                 const relinquishing = post.initializedness == .moved or
                     (post.initializedness == .deinitialized and post.ends_previous_roots);
                 if (!initializing and !relinquishing) continue;
                 var unconditional = false;
                 for (summary.input_post_states) |common| if (sameInputPath(common.target, post.target) and
                     common.initializedness == post.initializedness and
+                    common.initialization == post.initialization and
                     common.requires_available_destination == post.requires_available_destination and
                     common.ends_previous_roots == post.ends_previous_roots)
                 {
@@ -1553,18 +1900,47 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (unconditional) continue;
-                const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
-                const node = try self.cleanupNodeForPlace(target) orelse {
-                    for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                // Keep an explicit path into the already-evaluated argument.
+                // The lexical place remains a static cleanup-activation anchor.
+                const captured = try self.capturedCleanupInput(post.target, ids);
+                const node = try self.cleanupNodeForPlace(target) orelse (if (captured) |input| self.graph.value_fields.items[@intFromEnum(ids[input.argument_index])].value else null) orelse {
+                    for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                         try self.report(self.graph.binding(target.root).source, "conditional consumption needs a lexical cleanup place; move the indexed or indirect owner into a local value first", .{});
                         break;
                     };
                     continue;
                 };
-                try result.append(.{ .place = node, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index, .enabled = initializing });
+                try result.append(.{ .place = node, .captured_input = captured, .output_index = outcome.output_index, .parent_variants = try annotation_allocator.dupe(u32, outcome.parent_variants), .variant_index = outcome.variant_index, .enabled = initializing });
             }
         }
         return result.toOwnedSlice();
+    }
+
+    fn capturedCleanupInput(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId) !?primitives.CapturedCleanupInput {
+        const annotation_allocator = try self.annotations.storageAllocator(self.allocator);
+        if (path.storage_domain != null or path.input_index >= ids.len) return null;
+        const argument = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
+        var ty = self.graph.node(argument).ty orelse return null;
+        // A pointer input already starts at its referent in summary paths.
+        // Its extra dereference selects another storage identity, not a value
+        // projection inside a copied argument.
+        if (isPointer(self.graph, ty)) return if (path.projections.len == 0) .{ .argument_index = path.input_index } else null;
+        var projections: std.ArrayList(primitives.CleanupInputProjection) = .empty;
+        defer projections.deinit(annotation_allocator);
+        for (path.projections, 0..) |projection, index| {
+            if (projection == .dereference) {
+                if (index + 1 != path.projections.len or !isPointer(self.graph, ty)) return null;
+                return .{ .argument_index = path.input_index, .projections = try projections.toOwnedSlice(annotation_allocator) };
+            }
+            const selected: primitives.CleanupInputProjection = switch (projection) {
+                .field => |field| .{ .field = field },
+                .static_index => |element| .{ .element = element },
+                else => return null,
+            };
+            ty = @import("../global/cleanup_input.zig").inputProjectionType(self.graph, ty, selected) catch return null;
+            try projections.append(annotation_allocator, selected);
+        }
+        return null;
     }
 
     fn mayMoveInput(summary: facts.SafetySummary, post: facts.PlacePostState) bool {
@@ -1581,62 +1957,116 @@ pub const SafetyChecker = struct {
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
-    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) ![]const graph_mod.GlobalBindingId {
-        if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return &.{};
+    fn symbolicConsumptionValue(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
+        if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return null;
         var argument = arguments[path.input_index];
         const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
-        var ty = self.graph.node(node).ty orelse return &.{};
+        var ty = self.graph.node(node).ty orelse return null;
+        if (path.projections.len != 0 and isPointer(self.graph, ty)) {
+            for (path.projections) |projection| {
+                if (projection != .field and projection != .variant and projection != .static_index) return null;
+                argument = try self.projectSymbolicStorage(argument, projection, state) orelse return null;
+            }
+            return argument;
+        }
         if (path.projections.len != 0) {
-            if (path.projections[path.projections.len - 1] != .dereference or isPointer(self.graph, ty)) return &.{};
+            if (path.projections[path.projections.len - 1] != .dereference) return null;
             for (path.projections[0 .. path.projections.len - 1]) |projection| {
                 ty = switch (projection) {
                     .field => |index| blk: {
-                        const fields = types.fields(self.graph, ty) orelse return &.{};
-                        if (index >= fields.len) return &.{};
+                        const fields = types.fields(self.graph, ty) orelse return null;
+                        if (index >= fields.len) return null;
                         break :blk (self.graph.fields.items[fields.start + index]).ty;
                     },
                     .variant => |index| blk: {
-                        const variants = types.variants(self.graph, ty) orelse return &.{};
-                        if (index >= variants.len) return &.{};
-                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse return &.{};
+                        const variants = types.variants(self.graph, ty) orelse return null;
+                        if (index >= variants.len) return null;
+                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse return null;
                     },
-                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return &.{},
-                    .dereference => return &.{},
+                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return null,
+                    .dereference => return null,
                 };
                 argument = try self.projectValueFacts(argument, &.{projection});
             }
         }
         // Only a whole unknown pointer carries a consumption identity. The
         // surrounding copied record and borrowed dependency envelopes do not.
-        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return &.{};
-        return argument.symbolic_pointees;
+        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return null;
+        return argument;
+    }
+
+    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const facts.SymbolicPointeeId {
+        const value = try self.symbolicConsumptionValue(path, ids, arguments, state) orelse return &.{};
+        return value.symbolic_pointees;
     }
 
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
+        for (summary.storage_observation_conflicts) |conflict| {
+            const symbolic_consumed = try self.symbolicConsumptionValue(conflict.consumed, ids, arguments, state);
+            const symbolic_observed = try self.symbolicConsumptionValue(conflict.observed, ids, arguments, state);
+            if (symbolic_consumed != null and symbolic_observed != null) {
+                for (symbolic_consumed.?.symbolic_pointees) |consumed| for (symbolic_observed.?.symbolic_pointees) |observed| {
+                    if (state.symbolicStorageMayOverlap(consumed, observed)) {
+                        try self.report(source, "function observes storage after an aliased participant has consumed its value", .{});
+                        return false;
+                    }
+                };
+            }
+            var consumed_buffer: [1]facts.Place = undefined;
+            var observed_buffer: [1]facts.Place = undefined;
+            const consumed_places = try self.observationStorage(conflict.consumed, ids, arguments, state, &consumed_buffer);
+            const observed_places = try self.observationStorage(conflict.observed, ids, arguments, state, &observed_buffer);
+            if (conflict.captures_reachable) {
+                var reachable = std.array_list.Managed(facts.Place).init(self.allocator);
+                defer reachable.deinit();
+                for (observed_places) |observed| if (self.domainStorageType(observed)) |ty|
+                    try self.captureReachablePlaces(state, observed, ty, &reachable);
+                for (consumed_places) |consumed| for (reachable.items) |observed| if (consumed.mayOverlap(observed)) {
+                    try self.report(source, "virtual capture may observe storage changed through an aliased destination", .{});
+                    return false;
+                };
+            }
+            for (consumed_places) |consumed| for (observed_places) |observed| if (consumed.mayOverlap(observed)) {
+                try self.report(source, "function observes storage after an aliased participant has consumed its value", .{});
+                return false;
+            };
+        }
         for (summary.input_post_states, 0..) |post, index| {
             if (!cleanupTransition(summary, post)) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse {
                 if (post.target.input_index >= arguments.len or post.requires_available_destination) continue;
-                const identities = try self.symbolicConsumptionInputs(post.target, ids, arguments);
+                const identities = try self.symbolicConsumptionInputs(post.target, ids, arguments, state);
                 for (identities) |identity| {
                     for (state.symbolic_pointees.items) |pointee| {
-                        if (pointee.identity != identity or pointee.initializedness == .initialized) continue;
-                        try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
-                        return false;
+                        if (pointee.identity != identity) continue;
+                        if (pointee.initializedness != .initialized) {
+                            try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
+                            return false;
+                        }
+                        const observed = try self.symbolicConsumptionValue(post.target, ids, arguments, state) orelse continue;
+                        // Whole-input consumption has its own alias obligations
+                        // at the caller. A dead shared value generation alone
+                        // must not forbid consuming a different input identity.
+                        if ((if (pointee.backing) |backing| !state.tracker.isAlive(backing) else false) or
+                            (if (pointee.generation) |generation| !valueDependsOnRoot(observed, generation) else !state.tracker.dependenciesAreAlive(observed)))
+                        {
+                            try self.report(source, "reference depends on a root that has ended", .{});
+                            return false;
+                        }
                     }
                 }
                 for (summary.input_post_states[0..index]) |previous| {
                     if (!cleanupTransition(summary, previous) or previous.requires_available_destination or
                         sameInputPath(previous.target, post.target) or previous.target.input_index >= arguments.len) continue;
-                    for (try self.symbolicConsumptionInputs(previous.target, ids, arguments)) |other| {
-                        if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, identities, other) == null) continue;
+                    for (try self.symbolicConsumptionInputs(previous.target, ids, arguments, state)) |other| {
+                        if (std.mem.indexOfScalar(facts.SymbolicPointeeId, identities, other) == null) continue;
                         try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
                         return false;
                     }
                 }
                 continue;
             };
-            if (!post.requires_available_destination and self.initializednessAtPlace(state, target) != .initialized) {
+            if (!post.requires_available_destination and state.initializednessAtPlace(target) != .initialized) {
                 if (mayMoveInput(summary, post)) {
                     try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
                 } else {
@@ -1652,7 +2082,7 @@ pub const SafetyChecker = struct {
                         post.target.projections[post.target.projections.len - 1] == .dereference and
                         !sameInputPath(previous.target, post.target))) continue;
                 const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
-                if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
+                if (target.mayOverlap(other)) {
                     try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
                     return false;
                 }
@@ -1661,16 +2091,80 @@ pub const SafetyChecker = struct {
         return true;
     }
 
+    fn observationStorage(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, buffer: *[1]facts.Place) ![]const facts.Place {
+        if (path.storage_domain) |domain| {
+            if (path.input_index >= arguments.len) return &.{};
+            return self.domainStorage(try self.projectValueFacts(arguments[path.input_index], path.projections), domain, state);
+        }
+        buffer[0] = try self.resolveSummaryInputPath(path, ids, arguments, state) orelse return &.{};
+        return buffer;
+    }
+
+    // Capture alias obligations inspect storage identity, not value readiness.
+    // A receiver can be vacant at entry; its initializer's borrowed sources
+    // carry the additional reachable paths in the same caller-relative proof.
+    fn captureReachablePlaces(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId, visited: *std.array_list.Managed(facts.Place)) anyerror!void {
+        for (visited.items) |previous| if (previous.eql(storage)) return;
+        try visited.append(storage);
+        const original = self.valueAtPlace(state, storage) orelse return;
+        const value = try self.reconstructPlaceValue(state, storage, original);
+        if (self.graph.semanticType(ty) == .pointer) {
+            if (value.referenced_place) |target|
+                try self.captureReachablePlaces(state, target, self.graph.semanticType(ty).pointer.child, visited);
+            return;
+        }
+        if (self.graph.semanticType(ty) == .virtual) return;
+        const element = types.arrayElement(self.graph, ty);
+        for (value.fields) |field| {
+            const child_type = element orelse self.fieldTypeAt(ty, field.index) orelse continue;
+            const projection: facts.Projection = if (element != null) .{ .static_index = field.index } else .{ .field = field.index };
+            try self.captureReachablePlaces(state, try self.project(storage, projection), child_type, visited);
+        }
+        for (value.variants) |variant| {
+            if (value.known_choice_variant) |known| if (known != variant.index) continue;
+            const child_type = self.variantPayloadTypeAt(ty, variant.index) orelse continue;
+            try self.captureReachablePlaces(state, try self.project(storage, .{ .variant = variant.index }), child_type, visited);
+        }
+    }
+
     fn callCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initializing: bool) ![]const graph_mod.GlobalNodeId {
         var targets = std.array_list.Managed(facts.Place).init(self.allocator);
         defer targets.deinit();
+        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(try self.annotations.storageAllocator(self.allocator));
         for (summary.input_post_states) |post| {
             if (initializing) {
-                if (!post.requires_available_destination or post.initializedness != .initialized) continue;
+                if (post.initializedness != .initialized or
+                    (!post.requires_available_destination and post.initialization != .definite)) continue;
             } else if (post.initializedness != .moved and (post.initializedness != .deinitialized or !post.ends_previous_roots)) continue;
-            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |target| try appendPlaceFact(&targets, target);
+            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |target| {
+                // Ordinary writes can reinitialize a consumed caller place too.
+                // Availability preconditions describe relocation, not every
+                // transition that must reactivate the caller's cleanup flags.
+                if (initializing and !post.requires_available_destination and
+                    state.initializednessAtPlace(target) == .initialized) continue;
+                if (!initializing and post.target.projections.len == 0 and post.target.storage_domain == null and post.target.input_index < ids.len) {
+                    const argument = self.graph.value_fields.items[@intFromEnum(ids[post.target.input_index])].value;
+                    if (self.graph.node(argument).ty) |ty| if (isPointer(self.graph, ty)) {
+                        // Transport the evaluated reference identity through
+                        // the call, including an indexed referent. Both backends
+                        // disable its cleanup range from the argument snapshot.
+                        // Initialization still uses the lexical destination:
+                        // native post-call activation does not consume snapshots.
+                        try nodes.append(argument);
+                        continue;
+                    };
+                }
+                try appendPlaceFact(&targets, target);
+            } else if (post.target.projections.len == 0 and post.target.storage_domain == null and post.target.input_index < ids.len) {
+                // Keep the evaluated input identity when its referent is
+                // symbolic. This is runtime storage evidence, not a fabricated
+                // concrete Place or a flag on the reference's local slot.
+                const argument = self.graph.value_fields.items[@intFromEnum(ids[post.target.input_index])].value;
+                const ty = self.graph.node(argument).ty orelse continue;
+                if (isPointer(self.graph, ty) and arguments[post.target.input_index].symbolic_pointees.len != 0)
+                    try nodes.append(argument);
+            }
         }
-        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
         for (targets.items) |target| {
             var covered = false;
             for (targets.items) |other| if (!target.eql(other) and other.isPrefixOf(target)) {
@@ -1681,7 +2175,7 @@ pub const SafetyChecker = struct {
             if (try self.cleanupNodeForPlace(target)) |node| {
                 try nodes.append(node);
             } else {
-                for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                for (self.graph.auto_deinits.items) |cleanup| if (cleanup.ownerBinding() == target.root) {
                     try self.report(self.graph.binding(target.root).source, "cannot consume this indexed or indirect owner through a borrow; move it into a lexical owner before consuming it", .{});
                     break;
                 };
@@ -1697,14 +2191,14 @@ pub const SafetyChecker = struct {
         const binding = self.graph.binding(storage.root);
         var ty = binding.ty;
         var node: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-        try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = ty, .content = .{ .binding_use = storage.root } });
+        try self.graph.nodes.append(self.graph_allocator orelse self.allocator, .{ .source = binding.source, .ty = ty, .content = .{ .binding_use = storage.root } });
         for (storage.projections) |projection| switch (projection) {
             .field => |index| {
                 const fields = types.fields(self.graph, ty) orelse return null;
                 if (index >= fields.len) return null;
                 const field = self.graph.fields.items[fields.start + index];
                 const projected: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-                try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = field.ty, .content = .{ .struct_field_access = .{ .value = node, .field_name = field.name, .field_index = index } } });
+                try self.graph.nodes.append(self.graph_allocator orelse self.allocator, .{ .source = binding.source, .ty = field.ty, .content = .{ .struct_field_access = .{ .value = node, .field_name = field.name, .field_index = index } } });
                 node = projected;
                 ty = field.ty;
             },
@@ -1714,7 +2208,7 @@ pub const SafetyChecker = struct {
                 const variant_id: graph_mod.GlobalVariantId = @enumFromInt(variants.start + index);
                 const payload = self.graph.variants.items[@intFromEnum(variant_id)].payload_type orelse return null;
                 const projected: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-                try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = payload, .content = .{ .choice_payload_access = .{ .value = node, .variant = variant_id, .payload_type = payload } } });
+                try self.graph.nodes.append(self.graph_allocator orelse self.allocator, .{ .source = binding.source, .ty = payload, .content = .{ .choice_payload_access = .{ .value = node, .variant = variant_id, .payload_type = payload } } });
                 node = projected;
                 ty = payload;
             },
@@ -1725,7 +2219,8 @@ pub const SafetyChecker = struct {
 
     fn evaluatePrimitive(
         self: *SafetyChecker,
-        function: graph_mod.GlobalFunctionId,
+        caller: graph_mod.GlobalFunctionId,
+        callee: graph_mod.GlobalFunctionId,
         primitive: primitives.SafetyPrimitive,
         argument_ids: []const graph_mod.GlobalValueFieldId,
         values: []const facts.ValueFacts,
@@ -1738,8 +2233,7 @@ pub const SafetyChecker = struct {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .empty => .{},
             .raw_storage => blk: {
-                const id: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
-                try state.storage_capabilities.append(.available);
+                const id = try state.establishCapability();
                 break :blk .{ .foreign_storage = true, .storage_capabilities = try self.oneCapability(id) };
             },
             .inherited_reference, .inherited_storage => blk: {
@@ -1755,7 +2249,7 @@ pub const SafetyChecker = struct {
                 const root = try state.tracker.establish(.fresh);
                 state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
                 const shape = primitive_transfer.AllocationTransfer;
-                const fields = try self.allocator.alloc(facts.FieldFacts, shape.field_count);
+                const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, callee));
                 for (fields, 0..) |*field, index| {
                     const value = try self.allocator.create(facts.ValueFacts);
                     value.* = if (index == shape.data_field)
@@ -1771,6 +2265,7 @@ pub const SafetyChecker = struct {
                 var result: facts.ValueFacts = .{ .owned_roots = try self.oneRoot(root) };
                 for (fields) |field| result = try self.mergeValueFacts(result, field.value.*);
                 result.fields = fields;
+                result.explicit_dependency = false;
                 break :blk result;
             },
             .reference_copy => if (values.len != 0) values[0].referenceCopy() else .{},
@@ -1788,7 +2283,7 @@ pub const SafetyChecker = struct {
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
             .opaque_move => blk: {
-                try self.applyOpaqueMovePrimitive(function, source, argument_ids, values, state);
+                try self.applyOpaqueMovePrimitive(caller, primitive, source, argument_ids, values, state);
                 break :blk .{};
             },
             .opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
@@ -1798,7 +2293,7 @@ pub const SafetyChecker = struct {
             },
             .opaque_mark_empty => blk: {
                 if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage|
-                    self.markOpaqueStorageEmpty(state, storage);
+                    state.markOpaqueStorageEmpty(storage);
                 break :blk .{};
             },
             // Slot destruction is trusted runtime behavior. Domain emptiness is
@@ -1809,8 +2304,7 @@ pub const SafetyChecker = struct {
 
     fn require_available_storage_capabilities(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, maximum: u2, state: *FunctionState) !void {
         for (value.storage_capabilities) |capability| {
-            const raw = @intFromEnum(capability);
-            if (raw >= state.storage_capabilities.items.len or state.storage_capabilities.items[raw] != .available) {
+            if (state.capabilityState(capability) != .available) {
                 try self.report(source, "physical storage capability has already been consumed", .{});
             } else if (maximum > 1) {
                 try self.report(source, "function may consume the same physical storage capability more than once", .{});
@@ -1822,8 +2316,7 @@ pub const SafetyChecker = struct {
         _ = self;
         if (maximum == 0) return;
         for (value.storage_capabilities) |capability| {
-            const entry = &state.storage_capabilities.items[@intFromEnum(capability)];
-            if (entry.* != .consumed) entry.* = if (minimum == 0) .maybe_consumed else .consumed;
+            state.consumeCapability(capability, minimum != 0);
         }
     }
 
@@ -1841,9 +2334,10 @@ pub const SafetyChecker = struct {
         if (path.input_index >= arguments.len) return .{};
         var value = arguments[path.input_index];
         var storage: ?facts.Place = null;
+        var symbolic: ?facts.ValueFacts = null;
         if (path.projections.len == 0 or path.projections[0] != .dereference) {
-            // A Virtual value retains its concrete receiver Place. Loading
-            // through the wrapper must reach that receiver's scalar facts.
+            // Load the referenced value, but stop at a virtual handle: its
+            // receiver identity is part of the value, not another load target.
             var visited = std.array_list.Managed(facts.Place).init(self.allocator);
             defer visited.deinit();
             while (value.referenced_place) |place| {
@@ -1855,20 +2349,51 @@ pub const SafetyChecker = struct {
                 if (seen) break;
                 try visited.append(place);
                 storage = place;
-                value = self.valueAtPlace(state, place) orelse break;
+                const stored = self.valueAtPlace(state, place) orelse break;
+                value = try self.reconstructPlaceValue(state, place, stored);
+                // Aggregate provenance can retain a field's referent. It does
+                // not make the enclosing record another pointer to follow.
+                if (value.fields.len != 0 or value.variants.len != 0 or value.virtual_methods.len != 0 or value.domains.len != 0) break;
             }
         }
+        if (storage == null and value.symbolic_pointees.len == 1) symbolic = value;
         for (path.projections) |projection| {
             if (projection == .dereference) {
                 if (value.referenced_place) |place| {
                     storage = place;
-                    value = self.valueAtPlace(state, place) orelse .{};
+                    symbolic = null;
+                    value = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
+                } else {
+                    storage = null;
+                    symbolic = if (value.symbolic_pointees.len == 1) value else null;
+                    if (symbolic) |pointer| {
+                        const identity = pointer.symbolic_pointees[0];
+                        if (try self.symbolicValueAt(state, identity)) |stored| {
+                            value = try self.reconstructSymbolicValue(state, identity, stored.value);
+                        } else {
+                            const observed = try self.readSymbolicValue(state, pointer, null);
+                            if (!facts.isEmptyValue(observed)) value = observed;
+                        }
+                    }
                 }
             } else {
                 const fallback = try self.projectValueFacts(value, &.{projection});
                 if (storage) |place| {
                     storage = try self.project(place, projection);
-                    value = self.valueAtPlace(state, storage.?) orelse fallback;
+                    value = try self.reconstructPlaceValue(state, storage.?, self.valueAtPlace(state, storage.?) orelse fallback);
+                } else if (symbolic) |pointer| {
+                    const projected = try self.projectSymbolicStorage(pointer, projection, state);
+                    symbolic = projected;
+                    if (projected) |reference| {
+                        const identity = reference.symbolic_pointees[0];
+                        const stored = try self.symbolicValueAt(state, identity);
+                        value = if (stored) |known|
+                            try self.reconstructSymbolicValue(state, identity, known.value)
+                        else blk: {
+                            const observed = try self.readSymbolicValue(state, reference, null);
+                            break :blk if (facts.isEmptyValue(observed)) fallback else observed;
+                        };
+                    } else value = fallback;
                 } else value = fallback;
             }
         }
@@ -1904,18 +2429,18 @@ pub const SafetyChecker = struct {
             try self.report(source, "relocate requires distinct source and destination places", .{});
             return .{};
         }
-        const source_state = self.initializednessAtPlace(state, source_place);
+        const source_state = state.initializednessAtPlace(source_place);
         if (source_state != .initialized) {
             try self.requireInitialized(@enumFromInt(0), source, source_state);
             return .{};
         }
-        const destination_state = self.initializednessAtPlace(state, destination);
+        const destination_state = state.initializednessAtPlace(destination);
         if (!try self.requireAvailableRelocationDestination(source, destination_state)) return .{};
         if (destination_state == .deinitialized)
             try self.refreshStorageGenerationChecked(source, state, destination);
-        const value = self.valueAtPlace(state, source_place) orelse return .{};
-        try self.setPlace(state, destination, .initialized, value);
-        try self.markMoved(state, source_place, .{}, source);
+        const value = try self.reconstructPlaceValue(state, source_place, self.valueAtPlace(state, source_place) orelse .{});
+        try state.setPlace(destination, .initialized, value);
+        try state.markMoved(source_place, .{}, source);
         return .{};
     }
 
@@ -1935,12 +2460,13 @@ pub const SafetyChecker = struct {
     fn applyOpaqueMovePrimitive(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
+        primitive: primitives.SafetyPrimitive,
         source: primitives.SourceRef,
         argument_ids: []const graph_mod.GlobalValueFieldId,
         values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        const operands = primitive_transfer.opaqueMoveOperands(values.len) orelse return;
+        const operands = primitive_transfer.opaqueMoveOperands(primitive, values.len) orelse return;
         if (operands.storage) |storage_index| {
             try self.closeOpaqueOwnedRoots(source, values[operands.owner], state, null);
             if (try self.primitiveArgumentStorage(argument_ids, values, storage_index, state)) |storage| {
@@ -1955,7 +2481,7 @@ pub const SafetyChecker = struct {
             return;
         }
         const owner = values[operands.owner];
-        if (hasExternalOpaqueDependency(owner, owner.owned_roots)) {
+        if (hasExternalOpaqueDependency(owner, owner.owned_roots, state)) {
             try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
             return;
         }
@@ -2014,7 +2540,7 @@ pub const SafetyChecker = struct {
         if (index >= argument_ids.len) return;
         const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
         const pointer_place = try self.resolvePlace(argument, state) orelse return;
-        const pointer = self.getPlace(state, pointer_place) orelse return;
+        const pointer = state.getPlace(pointer_place) orelse return;
         try self.addOpaqueAccessProvenance(state, &pointer.value, storage);
     }
 
@@ -2047,7 +2573,7 @@ pub const SafetyChecker = struct {
             };
             if (!domain_already_opaque) try appendOpaqueProvenanceFact(&provenances, .{
                 .storage = storage,
-                .generation = try self.storageGeneration(state, storage),
+                .generation = try state.storageGeneration(storage),
             });
         }
         pointer.opaque_provenance = try provenances.toOwnedSlice();
@@ -2083,7 +2609,7 @@ pub const SafetyChecker = struct {
         defer storages.deinit();
         try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
         for (storages.items) |storage| {
-            const generation = try self.storageGeneration(state, storage);
+            const generation = try state.storageGeneration(storage);
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!opaque_storage.storage.eql(storage)) continue;
                 var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, generation);
@@ -2149,11 +2675,11 @@ pub const SafetyChecker = struct {
             };
         }
         const declaration = switch (self.graph.semanticType(ty)) {
-            .declared => |id| id,
+            .nominal => |id| id,
             else => return false,
         };
-        if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(declaration).name), "ForeignFunctionInterface")) return false;
-        const module = self.graph.moduleForDeclaration(declaration) orelse return false;
+        if (!std.mem.eql(u8, self.graph.typeDefinitionName(declaration), "ForeignFunctionInterface")) return false;
+        const module = types.nominalTypeOwner(self.graph, ty) orelse return false;
         return self.graph.modules.items[@intFromEnum(module)].is_bundled_core;
     }
 
@@ -2205,10 +2731,10 @@ pub const SafetyChecker = struct {
                     try self.requireMappedOpaqueContentsLive(source, stored, state);
                     if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
                     for (stored.domains) |domain| for (domain.storages) |target| {
-                        const generation = try self.storageGeneration(state, target);
+                        const generation = try state.storageGeneration(target);
                         if (state.tracker.roots.items[@intFromEnum(generation)].state != .alive)
                             try self.report(source, "reference depends on a root that has ended", .{});
-                        try self.requirePlaceInitialized(@enumFromInt(0), source, target, self.initializednessAtPlace(state, target), state);
+                        try self.requirePlaceInitialized(@enumFromInt(0), source, target, state.initializednessAtPlace(target), state);
                         if (self.valueAtPlace(state, target)) |contents| try self.requireLive(@enumFromInt(0), source, try self.reconstructPlaceValue(state, target, contents), state);
                     };
                 }
@@ -2216,7 +2742,7 @@ pub const SafetyChecker = struct {
                 // initialized. Unlike an output pointer, it is never merely a
                 // destination whose live storage may hold no initialized value.
                 if (self.isForeignCapabilityPlace(storage))
-                    try self.requirePlaceInitialized(@enumFromInt(0), source, storage, self.initializednessAtPlace(state, storage), state);
+                    try self.requirePlaceInitialized(@enumFromInt(0), source, storage, state.initializednessAtPlace(storage), state);
             }
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
@@ -2336,7 +2862,7 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (!guarded) continue;
-                const generation = try self.storageGeneration(state, storage);
+                const generation = try state.storageGeneration(storage);
                 const proof = facts.GenerationOutcome{ .storage = storage, .generation = generation, .guard = guard, .invalidates = false, .empties_opaque_storage = true, .source = source };
                 if (summary.outputs.len == 1) {
                     try self.attachOutcomeGeneration(&result, outcome.parent_variants, outcome.variant_index, proof);
@@ -2511,9 +3037,9 @@ pub const SafetyChecker = struct {
         for (relocations.items) |destination| try self.guardRelocation(source, summary, destination, output_index, argument_ids, arguments, state, choice, guard);
         for (resources.items) |post| {
             const storage = try self.resolveSummaryInputPath(post.target, argument_ids, arguments, state) orelse continue;
-            if (self.initializednessAtPlace(state, storage) != .initialized) continue;
+            if (state.initializednessAtPlace(storage) != .initialized) continue;
             const previous = self.valueAtPlace(state, storage) orelse continue;
-            const generation = try self.storageGeneration(state, storage);
+            const generation = try state.storageGeneration(storage);
             var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer owned.deinit();
             try collectOwnedRoots(previous, &owned);
@@ -2526,7 +3052,7 @@ pub const SafetyChecker = struct {
             }
             // Retain current facts in the caller, but make availability and
             // owned generations uncertain until this call's result is selected.
-            try self.setPlace(state, storage, .maybe_initialized, previous);
+            try state.setPlace(storage, .maybe_initialized, previous);
             state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
             state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = guard;
             for (owned_roots) |root| if (state.tracker.roots.items[@intFromEnum(root)].state == .alive) {
@@ -2569,7 +3095,7 @@ pub const SafetyChecker = struct {
             if (storage.isPrefixOf(generation.storage)) try appendPlaceFact(&storages, generation.storage);
         };
         for (storages.items) |storage| {
-            const root = try self.storageGeneration(state, storage);
+            const root = try state.storageGeneration(storage);
             const entry = &state.tracker.roots.items[@intFromEnum(root)];
             if (entry.state != .alive) {
                 entry.outcome_guard = 0;
@@ -2651,14 +3177,14 @@ pub const SafetyChecker = struct {
         if (source_place != null and destination_place != null) {
             const from = source_place.?;
             const to = destination_place.?;
-            if (from.isPrefixOf(to) or to.isPrefixOf(from)) {
+            if (from.mayOverlap(to)) {
                 try self.report(source, "relocation requires distinct, non-overlapping source and destination storage", .{});
                 return;
             }
-            if (self.initializednessAtPlace(state, from) == .initialized and self.valueAtPlace(state, from) != null) {
-                const available_state = self.initializednessAtPlace(state, to);
+            if (state.initializednessAtPlace(from) == .initialized and self.valueAtPlace(state, from) != null) {
+                const available_state = state.initializednessAtPlace(to);
                 if (!try self.requireAvailableRelocationDestination(source, available_state)) return;
-                const generation = try self.storageGeneration(state, from);
+                const generation = try state.storageGeneration(from);
                 const current = self.valueAtPlace(state, from).?;
                 var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
                 defer owned.deinit();
@@ -2670,9 +3196,9 @@ pub const SafetyChecker = struct {
                     // available. Both slots become pending; the owner roots
                     // themselves survive either outcome of the same transfer.
                     try self.refreshStorageGenerationChecked(source, state, to);
-                    const destination_generation = try self.storageGeneration(state, to);
-                    try self.setPlace(state, to, .maybe_initialized, current);
-                    try self.setPlace(state, from, .maybe_initialized, current);
+                    const destination_generation = try state.storageGeneration(to);
+                    try state.setPlace(to, .maybe_initialized, current);
+                    try state.setPlace(from, .maybe_initialized, current);
                     for (&[_]facts.ValidityRootId{ generation, destination_generation }) |root| {
                         state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
                         state.tracker.roots.items[@intFromEnum(root)].outcome_guard = guard;
@@ -2816,6 +3342,21 @@ pub const SafetyChecker = struct {
         try self.applySummaryOpaqueStorageEffects(summary, argument_ids, arguments, state);
     }
 
+    // Ending a value preserves its backing storage. Distinct input accesses
+    // retain their incarnations; ordered summary obligations check their actual
+    // aliasing at callers. Copies of the same access still share this identity.
+    fn endSymbolicGenerations(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !bool {
+        var handled = false;
+        for (value.symbolic_pointees) |identity| {
+            for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
+                if (entry.generation) |generation| _ = try self.endRoot(source, state, generation);
+                handled = true;
+                break;
+            };
+        }
+        return handled;
+    }
+
     fn applySummaryInputPostStates(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -2831,12 +3372,28 @@ pub const SafetyChecker = struct {
 
         // A summary describes the post-state of all inputs at once. Materialize
         // its values before changing any place so effects may transfer a value
-        // from an input that the same summary subsequently marks as moved.
+        // from an input that the same summary subsequently marks as moved. Capture
+        // destinations too: retargeting one reference field must not redirect
+        // another effect that describes its entry referent.
         const post_values = try self.allocator.alloc(?facts.ValueFacts, summary.input_post_states.len);
         @memset(post_values, null);
+        const post_targets = try self.allocator.alloc(?facts.Place, summary.input_post_states.len);
+        for (summary.input_post_states, post_targets) |post_state, *target|
+            target.* = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
+        var captures = std.array_list.Managed(PostCapture).init(self.allocator);
+        defer captures.deinit();
+        const previous_captures = self.active_post_captures;
+        self.active_post_captures = &captures;
+        defer self.active_post_captures = previous_captures;
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             if (post_state.initializedness != .initialized or post_state.opaque_ownership != .none) continue;
+            if (post_state.reference_refresh and post_state.initialization == .preserved) {
+                // A renewal observes this exact slot; it does not assign the
+                // summary's abstract value back into an unchanged reference.
+                if (post_targets[post_index]) |slot| post_values[post_index] = self.valueAtPlace(state, slot);
+                continue;
+            }
             post_values[post_index] = try self.instantiateOutputWithFresh(
                 post_state.value,
                 arguments,
@@ -2845,16 +3402,31 @@ pub const SafetyChecker = struct {
                 self.active_fresh_capabilities orelse &fresh_capabilities,
             );
         }
+        self.active_post_captures = previous_captures;
+
+        // A capture cannot use a final snapshot if a distinct output aliases
+        // the captured storage. Its write may follow capture construction.
+        for (captures.items) |capture| if (capture.storage) |storage|
+            try self.validatePostCaptureWrites(source, capture.input_index, &.{storage});
+
+        const reference_generations = try self.allocator.alloc(?facts.ValidityRootId, summary.input_post_states.len);
+        @memset(reference_generations, null);
+        for (summary.input_post_states, 0..) |post, index| if (post.reference_refresh) {
+            if (post_values[index]) |pointer| reference_generations[index] = try state.referenceObservationGeneration(pointer);
+        };
 
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
+            const symbolic_was_initialized = blk: {
+                if (post_state.initializedness != .initialized or post_state.initialization == .preserved or post_state.requires_available_destination) break :blk false;
+                const access = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state) orelse break :blk false;
+                if (access.symbolic_pointees.len != 1) break :blk false;
+                break :blk self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
+            };
             if (cleanupTransition(summary, post_state)) {
-                for (try self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments)) |identity| {
-                    for (state.symbolic_pointees.items) |*pointee| if (pointee.identity == identity) {
-                        // Unknown input reinitialization cannot revive old aliases.
-                        pointee.initializedness = if (post_state.requires_available_destination) .maybe_initialized else post_state.initializedness;
-                    };
+                for (try self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments, state)) |identity| {
+                    state.setSymbolicInitializedness(identity, if (post_state.requires_available_destination) .maybe_initialized else post_state.initializedness);
                 }
             }
 
@@ -2877,7 +3449,7 @@ pub const SafetyChecker = struct {
                 continue;
             }
             if (post_state.opaque_ownership == .definite or post_state.opaque_ownership == .conditional) {
-                const consumed = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
+                const consumed = post_targets[post_index];
                 const projected = try self.projectValueFacts(arguments[index], post_state.target.projections);
                 const value = if (consumed) |target|
                     if (self.valueAtPlace(state, target)) |stored| stored else projected
@@ -2887,33 +3459,71 @@ pub const SafetyChecker = struct {
                 if (post_state.opaque_storage) |opaque_path| {
                     const storage = try self.resolveSummaryOpaqueStoragePath(opaque_path, argument_ids, arguments, state) orelse continue;
                     try self.closeOpaqueOwnedRoots(source, value, state, consumed);
-                    if (consumed) |target| try self.markMoved(state, target, .{}, source);
+                    if (consumed) |target| try state.markMoved(target, .{}, source);
                     try self.hideOpaqueDependencies(state, storage, value);
                 } else {
-                    if (hasExternalOpaqueDependency(value, value.owned_roots))
+                    if (hasExternalOpaqueDependency(value, value.owned_roots, state))
                         try self.report(source, "opaque ownership storage cannot hide dependencies on external roots", .{});
                     try self.closeOpaqueOwnedRoots(source, value, state, consumed);
-                    if (consumed) |target| try self.markMoved(state, target, .{}, source);
+                    if (consumed) |target| try state.markMoved(target, .{}, source);
                 }
                 continue;
             }
 
-            const target = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state) orelse {
-                if (post_state.ends_previous_roots and post_state.target.projections.len == 0) {
-                    for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
+            const target = post_targets[post_index] orelse {
+                if (post_state.initializedness == .initialized and post_state.initialization != .preserved) {
+                    if (post_values[post_index]) |value| {
+                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access|
+                            try self.storeSymbolicValue(state, access, value, post_state.initialization == .definite);
+                    }
+                }
+                if (post_state.ends_previous_roots) {
+                    const symbolic = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state);
+                    const handled = if (symbolic) |value| try self.endSymbolicGenerations(source, value, state) else false;
+                    // Opaque receipts retain backing and borrowed roots, not
+                    // an exposed value generation that this fallback may end.
+                    if (!handled and post_state.target.projections.len == 0 and arguments[index].opaque_provenance.len == 0) {
+                        for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
+                    }
+                }
+                // The selected argument observes the current value after a
+                // definite write, or a possible replacement of live storage.
+                // Copied references retain the retired generation.
+                if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
+                    (post_state.initialization == .definite or (post_state.initialization == .possible and symbolic_was_initialized)))
+                {
+                    if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
+                        if (access.symbolic_pointees.len == 1) {
+                            if (post_state.ends_previous_roots) state.setSymbolicInitializedness(access.symbolic_pointees[0], .deinitialized);
+                            if (try state.renewSymbolicAccess(access)) |renewed| {
+                                state.setSymbolicInitializedness(renewed.symbolic_pointees[0], .initialized);
+                                if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |slot|
+                                    try state.setPlace(slot, .initialized, renewed);
+                            }
+                        }
+                    }
                 }
                 continue;
             };
 
+            const entry_initializedness = state.initializednessAtPlace(target);
+            if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
+                entry_initializedness != .initialized and post_state.initialization == .preserved) continue;
+            const initializedness = if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
+                entry_initializedness != .initialized and post_state.initialization == .possible)
+                value_state.Initializedness.maybe_initialized
+            else
+                post_state.initializedness;
+
             if (post_state.requires_available_destination) {
-                if (self.getPlace(state, target)) |current| {
+                if (state.getPlace(target)) |current| {
                     if (!try self.requireAvailableRelocationDestination(source, current.initializedness))
                         continue;
                 }
             }
 
-            const reinitializes_dead_place = post_state.initializedness == .initialized and
-                (if (self.getPlace(state, target)) |current| current.initializedness == .deinitialized else false);
+            const reinitializes_dead_place = initializedness == .initialized and
+                (if (state.getPlace(target)) |current| current.initializedness == .deinitialized else false);
             const previous_value = self.valueAtPlace(state, target);
             if (post_state.ends_previous_roots) if (previous_value) |previous| {
                 var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
@@ -2926,26 +3536,156 @@ pub const SafetyChecker = struct {
             if (post_state.refreshes_storage_generation or
                 (!post_state.requires_available_destination and reinitializes_dead_place))
             {
-                const old_generation = try self.storageGeneration(state, target);
+                const old_generation = try state.storageGeneration(target);
                 try self.refreshStorageGenerationChecked(source, state, target);
-                if (reinitializes_dead_place and post_state.target.projections.len == 0 and index < argument_ids.len) {
-                    const argument_node = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-                    if (try self.resolvePlace(argument_node, state)) |pointer_storage| {
-                        const argument = arguments[index];
-                        if (!pointer_storage.eql(target) and argument.referenced_place != null and argument.referenced_place.?.eql(target)) {
-                            const generation = try self.storageGeneration(state, target);
-                            const refreshed = try self.replaceValueRoots(argument, &.{old_generation}, generation);
-                            // The input pointer used to reinitialize the place
-                            // follows its generation; sibling aliases remain old.
-                            try self.setPlace(state, pointer_storage, .initialized, refreshed);
+                // A possible replacement of a live value still leaves the
+                // selected reference observing initialized storage. Vacant
+                // entry storage needs a definite write before it can renew.
+                if (reinitializes_dead_place or
+                    (post_state.refreshes_storage_generation and initializedness == .initialized and post_state.initialization != .preserved and
+                        (post_state.initialization == .definite or entry_initializedness == .initialized) and !post_state.requires_available_destination))
+                {
+                    if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |pointer_storage| {
+                        if (self.valueAtPlace(state, pointer_storage)) |pointer| {
+                            if (!pointer_storage.eql(target) and pointer.referenced_place != null and pointer.referenced_place.?.eql(target)) {
+                                const refreshed = try facts.replaceValueRoots(self.allocator, pointer, &.{old_generation}, try state.storageGeneration(target));
+                                // Renew the actual argument reference slot, including
+                                // fields in copied Args. Other copies keep old roots.
+                                try state.setPlace(pointer_storage, .initialized, refreshed);
+                            }
                         }
                     }
                 }
             }
 
-            const value = post_values[post_index] orelse facts.ValueFacts{};
-            try self.setPlace(state, target, post_state.initializedness, value);
+            if (!(post_state.reference_refresh and post_state.initialization == .preserved)) {
+                const value = post_values[post_index] orelse facts.ValueFacts{};
+                try state.setPlace(target, initializedness, value);
+            }
         }
+        for (summary.input_post_states, 0..) |post, index| {
+            if (!post.reference_refresh) continue;
+            const slot = post_targets[index] orelse continue;
+            const previous = reference_generations[index] orelse continue;
+            const pointer = self.valueAtPlace(state, slot) orelse continue;
+            const current = try state.referenceObservationGeneration(pointer) orelse continue;
+            if (current == previous) continue;
+            const refreshed = try facts.replaceValueRoots(self.allocator, pointer, &.{previous}, current);
+            try state.setPlace(slot, .initialized, refreshed);
+        }
+        try self.completePostCaptures(source, state, captures.items);
+    }
+
+    fn completePostCaptures(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        captures: []PostCapture,
+    ) !void {
+        if (captures.len == 0) return;
+        // All writes have established their actual generations. Resolve the
+        // planned identities without changing any entry snapshot or old alias.
+        for (captures) |*capture| {
+            var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+            defer dependencies.deinit();
+            if (capture.storage) |storage| {
+                if (self.domainStorageType(storage)) |ty| {
+                    var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                    defer visited.deinit();
+                    try self.captureContractStorage(@enumFromInt(0), source, state, storage, ty, &dependencies, &visited);
+                    try self.validatePostCaptureWrites(source, capture.input_index, visited.items);
+                }
+            } else if (capture.symbolic) |identity| {
+                try self.captureSymbolicStorage(source, state, identity, &dependencies);
+            }
+            capture.dependencies = try dependencies.toOwnedSlice();
+        }
+        // Rewrite fact envelopes in place. Setting a parent Place again would
+        // erase authoritative child initialization and sibling write facts.
+        for (state.places.items) |*place|
+            place.value = try self.resolvePostCaptureValue(place.value, captures);
+        for (state.symbolic_values.items) |*stored|
+            stored.value = try self.resolvePostCaptureValue(stored.value, captures);
+        for (captures) |capture| state.tracker.end(capture.placeholder);
+    }
+
+    fn captureSymbolicStorage(self: *SafetyChecker, source: primitives.SourceRef, state: *FunctionState, identity: facts.SymbolicPointeeId, dependencies: *std.array_list.Managed(facts.ValidityDependency)) !void {
+        if (self.symbolicStorageReadiness(state, identity) != .complete) {
+            try self.report(source, "virtual capture requires initialized storage after the call", .{});
+            return;
+        }
+        for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
+            if (entry.generation) |generation| try appendDependencyFact(dependencies, .{ .root = generation });
+            break;
+        };
+        if (try self.symbolicValueAt(state, identity)) |stored| {
+            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer roots.deinit();
+            try collectDependencyRoots(try self.reconstructSymbolicValue(state, identity, stored.value), &roots);
+            try collectOwnedRoots(stored.value, &roots);
+            for (roots.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
+        }
+    }
+
+    fn expandPostCaptureDependency(self: *SafetyChecker, root: facts.ValidityRootId, captures: []const PostCapture, visited: *std.array_list.Managed(facts.ValidityRootId), result: *std.array_list.Managed(facts.ValidityDependency)) anyerror!void {
+        for (captures) |capture| if (capture.placeholder == root) {
+            if (std.mem.indexOfScalar(facts.ValidityRootId, visited.items, root) != null) return;
+            try visited.append(root);
+            for (capture.dependencies) |dependency| try self.expandPostCaptureDependency(dependency.root, captures, visited, result);
+            return;
+        };
+        try appendDependencyFact(result, .{ .root = root });
+    }
+
+    fn resolvePostCaptureValue(self: *SafetyChecker, value: facts.ValueFacts, captures: []const PostCapture) anyerror!facts.ValueFacts {
+        var result = value;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        var visited = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer visited.deinit();
+        for (value.dependencies) |dependency| try self.expandPostCaptureDependency(dependency.root, captures, &visited, &dependencies);
+        result.dependencies = try dependencies.toOwnedSlice();
+        const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+        for (fields) |*field| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.resolvePostCaptureValue(field.value.*, captures);
+            field.value = child;
+        }
+        result.fields = fields;
+        const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+        for (variants) |*variant| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.resolvePostCaptureValue(variant.value.*, captures);
+            variant.value = child;
+        }
+        result.variants = variants;
+        return result;
+    }
+
+    fn summaryInputReferenceSlot(
+        self: *SafetyChecker,
+        path: facts.InputPath,
+        ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?facts.Place {
+        if (path.storage_domain != null or path.input_index >= ids.len or path.input_index >= arguments.len) return null;
+        const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
+        const ty = self.graph.node(node).ty orelse return null;
+        if (path.projections.len == 0) return if (isPointer(self.graph, ty)) try self.resolvePlace(node, state) else null;
+        if (path.projections[path.projections.len - 1] != .dereference) return null;
+
+        // A by-value record owns its field slots; only the explicit final
+        // dereference reaches the initialized owner. Keep that slot identity
+        // separate from the referent and from sibling reference fields.
+        var slot = if (isPointer(self.graph, ty)) arguments[path.input_index].referenced_place else try self.resolvePlace(node, state);
+        for (path.projections[0 .. path.projections.len - 1]) |projection| {
+            const current = slot orelse return null;
+            slot = if (projection == .dereference)
+                (self.valueAtPlace(state, current) orelse return null).referenced_place
+            else
+                try self.project(current, projection);
+        }
+        return slot;
     }
 
     fn resolveSummaryInputPath(
@@ -2958,7 +3698,18 @@ pub const SafetyChecker = struct {
         if (path_value.input_index >= arguments.len) return null;
         const index: usize = @intCast(path_value.input_index);
         var projections = path_value.projections;
-        var target = arguments[index].referenced_place orelse blk: {
+        // By-value aggregate facts can retain their elements' provenance.
+        // That does not make the aggregate envelope a reference to one element;
+        // follow its reference leaves only at explicit dereference projections.
+        const by_value = if (index < argument_ids.len) blk: {
+            const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+            break :blk if (self.graph.node(argument).ty) |ty| !isPointer(self.graph, ty) else false;
+        } else false;
+        var target = (if (by_value) null else arguments[index].referenced_place) orelse blk: {
+            // An evaluated symbolic reference names unknown referent storage.
+            // Its source syntax cannot recover a concrete Place and may have
+            // already consumed inputs. Apply its symbolic post-state instead.
+            if (!by_value and arguments[index].symbolic_pointees.len != 0) return null;
             if (index < argument_ids.len) {
                 const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
                 const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
@@ -2966,7 +3717,8 @@ pub const SafetyChecker = struct {
                     const storage = try self.resolvePlace(argument, state) orelse return null;
                     // An unknown pointer binding stores the pointer, not a
                     // concrete referent that summary effects may overwrite.
-                    if (isPointer(self.graph, self.graph.binding(storage.root).ty)) return null;
+                    const storage_type = self.domainStorageType(storage) orelse return null;
+                    if (isPointer(self.graph, storage_type)) return null;
                     break :blk storage;
                 }
             }
@@ -2992,6 +3744,10 @@ pub const SafetyChecker = struct {
                         continue;
                     }
                 }
+                // An unresolved reference does not identify embedded storage
+                // beneath the slot holding it. Symbolic referent effects use
+                // their own identities, just like unknown top-level inputs.
+                return null;
             }
             target = try self.project(target, projection);
         }
@@ -3073,7 +3829,7 @@ pub const SafetyChecker = struct {
     ) !void {
         for (summary.opaque_storage_empties) |empty_path| {
             const storage = try self.resolveSummaryOpaqueStoragePath(empty_path, argument_ids, arguments, state) orelse continue;
-            self.markOpaqueStorageEmpty(state, storage);
+            state.markOpaqueStorageEmpty(storage);
         }
     }
 
@@ -3089,11 +3845,11 @@ pub const SafetyChecker = struct {
             try appendRootFact(hidden, try self.instantiateFreshRoot(fresh, state, fresh_roots));
         for (effect.input_places) |input_path| {
             const target = try self.resolveSummaryInputPath(input_path, &.{}, arguments, state) orelse continue;
-            try appendRootFact(hidden, try self.storageGeneration(state, target));
+            try appendRootFact(hidden, try state.storageGeneration(target));
         }
         for (effect.input_generation_dependencies) |input_path| {
             const target = try self.resolveSummaryInputPath(input_path, &.{}, arguments, state) orelse continue;
-            try appendRootFact(hidden, try self.storageGeneration(state, target));
+            try appendRootFact(hidden, try state.storageGeneration(target));
         }
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
@@ -3228,7 +3984,7 @@ pub const SafetyChecker = struct {
         result.storage_capabilities = try capabilities.toOwnedSlice();
         for (effect.unavailable_fresh_storage) |entry| {
             const capability = try self.instantiateFreshCapability(entry.source, state, fresh_capabilities);
-            state.storage_capabilities.items[@intFromEnum(capability)] = if (entry.maybe_consumed) .maybe_consumed else .consumed;
+            state.consumeCapability(capability, !entry.maybe_consumed);
         }
 
         for (effect.input_receiver_values) |path| {
@@ -3252,14 +4008,14 @@ pub const SafetyChecker = struct {
             for (receiver.domains) |domain| for (domain.storages) |storage| {
                 if (self.domainStorageType(storage)) |ty| {
                     try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
-                } else try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+                } else try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(storage) });
             };
         }
         for (effect.input_domains) |domain| {
             if (domain.path.input_index >= arguments.len) continue;
             const input = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
             for (try self.domainStorage(input, domain.domain_index, state)) |storage| {
-                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+                try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(storage) });
                 if (self.domainStorageType(storage)) |ty| {
                     var visited = std.array_list.Managed(facts.Place).init(self.allocator);
                     defer visited.deinit();
@@ -3279,22 +4035,50 @@ pub const SafetyChecker = struct {
         var has_referent = false;
         for (effect.input_places) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
-            try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+            try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(target) });
             referenced_place = target;
             has_referent = true;
         }
-        for (effect.input_captured_storages) |path| {
+        for (effect.input_captured_storages) |capture| {
+            const path = capture.path;
             if (path.input_index >= arguments.len) continue;
-            const input = try self.projectValueFacts(arguments[path.input_index], path.projections);
-            if (input.referenced_place) |storage| if (self.domainStorageType(storage)) |ty| {
+            const storage = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
+            const access = try self.load_summary_input_value(path, arguments, state);
+            const source = if (storage) |place| self.graph.binding(place.root).source else primitives.SourceRef{ .file_index = 0, .offset = 0 };
+            if (capture.phase == .stale) {
+                try self.report(source, "virtual capture has no proven final post-call generation", .{});
+                continue;
+            }
+            if (capture.phase == .post) if (self.active_post_captures) |planned| {
+                var symbolic: ?facts.SymbolicPointeeId = null;
+                var entry_generation: ?facts.ValidityRootId = null;
+                if (storage) |place| {
+                    entry_generation = try state.storageGeneration(place);
+                } else if (access.symbolic_pointees.len == 1) {
+                    symbolic = access.symbolic_pointees[0];
+                    for (state.symbolic_pointees.items) |entry| if (entry.identity == symbolic.?) {
+                        entry_generation = entry.generation;
+                        break;
+                    };
+                } else {
+                    try self.report(source, "post-call virtual capture has no single storage identity", .{});
+                    continue;
+                }
+                const placeholder = try state.tracker.establish(.fresh);
+                try planned.append(.{ .placeholder = placeholder, .storage = storage, .symbolic = symbolic, .entry_generation = entry_generation, .input_index = path.input_index });
+                try appendDependencyFact(&dependencies, .{ .root = placeholder });
+                continue;
+            };
+            if (storage) |place| if (self.domainStorageType(place)) |ty| {
                 var visited = std.array_list.Managed(facts.Place).init(self.allocator);
                 defer visited.deinit();
-                try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
-            };
+                try self.captureContractStorage(@enumFromInt(0), source, state, place, ty, &dependencies, &visited);
+                if (capture.phase == .post) try self.validatePostCaptureWrites(source, path.input_index, visited.items);
+            } else {} else for (access.symbolic_pointees) |identity| try self.captureSymbolicStorage(source, state, identity, &dependencies);
         }
         for (effect.input_generation_dependencies) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
-            try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+            try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(target) });
         }
         for (effect.input_owned_roots) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -3337,6 +4121,7 @@ pub const SafetyChecker = struct {
                 try self.load_summary_input_value(dependency.path, arguments, state)
             else
                 try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            input = try self.renewPostCaptureInput(input, dependency.path, effect, arguments, state);
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activate_conditional_resources(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
@@ -3363,16 +4148,15 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            var input = try self.projectValueFacts(arguments[path.input_index], path.projections);
-            if (arguments[path.input_index].referenced_place) |base| {
-                var target = base;
-                for (path.projections) |projection| target = try self.project(target, projection);
-                if (self.valueAtPlace(state, target)) |stored| input = stored;
-            }
+            const input = try self.load_summary_input_value(path, arguments, state);
             result = try self.mergeValueFacts(result, input);
         }
 
         if (effect.fields.len != 0) {
+            // Explicit anchors belong to the value that introduced them. Child
+            // anchors are checked recursively; flattening their flag would make
+            // an enclosing owner retain replaced allocations as explicit loans.
+            const intrinsic_explicit_dependency = result.explicit_dependency;
             var intrinsic_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer intrinsic_owned.deinit();
             try intrinsic_owned.appendSlice(direct_owned_roots);
@@ -3397,6 +4181,7 @@ pub const SafetyChecker = struct {
             }
             result.fields = fields;
             result.variants = variants;
+            result.explicit_dependency = intrinsic_explicit_dependency;
             // A complete field effect supersedes ownership derived from the
             // prior fields. Intrinsic roots follow the whole-value transfer;
             // roots owned only by replaced fields must leave the parent.
@@ -3428,7 +4213,13 @@ pub const SafetyChecker = struct {
                         input_storage = true;
                         break;
                     };
-                    if (!input_storage) root.state = .conditional;
+                    if (!input_storage) for (state.symbolic_pointees.items) |pointee| {
+                        if (pointee.backing == root.id or pointee.generation == root.id) {
+                            input_storage = true;
+                            break;
+                        }
+                    };
+                    if (!input_storage and root.state == .alive) root.state = .conditional;
                 }
                 for (state.storage_capabilities.items[first_capability..]) |*capability| if (capability.* == .available) {
                     capability.* = .conditional;
@@ -3465,8 +4256,7 @@ pub const SafetyChecker = struct {
     ) !facts.StorageCapabilityId {
         _ = self;
         if (fresh.get(source)) |capability| return capability;
-        const capability: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
-        try state.storage_capabilities.append(.available);
+        const capability = try state.establishCapability();
         try fresh.put(source, capability);
         return capability;
     }
@@ -3515,6 +4305,9 @@ pub const SafetyChecker = struct {
     }
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
+        // Facts are immutable. Joining unchanged branch/loop values can retain
+        // their existing tree instead of reconstructing every aggregate leaf.
+        if (valueFactsEqual(left, right)) return left;
         const domains = try mergeDomainFacts(self.allocator, left.domains, right.domains);
         var choice_selectors: std.ArrayList(facts.CallChoiceSelector) = .empty;
         var choice_observations: std.ArrayList(facts.CallChoiceSelector) = .empty;
@@ -3591,14 +4384,14 @@ pub const SafetyChecker = struct {
             if (!found) try variants.append(right_variant);
         }
 
-        var symbolic_pointees: std.ArrayList(graph_mod.GlobalBindingId) = .empty;
+        var symbolic_pointees: std.ArrayList(facts.SymbolicPointeeId) = .empty;
         defer symbolic_pointees.deinit(self.allocator);
         for (left.symbolic_pointees) |identity| try symbolic_pointees.append(self.allocator, identity);
         for (right.symbolic_pointees) |identity| {
-            if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, symbolic_pointees.items, identity) == null)
+            if (std.mem.indexOfScalar(facts.SymbolicPointeeId, symbolic_pointees.items, identity) == null)
                 try symbolic_pointees.append(self.allocator, identity);
         }
-        const symbolic = try self.allocator.dupe(graph_mod.GlobalBindingId, symbolic_pointees.items);
+        const symbolic = try self.allocator.dupe(facts.SymbolicPointeeId, symbolic_pointees.items);
         return .{
             .symbolic_pointees = symbolic,
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
@@ -3656,27 +4449,13 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn initializednessAtPlace(
-        self: *SafetyChecker,
-        state: *FunctionState,
-        storage: facts.Place,
-    ) value_state.Initializedness {
-        var projection_count = storage.projections.len;
-        while (true) {
-            const prefix = facts.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
-            if (self.getPlace(state, prefix)) |stored| return stored.initializedness;
-            if (projection_count == 0) return .initialized;
-            projection_count -= 1;
-        }
-    }
-
     fn valueAtPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) ?facts.ValueFacts {
-        if (self.getPlace(state, storage)) |exact| return exact.value;
+        if (state.getPlace(storage)) |exact| return exact.value;
         var projection_count = storage.projections.len;
         while (projection_count > 0) {
             projection_count -= 1;
             const prefix = facts.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
-            if (self.getPlace(state, prefix)) |ancestor|
+            if (state.getPlace(prefix)) |ancestor|
                 return self.projectValueFacts(ancestor.value, storage.projections[projection_count..]) catch null;
         }
         return null;
@@ -3709,58 +4488,69 @@ pub const SafetyChecker = struct {
                 }
             }
             if (already_seen) continue;
-            projections_changed = true;
             const child_storage = facts.Place{
                 .root = storage.root,
                 .projections = entry.storage.projections[0 .. storage.projections.len + 1],
             };
             const inherited = try self.projectValueFacts(original, &.{projection});
-            const child_value = if (self.getPlace(state, child_storage)) |exact| exact.value else inherited;
+            const child_value = if (state.getPlace(child_storage)) |exact| exact.value else inherited;
             const child = try self.reconstructPlaceValue(state, child_storage, child_value);
-            switch (projection) {
-                .field, .static_index => |index| {
-                    const field_index: u32 = @intCast(index);
-                    var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
-                    var replaced = false;
-                    for (result.fields) |field| {
-                        if (field.index == field_index) {
-                            const stored = try self.allocator.create(facts.ValueFacts);
-                            stored.* = child;
-                            try fields.append(.{ .index = field_index, .value = stored });
-                            replaced = true;
-                        } else try fields.append(field);
-                    }
-                    if (!replaced) {
+            result = try self.replaceProjectedValue(result, projection, child);
+            projections_changed = true;
+        }
+        return if (projections_changed) self.refreshProjectedValueRoots(original, result) else original;
+    }
+
+    // Projection updates share value/ownership reconstruction independently of
+    // whether storage has a lexical Place or a symbolic pointee identity.
+    fn replaceProjectedValue(self: *SafetyChecker, original: facts.ValueFacts, projection: facts.Projection, child: facts.ValueFacts) !facts.ValueFacts {
+        var result = original;
+        switch (projection) {
+            .field, .static_index => |index| {
+                const field_index: u32 = @intCast(index);
+                var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
+                var replaced = false;
+                for (result.fields) |field| {
+                    if (field.index == field_index) {
                         const stored = try self.allocator.create(facts.ValueFacts);
                         stored.* = child;
                         try fields.append(.{ .index = field_index, .value = stored });
-                    }
-                    result.fields = try fields.toOwnedSlice();
-                },
-                .variant => |index| {
-                    var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
-                    var replaced = false;
-                    for (result.variants) |variant| {
-                        if (variant.index == index) {
-                            const stored = try self.allocator.create(facts.ValueFacts);
-                            stored.* = child;
-                            try variants.append(.{ .index = index, .value = stored });
-                            replaced = true;
-                        } else try variants.append(variant);
-                    }
-                    if (!replaced) {
+                        replaced = true;
+                    } else try fields.append(field);
+                }
+                if (!replaced) {
+                    const stored = try self.allocator.create(facts.ValueFacts);
+                    stored.* = child;
+                    try fields.append(.{ .index = field_index, .value = stored });
+                }
+                result.fields = try fields.toOwnedSlice();
+            },
+            .variant => |index| {
+                var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
+                var replaced = false;
+                for (result.variants) |variant| {
+                    if (variant.index == index) {
                         const stored = try self.allocator.create(facts.ValueFacts);
                         stored.* = child;
                         try variants.append(.{ .index = index, .value = stored });
-                    }
-                    result.variants = try variants.toOwnedSlice();
-                },
-                .dynamic_index => result = try self.mergeValueFacts(result, child),
-                .dereference => {},
-            }
+                        replaced = true;
+                    } else try variants.append(variant);
+                }
+                if (!replaced) {
+                    const stored = try self.allocator.create(facts.ValueFacts);
+                    stored.* = child;
+                    try variants.append(.{ .index = index, .value = stored });
+                }
+                result.variants = try variants.toOwnedSlice();
+            },
+            .dynamic_index => result = try self.mergeValueFacts(result, child),
+            .dereference => {},
         }
-        if (!projections_changed) return original;
+        return result;
+    }
 
+    fn refreshProjectedValueRoots(self: *SafetyChecker, original: facts.ValueFacts, projected: facts.ValueFacts) !facts.ValueFacts {
+        var result = projected;
         // Flattened aggregate roots must follow the authoritative projections.
         // Preserve intrinsic ownership and explicit dependencies independently
         // of fields, while removing roots carried only by replaced children.
@@ -3794,7 +4584,7 @@ pub const SafetyChecker = struct {
         while (depth > 0) {
             depth -= 1;
             const ancestor = facts.Place{ .root = storage.root, .projections = storage.projections[0..depth] };
-            if (findPlaceConst(state, ancestor)) |place| return .{
+            if (state.findPlace(ancestor)) |place| return .{
                 .storage = storage,
                 .initializedness = place.initializedness,
                 .value = try self.projectValueFacts(place.value, storage.projections[depth..]),
@@ -3803,36 +4593,35 @@ pub const SafetyChecker = struct {
         return .{ .storage = storage };
     }
 
-    fn refreshStorageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
-        _ = self;
-        var index: usize = 0;
-        var replaced = false;
-        while (index < state.storage_generations.items.len) {
-            const entry = state.storage_generations.items[index];
-            if (!storage.isPrefixOf(entry.storage)) {
-                index += 1;
-                continue;
+    // Indexing addresses array storage; it does not read every element. The
+    // pointer operands used to reach it still require ordinary validity checks.
+    fn evaluateArrayStorage(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, node: graph_mod.GlobalNodeId, state: *FunctionState) anyerror!?facts.ValueFacts {
+        if (self.graph.node(node).ty) |ty| if (types.arrayElement(self.graph, ty) != null) {
+            const before = self.diagnostics.list.items.len;
+            const access = try self.evaluateAccess(function, node, state);
+            if (self.diagnostics.list.items.len != before) return null;
+            if (access.storage) |storage| {
+                if (state.initializednessAtPlace(storage) == .moved) {
+                    try self.reportMovedPlace(source, storage, state);
+                    return null;
+                }
+                const value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
+                if (valueHasDeadExplicitDependencyForUse(value, state, false)) {
+                    try self.report(source, "value depends on a root that has ended", .{});
+                    return null;
+                }
+                const provenance = if (access.pointer) |pointer| blk: {
+                    var carried = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+                    try self.collectOpaqueProvenancesCarriedBy(state, pointer, &carried);
+                    break :blk try carried.toOwnedSlice();
+                } else try self.opaqueProvenanceForAccess(node, state);
+                return .{ .referenced_place = storage, .opaque_provenance = provenance };
             }
-            state.tracker.end(entry.generation);
-            if (entry.storage.eql(storage)) {
-                state.storage_generations.items[index].generation = try state.tracker.establish(.fresh);
-                state.storage_generations.items[index].needs_current_generation = false;
-                replaced = true;
-                index += 1;
-            } else {
-                _ = state.storage_generations.orderedRemove(index);
-            }
-        }
-        if (!replaced)
-            try state.storage_generations.append(.{ .storage = storage, .generation = try state.tracker.establish(.fresh) });
-    }
-
-    fn beginLexicalStorage(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
-        for (state.storage_generations.items) |entry| {
-            if (!storage.isPrefixOf(entry.storage)) continue;
-            try self.refreshStorageGeneration(state, storage);
-            return;
-        }
+            const value: facts.ValueFacts = access.pointer orelse access.value orelse .{};
+            try self.requireLive(function, source, value, state);
+            return if (self.diagnostics.list.items.len == before) value else null;
+        };
+        return self.evaluatePointerUse(function, source, node, state);
     }
 
     fn evaluatePointerUse(
@@ -3857,7 +4646,7 @@ pub const SafetyChecker = struct {
     ) ![]const facts.OpaqueProvenance {
         return switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
             .binding_use => |binding| blk: {
-                const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
+                const value = state.getPlace(.{ .root = binding }) orelse break :blk &.{};
                 // An owning aggregate lives in its binding's storage. Its
                 // references to heap storage do not place the binding there.
                 if (!isPointer(self.graph, self.graph.binding(binding).ty))
@@ -3894,7 +4683,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) ![]const facts.OpaqueProvenance {
         const pointer_place = try self.resolvePlace(node_id, state) orelse return &.{};
-        const pointer = self.getPlace(state, pointer_place) orelse return &.{};
+        const pointer = state.getPlace(pointer_place) orelse return &.{};
         var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
         try self.collectOpaqueProvenancesCarriedBy(state, pointer.value, &provenances);
         return provenances.toOwnedSlice();
@@ -3911,7 +4700,7 @@ pub const SafetyChecker = struct {
         var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
         for (storages.items) |storage| try appendOpaqueProvenanceFact(&provenances, .{
             .storage = storage,
-            .generation = try self.storageGeneration(state, storage),
+            .generation = try state.storageGeneration(storage),
         });
         return provenances.toOwnedSlice();
     }
@@ -4058,9 +4847,10 @@ pub const SafetyChecker = struct {
         return switch (semantic) {
             .pointer, .virtual => true,
             .array => |array| self.typeContainsPointer(array.element),
-            .nullable, .inferred_errable => |child| self.typeContainsPointer(child),
-            .builtin => false,
-            .declared, .structural => blk: {
+            .nullable => |child| self.typeContainsPointer(child),
+            .inferred_errable => |value| self.typeContainsPointer(value.child),
+            .builtin, .definition => false,
+            .nominal, .structural => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk self.choiceTypeContainsPointer(ty);
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|
                     if (self.typeContainsPointer(field.ty)) break :blk true;
@@ -4105,44 +4895,7 @@ pub const SafetyChecker = struct {
         var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer owners.deinit();
         if (self.valueAtPlace(state, storage)) |value| try collectOwnedRoots(value, &owners);
-        for (state.opaque_storages.items) |*opaque_storage| {
-            if (!opaque_storage.storage.eql(storage)) continue;
-            var merged = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try merged.appendSlice(opaque_storage.hidden_dependencies);
-            for (dependencies) |dependency| try appendRootFact(&merged, dependency);
-            opaque_storage.hidden_dependencies = try merged.toOwnedSlice();
-            opaque_storage.outcome_guard = 0;
-            var combined = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try combined.appendSlice(opaque_storage.owner_roots);
-            for (owners.items) |root| try appendRootFact(&combined, root);
-            opaque_storage.owner_roots = try combined.toOwnedSlice();
-            return;
-        }
-        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        for (dependencies) |dependency| try appendRootFact(&hidden, dependency);
-        try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = try hidden.toOwnedSlice(), .owner_roots = try owners.toOwnedSlice() });
-    }
-
-    fn markOpaqueStorageEmpty(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) void {
-        _ = self;
-        for (state.opaque_storages.items) |*opaque_storage| {
-            if (!opaque_storage.storage.eql(storage)) continue;
-            opaque_storage.hidden_dependencies = &.{};
-            opaque_storage.outcome_guard = 0;
-            return;
-        }
-    }
-
-    fn mergeOpaqueOwnerRoots(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, roots: []const facts.ValidityRootId) !void {
-        if (roots.len == 0) return;
-        for (state.opaque_storages.items) |*domain| {
-            if (!domain.storage.eql(storage)) continue;
-            var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try owners.appendSlice(domain.owner_roots);
-            for (roots) |root| try appendRootFact(&owners, root);
-            domain.owner_roots = try owners.toOwnedSlice();
-            return;
-        }
+        try state.mergeOpaqueStorage(storage, dependencies, owners.items);
     }
 
     fn mergeLiveOpaqueDependencies(
@@ -4454,21 +5207,21 @@ pub const SafetyChecker = struct {
             if (!storage.isPrefixOf(entry.storage)) continue;
             if (!try self.endRoot(source, state, entry.generation)) return;
         }
-        try self.refreshStorageGeneration(state, storage);
+        try state.refreshStorageGeneration(storage);
     }
 
     fn bindCallInputs(self: *SafetyChecker, function: graph_mod.Function, values: []const facts.ValueFacts, state: *FunctionState) !void {
         const ids = self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len];
-        for (ids, 0..) |binding, index| try self.setPlace(state, .{ .root = binding }, .initialized, if (index < values.len) values[index] else .{});
+        for (ids, 0..) |binding, index| try state.setPlace(.{ .root = binding }, .initialized, if (index < values.len) values[index] else .{});
     }
 
     fn collectCallOutput(self: *SafetyChecker, function: graph_mod.Function, state: *FunctionState) !facts.ValueFacts {
         const ids = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
         if (ids.len == 0) return .{};
-        if (ids.len == 1) return if (self.getPlace(state, .{ .root = ids[0] })) |place| place.value else .{};
+        if (ids.len == 1) return if (state.getPlace(.{ .root = ids[0] })) |place| place.value else .{};
         var fields = try self.allocator.alloc(facts.FieldFacts, ids.len);
         for (ids, 0..) |binding, index| {
-            const value = if (self.getPlace(state, .{ .root = binding })) |place| place.value else facts.ValueFacts{};
+            const value = if (state.getPlace(.{ .root = binding })) |place| place.value else facts.ValueFacts{};
             const owned = try self.allocator.create(facts.ValueFacts);
             owned.* = value;
             fields[index] = .{ .index = @intCast(index), .value = owned };
@@ -4524,33 +5277,49 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateChoicePayload(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, access: anytype, state: *FunctionState) !facts.ValueFacts {
+        return (try self.evaluateChoiceAccess(function, source, access, state)).value orelse .{};
+    }
+
+    fn evaluateChoiceAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, access: anytype, state: *FunctionState) anyerror!EvaluatedAccess {
         const choice_ty = self.graph.nodes.items[@intFromEnum(access.value)].ty orelse return .{};
         const wanted = variantIndex(self.graph, choice_ty, access.variant) orelse return .{};
-        const resolved = try self.resolvePlace(access.value, state);
+        const captured = try self.evaluateAccess(function, access.value, state);
+        const resolved = captured.storage;
         const choice = if (resolved) |storage| blk: {
             const stored = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+            if (captured.pointer) |pointer| break :blk try self.envelopeOpaqueRead(state, stored, choice_ty, pointer);
             const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
             break :blk try self.addOpaqueReadEnvelope(stored, choice_ty, provenance);
-        } else try self.evaluate(function, access.value, state);
+        } else try self.readEvaluatedAccess(function, source, choice_ty, captured, state);
 
         if (resolved) |storage| {
-            if (!self.variantActive(state, storage, wanted)) {
-                if (self.activeVariant(state, storage) != null) {
+            if (!state.variantActive(storage, wanted)) {
+                if (state.activeVariant(storage) != null) {
                     try self.report(source, "choice payload '..{d}' is not active", .{wanted});
                 } else {
                     try self.report(source, "choice payload '..{d}' requires its variant to be proven active", .{wanted});
                 }
                 return .{};
             }
-        } else if (choice.known_choice_variant != wanted and !self.temporaryVariantActive(state, access.value, wanted)) {
+        } else if (choice.known_choice_variant != wanted and !state.temporaryVariantActive(access.value, wanted)) {
             try self.report(source, "choice payload access requires a proven active variant", .{});
             return .{};
         }
+        var result: EvaluatedAccess = .{
+            .storage = if (resolved) |storage| try self.project(storage, .{ .variant = wanted }) else null,
+            .pointer = captured.pointer,
+        };
+        if (resolved == null) if (captured.pointer) |pointer| {
+            if (try self.projectSymbolicStorage(pointer, .{ .variant = wanted }, state)) |projected|
+                result.pointer = projected;
+        };
         for (choice.variants) |variant| if (variant.index == wanted) {
             try self.activate_conditional_resources(state, variant.value.*);
-            return variant.value.*;
+            result.value = variant.value.*;
+            return result;
         };
-        return .{};
+        result.value = .{};
+        return result;
     }
 
     fn evaluateVirtualCall(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, id: graph_mod.GlobalVirtualCallId, state: *FunctionState) !facts.ValueFacts {
@@ -4565,7 +5334,7 @@ pub const SafetyChecker = struct {
 
         const range = input_node.content.struct_value_literal.fields;
         const argument_nodes = self.globalValueFieldIds(range);
-        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        var candidate = try self.cloneState(state);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
         const inference = self.active_summary_inference orelse return error.MissingSafetySummary;
@@ -4598,9 +5367,7 @@ pub const SafetyChecker = struct {
         const consumed = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, false);
         const initialized = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, true);
         const outcomes = try self.callOutcomeCleanups(summary, argument_nodes, values, &candidate);
-        self.graph.virtual_calls.items[@intFromEnum(id)].consumed_auto_deinits = consumed;
-        self.graph.virtual_calls.items[@intFromEnum(id)].initialized_auto_deinits = initialized;
-        self.graph.virtual_calls.items[@intFromEnum(id)].outcome_cleanups = outcomes;
+        try self.annotations.setVirtualCall(self.allocator, id, .{ .consumed_auto_deinits = consumed, .initialized_auto_deinits = initialized, .outcome_cleanups = outcomes });
         const result = (try self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
@@ -4632,6 +5399,20 @@ pub const SafetyChecker = struct {
         const previous_capabilities = self.active_fresh_capabilities;
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
+        const saved_generations = self.active_entry_generations;
+        const saved_symbolic = self.active_entry_symbolic;
+        const saved_capture_writes = self.active_capture_writes;
+        defer self.active_capture_writes = saved_capture_writes;
+        self.active_capture_writes = &.{};
+        defer self.active_entry_generations = saved_generations;
+        defer self.active_entry_symbolic = saved_symbolic;
+        self.active_entry_generations = &.{};
+        self.active_entry_symbolic = &.{};
+        if (summaryHasPostCaptures(summary)) {
+            self.active_capture_writes = try self.captureWrites(summary, argument_nodes, values, state);
+            self.active_entry_generations = try self.allocator.dupe(state_mod.StorageGeneration, state.storage_generations.items);
+            self.active_entry_symbolic = try self.allocator.dupe(state_mod.SymbolicPointeeState, state.symbolic_pointees.items);
+        }
         const prepared = try self.prepareGeneralValueGuards(summary, values, state);
         const result = try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);
@@ -4643,45 +5424,350 @@ pub const SafetyChecker = struct {
         id: graph_mod.GlobalAutoDeinitId,
         state: *FunctionState,
     ) !void {
-        const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
-        const storage = facts.Place{ .root = cleanup.binding };
-        switch (self.initializednessAtPlace(state, storage)) {
-            .initialized => if (cleanup.deinit_fn != null) {
-                try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
-            } else if (cleanup.fields.len == 0) {
-                if (self.getPlace(state, storage)) |owned_value| {
-                    const source = self.graph.bindings.items[@intFromEnum(cleanup.binding)].source;
-                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                    defer roots.deinit();
-                    try collectOwnedRoots(owned_value.value, &roots);
-                    if (!try self.endRoots(source, state, roots.items)) return;
+        if (self.active_replacement) |active| if (active.plan.cleanup == id) {
+            if (active.pointer) |pointer| {
+                var vacant = false;
+                if (pointer.referenced_place) |place| {
+                    vacant = state.initializednessAtPlace(place) == .deinitialized;
+                } else if (pointer.symbolic_pointees.len == 1) {
+                    for (state.symbolic_pointees.items) |entry| if (entry.identity == pointer.symbolic_pointees[0]) {
+                        vacant = entry.initializedness == .deinitialized;
+                    };
                 }
-                try self.setPlace(state, storage, .deinitialized, .{});
-            } else {
-                const diagnostic_count = self.diagnostics.list.items.len;
-                try self.evaluateStructuralAutoDeinit(function, cleanup.fields, storage, state);
-                if (self.diagnostics.list.items.len == diagnostic_count)
-                    try self.setPlace(state, storage, .deinitialized, .{});
-            },
-            .maybe_initialized, .moved, .deinitialized => {},
+                // RHS evaluation may repopulate a destination that was empty
+                // when captured. Only omit old-value cleanup if it stays empty.
+                try self.annotations.constrainInitialization(self.allocator, active.plan.write, vacant);
+                if (pointer.referenced_place == null and pointer.symbolic_pointees.len == 1) {
+                    const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                    if (self.symbolicStorageComplete(state, pointer.symbolic_pointees[0])) if (cleanup.deinit_fn) |callee|
+                        return self.evaluateResolvedDeinitReference(function, callee, cleanup.input orelse return, cleanup.self_field_index, .{ .value = pointer }, state);
+                    var candidate = try self.cloneState(state);
+                    defer candidate.deinit();
+                    if (try self.evaluateSymbolicCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, pointer, &candidate)) {
+                        self.commitState(state, &candidate);
+                        return;
+                    }
+                }
+                if (pointer.referenced_place) |storage| {
+                    // Cleanup belongs to the destination captured before RHS
+                    // evaluation. Its source expression may consume resources
+                    // or now select a different referent.
+                    const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                    return self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
+                }
+            }
+        };
+        const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+        const storage = if (cleanup.targetNode()) |target| try self.resolvePlace(target, state) orelse return else facts.Place{ .root = cleanup.ownerBinding().? };
+        try self.evaluateCleanupOperation(function, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, storage, state);
+    }
+
+    // A captured unknown referent uses the same selected cleanup operations
+    // as a concrete Place. Its projected identities retain which children have
+    // been consumed without reevaluating the expression that selected it.
+    // Keep speculative traversal isolated until every projection is represented.
+    fn evaluateSymbolicCleanupOperation(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        callee: ?graph_mod.GlobalFunctionId,
+        input: ?graph_mod.GlobalNodeId,
+        self_index: u32,
+        fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
+        pointer: facts.ValueFacts,
+        state: *FunctionState,
+    ) anyerror!bool {
+        if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return false;
+        const identity = pointer.symbolic_pointees[0];
+        const entry = for (state.symbolic_pointees.items) |stored| {
+            if (stored.identity == identity) break stored;
+        } else return false;
+        if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return true;
+        if (entry.initializedness == .maybe_initialized) {
+            var live = try self.cloneState(state);
+            defer live.deinit();
+            var vacant = try self.cloneState(state);
+            defer vacant.deinit();
+            if (!self.refineSymbolicCleanupLive(&live, identity, false)) return false;
+            for (vacant.symbolic_pointees.items) |*stored| if (stored.identity == identity) {
+                stored.initializedness = .deinitialized;
+                if (stored.generation) |generation| vacant.tracker.end(generation);
+            };
+            if (!try self.evaluateSymbolicCleanupOperation(function, callee, input, self_index, fields, pointer, &live)) return false;
+            try self.joinState(state, &live, &vacant);
+            return true;
+        }
+        if (entry.initializedness != .initialized) return false;
+        const readiness = self.symbolicStorageReadiness(state, identity);
+        if (readiness == .complete) if (callee) |selected| {
+            try self.evaluateResolvedDeinitReference(function, selected, input orelse return false, self_index, .{ .value = pointer }, state);
+            return true;
+        };
+        const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
+        const active_variant = state.symbolicVariant(identity);
+        if (active_variant == null and children.len != 0 and children[0].is_variant) {
+            const variants = types.variants(self.graph, entry.ty orelse return false) orelse return false;
+            var joined: ?FunctionState = null;
+            defer if (joined) |*branch| branch.deinit();
+            for (0..variants.len) |variant| {
+                var branch = try self.cloneState(state);
+                defer branch.deinit();
+                try self.setSymbolicVariant(&branch, pointer, @intCast(variant));
+                if (!try self.evaluateSymbolicCleanupOperation(function, callee, input, self_index, fields, pointer, &branch)) return false;
+                if (joined) |*previous| {
+                    var combined = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
+                    errdefer combined.deinit();
+                    try self.joinState(&combined, previous, &branch);
+                    self.commitState(previous, &combined);
+                    combined.deinit();
+                } else joined = try self.cloneState(&branch);
+            }
+            if (joined) |*branch| self.commitState(state, branch);
+            return joined != null;
+        }
+        if (readiness == .possible) if (callee) |selected| {
+            var complete = try self.cloneState(state);
+            defer complete.deinit();
+            var partial = try self.cloneState(state);
+            defer partial.deinit();
+            if (!self.refineSymbolicCleanupLive(&complete, identity, true)) return false;
+            try self.evaluateResolvedDeinitReference(function, selected, input orelse return false, self_index, .{ .value = pointer }, &complete);
+            if (!try self.evaluateSymbolicCleanupOperation(function, null, input, self_index, fields, pointer, &partial)) return false;
+            try self.joinState(state, &complete, &partial);
+            return true;
+        };
+        for (children) |child| {
+            if (child.is_variant) {
+                const active = active_variant orelse return false;
+                if (child.field_index != active) continue;
+            }
+            if (child.repeat_count == 0) continue;
+            // Match concrete structural cleanup: a repeated child describes
+            // an arbitrary live element guarded by the runtime cleanup flags.
+            // Its abstract identity must overlap observed constant indices.
+            const projection: facts.Projection = if (child.repeat_count != null)
+                .dynamic_index
+            else if (child.is_variant)
+                .{ .variant = child.field_index }
+            else
+                .{ .field = child.field_index };
+            const projected = try self.projectSymbolicStorage(pointer, projection, state) orelse return false;
+            if (!try self.evaluateSymbolicCleanupOperation(function, child.deinit_fn, child.input, child.self_field_index, child.fields, projected, state)) return false;
+        }
+        const source = if (input) |node| self.graph.node(node).source else self.graph.declaration(self.graph.function(function).declaration).source;
+        _ = try self.endSymbolicGenerations(source, pointer, state);
+        for (state.symbolic_pointees.items) |*stored| if (stored.identity == identity) {
+            stored.initializedness = .deinitialized;
+        };
+        return true;
+    }
+
+    // Projected identities describe only observed storage, not proof of
+    // disjointness. A whole nominal cleanup needs every observed descendant
+    // in the current incarnation to remain complete.
+    fn symbolicStorageComplete(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
+        return self.symbolicStorageReadiness(state, identity) == .complete;
+    }
+
+    fn symbolicStorageReadiness(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) StorageReadiness {
+        const parent = for (state.symbolic_pointees.items) |entry| {
+            if (entry.identity == identity) break entry;
+        } else return .unavailable;
+        if (parent.initializedness == .deinitialized or parent.initializedness == .moved) return .unavailable;
+        var readiness: StorageReadiness = if (parent.initializedness == .maybe_initialized) .possible else .complete;
+        if (parent.generation) |generation| {
+            if (!state.tracker.isAlive(generation)) readiness = .possible;
+        } else readiness = .possible;
+        const namespace = state.tracker.namespace orelse return readiness;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != parent.generation) continue;
+            if (projected.projection == .variant) if (state.symbolicVariant(identity)) |active| {
+                if (projected.projection.variant != active) continue;
+            };
+            for (state.symbolic_pointees.items) |child| if (child.identity == projected.identity) {
+                switch (self.symbolicStorageReadiness(state, child.identity)) {
+                    .unavailable => return .unavailable,
+                    .possible => readiness = .possible,
+                    .complete => {},
+                }
+            };
+        }
+        return readiness;
+    }
+
+    // A runtime cleanup flag establishes availability only for this storage's
+    // current, common incarnation. Divergent or dead generations cannot be
+    // revived by assuming a value exists. Historical aliases remain unchanged.
+    fn refineSymbolicCleanupLive(self: *SafetyChecker, state: *FunctionState, identity: facts.SymbolicPointeeId, descendants: bool) bool {
+        var generation: ?facts.ValidityRootId = null;
+        for (state.symbolic_pointees.items) |*entry| {
+            if (entry.identity != identity) continue;
+            if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return false;
+            const backing = entry.backing orelse return false;
+            const current = entry.generation orelse return false;
+            if (!state.tracker.isAlive(backing)) return false;
+            const root = &state.tracker.roots.items[@intFromEnum(current)];
+            if (root.state != .alive and root.state != .maybe_alive) return false;
+            root.state = .alive;
+            root.outcome_guard = 0;
+            entry.initializedness = .initialized;
+            generation = current;
+            break;
+        }
+        const current = generation orelse return false;
+        if (!descendants) return true;
+        const namespace = state.tracker.namespace orelse return true;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != current) continue;
+            if (projected.projection == .variant) if (state.symbolicVariant(identity)) |active| {
+                if (projected.projection.variant != active) continue;
+            };
+            var observed = false;
+            for (state.symbolic_pointees.items) |entry| if (entry.identity == projected.identity) {
+                observed = true;
+                break;
+            };
+            if (observed and !self.refineSymbolicCleanupLive(state, projected.identity, true)) return false;
+        }
+        return true;
+    }
+
+    const StorageReadiness = enum { unavailable, possible, complete };
+
+    // Completeness can come from one whole write or authoritative projected
+    // writes. Empty vacant aggregates do not become initialized vacuously.
+    fn storageReadiness(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) anyerror!StorageReadiness {
+        const initializedness = state.initializednessAtPlace(storage);
+        if (initializedness == .initialized) {
+            var readiness: StorageReadiness = .complete;
+            for (state.places.items) |descendant| {
+                if (storage.eql(descendant.storage) or !storage.isPrefixOf(descendant.storage)) continue;
+                if (descendant.initializedness == .deinitialized or descendant.initializedness == .moved) return .unavailable;
+                if (descendant.initializedness == .maybe_initialized) readiness = .possible;
+            }
+            return readiness;
+        }
+        const ty = self.domainStorageType(storage) orelse return .unavailable;
+        if (types.arrayLength(self.graph, ty)) |length| {
+            // Every available element needs at least one authoritative fact.
+            // Never scan a large vacant array just to rediscover missing facts.
+            if (length == 0 or length > state.places.items.len)
+                return if (initializedness == .maybe_initialized) .possible else .unavailable;
+            var result: StorageReadiness = .complete;
+            for (0..@intCast(length)) |index| {
+                switch (try self.storageReadiness(state, try self.project(storage, .{ .static_index = index }))) {
+                    .unavailable => return if (initializedness == .maybe_initialized) .possible else .unavailable,
+                    .possible => result = .possible,
+                    .complete => {},
+                }
+            }
+            return result;
+        }
+        const fields = types.fields(self.graph, ty) orelse return if (initializedness == .maybe_initialized) .possible else .unavailable;
+        if (fields.len == 0) return if (initializedness == .maybe_initialized) .possible else .unavailable;
+        var result: StorageReadiness = .complete;
+        for (0..fields.len) |index| {
+            switch (try self.storageReadiness(state, try self.project(storage, .{ .field = @intCast(index) }))) {
+                .unavailable => return if (initializedness == .maybe_initialized) .possible else .unavailable,
+                .possible => result = .possible,
+                .complete => {},
+            }
+        }
+        return result;
+    }
+
+    // Keep child facts when refining the whole-value branch. This is a branch
+    // assumption, never a storage write or permission to revive a generation.
+    fn refineCleanupComplete(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !void {
+        const original = if (state.getPlace(storage)) |entry| entry.value else facts.ValueFacts{};
+        const value = try self.reconstructPlaceValue(state, storage, original);
+        const conditional_consumption = state.initializednessAtPlace(storage) == .maybe_initialized;
+        // A selected active cleanup flag is the preserving side of a tracked
+        // conditional consumption. Use the same current-generation guard as
+        // result refinement; unrelated and historical roots stay unavailable.
+        for (state.storage_generations.items) |generation| {
+            if (!conditional_consumption) break;
+            if (!generation.storage.eql(storage) or generation.needs_current_generation) continue;
+            const root = state.tracker.roots.items[@intFromEnum(generation.generation)];
+            if (root.state != .maybe_alive or root.outcome_guard == 0) break;
+            var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer owned.deinit();
+            try collectOwnedRoots(value, &owned);
+            var outcomes = std.array_list.Managed(facts.GenerationOutcome).init(self.allocator);
+            defer outcomes.deinit();
+            try outcomes.append(.{
+                .storage = storage,
+                .generation = generation.generation,
+                .guard = root.outcome_guard,
+                .invalidates = false,
+                .resource_state = .initialized,
+                .owned_roots = owned.items,
+            });
+            for (state.storage_generations.items) |child| {
+                if (child.storage.eql(storage) or !storage.isPrefixOf(child.storage) or child.needs_current_generation) continue;
+                try outcomes.append(.{ .storage = child.storage, .generation = child.generation, .guard = root.outcome_guard, .invalidates = false });
+            }
+            try self.activate_conditional_resources(state, .{ .generation_outcomes = outcomes.items });
+            break;
+        }
+        try self.activate_conditional_owner_roots(state, value);
+        try self.activate_conditional_capabilities(state, value);
+        for (state.places.items) |*entry| {
+            if (storage.isPrefixOf(entry.storage) and entry.initializedness == .maybe_initialized)
+                entry.initializedness = .initialized;
+        }
+        if (state.getPlace(storage)) |entry| {
+            entry.initializedness = .initialized;
+            entry.value = value;
+        } else try state.places.append(.{ .storage = storage, .initializedness = .initialized, .value = value });
+        for (state.storage_generations.items) |*generation| {
+            if (!generation.storage.eql(storage)) continue;
+            const root = state.tracker.roots.items[@intFromEnum(generation.generation)];
+            // Construction on only one incoming path can leave no common
+            // value generation. The cleanup branch borrows the current value;
+            // establish its identity on demand instead of reviving an old one.
+            if (root.state == .maybe_alive or root.state == .dead)
+                generation.needs_current_generation = true;
         }
     }
 
-    fn evaluateResolvedAutoDeinit(
-        self: *SafetyChecker,
-        function: graph_mod.GlobalFunctionId,
-        cleanup: graph_mod.AutoDeinit,
-        storage: facts.Place,
-        state: *FunctionState,
-    ) !void {
-        return self.evaluateResolvedDeinit(
-            function,
-            cleanup.deinit_fn orelse return,
-            cleanup.input orelse return,
-            cleanup.self_field_index,
-            storage,
-            state,
-        );
+    fn evaluateCleanupOperation(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), storage: facts.Place, state: *FunctionState) anyerror!void {
+        const ready = try self.storageReadiness(state, storage);
+        if (callee) |id| {
+            if (ready == .complete) {
+                if (state.initializednessAtPlace(storage) != .initialized)
+                    try self.refineCleanupComplete(state, storage);
+                return self.evaluateResolvedDeinit(function, id, input orelse return, self_index, storage, state);
+            }
+            if (ready == .possible) {
+                var whole = try self.cloneState(state);
+                defer whole.deinit();
+                var partial = try self.cloneState(state);
+                defer partial.deinit();
+                try self.refineCleanupComplete(&whole, storage);
+                try self.evaluateResolvedDeinit(function, id, input orelse return, self_index, storage, &whole);
+                try self.evaluateStructuralAutoDeinit(function, fields, storage, &partial);
+                return self.joinState(state, &whole, &partial);
+            }
+        }
+        // A choice needs an initialized discriminant before any payload can
+        // be selected. Incomplete-record fallback must not inspect a moved
+        // choice and reactivate the resources already transferred out of it.
+        if (ready == .unavailable) {
+            const ty = self.domainStorageType(storage) orelse return;
+            if (types.variants(self.graph, ty) != null and state.initializednessAtPlace(storage) != .initialized) return;
+        }
+        const diagnostic_count = self.diagnostics.list.items.len;
+        try self.evaluateStructuralAutoDeinit(function, fields, storage, state);
+        if (ready == .complete and self.diagnostics.list.items.len == diagnostic_count) {
+            if (fields.len == 0) if (state.getPlace(storage)) |owned_value| {
+                const source = self.graph.binding(storage.root).source;
+                var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer roots.deinit();
+                try collectOwnedRoots(owned_value.value, &roots);
+                if (!try self.endRoots(source, state, roots.items)) return;
+            };
+            try state.setPlace(storage, .deinitialized, .{});
+        }
     }
 
     fn evaluateStructuralAutoDeinit(
@@ -4698,16 +5784,16 @@ pub const SafetyChecker = struct {
             var joined: ?FunctionState = null;
             defer if (joined) |*value| value.deinit();
             for (0..variants.len) |index| {
-                if (self.activeVariant(state, storage)) |active| {
+                if (state.activeVariant(storage)) |active| {
                     if (active != index) continue;
                 }
                 if (self.valueAtPlace(state, storage)) |value| if (value.known_choice_variant) |active| {
                     if (active != index) continue;
                 };
-                if (self.variantRejected(state, storage, @intCast(index))) continue;
-                var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                if (state.variantRejected(storage, @intCast(index))) continue;
+                var branch = try self.cloneState(state);
                 defer branch.deinit();
-                self.setActiveVariant(&branch, storage, @intCast(index));
+                try branch.setActiveVariant(storage, @intCast(index));
                 const payload_storage = try self.project(storage, .{ .variant = @intCast(index) });
                 if (self.valueAtPlace(&branch, payload_storage)) |payload|
                     try self.activate_conditional_resources(&branch, payload);
@@ -4715,37 +5801,20 @@ pub const SafetyChecker = struct {
                     if (field.field_index != index) continue;
                     try self.evaluateAutoDeinitField(function, field, payload_storage, &branch);
                 }
-                if (joined) |*existing| {
-                    var combined = try existing.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                    try self.joinState(&combined, existing, &branch);
-                    existing.deinit();
-                    existing.* = combined;
-                } else joined = try branch.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                if (joined) |*existing| try self.joinState(existing, existing, &branch) else joined = try self.cloneState(&branch);
             }
             if (joined) |*value| self.commitState(state, value);
             return;
         }
         for (children) |field| {
-            const field_storage = try self.project(storage, .{ .field = field.field_index });
+            if (field.repeat_count == 0) continue;
+            const field_storage = try self.project(storage, if (field.repeat_count != null) .dynamic_index else .{ .field = field.field_index });
             try self.evaluateAutoDeinitField(function, field, field_storage, state);
         }
     }
 
     fn evaluateAutoDeinitField(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, field_storage: facts.Place, state: *FunctionState) anyerror!void {
-        if (self.initializednessAtPlace(state, field_storage) != .initialized) return;
-        if (field.deinit_fn) |deinit_fn| {
-            try self.evaluateResolvedDeinit(
-                function,
-                deinit_fn,
-                field.input orelse return,
-                field.self_field_index,
-                field_storage,
-                state,
-            );
-        } else {
-            try self.evaluateStructuralAutoDeinit(function, field.fields, field_storage, state);
-            try self.setPlace(state, field_storage, .deinitialized, .{});
-        }
+        try self.evaluateCleanupOperation(function, field.deinit_fn, field.input, field.self_field_index, field.fields, field_storage, state);
     }
 
     fn evaluateResolvedDeinit(
@@ -4757,12 +5826,24 @@ pub const SafetyChecker = struct {
         storage: facts.Place,
         state: *FunctionState,
     ) !void {
+        return self.evaluateResolvedDeinitReference(function, deinit_fn, input, self_field_index, .{ .storage = storage }, state);
+    }
+
+    fn evaluateResolvedDeinitReference(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        deinit_fn: graph_mod.GlobalFunctionId,
+        input: graph_mod.GlobalNodeId,
+        self_field_index: u32,
+        reference: union(enum) { storage: facts.Place, value: facts.ValueFacts },
+        state: *FunctionState,
+    ) !void {
         const input_node = self.graph.nodes.items[@intFromEnum(input)];
         if (input_node.content != .struct_value_literal) return;
         const range = input_node.content.struct_value_literal.fields;
         const argument_ids = self.globalValueFieldIds(range);
 
-        var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        var candidate = try self.cloneState(state);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
         var values = try self.allocator.alloc(facts.ValueFacts, argument_ids.len);
@@ -4770,9 +5851,12 @@ pub const SafetyChecker = struct {
         for (argument_ids, 0..) |field_id, index| {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
             values[index] = if (index == self_field_index)
-                .{
-                    .dependencies = try self.oneDependency(try self.storageGeneration(&candidate, storage)),
-                    .referenced_place = storage,
+                switch (reference) {
+                    .value => |value| value,
+                    .storage => |place| .{
+                        .dependencies = try self.oneDependency(try candidate.storageGeneration(place)),
+                        .referenced_place = place,
+                    },
                 }
             else
                 try self.evaluate(function, field.value, &candidate);
@@ -4808,6 +5892,279 @@ pub const SafetyChecker = struct {
         }
     }
 
+    // Project unknown embedded storage without inventing a concrete Place.
+    // The namespace interns only observed fields and is shared by branch forks.
+    fn projectSymbolicReference(self: *SafetyChecker, pointer: facts.ValueFacts, field: u32, state: *FunctionState) !?facts.ValueFacts {
+        return self.projectSymbolicStorage(pointer, .{ .field = field }, state);
+    }
+
+    fn projectSymbolicStorage(self: *SafetyChecker, pointer: facts.ValueFacts, projection: facts.Projection, state: *FunctionState) !?facts.ValueFacts {
+        if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
+        const parent_id = pointer.symbolic_pointees[0];
+        const parent = for (state.symbolic_pointees.items) |entry| {
+            if (entry.identity == parent_id) break entry;
+        } else return null;
+        const child_type: ?graph_mod.GlobalTypeId = if (parent.ty) |ty| blk: {
+            break :blk switch (projection) {
+                .field => |field| field_type: {
+                    const fields = types.fields(self.graph, ty) orelse return null;
+                    if (field >= fields.len) return null;
+                    break :field_type self.graph.fields.items[fields.start + field].ty;
+                },
+                .variant => |variant| payload_type: {
+                    const variants = types.variants(self.graph, ty) orelse return null;
+                    if (variant >= variants.len) return null;
+                    break :payload_type self.graph.variants.items[variants.start + variant].payload_type orelse return null;
+                },
+                .static_index => |index| element_type: {
+                    const length = types.arrayLength(self.graph, ty) orelse return null;
+                    if (index >= length) return null;
+                    break :element_type types.arrayElement(self.graph, ty) orelse return null;
+                },
+                .dynamic_index => if ((types.arrayLength(self.graph, ty) orelse 0) != 0) types.arrayElement(self.graph, ty) else return null,
+                .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
+            };
+        } else null;
+        const observation = try state.projectSymbolicStorage(parent, projection, child_type) orelse return null;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        try dependencies.appendSlice(pointer.dependencies);
+        try appendDependencyFact(&dependencies, .{ .root = observation.generation });
+        return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{observation.identity}) };
+    }
+
+    // Reading an input reference slot observes the pointer stored in it, not
+    // a pointer to that slot. Intern that initial referent separately so copies
+    // share its incarnation without granting ownership of the slot's parent.
+    fn readSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, ty: ?graph_mod.GlobalTypeId) !facts.ValueFacts {
+        if (pointer.symbolic_pointees.len != 1) return .{};
+        const identity = pointer.symbolic_pointees[0];
+        const stored = try self.symbolicValueAt(state, identity);
+        const value_type = ty orelse for (state.symbolic_pointees.items) |entry| {
+            if (entry.identity == identity) break entry.ty;
+        } else null;
+        if (stored == null and value_type != null and isPointer(self.graph, value_type.?))
+            return (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse .{};
+        return self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+    }
+
+    // Tag refinement does not write the payload or discard descendant facts.
+    // Branch clones own these records; joining different tags removes the proof.
+    fn setSymbolicVariant(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, variant: u32) !void {
+        if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return;
+        const identity = pointer.symbolic_pointees[0];
+        var stored = (try self.symbolicValueAt(state, identity)) orelse SymbolicStoredValue{ .identity = identity, .value = .{} };
+        stored.value.known_choice_variant = variant;
+        try state.setSymbolicValue(stored, false, true);
+    }
+
+    fn storeSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts, definite: bool) !void {
+        if (pointer.opaque_provenance.len != 0) return;
+        for (pointer.symbolic_pointees) |identity| {
+            const strong = definite and pointer.symbolic_pointees.len == 1;
+            const previous = try self.symbolicValueAt(state, identity);
+            const next: SymbolicStoredValue = if (strong)
+                .{ .identity = identity, .value = value }
+            else
+                try self.joinSymbolicStoredValue(.{ .identity = identity, .value = value }, previous);
+            const retain_empty = if (facts.isEmptyValue(next.value) and state.exactSymbolicValue(identity) == null) blk: {
+                const entry = state.symbolicPointee(identity) orelse break :blk false;
+                const ty = entry.ty orelse break :blk false;
+                break :blk self.typeContainsPointer(ty);
+            } else false;
+            try state.setSymbolicValue(next, strong, retain_empty);
+        }
+    }
+
+    fn symbolicValueAt(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?SymbolicStoredValue {
+        if (state.exactSymbolicValue(identity)) |stored| return stored;
+        const namespace = state.tracker.namespace orelse return null;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.identity != identity) continue;
+            if (projected.projection == .dereference) return null;
+            for (state.symbolic_pointees.items) |parent| {
+                if (parent.identity != projected.parent or parent.generation != projected.parent_generation) continue;
+                const stored = try self.symbolicValueAt(state, parent.identity) orelse return null;
+                return .{ .identity = identity, .value = try self.projectValueFacts(stored.value, &.{projected.projection}), .definite = stored.definite };
+            }
+        }
+        return null;
+    }
+
+    fn reconstructSymbolicValue(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId, original: facts.ValueFacts) anyerror!facts.ValueFacts {
+        if (state.symbolic_values.items.len == 0) return original;
+        const namespace = state.tracker.namespace orelse return original;
+        const parent = for (state.symbolic_pointees.items) |entry| {
+            if (entry.identity == identity) break entry;
+        } else return original;
+        var result = original;
+        var prepared = false;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.projection == .dereference or projected.parent != identity or projected.parent_generation != parent.generation) continue;
+            var changed = false;
+            for (state.symbolic_values.items) |stored| {
+                if (stored.identity == projected.identity or state.symbolicStorageDescendsFrom(stored.identity, projected.identity)) {
+                    changed = true;
+                    break;
+                }
+            }
+            if (!changed) continue;
+            if (!prepared) {
+                // Empty siblings must not inherit another field's reference
+                // facts from a flattened aggregate envelope.
+                if (parent.ty) |ty| if (types.fields(self.graph, ty)) |range| {
+                    const fields = try self.allocator.alloc(facts.FieldFacts, range.len);
+                    for (fields, 0..) |*field, index| {
+                        field.* = .{ .index = @intCast(index), .value = &facts.empty_value_facts };
+                        for (result.fields) |known| if (known.index == index) {
+                            field.* = known;
+                            break;
+                        };
+                    }
+                    result.fields = fields;
+                };
+                prepared = true;
+            }
+            const stored = try self.symbolicValueAt(state, projected.identity);
+            const inherited = try self.projectValueFacts(original, &.{projected.projection});
+            const child = try self.reconstructSymbolicValue(state, projected.identity, if (stored) |known| known.value else inherited);
+            result = try self.replaceProjectedValue(result, projected.projection, child);
+        }
+        return if (prepared) self.refreshProjectedValueRoots(original, result) else original;
+    }
+
+    fn joinSymbolicStoredValue(self: *SafetyChecker, stored: SymbolicStoredValue, other: ?SymbolicStoredValue) !SymbolicStoredValue {
+        const definite = stored.definite and other != null and other.?.definite;
+        var value = try self.mergeValueFacts(stored.value, if (other) |known| known.value else .{});
+        if (!definite) value = try self.withoutExactSymbolicReferences(value);
+        return .{ .identity = stored.identity, .value = value, .definite = definite };
+    }
+
+    fn withoutExactSymbolicReferences(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
+        var value = original;
+        value.referenced_place = null;
+        value.symbolic_pointees = &.{};
+        value.domains = &.{};
+        const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+        for (fields) |*field| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.withoutExactSymbolicReferences(field.value.*);
+            field.value = child;
+        }
+        value.fields = fields;
+        const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+        for (variants) |*variant| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.withoutExactSymbolicReferences(variant.value.*);
+            variant.value = child;
+        }
+        value.variants = variants;
+        return value;
+    }
+
+    const WritePointer = struct {
+        value: facts.ValueFacts,
+        slot: ?facts.Place = null,
+        // Address formation and a captured reference slot can establish one
+        // destination. An arbitrary returned temporary cannot renew aliases.
+        renewable: bool = false,
+    };
+
+    fn renewWriteReferenceSlot(self: *SafetyChecker, state: *FunctionState, operand: WritePointer, renewed: facts.ValueFacts) !void {
+        const slot = operand.slot orelse return;
+        if (state.initializednessAtPlace(slot) != .initialized) return;
+        const current = self.valueAtPlace(state, slot) orelse return;
+        // RHS effects may retarget or consume the slot. Renewal applies only
+        // to the same reference observation captured before those effects.
+        if (sameReferenceObservation(current, operand.value))
+            try state.setPlace(slot, .initialized, renewed);
+    }
+
+    fn evaluateWritePointer(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId, state: *FunctionState) !WritePointer {
+        const node = self.graph.node(node_id);
+        // Address formation produces a reference value, not a reference slot.
+        // Publishing it into the referent would invent initialization before RHS.
+        if (node.content == .address_of)
+            return .{ .value = try self.evaluateAddress(function, node.source, node.content.address_of, state, true), .renewable = true };
+        const access: EvaluatedAccess = switch (node.content) {
+            .binding_use => |binding| return .{ .value = try self.evaluate(function, node_id, state), .slot = .{ .root = binding }, .renewable = true },
+            .struct_field_access, .array_index, .dereference, .choice_payload_access => try self.evaluateAccess(function, node_id, state),
+            else => return .{ .value = try self.evaluate(function, node_id, state) },
+        };
+        const value = try self.readEvaluatedAccess(function, node.source, node.ty, access, state);
+        const slot = access.storage orelse return .{ .value = value };
+        const ty = self.domainStorageType(slot) orelse return .{ .value = value };
+        if (!isPointer(self.graph, ty)) return .{ .value = value };
+        // An unknown index does not identify one stable reference-valued slot.
+        for (slot.projections) |projection| if (projection == .dynamic_index) return .{ .value = value };
+        return .{ .value = value, .slot = slot, .renewable = true };
+    }
+
+    const EvaluatedAccess = struct {
+        storage: ?facts.Place = null,
+        pointer: ?facts.ValueFacts = null,
+        value: ?facts.ValueFacts = null,
+    };
+
+    // Capture address-forming effects once. Projected reads must not ask the
+    // syntax-based Place resolver to execute a pointer-producing call again.
+    fn evaluateAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId, state: *FunctionState) anyerror!EvaluatedAccess {
+        const node = self.graph.node(node_id);
+        return switch (node.content) {
+            .binding_use => |binding| .{ .storage = .{ .root = binding } },
+            .dereference => |access| blk: {
+                const pointer = try self.evaluatePointerUse(function, node.source, access.pointer, state) orelse break :blk .{ .value = .{} };
+                break :blk .{ .storage = pointer.referenced_place, .pointer = pointer };
+            },
+            .struct_field_access => |access| blk: {
+                const parent = try self.evaluateAccess(function, access.value, state);
+                if (parent.storage) |storage| break :blk .{ .storage = try self.project(storage, .{ .field = access.field_index }), .pointer = parent.pointer };
+                if (parent.pointer) |pointer| if (try self.projectSymbolicReference(pointer, access.field_index, state)) |projected|
+                    break :blk .{ .pointer = projected };
+                const aggregate = try self.readEvaluatedAccess(function, node.source, self.graph.node(access.value).ty, parent, state);
+                for (aggregate.fields) |field| if (field.index == access.field_index) break :blk .{ .value = field.value.* };
+                break :blk .{ .value = aggregate };
+            },
+            .array_index => |access| blk: {
+                const pointer = try self.evaluateArrayStorage(function, node.source, access.array_ptr, state) orelse break :blk .{ .value = .{} };
+                _ = try self.evaluate(function, access.index, state);
+                if (pointer.referenced_place) |base| break :blk .{
+                    .storage = try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index),
+                    .pointer = pointer,
+                };
+                if (self.staticIndex(access.index)) |index|
+                    if (try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state)) |projected|
+                        break :blk .{ .pointer = projected };
+                break :blk .{ .pointer = pointer };
+            },
+            .choice_payload_access => |access| try self.evaluateChoiceAccess(function, node.source, access, state),
+            else => .{ .value = try self.evaluate(function, node_id, state) },
+        };
+    }
+
+    fn readEvaluatedAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, ty: ?graph_mod.GlobalTypeId, access: EvaluatedAccess, state: *FunctionState) !facts.ValueFacts {
+        if (access.value) |value| return value;
+        if (access.pointer) |pointer| try self.requireLive(function, source, pointer, state);
+        var value: facts.ValueFacts = .{};
+        if (access.storage) |storage| {
+            try self.requirePlaceInitialized(function, source, storage, state.initializednessAtPlace(storage), state);
+            try self.requireDescendantsInitialized(function, source, storage, state);
+            value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{}), state);
+        } else if (access.pointer) |pointer| {
+            for (pointer.symbolic_pointees) |identity| {
+                var selected = pointer;
+                selected.symbolic_pointees = &.{identity};
+                const contents = try self.readSymbolicValue(state, selected, ty);
+                value = try self.mergeValueFacts(value, contents);
+                if (pointer.symbolic_pointees.len == 1) value = contents;
+            }
+        }
+        if (access.pointer) |pointer| return self.envelopeOpaqueRead(state, value, ty, pointer);
+        // A stored scalar copy does not borrow the opaque allocation whose
+        // metadata supplied it. Apply the same typed storage-envelope
+        // projection used for indirect reads.
+        return self.addOpaqueReadEnvelope(value, ty, &.{});
+    }
+
     fn evaluateAddress(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
@@ -4830,18 +6187,29 @@ pub const SafetyChecker = struct {
                 }
                 try self.refreshStorageGenerationChecked(source, state, place);
                 const value = try self.evaluate(function, assignment.value, state);
-                try self.setPlace(state, place, .initialized, value);
+                try state.setPlace(place, .initialized, value);
             }
         }
-        try self.validateAddressAccess(function, source, child, state);
-        const storage = try self.resolvePlace(child, state);
-        if (!allow_moved_destination) if (storage) |target| if (self.initializednessAtPlace(state, target) == .moved)
+        const captured: ?EvaluatedAccess = switch (self.graph.node(child).content) {
+            .binding_use, .dereference, .struct_field_access, .array_index, .choice_payload_access => try self.evaluateAccess(function, child, state),
+            else => null,
+        };
+        if (captured == null) try self.validateAddressAccess(function, source, child, state);
+        const storage = if (captured) |access| access.storage else try self.resolvePlace(child, state);
+        if (storage == null) if (captured) |access| if (access.pointer) |pointer| {
+            if (pointer.symbolic_pointees.len != 0) return pointer;
+        };
+        if (!allow_moved_destination) if (storage) |target| if (state.initializednessAtPlace(target) == .moved)
             try self.reportMovedPlace(source, target, state);
-        const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
+        const opaque_provenance = if (captured != null and captured.?.pointer != null) blk: {
+            var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+            try self.collectOpaqueProvenancesCarriedBy(state, captured.?.pointer.?, &provenances);
+            break :blk try provenances.toOwnedSlice();
+        } else try self.opaqueProvenanceForAccess(child, state);
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         if (opaque_provenance.len == 0) {
             if (storage) |target| {
-                const generation = try self.storageGeneration(state, target);
+                const generation = try state.storageGeneration(target);
                 try appendDependencyFact(&dependencies, .{ .root = generation });
                 // Taking the address of an input/output slot borrows this
                 // function's physical storage. Summaries can also materialize
@@ -4874,7 +6242,7 @@ pub const SafetyChecker = struct {
             .struct_field_access => |access| try self.validateAddressAccess(function, source, access.value, state),
             .choice_payload_access => |access| try self.validateAddressAccess(function, source, access.value, state),
             .array_index => |access| {
-                _ = try self.evaluatePointerUse(function, source, access.array_ptr, state);
+                _ = try self.evaluateArrayStorage(function, source, access.array_ptr, state);
                 _ = try self.evaluate(function, access.index, state);
             },
             else => {},
@@ -4883,7 +6251,7 @@ pub const SafetyChecker = struct {
 
     fn reportMovedPlace(self: *SafetyChecker, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
         const name = self.graph.text(self.graph.binding(storage.root).name);
-        const moved_at = if (self.getPlace(state, storage)) |place| place.moved_at else null;
+        const moved_at = if (state.getPlace(storage)) |place| place.moved_at else null;
         if (moved_at) |origin| if (self.location(origin)) |origin_location| {
             const position = self.diagnostics.lineColumn(origin_location);
             if (storage.projections.len == 0)
@@ -4897,7 +6265,7 @@ pub const SafetyChecker = struct {
 
     fn reportMovedReassignment(self: *SafetyChecker, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
         const name = self.graph.text(self.graph.binding(storage.root).name);
-        const moved_at = if (self.getPlace(state, storage)) |place| place.moved_at else null;
+        const moved_at = if (state.getPlace(storage)) |place| place.moved_at else null;
         if (moved_at) |origin| if (self.location(origin)) |origin_location| {
             const position = self.diagnostics.lineColumn(origin_location);
             return self.report(source, "binding '{s}' was moved and cannot be reassigned (moved at {s}:{d}:{d})", .{ name, self.diagnostics.path(origin_location), position.line, position.column });
@@ -4927,8 +6295,11 @@ pub const SafetyChecker = struct {
                 break :blk try self.project(base, .{ .variant = index });
             },
             .array_index => |access| blk: {
-                const pointer = try self.evaluate(@enumFromInt(0), access.array_ptr, state);
-                const base = pointer.referenced_place orelse break :blk null;
+                const ty = self.graph.node(access.array_ptr).ty orelse break :blk null;
+                const base = if (types.arrayElement(self.graph, ty) != null)
+                    try self.resolvePlace(access.array_ptr, state) orelse break :blk null
+                else
+                    (try self.evaluate(@enumFromInt(0), access.array_ptr, state)).referenced_place orelse break :blk null;
                 break :blk try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index);
             },
             else => null,
@@ -4940,97 +6311,6 @@ pub const SafetyChecker = struct {
         @memcpy(projections[0..base.projections.len], base.projections);
         projections[base.projections.len] = projection;
         return .{ .root = base.root, .projections = projections };
-    }
-
-    fn storageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !facts.ValidityRootId {
-        for (state.storage_generations.items) |*entry| if (entry.storage.eql(storage)) {
-            // Both paths may leave an initialized Place with different
-            // incarnations. A new borrow observes the current storage, while
-            // historical aliases keep their original, conservatively joined
-            // roots. Materialize only on demand to avoid growing loop states.
-            if (entry.needs_current_generation and self.initializednessAtPlace(state, storage) == .initialized) {
-                entry.generation = try state.tracker.establish(.fresh);
-                entry.needs_current_generation = false;
-            }
-            return entry.generation;
-        };
-        if (state.tracker.namespace) |namespace| {
-            for (namespace.initial_storage.items) |initial| if (initial.storage.eql(storage)) {
-                const index = @intFromEnum(initial.root);
-                if (index >= state.tracker.roots.items.len or !state.tracker.roots.items[index].present) {
-                    try state.tracker.materialize(initial.root);
-                }
-                if (state.tracker.isAlive(initial.root)) {
-                    try state.storage_generations.append(.{ .storage = storage, .generation = initial.root });
-                    return initial.root;
-                }
-                // An ended incarnation cannot become the initial generation
-                // again when a lexical slot is reused in a later iteration.
-                const root = try state.tracker.establish(.fresh);
-                try state.storage_generations.append(.{ .storage = storage, .generation = root });
-                return root;
-            };
-            const root = try state.tracker.establish(.fresh);
-            try namespace.initial_storage.append(self.allocator, .{ .storage = storage, .root = root });
-            try state.storage_generations.append(.{ .storage = storage, .generation = root });
-            return root;
-        }
-        const root = try state.tracker.establish(.fresh);
-        try state.storage_generations.append(.{ .storage = storage, .generation = root });
-        return root;
-    }
-
-    fn setPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, initializedness: value_state.Initializedness, value: facts.ValueFacts) !void {
-        self.invalidateChoiceRefinements(state, storage);
-        // Replacing an aggregate invalidates facts recorded for its old
-        // projections. Otherwise a later read can observe stale facts from a
-        // preceding iteration rather than the newly assigned aggregate.
-        var index: usize = 0;
-        while (index < state.places.items.len) {
-            const candidate = state.places.items[index].storage;
-            if (!candidate.eql(storage) and storage.isPrefixOf(candidate)) {
-                _ = state.places.orderedRemove(index);
-            } else index += 1;
-        }
-        var stored = false;
-        for (state.places.items) |*entry| if (entry.storage.eql(storage)) {
-            entry.initializedness = initializedness;
-            if (initializedness != .moved) entry.moved_at = null;
-            entry.value = value;
-            stored = true;
-            break;
-        };
-        if (!stored)
-            try state.places.append(.{ .storage = storage, .initializedness = initializedness, .value = value });
-        if (initializedness == .initialized)
-            try self.recordKnownChoiceVariants(state, storage, value);
-    }
-
-    fn markMoved(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, value: facts.ValueFacts, source: primitives.SourceRef) !void {
-        try self.setPlace(state, storage, .moved, value);
-        if (self.getPlace(state, storage)) |place| place.moved_at = source;
-    }
-
-    fn recordKnownChoiceVariants(
-        self: *SafetyChecker,
-        state: *FunctionState,
-        storage: facts.Place,
-        value: facts.ValueFacts,
-    ) !void {
-        if (value.known_choice_variant) |variant_index|
-            self.setActiveVariant(state, storage, variant_index);
-        for (value.fields) |field|
-            try self.recordKnownChoiceVariants(
-                state,
-                try self.project(storage, .{ .field = field.index }),
-                field.value.*,
-            );
-    }
-
-    fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) ?*facts.PlaceFacts {
-        _ = self;
-        for (state.places.items) |*entry| if (entry.storage.eql(storage)) return entry;
-        return null;
     }
 
     fn requireInitialized(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, state: value_state.Initializedness) !void {
@@ -5051,6 +6331,10 @@ pub const SafetyChecker = struct {
         initializedness: value_state.Initializedness,
         state: *FunctionState,
     ) !void {
+        // Projected writes can complete vacant aggregates without a whole-value
+        // write. This is a read proof, not a generation change: historical
+        // references must remain invalid after destruction or replacement.
+        if (initializedness == .deinitialized and try self.storageReadiness(state, storage) == .complete) return;
         if (initializedness == .moved) return self.reportMovedPlace(source, storage, state);
         if (initializedness == .maybe_initialized) {
             const name = self.graph.text(self.graph.binding(storage.root).name);
@@ -5087,9 +6371,9 @@ pub const SafetyChecker = struct {
     fn captureContractStorage(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId, dependencies: *std.array_list.Managed(facts.ValidityDependency), visited: *std.array_list.Managed(facts.Place)) anyerror!void {
         for (visited.items) |previous| if (previous.eql(storage)) return;
         try visited.append(storage);
-        try self.requirePlaceInitialized(function, source, storage, self.initializednessAtPlace(state, storage), state);
+        try self.requirePlaceInitialized(function, source, storage, state.initializednessAtPlace(storage), state);
         try self.requireDescendantsInitialized(function, source, storage, state);
-        try appendDependencyFact(dependencies, .{ .root = try self.storageGeneration(state, storage) });
+        try appendDependencyFact(dependencies, .{ .root = try state.storageGeneration(storage) });
         const value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
         var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer roots.deinit();
@@ -5132,16 +6416,28 @@ pub const SafetyChecker = struct {
         value: facts.ValueFacts,
         state: *FunctionState,
     ) !void {
+        return self.rejectEscapingValue(function, source, value, state, .output);
+    }
+
+    fn rejectEscapingValue(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+        destination: enum { output, caller_storage },
+    ) !void {
         if (self.escapingLocalRoot(function, value, state)) |root| {
             var name: []const u8 = "local or temporary";
             for (state.storage_generations.items) |entry| if (entry.generation == root) {
                 name = self.graph.text(self.graph.binding(entry.storage.root).name);
                 break;
             };
-            try self.report(source, "function output cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{name});
+            const subject = if (destination == .output) "function output" else "caller storage";
+            try self.report(source, "{s} cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{ subject, name });
             return;
         }
-        if (valueDependsOnDeadRoot(value, state)) {
+        if (destination == .output and valueDependsOnDeadRoot(value, state)) {
             try self.report(source, "returned reference depends on a root that has ended", .{});
         }
     }
@@ -5155,7 +6451,7 @@ pub const SafetyChecker = struct {
         for (self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len]) |binding| {
             const storage = facts.Place{ .root = binding };
             const output = self.valueAtPlace(state, storage) orelse continue;
-            if (self.initializednessAtPlace(state, storage) != .initialized) continue;
+            if (state.initializednessAtPlace(storage) != .initialized) continue;
             const source = self.graph.bindings.items[@intFromEnum(binding)].source;
             try self.rejectEscapingLocalRoots(function, source, output, state);
             // Field assignments have their own authoritative place records.
@@ -5166,6 +6462,29 @@ pub const SafetyChecker = struct {
                 try self.rejectEscapingLocalRoots(function, source, place.value, state);
             }
         }
+        for (state.symbolic_values.items) |stored| {
+            if (!self.symbolicSlotMayBeAvailable(state, stored.identity)) continue;
+            const contents = try self.reconstructSymbolicValue(state, stored.identity, stored.value);
+            try self.rejectEscapingValue(function, self.graph.declaration(record.declaration).source, contents, state, .caller_storage);
+        }
+    }
+
+    fn symbolicSlotMayBeAvailable(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
+        const entry = for (state.symbolic_pointees.items) |pointee| {
+            if (pointee.identity == identity) break pointee;
+        } else return false;
+        if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return false;
+        const namespace = state.tracker.namespace orelse return true;
+        for (namespace.projected_storage.items) |projected| {
+            if (projected.identity != identity) continue;
+            for (state.symbolic_pointees.items) |parent| {
+                if (parent.identity != projected.parent) continue;
+                if (parent.generation != null and parent.generation != projected.parent_generation) return false;
+                return self.symbolicSlotMayBeAvailable(state, parent.identity);
+            }
+            return false;
+        }
+        return true;
     }
 
     fn valueDependsOnLocalStorage(
@@ -5239,55 +6558,66 @@ pub const SafetyChecker = struct {
     }
 
     fn endBlockStorage(self: *SafetyChecker, block_id: graph_mod.GlobalBlockId, state: *FunctionState) !void {
-        // TODO: Preserve lexical array roots through imported Errable payload
-        // extraction; a borrowed aggregate assigned into an outer binding can
-        // otherwise lose its dependency when the inner array's scope ends.
+        // A command's outer scope belongs to the session. Nested lexical
+        // scopes still end normally; accepted outer storage survives commands.
+        if (self.continuation) |continuation| {
+            if (self.graph.function(continuation.function).body == block_id and state == &continuation.state.state) return;
+        }
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.nodes.items[@intFromEnum(node)].content) {
-            .binding_declaration => |binding| {
-                var i: usize = 0;
-                while (i < state.storage_generations.items.len) {
-                    const entry = state.storage_generations.items[i];
-                    if (entry.storage.root == binding) {
-                        try appendRootFact(&state.lexical_storage_generations, entry.generation);
-                        state.tracker.end(entry.generation);
-                        _ = state.storage_generations.orderedRemove(i);
-                    } else i += 1;
-                }
-                i = 0;
-                while (i < state.places.items.len) {
-                    if (state.places.items[i].storage.root == binding) _ = state.places.orderedRemove(i) else i += 1;
-                }
-            },
+            .binding_declaration => |binding| try state.endLexicalStorage(binding),
             else => {},
         };
+    }
+
+    const SymbolicGenerationJoin = struct {
+        identity: facts.SymbolicPointeeId,
+        left: facts.ValidityRootId,
+        right: facts.ValidityRootId,
+        result: facts.ValidityRootId,
+    };
+
+    fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: *const FunctionState, right_state: *const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
+        const merged = try self.mergeValueFacts(left, right);
+        if (generations.len == 0) return merged;
+        var result = merged;
+        if (left.symbolic_pointees.len == 1 and right.symbolic_pointees.len == 1 and
+            left.symbolic_pointees[0] == right.symbolic_pointees[0] and
+            left.opaque_provenance.len == 0 and right.opaque_provenance.len == 0 and
+            left_state.tracker.dependenciesAreAlive(left) and right_state.tracker.dependenciesAreAlive(right))
+        {
+            for (generations) |generation| {
+                if (generation.identity != left.symbolic_pointees[0]) continue;
+                // Only observations of each incoming current value follow the
+                // joined incarnation. Historical aliases keep their old roots.
+                if (valueDependsOnRoot(left, generation.left) and valueDependsOnRoot(right, generation.right))
+                    result = try facts.replaceValueRoots(self.allocator, result, &.{ generation.left, generation.right }, generation.result);
+            }
+        }
+        var projected = false;
+        for (left.fields) |a| for (right.fields) |b| if (a.index == b.index) {
+            result = try self.replaceProjectedValue(result, .{ .field = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
+            projected = true;
+            break;
+        };
+        for (left.variants) |a| for (right.variants) |b| if (a.index == b.index) {
+            result = try self.replaceProjectedValue(result, .{ .variant = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
+            projected = true;
+            break;
+        };
+        return if (projected) self.refreshProjectedValueRoots(merged, result) else result;
     }
 
     fn joinState(self: *SafetyChecker, destination: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
         if (!left.reachable) return self.copyState(destination, right);
         if (!right.reachable) return self.copyState(destination, left);
 
-        var joined = FunctionState.init(self.allocator);
+        var joined = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
         joined.tracker.namespace = left.tracker.namespace;
         std.debug.assert(left.tracker.namespace == right.tracker.namespace);
         errdefer joined.deinit();
 
-        for (left.symbolic_pointees.items) |pointee| {
-            var result = pointee;
-            for (right.symbolic_pointees.items) |other| {
-                if (other.identity == pointee.identity and other.initializedness != pointee.initializedness)
-                    result.initializedness = .maybe_initialized;
-            }
-            try joined.symbolic_pointees.append(result);
-        }
-        for (right.symbolic_pointees.items) |pointee| {
-            var found = false;
-            for (left.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
-                found = true;
-                break;
-            };
-            if (!found) try joined.symbolic_pointees.append(pointee);
-        }
+        try joined.joinSymbolicPointees(left, right);
 
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
@@ -5321,35 +6651,59 @@ pub const SafetyChecker = struct {
             });
         }
 
-        const capability_count = @max(left.storage_capabilities.items.len, right.storage_capabilities.items.len);
-        for (0..capability_count) |index| {
-            const left_state: StorageCapabilityState = if (index < left.storage_capabilities.items.len)
-                left.storage_capabilities.items[index]
-            else
-                .consumed;
-            const right_state: StorageCapabilityState = if (index < right.storage_capabilities.items.len)
-                right.storage_capabilities.items[index]
-            else
-                .consumed;
-            try joined.storage_capabilities.append(if (left_state == right_state) left_state else .maybe_consumed);
+        var generations: std.ArrayList(SymbolicGenerationJoin) = .empty;
+        defer generations.deinit(self.allocator);
+        for (joined.symbolic_pointees.items) |*pointee| {
+            if (pointee.generation != null or pointee.initializedness != .initialized or pointee.backing == null) continue;
+            const a = for (left.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry;
+            } else continue;
+            const b = for (right.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry;
+            } else continue;
+            const left_generation = a.generation orelse continue;
+            const right_generation = b.generation orelse continue;
+            if (!left.tracker.isAlive(left_generation) or !right.tracker.isAlive(right_generation) or
+                !left.tracker.isAlive(pointee.backing.?) or !right.tracker.isAlive(pointee.backing.?)) continue;
+            const current = try joined.tracker.establish(.fresh);
+            pointee.generation = current;
+            try generations.append(self.allocator, .{ .identity = pointee.identity, .left = left_generation, .right = right_generation, .result = current });
         }
+
+        for (left.symbolic_values.items) |stored| {
+            const other = try self.symbolicValueAt(right, stored.identity);
+            var merged = try self.joinSymbolicStoredValue(stored, other);
+            if (generations.items.len != 0 and stored.definite and other != null and other.?.definite)
+                merged.value = try self.joinObservedSymbolicValues(stored.value, other.?.value, left, right, generations.items);
+            try joined.symbolic_values.append(merged);
+        }
+        for (right.symbolic_values.items) |stored| {
+            var found = false;
+            for (left.symbolic_values.items) |other| if (other.identity == stored.identity) {
+                found = true;
+                break;
+            };
+            if (!found) try joined.symbolic_values.append(try self.joinSymbolicStoredValue(stored, try self.symbolicValueAt(left, stored.identity)));
+        }
+
+        try joined.joinCapabilities(left, right);
 
         for (left.places.items) |left_place| {
             var merged = left_place;
             // A projection written on only one path still has a value on the
             // other path: it inherits that path's nearest aggregate record.
-            const right_place = if (findPlaceConst(right, left_place.storage)) |exact| exact.* else try self.inheritedPlaceFacts(right, left_place.storage);
+            const right_place = if (right.findPlace(left_place.storage)) |exact| exact.* else try self.inheritedPlaceFacts(right, left_place.storage);
             merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
             merged.moved_at = if (merged.initializedness == .moved)
                 if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
             else
                 null;
-            merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+            merged.value = try self.joinObservedSymbolicValues(left_place.value, right_place.value, left, right, generations.items);
 
             try joined.places.append(merged);
         }
         for (right.places.items) |right_place| {
-            if (findPlaceConst(left, right_place.storage) == null) {
+            if (left.findPlace(right_place.storage) == null) {
                 const left_place = try self.inheritedPlaceFacts(left, right_place.storage);
                 var merged = right_place;
                 merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
@@ -5357,22 +6711,10 @@ pub const SafetyChecker = struct {
                     if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
                 else
                     null;
-                merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+                merged.value = try self.joinObservedSymbolicValues(left_place.value, right_place.value, left, right, generations.items);
 
                 try joined.places.append(merged);
             }
-        }
-
-        for (left.ownership_edges.items) |edge| try joined.ownership_edges.append(edge);
-        for (right.ownership_edges.items) |edge| {
-            var found = false;
-            for (joined.ownership_edges.items) |existing| {
-                if (existing.owner == edge.owner and existing.owned == edge.owned) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) try joined.ownership_edges.append(edge);
         }
 
         try joined.storage_generations.appendSlice(left.storage_generations.items);
@@ -5382,8 +6724,8 @@ pub const SafetyChecker = struct {
                 if (existing.storage.eql(candidate.storage)) {
                     existing.needs_current_generation = existing.needs_current_generation or candidate.needs_current_generation or
                         (existing.generation != candidate.generation and
-                            self.initializednessAtPlace(@constCast(left), candidate.storage) == .initialized and
-                            self.initializednessAtPlace(@constCast(right), candidate.storage) == .initialized);
+                            left.initializednessAtPlace(candidate.storage) == .initialized and
+                            right.initializednessAtPlace(candidate.storage) == .initialized);
                     found = true;
                     break;
                 }
@@ -5395,11 +6737,11 @@ pub const SafetyChecker = struct {
 
         for (left.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-            try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
+            try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
         }
         for (right.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-            try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
+            try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
         }
 
         for (joined.opaque_storages.items) |*domain| {
@@ -5447,11 +6789,12 @@ pub const SafetyChecker = struct {
         // its generations before cloning entry state so first address-taking
         // in the body is not mistaken for a conditionally created lifetime.
         const existing_places = try self.allocator.dupe(facts.PlaceFacts, state.places.items);
-        for (existing_places) |place_facts| _ = try self.storageGeneration(state, place_facts.storage);
+        defer self.allocator.free(existing_places);
+        for (existing_places) |place_facts| _ = try state.storageGeneration(place_facts.storage);
 
-        var entry = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        var entry = try self.cloneState(state);
         defer entry.deinit();
-        var current = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        var current = try self.cloneState(state);
         defer current.deinit();
         var last_break: ?FunctionState = null;
         defer if (last_break) |*break_state| break_state.deinit();
@@ -5459,7 +6802,7 @@ pub const SafetyChecker = struct {
         defer join_context.deinit();
 
         for (0..8) |_| {
-            var iteration = try current.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            var iteration = try self.cloneState(&current);
             defer iteration.deinit();
             var transfers: LoopTransfers = .{};
             defer transfers.deinit();
@@ -5472,12 +6815,14 @@ pub const SafetyChecker = struct {
             }
 
             if (last_break) |*break_state| break_state.deinit();
+            last_break = null;
             last_break = if (transfers.break_state) |*break_state|
-                try break_state.clone(self.allocator, if (self.collect_stats) &self.stats else null)
+                try self.cloneState(break_state)
             else
                 null;
 
-            var next = try entry.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+            var next = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
+            errdefer next.deinit();
             try self.joinState(&next, &entry, &iteration);
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             if (statesEqual(&current, &next)) {
@@ -5501,9 +6846,10 @@ pub const SafetyChecker = struct {
         left: *const FunctionState,
         right: *const FunctionState,
     ) !void {
+        try self.widenLoopSymbolicObservations(context, joined, left, right);
         for (joined.places.items) |*joined_place| {
-            if (self.initializednessAtPlace(@constCast(left), joined_place.storage) != .initialized or
-                self.initializednessAtPlace(@constCast(right), joined_place.storage) != .initialized) continue;
+            if (left.initializednessAtPlace(joined_place.storage) != .initialized or
+                right.initializednessAtPlace(joined_place.storage) != .initialized) continue;
             const left_value = self.valueAtPlace(@constCast(left), joined_place.storage) orelse facts.ValueFacts{};
             const right_value = self.valueAtPlace(@constCast(right), joined_place.storage) orelse facts.ValueFacts{};
 
@@ -5679,11 +7025,53 @@ pub const SafetyChecker = struct {
             const phi = try self.loopRootPhi(context, joined, logical_storage);
             for (joined.places.items) |*related| {
                 if (!logical_storage.isPrefixOf(related.storage)) continue;
-                related.value = try self.replaceValueRoots(related.value, alternatives[0..alternative_count], phi);
+                related.value = try facts.replaceValueRoots(self.allocator, related.value, alternatives[0..alternative_count], phi);
             }
-            self.replaceOwnershipEdgeRoots(joined, alternatives[0..alternative_count], phi);
         }
         self.trimUnreferencedLoopRoots(context, joined);
+    }
+
+    fn widenLoopSymbolicObservations(self: *SafetyChecker, context: *LoopJoinContext, joined: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
+        for (joined.symbolic_pointees.items) |*pointee| {
+            if (pointee.initializedness != .initialized) continue;
+            const current = pointee.generation orelse continue;
+            if (!joined.tracker.isAlive(current)) continue;
+            const a = for (left.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry.generation;
+            } else null;
+            const b = for (right.symbolic_pointees.items) |entry| {
+                if (entry.identity == pointee.identity) break entry.generation;
+            } else null;
+            if (a == null or b == null or a == b or current == a or current == b) continue;
+            var existing: ?facts.ValidityRootId = null;
+            for (context.symbolic.items) |entry| if (entry.identity == pointee.identity) {
+                existing = entry.root;
+                break;
+            };
+            if (existing == null) {
+                try context.symbolic.append(.{ .identity = pointee.identity, .root = current });
+                continue;
+            }
+            const canonical = existing.?;
+            // Reusing an observation is legal only after no historical value
+            // retains it. Never revive a root carried by an earlier alias.
+            var retained = false;
+            for (joined.places.items) |place| if (retainsLoopObservation(place.value, canonical)) {
+                retained = true;
+                break;
+            };
+            for (joined.symbolic_values.items) |stored| if (retainsLoopObservation(stored.value, canonical)) {
+                retained = true;
+                break;
+            };
+            if (retained or rootIsStructurallyReferenced(joined, canonical)) continue;
+            try joined.tracker.materialize(canonical);
+            joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
+            for (joined.places.items) |*place| place.value = try facts.replaceValueRoots(self.allocator, place.value, &.{current}, canonical);
+            for (joined.symbolic_values.items) |*stored| stored.value = try facts.replaceValueRoots(self.allocator, stored.value, &.{current}, canonical);
+            pointee.generation = canonical;
+            joined.tracker.end(current);
+        }
     }
 
     fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) void {
@@ -5691,6 +7079,10 @@ pub const SafetyChecker = struct {
             const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
             var referenced = false;
             for (context.roots.items) |entry| if (entry.root == root) {
+                referenced = true;
+                break;
+            };
+            if (!referenced) for (context.symbolic.items) |entry| if (entry.root == root) {
                 referenced = true;
                 break;
             };
@@ -5728,34 +7120,6 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn replaceOwnershipEdgeRoots(
-        self: *SafetyChecker,
-        state: *FunctionState,
-        sources: []const facts.ValidityRootId,
-        replacement: facts.ValidityRootId,
-    ) void {
-        var write: usize = 0;
-        for (state.ownership_edges.items) |edge| {
-            const rewritten = OwnershipEdge{
-                .owner = if (containsRoot(sources, edge.owner)) replacement else edge.owner,
-                .owned = if (containsRoot(sources, edge.owned)) replacement else edge.owned,
-            };
-            var duplicate = false;
-            for (state.ownership_edges.items[0..write]) |existing| {
-                if (existing.owner == rewritten.owner and existing.owned == rewritten.owned) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                state.ownership_edges.items[write] = rewritten;
-                write += 1;
-            }
-        }
-        state.ownership_edges.shrinkRetainingCapacity(write);
-        _ = self;
-    }
-
     fn loopRootPhi(
         self: *SafetyChecker,
         context: *LoopJoinContext,
@@ -5777,55 +7141,24 @@ pub const SafetyChecker = struct {
         return root;
     }
 
-    fn replaceValueRoots(
-        self: *SafetyChecker,
-        value: facts.ValueFacts,
-        sources: []const facts.ValidityRootId,
-        replacement: facts.ValidityRootId,
-    ) !facts.ValueFacts {
-        var result = value;
-        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
-        for (value.dependencies) |dependency|
-            try appendDependencyFact(&dependencies, .{ .root = if (containsRoot(sources, dependency.root)) replacement else dependency.root });
-        result.dependencies = try dependencies.toOwnedSlice();
-        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        for (value.owned_roots) |root|
-            try appendRootFact(&owned_roots, if (containsRoot(sources, root)) replacement else root);
-        result.owned_roots = try owned_roots.toOwnedSlice();
-        const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
-        for (value.fields, 0..) |field, index| {
-            const stored = try self.allocator.create(facts.ValueFacts);
-            stored.* = try self.replaceValueRoots(field.value.*, sources, replacement);
-            fields[index] = .{ .index = field.index, .value = stored };
-        }
-        result.fields = fields;
-        const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
-        for (value.variants, 0..) |variant, index| {
-            const stored = try self.allocator.create(facts.ValueFacts);
-            stored.* = try self.replaceValueRoots(variant.value.*, sources, replacement);
-            variants[index] = .{ .index = variant.index, .value = stored };
-        }
-        result.variants = variants;
-        return result;
-    }
-
     fn mergeLoopTransfer(self: *SafetyChecker, destination: anytype, source: *const FunctionState) !void {
         const Destination = @TypeOf(destination.*);
         if (comptime Destination == ?FunctionState) {
             if (destination.*) |*current| {
-                var joined = try current.clone(self.allocator, if (self.collect_stats) &self.stats else null);
-                try self.joinState(&joined, current, source);
-                current.deinit();
-                current.* = joined;
+                try self.joinState(current, current, source);
             } else {
-                destination.* = try source.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                destination.* = try self.cloneState(source);
             }
         } else {
             if (!destination.*.reachable) {
                 try self.copyState(destination, source);
             } else {
-                var joined = try destination.*.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                var joined = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
+                errdefer joined.deinit();
                 try self.joinState(&joined, destination, source);
+                var join_context = LoopJoinContext.init(self.allocator);
+                defer join_context.deinit();
+                try self.widenLoopOwnedRoots(&join_context, &joined, destination, source);
                 destination.deinit();
                 destination.* = joined;
             }
@@ -5841,6 +7174,10 @@ pub const SafetyChecker = struct {
         materialized: *const FunctionState,
         other: *const FunctionState,
     ) bool {
+        if (materialized.tracker.namespace) |namespace| for (namespace.projected_storage.items) |entry| {
+            if (entry.generation != root and entry.backing != root) continue;
+            if (other.initialProjectedPointee(entry.identity) != null) return true;
+        };
         var storage: ?facts.Place = null;
         for (materialized.storage_generations.items) |entry| if (entry.generation == root) {
             storage = entry.storage;
@@ -5855,14 +7192,14 @@ pub const SafetyChecker = struct {
         var projection_count = target.projections.len;
         while (true) {
             const prefix = facts.Place{ .root = target.root, .projections = target.projections[0..projection_count] };
-            if (findPlaceConst(other, prefix)) |stored| return stored.initializedness == .initialized;
+            if (other.findPlace(prefix)) |stored| return stored.initializedness == .initialized;
             if (projection_count == 0) return false;
             projection_count -= 1;
         }
     }
 
     fn copyState(self: *SafetyChecker, out: *FunctionState, source: *const FunctionState) !void {
-        const clone = try source.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+        const clone = try self.cloneState(source);
         out.deinit();
         out.* = clone;
     }
@@ -5874,22 +7211,15 @@ pub const SafetyChecker = struct {
         candidate.* = old;
     }
 
-    fn validateUniqueOwnership(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, state: *FunctionState) !void {
-        _ = function;
-        for (state.ownership_edges.items, 0..) |edge, index| for (state.ownership_edges.items[index + 1 ..]) |other| {
-            if (edge.owned == other.owned and edge.owner != other.owner) {
-                try self.report(source, "resource has multiple live owners", .{});
-                return;
-            }
-        };
-    }
-
     fn refineChoice(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, variant: graph_mod.GlobalVariantId, active: bool) !void {
         const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return;
         const index = variantIndex(self.graph, ty, variant) orelse return;
-        const storage = try self.resolvePlace(node, state);
+        return self.refineChoiceStorage(state, node, ty, index, active, try self.resolvePlace(node, state));
+    }
+
+    fn refineChoiceStorage(self: *SafetyChecker, state: *FunctionState, node: graph_mod.GlobalNodeId, ty: graph_mod.GlobalTypeId, index: u32, active: bool, storage: ?facts.Place) !void {
         if (storage == null) {
-            if (active) try self.setTemporaryActiveVariant(state, node, index);
+            if (active) try state.setTemporaryActiveVariant(node, index);
             return;
         }
         const target = storage.?;
@@ -5899,13 +7229,13 @@ pub const SafetyChecker = struct {
                     try self.activate_conditional_resources(state, payload.value.*);
                     break;
                 };
-            self.clearRejectedVariant(state, target, index);
-            self.setActiveVariant(state, target, index);
+            state.clearRejectedVariant(target, index);
+            try state.setActiveVariant(target, index);
             return;
         }
 
-        self.clearActiveVariant(state, target, index);
-        self.setRejectedVariant(state, target, index);
+        state.clearActiveVariant(target, index);
+        try state.setRejectedVariant(target, index);
 
         // Once every other variant has been rejected, the remaining one is
         // proven active. Temporary expressions only retain positive proofs;
@@ -5914,7 +7244,7 @@ pub const SafetyChecker = struct {
         var remaining: ?u32 = null;
         for (0..variants.len) |offset| {
             const candidate: u32 = @intCast(offset);
-            if (self.variantRejected(state, target, candidate)) continue;
+            if (state.variantRejected(target, candidate)) continue;
             if (remaining != null) return;
             remaining = candidate;
         }
@@ -5923,7 +7253,7 @@ pub const SafetyChecker = struct {
                 try self.activate_conditional_resources(state, payload.value.*);
                 break;
             };
-            self.setActiveVariant(state, target, only);
+            try state.setActiveVariant(target, only);
         }
     }
 
@@ -5936,7 +7266,7 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (current) for (state.opaque_storages.items) |domain| if (domain.storage.eql(outcome.storage) and domain.outcome_guard == outcome.guard) {
-                    self.markOpaqueStorageEmpty(state, outcome.storage);
+                    state.markOpaqueStorageEmpty(outcome.storage);
                     break;
                 };
                 continue;
@@ -5955,8 +7285,8 @@ pub const SafetyChecker = struct {
                 if (@intFromEnum(relocation.generation) >= state.tracker.roots.items.len) continue;
                 const destination_root = &state.tracker.roots.items[@intFromEnum(relocation.generation)];
                 if (destination_root.state != .maybe_alive or destination_root.outcome_guard != outcome.guard or
-                    self.initializednessAtPlace(state, outcome.storage) != .maybe_initialized or
-                    self.initializednessAtPlace(state, relocation.destination) != .maybe_initialized) continue;
+                    state.initializednessAtPlace(outcome.storage) != .maybe_initialized or
+                    state.initializednessAtPlace(relocation.destination) != .maybe_initialized) continue;
                 var destination_current = false;
                 for (state.storage_generations.items) |generation| if (generation.storage.eql(relocation.destination) and
                     generation.generation == relocation.generation and !generation.needs_current_generation)
@@ -5968,23 +7298,23 @@ pub const SafetyChecker = struct {
                 destination_root.outcome_guard = 0;
                 if (relocation.moved) {
                     try self.endStorageGenerationsUnder(outcome.source, state, outcome.storage);
-                    try self.setPlace(state, outcome.storage, .moved, .{});
+                    try state.setPlace(outcome.storage, .moved, .{});
                     destination_root.state = .alive;
-                    if (self.getPlace(state, relocation.destination)) |place| place.initializedness = .initialized;
+                    if (state.getPlace(relocation.destination)) |place| place.initializedness = .initialized;
                 } else {
                     try self.endStorageGenerationsUnder(outcome.source, state, relocation.destination);
-                    try self.setPlace(state, relocation.destination, relocation.available_state, .{});
+                    try state.setPlace(relocation.destination, relocation.available_state, .{});
                     root.state = .alive;
-                    if (self.getPlace(state, outcome.storage)) |place| place.initializedness = .initialized;
+                    if (state.getPlace(outcome.storage)) |place| place.initializedness = .initialized;
                 }
                 continue;
             }
             if (outcome.resource_state) |initializedness| {
-                if (self.initializednessAtPlace(state, outcome.storage) != .maybe_initialized) continue;
+                if (state.initializednessAtPlace(outcome.storage) != .maybe_initialized) continue;
                 if (initializedness == .deinitialized) {
                     _ = try self.endRoots(outcome.source, state, outcome.owned_roots);
                     try self.endStorageGenerationsUnder(outcome.source, state, outcome.storage);
-                    try self.setPlace(state, outcome.storage, .deinitialized, .{});
+                    try state.setPlace(outcome.storage, .deinitialized, .{});
                 } else {
                     root.state = .alive;
                     for (outcome.owned_roots) |owned| {
@@ -5994,7 +7324,7 @@ pub const SafetyChecker = struct {
                             entry.outcome_guard = 0;
                         }
                     }
-                    if (self.getPlace(state, outcome.storage)) |place| place.initializedness = .initialized;
+                    if (state.getPlace(outcome.storage)) |place| place.initializedness = .initialized;
                 }
                 continue;
             }
@@ -6070,104 +7400,6 @@ pub const SafetyChecker = struct {
         return null;
     }
 
-    fn setActiveVariant(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) void {
-        for (state.choice_active.items) |*entry| if (entry.storage.eql(storage)) {
-            entry.variant_index = index;
-            self.clearRejectedVariant(state, storage, index);
-            return;
-        };
-        state.choice_active.append(.{ .storage = storage, .variant_index = index }) catch {};
-        self.clearRejectedVariant(state, storage, index);
-    }
-
-    fn clearActiveVariant(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) void {
-        _ = self;
-        var cursor: usize = 0;
-        while (cursor < state.choice_active.items.len) {
-            const entry = state.choice_active.items[cursor];
-            if (entry.storage.eql(storage) and entry.variant_index == index) {
-                _ = state.choice_active.orderedRemove(cursor);
-            } else {
-                cursor += 1;
-            }
-        }
-    }
-
-    fn setTemporaryActiveVariant(self: *SafetyChecker, state: *FunctionState, expression: graph_mod.GlobalNodeId, index: u32) !void {
-        _ = self;
-        for (state.choice_temporary_active.items) |*entry| {
-            if (entry.expression != expression) continue;
-            entry.variant_index = index;
-            return;
-        }
-        try state.choice_temporary_active.append(.{ .expression = expression, .variant_index = index });
-    }
-
-    fn temporaryVariantActive(self: *SafetyChecker, state: *const FunctionState, expression: graph_mod.GlobalNodeId, index: u32) bool {
-        _ = self;
-        for (state.choice_temporary_active.items) |entry|
-            if (entry.expression == expression) return entry.variant_index == index;
-        return false;
-    }
-
-    fn setRejectedVariant(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) void {
-        _ = self;
-        for (state.choice_rejected.items) |entry|
-            if (entry.storage.eql(storage) and entry.variant_index == index) return;
-        state.choice_rejected.append(.{ .storage = storage, .variant_index = index }) catch {};
-    }
-
-    fn clearRejectedVariant(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) void {
-        _ = self;
-        var cursor: usize = 0;
-        while (cursor < state.choice_rejected.items.len) {
-            const entry = state.choice_rejected.items[cursor];
-            if (entry.storage.eql(storage) and entry.variant_index == index) {
-                _ = state.choice_rejected.orderedRemove(cursor);
-            } else {
-                cursor += 1;
-            }
-        }
-    }
-
-    fn variantRejected(self: *SafetyChecker, state: *const FunctionState, storage: facts.Place, index: u32) bool {
-        _ = self;
-        for (state.choice_rejected.items) |entry|
-            if (entry.storage.eql(storage) and entry.variant_index == index) return true;
-        return false;
-    }
-
-    fn invalidateChoiceRefinements(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) void {
-        _ = self;
-        var cursor: usize = 0;
-        while (cursor < state.choice_active.items.len) {
-            if (storage.isPrefixOf(state.choice_active.items[cursor].storage)) {
-                _ = state.choice_active.orderedRemove(cursor);
-            } else {
-                cursor += 1;
-            }
-        }
-        cursor = 0;
-        while (cursor < state.choice_rejected.items.len) {
-            if (storage.isPrefixOf(state.choice_rejected.items[cursor].storage)) {
-                _ = state.choice_rejected.orderedRemove(cursor);
-            } else {
-                cursor += 1;
-            }
-        }
-    }
-
-    fn variantActive(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, index: u32) bool {
-        return if (self.activeVariant(state, storage)) |active| active == index else false;
-    }
-
-    fn activeVariant(self: *SafetyChecker, state: *const FunctionState, storage: facts.Place) ?u32 {
-        _ = self;
-        for (state.choice_active.items) |entry|
-            if (entry.storage.eql(storage)) return entry.variant_index;
-        return null;
-    }
-
     fn staticIndex(self: *SafetyChecker, node: graph_mod.GlobalNodeId) ?usize {
         return switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .int_literal => |value| std.math.cast(usize, value),
@@ -6207,13 +7439,14 @@ pub const SafetyChecker = struct {
     }
 
     fn report(self: *SafetyChecker, source: primitives.SourceRef, comptime fmt: []const u8, args: anytype) !void {
-        const loc = self.location(source) orelse return;
-        try self.diagnostics.add(loc, .semantic, fmt, args);
+        if (self.location(source)) |loc| {
+            try self.diagnostics.add(loc, .semantic, fmt, args);
+        } else try self.diagnostics.addUnlocated(.semantic, fmt, args);
     }
 
     fn validateIntegerLiteral(self: *SafetyChecker, source: primitives.SourceRef, maybe_ty: ?graph_mod.GlobalTypeId, value: i128) !void {
         const ty = maybe_ty orelse return;
-        const builtin = switch (self.graph.resolvedSemanticType(ty) orelse return) {
+        const builtin = switch (types.representation(self.graph, ty) orelse return) {
             .builtin => |kind| kind,
             else => return,
         };
@@ -6254,18 +7487,19 @@ pub const SafetyChecker = struct {
     }
 
     fn location(self: *SafetyChecker, source: primitives.SourceRef) ?tok.Location {
+        if (@import("../global/source_location.zig").find(self.graph, &self.diagnostics.source_db, source)) |found| return found;
         if (source.file_index >= self.graph.files.items.len) return null;
         const file = self.graph.files.items[source.file_index];
+        if (file.content_hash != null) return null;
         const basename = self.graph.text(file.path);
-        const module_dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
 
+        // Source-less synthetic graphs may identify their one diagnostic file
+        // by basename. A known source version never falls back to another one.
         var basename_match: ?@TypeOf(self.diagnostics.source_db.fileId(0)) = null;
         for (self.diagnostics.source_db.files, 0..) |candidate, index| {
             if (!std.mem.eql(u8, std.fs.path.basename(candidate.path), basename)) continue;
-            const id = self.diagnostics.source_db.fileId(index);
-            if (std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", module_dir))
-                return .{ .file = id, .offset = source.offset };
-            if (basename_match == null) basename_match = id else basename_match = null;
+            if (basename_match != null) return null;
+            basename_match = self.diagnostics.source_db.fileId(index);
         }
         return if (basename_match) |id| .{ .file = id, .offset = source.offset } else null;
     }
@@ -6380,10 +7614,20 @@ fn valueHasDeadExplicitDependencyForUse(value: facts.ValueFacts, state: *const S
     return false;
 }
 
-fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.ValidityRootId) bool {
-    for (value.dependencies) |dependency| if (!containsRoot(owned, dependency.root)) return true;
-    for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned)) return true;
-    for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned)) return true;
+fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.ValidityRootId, state: *const SafetyChecker.FunctionState) bool {
+    for (value.dependencies) |dependency| {
+        if (containsRoot(owned, dependency.root)) continue;
+        // Input reference facts describe unknown caller storage, not a new
+        // external loan acquired by this body. Opaque-transfer summaries carry
+        // the obligation to the caller, where actual owned/borrowed roots are
+        // available. Never suppress concrete lexical or acquired dependencies.
+        const symbolic = for (state.symbolic_pointees.items) |entry| {
+            if (entry.backing == dependency.root or entry.generation == dependency.root) break true;
+        } else false;
+        if (!symbolic) return true;
+    }
+    for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned, state)) return true;
+    for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned, state)) return true;
     return false;
 }
 
@@ -6405,6 +7649,15 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
     for (value.dependencies) |dependency| try appendRootFact(roots, dependency.root);
     for (value.fields) |field| try collectDependencyRoots(field.value.*, roots);
     for (value.variants) |variant| try collectDependencyRoots(variant.value.*, roots);
+}
+
+fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.explicit_dependency != right.explicit_dependency or left.foreign_storage != right.foreign_storage or left.opaque_provenance.len != 0 or right.opaque_provenance.len != 0) return false;
+    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
+    if (left.referenced_place) |place| if (!place.eql(right.referenced_place.?)) return false;
+    if (!std.mem.eql(facts.SymbolicPointeeId, left.symbolic_pointees, right.symbolic_pointees) or left.dependencies.len != right.dependencies.len) return false;
+    for (left.dependencies, right.dependencies) |a, b| if (!std.meta.eql(a, b)) return false;
+    return true;
 }
 
 fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {
@@ -6436,15 +7689,35 @@ fn valueDependsOnDeadRootWithOwners(
     return false;
 }
 
+// Conditional facts can keep an observation even without a direct loan.
+// Guarded fact graphs are opaque here; conservatively retain their roots
+// rather than traverse potentially recursive snapshots during loop widening.
+fn retainsLoopObservation(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
+    // Guarded snapshots can form recursive fact graphs. Conservatively retain
+    // their observations rather than traversing or renewing hidden aliases.
+    if (value.guarded_values.len != 0 or containsRoot(value.owned_roots, root)) return true;
+    for (value.dependencies) |dependency| if (dependency.root == root) return true;
+    for (value.opaque_provenance) |provenance| if (provenance.generation == root) return true;
+    for (value.generation_outcomes) |outcome| {
+        if (outcome.generation == root or containsRoot(outcome.owned_roots, root)) return true;
+        if (outcome.relocation) |relocation| if (relocation.generation == root) return true;
+    }
+    for (value.fields) |field| if (retainsLoopObservation(field.value.*, root)) return true;
+    for (value.variants) |variant| if (retainsLoopObservation(variant.value.*, root)) return true;
+    return false;
+}
+
 fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+    for (state.symbolic_pointees.items) |pointee|
+        if (pointee.backing == root or pointee.generation == root) return true;
     for (state.places.items) |stored|
+        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+    for (state.symbolic_values.items) |stored|
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
         if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
-    for (state.ownership_edges.items) |edge|
-        if (edge.owner == root or edge.owned == root) return true;
     return false;
 }
 
@@ -6455,7 +7728,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.lexical_storage_generations.items.len != right.lexical_storage_generations.items.len or
         left.places.items.len != right.places.items.len or
         left.symbolic_pointees.items.len != right.symbolic_pointees.items.len or
-        left.ownership_edges.items.len != right.ownership_edges.items.len or
+        left.symbolic_values.items.len != right.symbolic_values.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
         left.choice_active.items.len != right.choice_active.items.len or
@@ -6465,7 +7738,16 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     for (left.symbolic_pointees.items) |pointee| {
         var found = false;
         for (right.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
-            if (other.initializedness != pointee.initializedness) return false;
+            if (other.initializedness != pointee.initializedness or other.backing != pointee.backing or other.generation != pointee.generation) return false;
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    for (left.symbolic_values.items) |stored| {
+        var found = false;
+        for (right.symbolic_values.items) |other| if (other.identity == stored.identity) {
+            if (stored.definite != other.definite or !valueFactsEqual(stored.value, other.value)) return false;
             found = true;
             break;
         };
@@ -6478,16 +7760,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     for (left.lexical_storage_generations.items) |root|
         if (!containsRoot(right.lexical_storage_generations.items, root)) return false;
     for (left.places.items) |left_place| {
-        const right_place = findPlaceConst(right, left_place.storage) orelse return false;
+        const right_place = right.findPlace(left_place.storage) orelse return false;
         if (left_place.initializedness != right_place.initializedness or !std.meta.eql(left_place.moved_at, right_place.moved_at) or !valueFactsEqual(left_place.value, right_place.value)) return false;
-    }
-    for (left.ownership_edges.items) |edge| {
-        var found = false;
-        for (right.ownership_edges.items) |other| if (edge.owner == other.owner and edge.owned == other.owned) {
-            found = true;
-            break;
-        };
-        if (!found) return false;
     }
     for (left.storage_generations.items) |entry| {
         var found = false;
@@ -6543,7 +7817,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
     for (left.symbolic_pointees) |identity|
-        if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, right.symbolic_pointees, identity) == null) return false;
+        if (std.mem.indexOfScalar(facts.SymbolicPointeeId, right.symbolic_pointees, identity) == null) return false;
     if (left.domains.len != right.domains.len) return false;
     for (left.domains, right.domains) |a, b| {
         if (a.domain_index != b.domain_index or a.storages.len != b.storages.len) return false;
@@ -6582,11 +7856,6 @@ fn joinInitializedness(left: value_state.Initializedness, right: value_state.Ini
     return .maybe_initialized;
 }
 
-fn findPlaceConst(state: *const SafetyChecker.FunctionState, storage: facts.Place) ?*const facts.PlaceFacts {
-    for (state.places.items) |*entry| if (entry.storage.eql(storage)) return entry;
-    return null;
-}
-
 fn isPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .pointer => true,
@@ -6597,8 +7866,8 @@ fn isPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTy
 fn appendSafetyTypeName(buffer: *std.array_list.Managed(u8), graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) anyerror!void {
     switch (graph.semanticType(ty)) {
         .builtin => |builtin| try buffer.appendSlice(@tagName(builtin)),
-        .declared => |decl| try buffer.appendSlice(graph.text(graph.declaration(decl).name)),
-        .generic => |generic| try buffer.appendSlice(graph.text(graph.declaration(generic.base).name)),
+        .nominal => |decl| try buffer.appendSlice(graph.typeDefinitionName(decl)),
+        .generic => |generic| try buffer.appendSlice(graph.familyDefinitionName(generic.base)),
         .pointer => |pointer| {
             try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
             try appendSafetyTypeName(buffer, graph, pointer.child);
@@ -6636,7 +7905,7 @@ test "opaque summary runtime recovers hidden external dependencies" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -6647,9 +7916,9 @@ test "opaque summary runtime recovers hidden external dependencies" {
     const storage = facts.Place{ .root = binding };
     const backing = try state.tracker.establish(.fresh);
     state.tracker.roots.items[@intFromEnum(backing)].owned_resource = true;
-    const generation = try checker.storageGeneration(&state, storage);
+    const generation = try state.storageGeneration(storage);
     const external = try state.tracker.establish(.fresh);
-    try checker.setPlace(&state, storage, .initialized, .{ .owned_roots = &.{backing} });
+    try state.setPlace(storage, .initialized, .{ .owned_roots = &.{backing} });
     try checker.mergeOpaqueStorage(&state, storage, &.{ backing, generation, external });
 
     const moved_out = try checker.applyOutcomeSummary(.{ .file_index = 0, .offset = 0 }, .{
@@ -6672,7 +7941,7 @@ test "opaque receiver effects select only their mapped storage domain" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -6719,9 +7988,10 @@ test "opaque primitives move ownership through domain state" {
 
     try checker.applyOpaqueMovePrimitive(
         @enumFromInt(0),
+        .trusted_opaque_move_in,
         .{ .file_index = 0, .offset = 0 },
         &.{},
-        &.{ .{ .referenced_place = storage }, .{}, moved },
+        &.{ .{ .referenced_place = storage }, .{}, moved, .{} },
         &state,
     );
     try std.testing.expect(!state.tracker.isAlive(owned));
@@ -6737,7 +8007,7 @@ test "opaque primitives move ownership through domain state" {
     try std.testing.expectEqual(@as(usize, 1), moved_out.owned_roots.len);
     try std.testing.expect(state.tracker.isAlive(moved_out.owned_roots[0]));
 
-    checker.markOpaqueStorageEmpty(&state, storage);
+    state.markOpaqueStorageEmpty(storage);
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
 }
 
@@ -6760,9 +8030,9 @@ test "opaque ownership cycle detection follows indirect edges" {
     const first_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
     const second_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(1)) };
     const third_storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(2)) };
-    try checker.setPlace(&state, first_storage, .initialized, .{ .owned_roots = &.{first} });
-    try checker.setPlace(&state, second_storage, .initialized, .{ .owned_roots = &.{second} });
-    try checker.setPlace(&state, third_storage, .initialized, .{ .owned_roots = &.{third} });
+    try state.setPlace(first_storage, .initialized, .{ .owned_roots = &.{first} });
+    try state.setPlace(second_storage, .initialized, .{ .owned_roots = &.{second} });
+    try state.setPlace(third_storage, .initialized, .{ .owned_roots = &.{third} });
     try checker.mergeOpaqueStorage(&state, first_storage, &.{second});
     try checker.mergeOpaqueStorage(&state, second_storage, &.{third});
 
@@ -6786,8 +8056,8 @@ test "relocate primitive preserves owned root identity" {
     const destination = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(1)) };
     const root = try state.tracker.establish(.fresh);
     state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
-    try checker.setPlace(&state, source_storage, .initialized, .{ .owned_roots = &.{root} });
-    try checker.setPlace(&state, destination, .moved, .{});
+    try state.setPlace(source_storage, .initialized, .{ .owned_roots = &.{root} });
+    try state.setPlace(destination, .moved, .{});
 
     _ = try checker.relocatePrimitive(
         .{ .file_index = 0, .offset = 0 },
@@ -6795,8 +8065,8 @@ test "relocate primitive preserves owned root identity" {
         &state,
     );
     try std.testing.expect(state.tracker.isAlive(root));
-    try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source_storage).?.initializedness);
-    const destination_value = checker.getPlace(&state, destination).?.value;
+    try std.testing.expectEqual(value_state.Initializedness.moved, state.getPlace(source_storage).?.initializedness);
+    const destination_value = state.getPlace(destination).?.value;
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, destination_value.owned_roots);
 }
 
@@ -6875,12 +8145,12 @@ test "structural auto deinit marks nested fields and parent dead" {
         .deinit_fn = null,
     });
     try graph.auto_deinits.append(allocator, .{
-        .binding = @enumFromInt(0),
+        .storage = .{ .binding = @enumFromInt(0) },
         .deinit_fn = null,
         .fields = .{ .start = 0, .len = 1 },
     });
 
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
@@ -6888,12 +8158,41 @@ test "structural auto deinit marks nested fields and parent dead" {
     defer state.deinit();
     const root = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
     const child = try checker.project(root, .{ .field = 0 });
-    try checker.setPlace(&state, root, .initialized, .{});
-    try checker.setPlace(&state, child, .initialized, .{});
+    try state.setPlace(root, .initialized, .{});
+    try state.setPlace(child, .initialized, .{});
 
     try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
-    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, child));
-    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, root));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(child));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(root));
+}
+
+test "Safety in-place branch joins release tables on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(a: std.mem.Allocator) !void {
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const facts_allocator = arena.allocator();
+            var checker = SafetyChecker.init(facts_allocator, undefined, undefined);
+            checker.state_allocator = a;
+            defer checker.deinit();
+            var left = SafetyChecker.FunctionState.initWithAllocators(facts_allocator, a);
+            defer left.deinit();
+            var right = SafetyChecker.FunctionState.initWithAllocators(facts_allocator, a);
+            defer right.deinit();
+            _ = try left.tracker.establish(.fresh);
+            _ = try right.tracker.establish(.fresh);
+            try left.storage_capabilities.append(.available);
+            try right.storage_capabilities.append(.consumed);
+            try checker.joinState(&left, &left, &right);
+            try std.testing.expectEqual(@import("state.zig").StorageCapabilityState.maybe_consumed, left.storage_capabilities.items[0]);
+            var transfer: ?SafetyChecker.FunctionState = null;
+            defer if (transfer) |*state| state.deinit();
+            try checker.mergeLoopTransfer(&transfer, &left);
+            try checker.mergeLoopTransfer(&transfer, &right);
+            try checker.mergeLoopTransfer(&left, &right);
+            try std.testing.expectEqual(@import("state.zig").StorageCapabilityState.maybe_consumed, left.storage_capabilities.items[0]);
+        }
+    }.run, .{});
 }
 
 test "rich safety join preserves all compact state dimensions" {
@@ -6933,8 +8232,6 @@ test "rich safety join preserves all compact state dimensions" {
         .value = .{ .dependencies = &.{.{ .root = right_dependency }} },
     });
 
-    try left.ownership_edges.append(.{ .owner = changing, .owned = left_dependency });
-    try right.ownership_edges.append(.{ .owner = changing, .owned = right_dependency });
     try left.storage_generations.append(.{ .storage = storage, .generation = left_dependency });
     try right.storage_generations.append(.{ .storage = storage, .generation = right_dependency });
     try left.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{left_dependency}, .owner_roots = &.{left_dependency} });
@@ -6951,7 +8248,6 @@ test "rich safety join preserves all compact state dimensions" {
     const joined_value = checker.valueAtPlace(&joined, storage).?;
     try std.testing.expect(valueDependsOnRoot(joined_value, left_dependency));
     try std.testing.expect(valueDependsOnRoot(joined_value, right_dependency));
-    try std.testing.expectEqual(@as(usize, 2), joined.ownership_edges.items.len);
     try std.testing.expectEqual(@as(usize, 1), joined.storage_generations.items.len);
     try std.testing.expectEqual(@as(usize, 1), joined.opaque_storages.items.len);
     try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, left_dependency));
@@ -7020,7 +8316,6 @@ test "loop root widening is stable and preserves historical aliases" {
     entry.tracker.roots.items[@intFromEnum(old)].owned_resource = true;
     const child = try entry.tracker.establish(.fresh);
     entry.tracker.roots.items[@intFromEnum(child)].owned_resource = true;
-    try entry.ownership_edges.append(.{ .owner = old, .owned = child });
     try entry.places.append(.{ .storage = owner, .initializedness = .initialized, .value = .{
         .dependencies = &.{.{ .root = old }},
         .owned_roots = &.{old},
@@ -7029,53 +8324,46 @@ test "loop root widening is stable and preserves historical aliases" {
         .dependencies = &.{.{ .root = old }},
     } });
 
-    var iteration = try entry.clone(allocator, null);
+    var iteration = try entry.clone(allocator);
     defer iteration.deinit();
     iteration.tracker.end(old);
     const replacement = try iteration.tracker.establish(.fresh);
     iteration.tracker.roots.items[@intFromEnum(replacement)].owned_resource = true;
-    try iteration.ownership_edges.append(.{ .owner = replacement, .owned = child });
-    checker.getPlace(&iteration, owner).?.value = .{
+    iteration.getPlace(owner).?.value = .{
         .dependencies = &.{.{ .root = replacement }},
         .owned_roots = &.{replacement},
     };
 
     var context = SafetyChecker.LoopJoinContext.init(allocator);
     defer context.deinit();
-    var joined = try entry.clone(allocator, null);
+    var joined = try entry.clone(allocator);
     defer joined.deinit();
     try checker.joinState(&joined, &entry, &iteration);
     try checker.widenLoopOwnedRoots(&context, &joined, &entry, &iteration);
     try std.testing.expectEqual(@as(usize, 1), context.roots.items.len);
     const phi = context.roots.items[0].root;
-    const widened_owner = checker.getPlace(&joined, owner).?.value;
+    const widened_owner = joined.getPlace(owner).?.value;
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{phi}, widened_owner.owned_roots);
     try std.testing.expect(joined.tracker.dependenciesAreAlive(widened_owner));
-    try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, alias).?.value));
-    try std.testing.expectEqual(@as(usize, 1), joined.ownership_edges.items.len);
-    try std.testing.expectEqual(phi, joined.ownership_edges.items[0].owner);
-    try std.testing.expectEqual(child, joined.ownership_edges.items[0].owned);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(joined.getPlace(alias).?.value));
     const stable_root_count = joined.tracker.roots.items.len;
 
-    var second_iteration = try joined.clone(allocator, null);
+    var second_iteration = try joined.clone(allocator);
     defer second_iteration.deinit();
     second_iteration.tracker.end(phi);
     const second_replacement = try second_iteration.tracker.establish(.fresh);
     second_iteration.tracker.roots.items[@intFromEnum(second_replacement)].owned_resource = true;
-    try second_iteration.ownership_edges.append(.{ .owner = second_replacement, .owned = child });
-    checker.getPlace(&second_iteration, owner).?.value = .{
+    second_iteration.getPlace(owner).?.value = .{
         .dependencies = &.{.{ .root = second_replacement }},
         .owned_roots = &.{second_replacement},
     };
 
-    var fixed_point = try entry.clone(allocator, null);
+    var fixed_point = try entry.clone(allocator);
     defer fixed_point.deinit();
     try checker.joinState(&fixed_point, &entry, &second_iteration);
     try checker.widenLoopOwnedRoots(&context, &fixed_point, &entry, &second_iteration);
-    try std.testing.expectEqual(phi, checker.getPlace(&fixed_point, owner).?.value.owned_roots[0]);
+    try std.testing.expectEqual(phi, fixed_point.getPlace(owner).?.value.owned_roots[0]);
     try std.testing.expectEqual(stable_root_count, fixed_point.tracker.roots.items.len);
-    try std.testing.expectEqual(@as(usize, 1), fixed_point.ownership_edges.items.len);
-    try std.testing.expectEqual(phi, fixed_point.ownership_edges.items[0].owner);
 }
 
 test "loop root widening does not hide crossed stale dependencies" {
@@ -7097,23 +8385,23 @@ test "loop root widening does not hide crossed stale dependencies" {
         .dependencies = &.{ .{ .root = first }, .{ .root = second } },
         .owned_roots = &.{first},
     } });
-    var right = try left.clone(allocator, null);
+    var right = try left.clone(allocator);
     defer right.deinit();
     right.tracker.roots.items[@intFromEnum(first)].state = .dead;
     right.tracker.roots.items[@intFromEnum(second)].state = .alive;
-    checker.getPlace(&right, storage).?.value = .{
+    right.getPlace(storage).?.value = .{
         .dependencies = &.{ .{ .root = first }, .{ .root = second } },
         .owned_roots = &.{second},
     };
 
-    var joined = try left.clone(allocator, null);
+    var joined = try left.clone(allocator);
     defer joined.deinit();
     try checker.joinState(&joined, &left, &right);
     var context = SafetyChecker.LoopJoinContext.init(allocator);
     defer context.deinit();
     try checker.widenLoopOwnedRoots(&context, &joined, &left, &right);
     try std.testing.expectEqual(@as(usize, 0), context.roots.items.len);
-    try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, storage).?.value));
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(joined.getPlace(storage).?.value));
 }
 
 test "local storage generations survive scope cleanup for escape checks" {
@@ -7279,15 +8567,15 @@ test "temporary choice refinement tracks non-addressable expressions" {
     const variant: graph_mod.GlobalVariantId = @enumFromInt(1);
     try checker.refineChoice(&left, expression, variant, true);
     try checker.refineChoice(&right, expression, variant, true);
-    try std.testing.expect(checker.temporaryVariantActive(&left, expression, 1));
+    try std.testing.expect(left.temporaryVariantActive(expression, 1));
 
-    var cloned = try left.clone(allocator, null);
+    var cloned = try left.clone(allocator);
     defer cloned.deinit();
     try std.testing.expect(statesEqual(&left, &cloned));
     try std.testing.expect(!statesEqual(&left, &empty));
 
     try checker.joinState(&joined, &left, &right);
-    try std.testing.expect(checker.temporaryVariantActive(&joined, expression, 1));
+    try std.testing.expect(joined.temporaryVariantActive(expression, 1));
 
     try checker.joinState(&joined, &left, &empty);
     try std.testing.expectEqual(@as(usize, 0), joined.choice_temporary_active.items.len);
@@ -7298,7 +8586,7 @@ test "recursive summary helper instantiates converged outputs" {
     defer arena.deinit();
     var allocator = arena.allocator();
 
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -7359,8 +8647,54 @@ test "direct call summaries annotate auto deinit transitions" {
         .initializedness = .deinitialized,
     }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))}, &.{}, &state);
 
-    try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(initializes_call)].content.function_call.initializes_auto_deinit.?);
-    try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(consumes_call)].content.function_call.consumes_auto_deinit.?);
+    try std.testing.expectEqual(address, checker.annotations.call(initializes_call).initializes_auto_deinit.?);
+    try std.testing.expectEqual(address, checker.annotations.call(consumes_call).consumes_auto_deinit.?);
+}
+
+test "ordinary call writes reactivate cleanup only for unavailable caller storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const storage = facts.Place{ .root = binding };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .binding_use = binding } });
+    try graph.value_fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const summary = facts.SafetySummary{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .initialization = .definite }} };
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = storage }};
+    const ids = [_]graph_mod.GlobalValueFieldId{@enumFromInt(0)};
+    for ([_]value_state.Initializedness{ .initialized, .deinitialized, .moved, .maybe_initialized }) |before| {
+        try state.setPlace(storage, before, .{});
+        const nodes = try checker.callCleanupNodes(summary, &ids, &arguments, &state, true);
+        try std.testing.expectEqual(@as(usize, if (before == .initialized) 0 else 1), nodes.len);
+        if (nodes.len != 0) try std.testing.expectEqual(binding, graph.node(nodes[0]).content.binding_use);
+        // Recording a runtime flag update must not itself change safety facts.
+        try std.testing.expectEqual(before, state.initializednessAtPlace(storage));
+        for ([_]facts.PlacePostState.Initialization{ .preserved, .possible }) |initialization| {
+            const conditional = facts.SafetySummary{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .initialization = initialization }} };
+            const preserved = try checker.callCleanupNodes(conditional, &ids, &arguments, &state, true);
+            try std.testing.expectEqual(@as(usize, 0), preserved.len);
+        }
+    }
+    for ([_]facts.PlacePostState.Initialization{ .preserved, .possible, .definite }) |initialization| {
+        try state.setPlace(storage, .deinitialized, .{});
+        const effects = facts.SafetySummary{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .initialization = initialization }} };
+        try checker.applySummaryInputPostStates(source, effects, &ids, &arguments, &state);
+        const expected: value_state.Initializedness = switch (initialization) {
+            .preserved => .deinitialized,
+            .possible => .maybe_initialized,
+            .definite => .initialized,
+        };
+        try std.testing.expectEqual(expected, state.initializednessAtPlace(storage));
+    }
 }
 
 test "conditional owned roots may escape through nested aggregate fields" {
@@ -7421,6 +8755,11 @@ test "choice outputs keep lazily materialized input storage alive" {
     defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
+    // Other branches may already have reserved identities. Materializing this
+    // payload must not turn their absent placeholder roots into live resources.
+    var namespace: facts.Tracker.RootNamespace = .{ .next_id = 8 };
+    defer namespace.deinit(allocator);
+    state.tracker.namespace = &namespace;
     const storage = facts.Place{ .root = @as(graph_mod.GlobalBindingId, @enumFromInt(0)) };
     const projections = [_]facts.Projection{.{ .field = 0 }};
     const payload = facts.ValueEffect{
@@ -7436,13 +8775,35 @@ test "choice outputs keep lazily materialized input storage alive" {
     try std.testing.expect(state.tracker.isAlive(state.storage_generations.items[0].generation));
     const owned = output.variants[0].value.owned_roots[0];
     try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(owned)].state);
+    for (state.tracker.roots.items[0..8]) |root| {
+        try std.testing.expect(!root.present);
+        try std.testing.expectEqual(.dead, root.state);
+    }
+}
+
+fn allocationPrimitiveTestGraph(allocator: std.mem.Allocator, count: u32) !graph_mod.GlobalSemanticGraph {
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    errdefer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .UIntNative });
+    for (0..count) |_| try graph.fields.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .ty = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = count } } });
+    try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = count, .len = 1 }, .safety_primitive = .establish_allocation });
+    // The caller deliberately has no outputs. Allocation shape belongs to
+    // the selected callee, independently of its enclosing function's signature.
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    return graph;
 }
 
 test "allocation primitive agrees with instantiated symbolic transfer" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var graph = try allocationPrimitiveTestGraph(allocator, 12);
     defer graph.deinit(allocator);
     var checker = SafetyChecker.init(allocator, undefined, &graph);
     defer checker.deinit();
@@ -7462,15 +8823,24 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     defer engine.deinit();
     var infer = summary_infer.Infer.init(allocator, &graph, &engine);
     defer infer.deinit();
-    const effect = try infer.primitiveValueEffect(.establish_allocation, 1);
+    const effect = try infer.primitiveValueEffect(.establish_allocation, 1, @enumFromInt(0));
     const symbolic = try checker.instantiateOutput(effect, &arguments, &summary_state);
-    const direct = try checker.evaluatePrimitive(@enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
+    const direct = try checker.evaluatePrimitive(@enumFromInt(1), @enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
     try std.testing.expect(valueFactsEqual(direct, symbolic));
+    try std.testing.expectEqual(@as(usize, 12), direct.fields.len);
+    for (direct.fields[5..]) |field| {
+        try std.testing.expectEqual(@as(usize, 0), field.value.dependencies.len);
+        try std.testing.expectEqual(@as(usize, 0), field.value.owned_roots.len);
+    }
     try std.testing.expectEqual(@as(usize, 1), direct.owned_roots.len);
     try std.testing.expect(valueDependsOnRoot(direct, deallocator_root));
     try std.testing.expect(valueDependsOnRoot(direct, anchor_root));
     const deallocator = try checker.projectValueFacts(direct, &.{.{ .field = 4 }});
     try std.testing.expect(valueDependsOnRoot(deallocator, deallocator_root));
+    const metadata = try checker.projectValueFacts(direct, &.{.{ .field = 11 }});
+    try std.testing.expectEqual(@as(usize, 0), metadata.owned_roots.len);
+    try std.testing.expect(!valueDependsOnRoot(metadata, anchor_root));
+    try std.testing.expect(!valueDependsOnRoot(metadata, deallocator_root));
 }
 
 test "new borrows after joined reinitialization do not revive old generations" {
@@ -7482,23 +8852,23 @@ test "new borrows after joined reinitialization do not revive old generations" {
     var left = SafetyChecker.FunctionState.init(allocator);
     defer left.deinit();
     const storage = facts.Place{ .root = @enumFromInt(0) };
-    try checker.setPlace(&left, storage, .initialized, .{});
-    const historical = try checker.storageGeneration(&left, storage);
-    var right = try left.clone(allocator, null);
+    try left.setPlace(storage, .initialized, .{});
+    const historical = try left.storageGeneration(storage);
+    var right = try left.clone(allocator);
     defer right.deinit();
-    try checker.refreshStorageGeneration(&right, storage);
+    try right.refreshStorageGeneration(storage);
     var joined = SafetyChecker.FunctionState.init(allocator);
     defer joined.deinit();
     try checker.joinState(&joined, &left, &right);
     try std.testing.expect(!joined.tracker.isAlive(historical));
-    const current = try checker.storageGeneration(&joined, storage);
+    const current = try joined.storageGeneration(storage);
     try std.testing.expect(current != historical);
     try std.testing.expect(joined.tracker.isAlive(current));
     try std.testing.expect(!joined.tracker.isAlive(historical));
-    try std.testing.expectEqual(current, try checker.storageGeneration(&joined, storage));
-    try checker.setPlace(&joined, storage, .deinitialized, .{});
+    try std.testing.expectEqual(current, try joined.storageGeneration(storage));
+    try joined.setPlace(storage, .deinitialized, .{});
     joined.tracker.end(current);
-    try std.testing.expectEqual(current, try checker.storageGeneration(&joined, storage));
+    try std.testing.expectEqual(current, try joined.storageGeneration(storage));
     try std.testing.expect(!joined.tracker.isAlive(current));
 }
 
@@ -7524,7 +8894,7 @@ test "dependency primitives preserve the value referent and borrow only anchor v
     };
     inline for (.{ primitives.SafetyPrimitive.depend_on, primitives.SafetyPrimitive.restrict_reference }) |primitive| {
         const direct = try checker.dependencyPrimitive(&arguments, primitive_transfer.forPrimitive(primitive).value);
-        const effect = try inference.primitiveValueEffect(primitive, 0);
+        const effect = try inference.primitiveValueEffect(primitive, 0, null);
         const symbolic = try checker.instantiateOutput(effect, &arguments, &state);
         try std.testing.expect(symbolic.referenced_place.?.eql(direct.referenced_place.?));
         try std.testing.expectEqual(direct.explicit_dependency, symbolic.explicit_dependency);
@@ -7539,16 +8909,18 @@ test "storage capability consumption agrees between primitives and summaries" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
-    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    var graph = try allocationPrimitiveTestGraph(allocator, 12);
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
     inline for (.{ primitives.SafetyPrimitive.establish_inherited_storage, primitives.SafetyPrimitive.establish_allocation }) |primitive| {
         var direct = SafetyChecker.FunctionState.init(allocator);
         defer direct.deinit();
         try direct.storage_capabilities.append(.available);
         const root = try direct.tracker.establish(.fresh);
-        var symbolic = try direct.clone(allocator, null);
+        var symbolic = try direct.clone(allocator);
         defer symbolic.deinit();
         const anchor = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
         const address = facts.ValueFacts{ .storage_capabilities = &.{@enumFromInt(0)} };
@@ -7556,7 +8928,7 @@ test "storage capability consumption agrees between primitives and summaries" {
             &.{ address, anchor }
         else
             &.{ address, .{}, .{}, .{}, anchor };
-        _ = try checker.evaluatePrimitive(@enumFromInt(0), primitive, &.{}, arguments, &direct, .{ .file_index = 0, .offset = 0 });
+        _ = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), primitive, &.{}, arguments, &direct, .{ .file_index = 0, .offset = 0 });
         const index = primitive_transfer.forPrimitive(primitive).consumes_storage_input.?;
         try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
             .storage_capability_uses = &.{.{ .target = .{ .input_index = index } }},
@@ -7587,16 +8959,16 @@ test "native acquisition and page trimming agree with symbolic transfers" {
     var symbolic = SafetyChecker.FunctionState.init(allocator);
     defer symbolic.deinit();
     const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
-    const acquired = try checker.evaluatePrimitive(@enumFromInt(0), .native_allocated_storage, &.{}, &.{}, &direct, source);
-    const acquired_effect = try inference.primitiveValueEffect(.native_allocated_storage, 1);
+    const acquired = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .native_allocated_storage, &.{}, &.{}, &direct, source);
+    const acquired_effect = try inference.primitiveValueEffect(.native_allocated_storage, 1, null);
     const inferred = try checker.instantiateOutput(acquired_effect, &.{}, &symbolic);
     try std.testing.expectEqual(acquired.foreign_storage, inferred.foreign_storage);
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquired.storage_capabilities, inferred.storage_capabilities);
-    const trimmed_effect = try inference.primitiveValueEffect(.acquisition_subaddress, 2);
+    const trimmed_effect = try inference.primitiveValueEffect(.acquisition_subaddress, 2, null);
     inline for (.{ SafetyChecker.StorageCapabilityState.available, SafetyChecker.StorageCapabilityState.consumed }) |state| {
         direct.storage_capabilities.items[0] = state;
         symbolic.storage_capabilities.items[0] = state;
-        const trimmed = try checker.evaluatePrimitive(@enumFromInt(0), .acquisition_subaddress, &.{}, &.{ acquired, .{} }, &direct, source);
+        const trimmed = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .acquisition_subaddress, &.{}, &.{ acquired, .{} }, &direct, source);
         const inferred_trimmed = try checker.instantiateOutput(trimmed_effect, &.{ inferred, .{} }, &symbolic);
         try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquired.storage_capabilities, trimmed.storage_capabilities);
         try std.testing.expectEqualSlices(facts.StorageCapabilityId, trimmed.storage_capabilities, inferred_trimmed.storage_capabilities);
@@ -7617,7 +8989,7 @@ test "stored anchor lifetime agrees between dependency primitives and summaries"
     const root = try state.tracker.establish(.fresh);
     const holder = facts.Place{ .root = @enumFromInt(0) };
     const anchor = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
-    try checker.setPlace(&state, holder, .initialized, .{ .fields = &.{.{ .index = 0, .value = &anchor }} });
+    try state.setPlace(holder, .initialized, .{ .fields = &.{.{ .index = 0, .value = &anchor }} });
     const direct = try checker.dependencyPrimitive(&.{ .{}, anchor }, .depend_on);
     const symbolic = try checker.instantiateOutput(.{
         .explicit_dependency = true,
@@ -7628,6 +9000,35 @@ test "stored anchor lifetime agrees between dependency primitives and summaries"
     try std.testing.expectEqual(@as(?facts.Place, null), symbolic.referenced_place);
     state.tracker.end(root);
     try std.testing.expect(valueDependsOnDeadRoot(symbolic, &state));
+}
+
+test "stored anchor loading stops at aggregate field provenance" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    inline for (.{ false, true }) |projected| {
+        var state = SafetyChecker.FunctionState.init(allocator);
+        defer state.deinit();
+        const root = try state.tracker.establish(.fresh);
+        const holder = facts.Place{ .root = @enumFromInt(0) };
+        const referent = facts.Place{ .root = @enumFromInt(1) };
+        const anchor = facts.ValueFacts{ .dependencies = &.{.{ .root = root }}, .referenced_place = referent };
+        try state.setPlace(referent, .initialized, .{});
+        try state.setPlace(holder, .initialized, .{
+            .referenced_place = referent,
+            .fields = if (projected) &.{} else &.{.{ .index = 0, .value = &anchor }},
+        });
+        if (projected) try state.setPlace(try checker.project(holder, .{ .field = 0 }), .initialized, anchor);
+        const value = try checker.instantiateOutput(.{
+            .explicit_dependency = true,
+            .input_dependencies = &.{.{ .path = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} }, .validity_only = true }},
+        }, &.{.{ .referenced_place = holder }}, &state);
+        try std.testing.expectEqualSlices(facts.ValidityDependency, anchor.dependencies, value.dependencies);
+        state.tracker.end(root);
+        try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+    }
 }
 
 test "activating choice payloads never revives consumed storage capabilities" {
@@ -7647,6 +9048,26 @@ test "activating choice payloads never revives consumed storage capabilities" {
         try checker.activate_conditional_resources(&state, choice.variants[0].value.*);
         const expected: SafetyChecker.StorageCapabilityState = if (consumed) .consumed else .available;
         try std.testing.expectEqual(expected, state.storage_capabilities.items[0]);
+    }
+    // Multiple output fields can describe the same fresh capability. A later
+    // possible consumption must not weaken an already definite consumption.
+    const definite = facts.ValueEffect{
+        .fresh_storage_capabilities = &.{15},
+        .unavailable_fresh_storage = &.{.{ .source = 15 }},
+    };
+    const possible = facts.ValueEffect{
+        .fresh_storage_capabilities = &.{15},
+        .unavailable_fresh_storage = &.{.{ .source = 15, .maybe_consumed = true }},
+    };
+    inline for (.{ false, true }) |reverse| {
+        var state = SafetyChecker.FunctionState.init(allocator);
+        defer state.deinit();
+        _ = try checker.instantiateOutput(.{ .fields = &.{
+            .{ .index = 0, .value = if (reverse) &possible else &definite },
+            .{ .index = 1, .value = if (reverse) &definite else &possible },
+        } }, &.{}, &state);
+        try std.testing.expectEqual(@as(usize, 1), state.storage_capabilities.items.len);
+        try std.testing.expectEqual(.consumed, state.capabilityState(@enumFromInt(0)));
     }
 }
 
@@ -7726,7 +9147,7 @@ test "projected writes refresh aggregate roots and preserve explicit dependencie
     };
     const storage = facts.Place{ .root = @enumFromInt(0) };
     const nested = try checker.project(try checker.project(storage, .{ .field = 0 }), .{ .field = 0 });
-    try checker.setPlace(&state, nested, .initialized, .{
+    try state.setPlace(nested, .initialized, .{
         .dependencies = &.{.{ .root = new_root }},
         .owned_roots = &.{new_root},
     });
@@ -7744,6 +9165,131 @@ test "projected writes refresh aggregate roots and preserve explicit dependencie
     try std.testing.expect(valueDependsOnDeadRoot(preserved, &state));
 }
 
+test "choice payload reads evaluate unknown pointer operands once" {
+    try choiceAccessEvaluatesOnce(false, false);
+}
+
+test "choice payload addresses evaluate unknown pointer operands once" {
+    try choiceAccessEvaluatesOnce(true, false);
+}
+
+test "choice payload reads evaluate concrete pointer operands once" {
+    try choiceAccessEvaluatesOnce(false, true);
+}
+
+test "choice payload addresses retain the evaluated concrete destination" {
+    try choiceAccessEvaluatesOnce(true, true);
+}
+
+fn choiceAccessEvaluatesOnce(take_address: bool, concrete: bool) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = primitives.StringRange{ .start = 0, .len = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } },
+    });
+    try graph.variants.append(a, .{ .name = name, .source = source, .value = 0, .payload_type = @enumFromInt(0) });
+    for ([_]u32{ 0, 2, 1 }) |ty|
+        try graph.bindings.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(ty), .mutability = .variable });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .move_value = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .binding_use = @enumFromInt(1) } },
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .value_sequence = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .dereference = .{ .pointer = @enumFromInt(3), .ty = @enumFromInt(1), .pointer_type = @enumFromInt(2) } } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .choice_payload_access = .{ .value = @enumFromInt(4), .variant = @enumFromInt(0), .payload_type = @enumFromInt(0) } } },
+    });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(1), @enumFromInt(2) });
+    try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 2 }, .ret_val = @enumFromInt(2) });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const owner = facts.Place{ .root = @enumFromInt(0) };
+    try state.setPlace(owner, .initialized, .{});
+    const choice_storage = facts.Place{ .root = @enumFromInt(2) };
+    try state.setPlace(choice_storage, .initialized, .{ .known_choice_variant = 0 });
+    try state.setPlace(.{ .root = @enumFromInt(1) }, .initialized, if (concrete) .{ .referenced_place = choice_storage } else .{});
+    try state.choice_temporary_active.append(.{ .expression = @enumFromInt(4), .variant_index = 0 });
+    const access = .{ .value = @as(graph_mod.GlobalNodeId, @enumFromInt(4)), .variant = @as(graph_mod.GlobalVariantId, @enumFromInt(0)) };
+    const result = if (take_address)
+        try checker.evaluateAddress(@enumFromInt(0), source, @enumFromInt(5), &state, false)
+    else
+        try checker.evaluateChoicePayload(@enumFromInt(0), source, access, &state);
+    try std.testing.expect(!diags.hasErrors());
+    if (take_address and concrete)
+        try std.testing.expect(result.referenced_place.?.eql(try checker.project(choice_storage, .{ .variant = 0 })));
+    try std.testing.expectEqual(value_state.Initializedness.moved, state.initializednessAtPlace(owner));
+    // A second evaluation is a second effect, not a cached read or permission
+    // to consume twice. It must fail independently of payload tag narrowing.
+    _ = if (take_address)
+        try checker.evaluateAddress(@enumFromInt(0), source, @enumFromInt(5), &state, false)
+    else
+        try checker.evaluateChoicePayload(@enumFromInt(0), source, access, &state);
+    try std.testing.expect(diags.hasErrors());
+}
+
+test "field writes retain the evaluated destination when their RHS retargets its pointer" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = primitives.StringRange{ .start = 0, .len = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_write } },
+    });
+    try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(1) });
+    for ([_]u32{ 2, 2, 3, 3, 1 }) |ty|
+        try graph.bindings.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(ty), .mutability = .variable });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(3), .content = .{ .binding_use = @enumFromInt(2) } },
+        .{ .source = source, .ty = @enumFromInt(3), .content = .{ .binding_use = @enumFromInt(3) } },
+        .{ .source = source, .ty = null, .content = .{ .assignment = .{ .binding = @enumFromInt(2), .value = @enumFromInt(1) } } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(4) } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .value_sequence = @enumFromInt(0) } },
+        .{ .source = source, .ty = null, .content = .{ .struct_field_store = .{ .struct_ptr = @enumFromInt(0), .struct_type = @enumFromInt(2), .field_index = 0, .field_type = @enumFromInt(1), .value = @enumFromInt(4) } } },
+    });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(2), @enumFromInt(3), @enumFromInt(5) });
+    try graph.blocks.appendSlice(a, &.{
+        .{ .nodes = .{ .start = 0, .len = 2 }, .ret_val = @enumFromInt(3) },
+        .{ .nodes = .{ .start = 2, .len = 1 } },
+    });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(1) });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first = facts.Place{ .root = @enumFromInt(0) };
+    const second = facts.Place{ .root = @enumFromInt(1) };
+    const payload = facts.ValueFacts{ .foreign_storage = true };
+    try state.setPlace(first, .initialized, .{});
+    try state.setPlace(second, .initialized, .{});
+    try state.setPlace(.{ .root = @enumFromInt(2) }, .initialized, .{ .referenced_place = first });
+    try state.setPlace(.{ .root = @enumFromInt(3) }, .initialized, .{ .referenced_place = second });
+    try state.setPlace(.{ .root = @enumFromInt(4) }, .initialized, payload);
+    try checker.validateBlock(@enumFromInt(0), @enumFromInt(1), &state, null);
+    try std.testing.expect(!diags.hasErrors());
+    try std.testing.expect(checker.valueAtPlace(&state, try checker.project(first, .{ .field = 0 })).?.foreign_storage);
+    try std.testing.expect(!checker.valueAtPlace(&state, try checker.project(second, .{ .field = 0 })).?.foreign_storage);
+    try std.testing.expect(checker.valueAtPlace(&state, .{ .root = @enumFromInt(2) }).?.referenced_place.?.eql(second));
+}
+
 test "dynamic projected writes retain newly merged roots" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -7754,7 +9300,7 @@ test "dynamic projected writes retain newly merged roots" {
     defer state.deinit();
     const root = try state.tracker.establish(.fresh);
     const storage = facts.Place{ .root = @enumFromInt(0) };
-    try checker.setPlace(&state, try checker.project(storage, .dynamic_index), .initialized, .{
+    try state.setPlace(try checker.project(storage, .dynamic_index), .initialized, .{
         .dependencies = &.{.{ .root = root }},
         .owned_roots = &.{root},
     });
@@ -7836,7 +9382,7 @@ test "generation outcome proofs cannot be replayed after another call or invalid
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const storage = facts.Place{ .root = @enumFromInt(0) };
-    const generation = try checker.storageGeneration(&state, storage);
+    const generation = try state.storageGeneration(storage);
     const preserved = facts.ValueFacts{ .generation_outcomes = &.{.{ .storage = storage, .generation = generation, .guard = 1, .invalidates = false }} };
     state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
     state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 1;
@@ -7863,12 +9409,12 @@ test "relocation refinement validates both generations and preserves the transfe
         defer state.deinit();
         const from = facts.Place{ .root = @enumFromInt(0) };
         const to = facts.Place{ .root = @enumFromInt(1) };
-        const generation = try checker.storageGeneration(&state, from);
-        const destination_generation = try checker.storageGeneration(&state, to);
+        const generation = try state.storageGeneration(from);
+        const destination_generation = try state.storageGeneration(to);
         const owner = try state.tracker.establish(.fresh);
         const value = facts.ValueFacts{ .owned_roots = &.{owner} };
-        try checker.setPlace(&state, from, .maybe_initialized, value);
-        try checker.setPlace(&state, to, .maybe_initialized, value);
+        try state.setPlace(from, .maybe_initialized, value);
+        try state.setPlace(to, .maybe_initialized, value);
         for (&[_]facts.ValidityRootId{ generation, destination_generation }) |root| {
             state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
             state.tracker.roots.items[@intFromEnum(root)].outcome_guard = 7;
@@ -7881,24 +9427,24 @@ test "relocation refinement validates both generations and preserves the transfe
             .relocation = .{ .destination = to, .generation = destination_generation, .available_state = .deinitialized, .moved = scenario == 0 },
         }} };
         if (scenario == 2) state.tracker.roots.items[@intFromEnum(destination_generation)].outcome_guard = 8;
-        if (scenario == 3) try checker.refreshStorageGeneration(&state, to);
+        if (scenario == 3) try state.refreshStorageGeneration(to);
         try checker.activate_conditional_resources(&state, proof);
         try std.testing.expect(state.tracker.isAlive(owner));
         if (scenario == 0) {
-            try std.testing.expectEqual(value_state.Initializedness.moved, checker.initializednessAtPlace(&state, from));
-            try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&state, to));
+            try std.testing.expectEqual(value_state.Initializedness.moved, state.initializednessAtPlace(from));
+            try std.testing.expectEqual(value_state.Initializedness.initialized, state.initializednessAtPlace(to));
             try std.testing.expect(!state.tracker.isAlive(generation));
             try std.testing.expect(state.tracker.isAlive(destination_generation));
             try std.testing.expectEqual(owner, checker.valueAtPlace(&state, to).?.owned_roots[0]);
         } else if (scenario == 1) {
-            try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&state, from));
-            try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, to));
+            try std.testing.expectEqual(value_state.Initializedness.initialized, state.initializednessAtPlace(from));
+            try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(to));
             try std.testing.expect(state.tracker.isAlive(generation));
             try std.testing.expect(!state.tracker.isAlive(destination_generation));
             try std.testing.expectEqual(owner, checker.valueAtPlace(&state, from).?.owned_roots[0]);
         } else {
-            try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, checker.initializednessAtPlace(&state, from));
-            try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, checker.initializednessAtPlace(&state, to));
+            try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, state.initializednessAtPlace(from));
+            try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, state.initializednessAtPlace(to));
             try std.testing.expect(!state.tracker.isAlive(generation));
         }
     }
@@ -7937,7 +9483,7 @@ test "consuming a value ends nested owned roots while preserving borrowed depend
         .ty = @enumFromInt(1),
         .mutability = .variable,
     });
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
@@ -7947,20 +9493,20 @@ test "consuming a value ends nested owned roots while preserving borrowed depend
     const borrowed = try state.tracker.establish(.fresh);
     const child = facts.ValueFacts{ .owned_roots = &.{owned}, .dependencies = &.{.{ .root = borrowed }} };
     const storage = facts.Place{ .root = @enumFromInt(0) };
-    try checker.setPlace(&state, storage, .initialized, .{ .fields = &.{.{ .index = 0, .value = &child }} });
+    try state.setPlace(storage, .initialized, .{ .fields = &.{.{ .index = 0, .value = &child }} });
     try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
         .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized, .ends_previous_roots = true }},
     }, &.{}, &.{.{ .referenced_place = storage }}, &state);
     try std.testing.expect(!state.tracker.isAlive(owned));
     try std.testing.expect(state.tracker.isAlive(borrowed));
-    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, storage));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(storage));
 }
 
 test "conditional opaque empty proofs retain current call and storage identity" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
     defer diags.deinit();
     var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
@@ -7970,7 +9516,7 @@ test "conditional opaque empty proofs retain current call and storage identity" 
     const other = facts.Place{ .root = @enumFromInt(1) };
     const dependency = try state.tracker.establish(.fresh);
     const later_dependency = try state.tracker.establish(.fresh);
-    const generation = try checker.storageGeneration(&state, storage);
+    const generation = try state.storageGeneration(storage);
     try checker.mergeOpaqueStorage(&state, storage, &.{dependency});
     try checker.mergeOpaqueStorage(&state, other, &.{later_dependency});
     const summary = facts.SafetySummary{
@@ -8016,7 +9562,7 @@ test "conditional opaque empty proofs retain current call and storage identity" 
 
     try checker.mergeOpaqueStorage(&state, storage, &.{dependency});
     const before_generation = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
-    try checker.refreshStorageGeneration(&state, storage);
+    try state.refreshStorageGeneration(storage);
     try checker.activate_conditional_resources(&state, before_generation.variants[1].value.*);
     try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[0].hidden_dependencies.len);
 }
@@ -8057,10 +9603,10 @@ test "mutable entry choice observations do not follow post call mutations or mis
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const place = facts.Place{ .root = @enumFromInt(0) };
-    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 1 });
+    try state.setPlace(place, .initialized, .{ .known_choice_variant = 1 });
     const pointer: facts.ValueFacts = .{ .referenced_place = place };
     const before = (try checker.entryConditionValue(pointer, &.{.dereference}, &state)).?;
-    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 2 });
+    try state.setPlace(place, .initialized, .{ .known_choice_variant = 2 });
     const after = (try checker.entryConditionValue(pointer, &.{.dereference}, &state)).?;
     try std.testing.expectEqual(@as(?u32, 1), before.known_choice_variant);
     try std.testing.expectEqual(@as(?u32, 2), after.known_choice_variant);
@@ -8076,7 +9622,7 @@ test "mixed dependency guards capture mutable entry facts before replacement" {
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const place = facts.Place{ .root = @enumFromInt(0) };
-    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 1 });
+    try state.setPlace(place, .initialized, .{ .known_choice_variant = 1 });
     const arguments = [_]facts.ValueFacts{.{ .referenced_place = place }};
     const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{
         .{ .subject = .entry_input, .index = 0, .projections = &.{.dereference}, .variant_index = 1 },
@@ -8085,7 +9631,7 @@ test "mixed dependency guards capture mutable entry facts before replacement" {
     const precise: facts.SafetySummary = .{ .outputs = &.{.{}} };
     const summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .guarded_effects = &.{.{ .conditions = conditions, .effects = &precise }} };
     const prepared = try checker.prepareGeneralValueGuards(summary, &arguments, &state);
-    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 2 });
+    try state.setPlace(place, .initialized, .{ .known_choice_variant = 2 });
     try std.testing.expectEqual(@as(usize, 1), prepared.len);
     try std.testing.expectEqual(@as(u32, 1), prepared[0].proof.entry_facts.terms[0].variant_index);
     try std.testing.expectEqual(@as(?u32, 2), (try checker.entryConditionValue(arguments[0], &.{.dereference}, &state)).?.known_choice_variant);
@@ -8101,9 +9647,9 @@ test "branch root identities separate owned resources from lexical temporaries" 
     var entry = SafetyChecker.FunctionState.init(allocator);
     defer entry.deinit();
     entry.tracker.namespace = &namespace;
-    var owner_branch = try entry.clone(allocator, null);
+    var owner_branch = try entry.clone(allocator);
     defer owner_branch.deinit();
-    var temporary_branch = try entry.clone(allocator, null);
+    var temporary_branch = try entry.clone(allocator);
     defer temporary_branch.deinit();
     const owner = try owner_branch.tracker.establish(.fresh);
     owner_branch.tracker.roots.items[@intFromEnum(owner)].owned_resource = true;
@@ -8131,17 +9677,1068 @@ test "branches share initial storage identities without reviving ended generatio
     var entry = SafetyChecker.FunctionState.init(allocator);
     defer entry.deinit();
     entry.tracker.namespace = &namespace;
-    var left = try entry.clone(allocator, null);
+    var left = try entry.clone(allocator);
     defer left.deinit();
-    var right = try entry.clone(allocator, null);
+    var right = try entry.clone(allocator);
     defer right.deinit();
     const storage = facts.Place{ .root = @enumFromInt(0) };
-    const initial = try checker.storageGeneration(&left, storage);
-    try std.testing.expectEqual(initial, try checker.storageGeneration(&right, storage));
+    const initial = try left.storageGeneration(storage);
+    try std.testing.expectEqual(initial, try right.storageGeneration(storage));
     left.tracker.end(initial);
     _ = left.storage_generations.pop();
-    const replacement = try checker.storageGeneration(&left, storage);
+    const replacement = try left.storageGeneration(storage);
     try std.testing.expect(replacement != initial);
     try std.testing.expect(!left.tracker.isAlive(initial));
     try std.testing.expect(right.tracker.isAlive(initial));
+}
+
+test "storage observations resolve every mapped domain rather than the wrapper slot" {
+    const a = std.testing.allocator;
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first = facts.Place{ .root = @enumFromInt(1) };
+    const second = facts.Place{ .root = @enumFromInt(2) };
+    const argument = facts.ValueFacts{ .referenced_place = .{ .root = @enumFromInt(0) }, .domains = &.{.{ .domain_index = 3, .storages = &.{ first, second } }} };
+    var buffer: [1]facts.Place = undefined;
+    const resolved = try checker.observationStorage(.{ .input_index = 0, .storage_domain = 3 }, &.{}, &.{argument}, &state, &buffer);
+    try std.testing.expectEqual(@as(usize, 2), resolved.len);
+    try std.testing.expect(resolved[0].eql(first));
+    try std.testing.expect(resolved[1].eql(second));
+    try std.testing.expectError(error.MissingVirtualStorageDomain, checker.observationStorage(.{ .input_index = 0, .storage_domain = 4 }, &.{}, &.{argument}, &state, &buffer));
+}
+
+test "symbolic destination renewal preserves backing validity and historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .binding_use = @enumFromInt(0) } });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const other_generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.appendSlice(&.{
+        .{ .identity = @enumFromInt(0), .initializedness = .deinitialized, .backing = backing, .generation = generation },
+        .{ .identity = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = other_generation },
+    });
+    const access: facts.ValueFacts = .{
+        .dependencies = &.{ .{ .root = backing }, .{ .root = generation } },
+        .symbolic_pointees = &.{@enumFromInt(0)},
+    };
+    try state.setPlace(.{ .root = @enumFromInt(0) }, .initialized, access);
+    try std.testing.expect(try checker.endSymbolicGenerations(source, access, &state));
+    try std.testing.expect(state.tracker.isAlive(backing));
+    try std.testing.expect(!state.tracker.isAlive(generation));
+    // A possible-alias group is not an equality proof. Callers check ordered
+    // consumption/observation obligations against their actual destinations.
+    try std.testing.expect(state.tracker.isAlive(other_generation));
+    const renewed = (try state.renewSymbolicAccess(access)).?;
+    try std.testing.expect(state.tracker.dependenciesAreAlive(renewed));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(access));
+    // Preparing an initialization neither publishes its reference nor marks
+    // the vacant referent initialized before the RHS has completed.
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(checker.valueAtPlace(&state, .{ .root = @enumFromInt(0) }).?));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.symbolic_pointees.items[0].initializedness);
+    try std.testing.expect(try state.renewSymbolicAccess(access) == null);
+    state.tracker.end(backing);
+    try std.testing.expect(try state.renewSymbolicAccess(renewed) == null);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(renewed));
+}
+
+test "symbolic input records retain separate reference leaves and explicit empty siblings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const scalar: graph_mod.GlobalTypeId = @enumFromInt(0);
+    const pointer: graph_mod.GlobalTypeId = @enumFromInt(1);
+    const record: graph_mod.GlobalTypeId = @enumFromInt(2);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = scalar, .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 3 } } },
+    });
+    for ([_]graph_mod.GlobalTypeId{ pointer, scalar, pointer }) |ty|
+        try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = ty, .source = source });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var backing: ?facts.ValidityRootId = null;
+    var generation: ?facts.ValidityRootId = null;
+    const value = try checker.seedInputValue(record, &state, &backing, &generation, null, .{ .input_index = 0 });
+    const first = try checker.projectValueFacts(value, &.{.{ .field = 0 }});
+    const empty = try checker.projectValueFacts(value, &.{.{ .field = 1 }});
+    const second = try checker.projectValueFacts(value, &.{.{ .field = 2 }});
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_pointees.items.len);
+    try std.testing.expectEqual(@as(usize, 0), value.symbolic_pointees.len);
+    try std.testing.expectEqual(@as(usize, 1), first.symbolic_pointees.len);
+    try std.testing.expectEqual(@as(usize, 1), second.symbolic_pointees.len);
+    try std.testing.expect(first.symbolic_pointees[0] != second.symbolic_pointees[0]);
+    try std.testing.expect(facts.isEmptyValue(empty));
+    try std.testing.expect(try checker.endSymbolicGenerations(source, first, &state));
+    try std.testing.expect(state.tracker.isAlive(backing.?));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(second));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(empty));
+}
+
+test "opaque transfer defers symbolic input obligations but rejects concrete loans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const external = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const unknown: facts.ValueFacts = .{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } } };
+    const borrowed: facts.ValueFacts = .{ .dependencies = &.{.{ .root = external }} };
+    try std.testing.expect(!hasExternalOpaqueDependency(unknown, &.{}, &state));
+    try std.testing.expect(hasExternalOpaqueDependency(borrowed, &.{}, &state));
+    try std.testing.expect(!hasExternalOpaqueDependency(borrowed, &.{external}, &state));
+}
+
+test "safety continuations retain temporal state while candidate forks remain isolated" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "command.rg", .code = "value" }};
+    var diags = try diagnostics.Diagnostics.init(&a, &files);
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "value");
+    const path = try graph.addString(a, "command.rg");
+    try graph.files.append(a, .{ .module = @enumFromInt(0), .path = path });
+    try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 2 } });
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } });
+    try graph.bindings.append(a, .{ .name = name, .ty = @enumFromInt(0), .source = source, .mutability = .constant, .initialization = @enumFromInt(0) });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .binding_declaration = @enumFromInt(0) } });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = @enumFromInt(0) } } });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(1), @enumFromInt(2) });
+    for (0..2) |index| {
+        try graph.blocks.append(a, .{ .nodes = .{ .start = @intCast(index), .len = 1 } });
+        try graph.declarations.append(a, .{ .kind = .function, .name = name, .source = source });
+        try graph.functions.append(a, .{ .declaration = @enumFromInt(index), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(index) });
+    }
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var accepted: SafetyChecker.ContinuationState = undefined;
+    accepted.init(a);
+    defer accepted.deinit();
+    try checker.analyzeContinuation(@enumFromInt(0), &accepted);
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try std.testing.expectEqual(value_state.Initializedness.initialized, accepted.state.initializednessAtPlace(storage));
+    var candidate: SafetyChecker.ContinuationState = undefined;
+    try accepted.fork(&candidate, a);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.state.tracker.namespace.? == &candidate.namespace);
+    try std.testing.expectError(error.Reported, checker.analyzeContinuation(@enumFromInt(1), &candidate));
+    var reassignment = false;
+    for (diags.list.items) |diagnostic| if (std.mem.indexOf(u8, diagnostic.msg, "constant and cannot be reassigned") != null) {
+        reassignment = true;
+    };
+    try std.testing.expect(reassignment);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, accepted.state.initializednessAtPlace(storage));
+    try std.testing.expect(checker.continuation == null);
+}
+
+test "summary dereferences require a known referent rather than a synthetic child place" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const owner = facts.Place{ .root = @enumFromInt(0) };
+    const slot = try checker.project(owner, .{ .field = 0 });
+    const external = facts.Place{ .root = @enumFromInt(1) };
+    const path = facts.InputPath{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 0 } } };
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = owner }};
+    try std.testing.expectEqual(null, try checker.resolveSummaryInputPath(path, &.{}, &arguments, &state));
+    try state.setPlace(slot, .initialized, .{ .referenced_place = external });
+    const resolved = (try checker.resolveSummaryInputPath(path, &.{}, &arguments, &state)).?;
+    try std.testing.expect(resolved.eql(try checker.project(external, .{ .field = 0 })));
+}
+
+test "projected symbolic fields retain identity across branches without ending siblings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(allocator);
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const parent = facts.ValueFacts{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } }, .symbolic_pointees = &.{@enumFromInt(0)} };
+    var left = try state.clone(allocator);
+    defer left.deinit();
+    var right = try state.clone(allocator);
+    defer right.deinit();
+    const first = (try checker.projectSymbolicReference(parent, 0, &left)).?;
+    const sibling = (try checker.projectSymbolicReference(parent, 1, &left)).?;
+    const nested_sibling = (try checker.projectSymbolicReference(sibling, 0, &left)).?;
+    const same = (try checker.projectSymbolicReference(parent, 0, &right)).?;
+    const variant = (try checker.projectSymbolicStorage(parent, .{ .variant = 0 }, &left)).?;
+    const same_variant = (try checker.projectSymbolicStorage(parent, .{ .variant = 0 }, &right)).?;
+    try std.testing.expectEqual(variant.symbolic_pointees[0], same_variant.symbolic_pointees[0]);
+    try std.testing.expect(variant.symbolic_pointees[0] != first.symbolic_pointees[0]);
+    try std.testing.expect(left.symbolicStorageContains(parent.symbolic_pointees[0], first.symbolic_pointees[0]));
+    try std.testing.expect(left.symbolicStorageContains(sibling.symbolic_pointees[0], nested_sibling.symbolic_pointees[0]));
+    try std.testing.expect(!left.symbolicStorageContains(first.symbolic_pointees[0], sibling.symbolic_pointees[0]));
+    try std.testing.expectEqual(first.symbolic_pointees[0], same.symbolic_pointees[0]);
+    try std.testing.expect(first.symbolic_pointees[0] != sibling.symbolic_pointees[0]);
+    try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &left));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(sibling, .{}, &left));
+    try std.testing.expect(left.tracker.isAlive(generation));
+    try std.testing.expect(right.tracker.isAlive(same.dependencies[same.dependencies.len - 1].root));
+    for (left.symbolic_pointees.items) |*entry| if (entry.identity == first.symbolic_pointees[0]) {
+        entry.initializedness = .deinitialized;
+    };
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    for (joined.symbolic_pointees.items) |entry| {
+        if (entry.identity == first.symbolic_pointees[0]) try std.testing.expectEqual(.maybe_initialized, entry.initializedness);
+        if (entry.identity == sibling.symbolic_pointees[0] or entry.identity == nested_sibling.symbolic_pointees[0])
+            try std.testing.expectEqual(.initialized, entry.initializedness);
+    }
+    var context = SafetyChecker.LoopJoinContext.init(allocator);
+    defer context.deinit();
+    const count = joined.tracker.roots.items.len;
+    checker.trimUnreferencedLoopRoots(&context, &joined);
+    try std.testing.expectEqual(count, joined.tracker.roots.items.len);
+}
+
+test "projected symbolic payload types survive lazy branch materialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = primitives.StringRange{ .start = 0, .len = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } },
+    });
+    try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0) });
+    try graph.variants.appendSlice(a, &.{
+        .{ .name = name, .source = source, .value = 0, .payload_type = @enumFromInt(1) },
+        .{ .name = name, .source = source, .value = 1 },
+    });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(2), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const parent = facts.ValueFacts{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } }, .symbolic_pointees = &.{@enumFromInt(0)} };
+    var left = try state.clone(a);
+    defer left.deinit();
+    var right = try state.clone(a);
+    defer right.deinit();
+    try std.testing.expectEqual(null, try checker.projectSymbolicStorage(parent, .{ .variant = 1 }, &left));
+    try std.testing.expectEqual(null, try checker.projectSymbolicStorage(parent, .{ .field = 0 }, &left));
+    const payload = (try checker.projectSymbolicStorage(parent, .{ .variant = 0 }, &left)).?;
+    const field = (try checker.projectSymbolicReference(payload, 0, &left)).?;
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(1)), right.initialProjectedPointee(payload.symbolic_pointees[0]).?.ty);
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), right.initialProjectedPointee(field.symbolic_pointees[0]).?.ty);
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    const again = (try checker.projectSymbolicStorage(parent, .{ .variant = 0 }, &joined)).?;
+    try std.testing.expectEqual(payload.symbolic_pointees[0], again.symbolic_pointees[0]);
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(again, .{}, &joined));
+}
+
+test "projected symbolic array elements retain independent generations without expanding their length" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 1_000_000 } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+    });
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(2), .mutability = .variable });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(2), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 0 } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .array_index = .{ .array_ptr = @enumFromInt(0), .index = @enumFromInt(1), .element_type = @enumFromInt(0), .array_type = @enumFromInt(1) } } },
+    });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const parent = facts.ValueFacts{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } }, .symbolic_pointees = &.{@enumFromInt(0)} };
+    var left = try state.clone(a);
+    defer left.deinit();
+    var right = try state.clone(a);
+    defer right.deinit();
+    const first = (try checker.projectSymbolicStorage(parent, .{ .static_index = 0 }, &left)).?;
+    try left.setPlace(.{ .root = @enumFromInt(0) }, .initialized, parent);
+    const address = try checker.evaluateAddress(@enumFromInt(0), source, @enumFromInt(2), &left, false);
+    try std.testing.expectEqual(first.symbolic_pointees[0], address.symbolic_pointees[0]);
+    try std.testing.expect(!diags.hasErrors());
+    const last = (try checker.projectSymbolicStorage(parent, .{ .static_index = 999_999 }, &left)).?;
+    try std.testing.expectEqual(null, try checker.projectSymbolicStorage(parent, .{ .static_index = 1_000_000 }, &left));
+    const unknown = (try checker.projectSymbolicStorage(parent, .dynamic_index, &left)).?;
+    try std.testing.expect(left.symbolicStorageMayOverlap(unknown.symbolic_pointees[0], first.symbolic_pointees[0]));
+    try std.testing.expect(left.symbolicStorageMayOverlap(last.symbolic_pointees[0], unknown.symbolic_pointees[0]));
+    try std.testing.expect(!left.symbolicStorageMayOverlap(first.symbolic_pointees[0], last.symbolic_pointees[0]));
+    try std.testing.expectEqual(@as(usize, 3), namespace.projected_storage.items.len);
+    const initial = right.initialProjectedPointee(first.symbolic_pointees[0]).?;
+    try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), initial.ty);
+    try std.testing.expect(checker.symbolicStorageComplete(&left, parent.symbolic_pointees[0]));
+    try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &left));
+    try std.testing.expect(!checker.symbolicStorageComplete(&left, parent.symbolic_pointees[0]));
+    try std.testing.expect(checker.symbolicStorageComplete(&right, parent.symbolic_pointees[0]));
+    try std.testing.expect(valueDependsOnDeadRootWithOwners(first, .{}, &left));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(last, .{}, &left));
+    const historical = (try checker.projectSymbolicStorage(parent, .{ .static_index = 0 }, &right)).?;
+    try std.testing.expectEqual(first.symbolic_pointees[0], historical.symbolic_pointees[0]);
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(historical, .{}, &right));
+    try std.testing.expectEqual(@as(usize, 3), namespace.projected_storage.items.len);
+}
+
+test "replacement initialization proof observes destination after RHS preparation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(1), .value = @enumFromInt(1) } } },
+        .{ .source = source, .ty = null, .content = .{ .int_literal = 0 } },
+    });
+    try graph.auto_deinits.append(allocator, .{ .storage = .{ .indirect = @enumFromInt(1) }, .deinit_fn = null });
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const target = facts.Place{ .root = @enumFromInt(0) };
+    try checker.annotations.recordInitialization(allocator, @enumFromInt(0), true);
+    checker.active_replacement = .{
+        .plan = .{ .block = @enumFromInt(0), .write = @enumFromInt(0), .value = @enumFromInt(1), .prepared = @enumFromInt(0), .cleanup = @enumFromInt(0), .result = @enumFromInt(1) },
+        .pointer = .{ .referenced_place = target },
+    };
+    try state.setPlace(target, .deinitialized, .{});
+    try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
+    try std.testing.expect(checker.annotations.observed(@enumFromInt(0)) == true);
+    // Model a RHS that initializes the captured destination before its cleanup.
+    try state.setPlace(target, .initialized, .{});
+    try checker.applyAutoDeinit(@enumFromInt(0), @enumFromInt(0), &state);
+    try std.testing.expect(checker.annotations.observed(@enumFromInt(0)) == false);
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.initializednessAtPlace(target));
+}
+
+test "projected consumption retains other participant generations for caller alias checks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = primitives.StringRange{ .start = 0, .len = 0 };
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 1, .len = 1 } } },
+        .{ .structural = .{ .fields = .{ .start = 2, .len = 2 } } },
+        .{ .pointer = .{ .child = @enumFromInt(4), .mutability = .read_write } },
+        .{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_write } },
+    });
+    for ([_]u32{ 0, 2, 3, 3 }) |ty| try graph.fields.append(allocator, .{ .name = name, .ty = @enumFromInt(ty), .source = source });
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    var backing: ?facts.ValidityRootId = null;
+    var generation: ?facts.ValidityRootId = null;
+    const holder = try checker.seedInputValue(@enumFromInt(5), &state, &backing, &generation, null, .{ .input_index = 0 });
+    const resource = try checker.seedInputValue(@enumFromInt(6), &state, &backing, &generation, null, .{ .input_index = 0 });
+    const counter = try checker.seedInputValue(@enumFromInt(2), &state, &backing, &generation, null, .{ .input_index = 0 });
+    const item = (try checker.projectSymbolicReference(holder, 0, &state)).?;
+    const sibling = (try checker.projectSymbolicReference(holder, 1, &state)).?;
+    try std.testing.expect(try checker.endSymbolicGenerations(source, item, &state));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(resource));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(holder));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(counter));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(sibling));
+}
+
+test "published continuation snapshots own place paths and root namespaces" {
+    const a = std.testing.allocator;
+    var retained_arena = std.heap.ArenaAllocator.init(a);
+    defer retained_arena.deinit();
+    var retained: SafetyChecker.ContinuationState = undefined;
+    {
+        var temporary = std.heap.ArenaAllocator.init(a);
+        defer temporary.deinit();
+        const allocator = temporary.allocator();
+        var source: SafetyChecker.ContinuationState = undefined;
+        source.init(allocator);
+        defer source.deinit();
+        const root = try source.state.tracker.establish(.fresh);
+        const paths = try allocator.dupe(facts.Projection, &.{.{ .field = 2 }});
+        const storage: facts.Place = .{ .root = @enumFromInt(7), .projections = paths };
+        try source.namespace.initial_storage.append(allocator, .{ .storage = storage, .root = root });
+        try source.state.places.append(.{ .storage = storage, .value = .{ .referenced_place = storage, .dependencies = try allocator.dupe(facts.ValidityDependency, &.{.{ .root = root }}) } });
+        try source.state.storage_generations.append(.{ .storage = storage, .generation = root });
+        try source.snapshot(&retained, retained_arena.allocator(), a);
+        try std.testing.expect(retained.state.places.items[0].storage.projections.ptr != paths.ptr);
+        source.state.tracker.end(root);
+        paths[0] = .{ .field = 99 };
+    }
+    defer retained.deinit();
+    try std.testing.expect(retained.state.tracker.namespace.? == &retained.namespace);
+    try std.testing.expect(retained.state.tracker.isAlive(@enumFromInt(0)));
+    try std.testing.expectEqual(@as(u32, 2), retained.namespace.initial_storage.items[0].storage.projections[0].field);
+    try std.testing.expectEqual(@as(u32, 2), retained.state.places.items[0].value.referenced_place.?.projections[0].field);
+    try std.testing.expectEqual(@as(u32, 2), retained.state.storage_generations.items[0].storage.projections[0].field);
+}
+
+test "by-value input reference arrays seed only observed elements with independent identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 1_000_000 } },
+    });
+    const summary: facts.SafetySummary = .{ .required_live_inputs = &.{
+        .{ .input_index = 0, .projections = &.{.{ .static_index = 0 }} },
+        .{ .input_index = 0, .projections = &.{.{ .static_index = 999_999 }} },
+    } };
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    var backing: ?facts.ValidityRootId = null;
+    var generation: ?facts.ValidityRootId = null;
+    const value = try checker.seedInputValue(@enumFromInt(2), &state, &backing, &generation, &summary, .{ .input_index = 0 });
+    try std.testing.expectEqual(@as(usize, 2), value.fields.len);
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_pointees.items.len);
+    try std.testing.expectEqual(@as(usize, 0), value.symbolic_pointees.len);
+    const first = try checker.projectValueFacts(value, &.{.{ .static_index = 0 }});
+    const last = try checker.projectValueFacts(value, &.{.{ .static_index = 999_999 }});
+    try std.testing.expect(first.symbolic_pointees[0] != last.symbolic_pointees[0]);
+    try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(last));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(first));
+}
+
+test "write pointer capture distinguishes symbolic slots from temporary reference values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .move_value = @enumFromInt(0) } },
+    });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const value: facts.ValueFacts = .{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } }, .symbolic_pointees = &.{@enumFromInt(0)} };
+    try state.setPlace(.{ .root = @enumFromInt(0) }, .initialized, value);
+    const slot = try checker.evaluateWritePointer(@enumFromInt(0), @enumFromInt(0), &state);
+    try std.testing.expect(slot.renewable);
+    try std.testing.expectEqual(@as(graph_mod.GlobalBindingId, @enumFromInt(0)), slot.slot.?.root);
+    const temporary = try checker.evaluateWritePointer(@enumFromInt(0), @enumFromInt(1), &state);
+    try std.testing.expect(!temporary.renewable);
+    try std.testing.expectEqual(null, temporary.slot);
+    try std.testing.expectEqual(value_state.Initializedness.moved, state.initializednessAtPlace(slot.slot.?));
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "symbolic summary destinations never reevaluate their argument syntax" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .move_value = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .dereference = .{ .pointer = @enumFromInt(1), .ty = @enumFromInt(0), .pointer_type = @enumFromInt(1) } } },
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .address_of = @enumFromInt(2) } },
+    });
+    try graph.value_fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(3) });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const value: facts.ValueFacts = .{ .dependencies = &.{ .{ .root = backing }, .{ .root = generation } }, .symbolic_pointees = &.{@enumFromInt(0)} };
+    try state.setPlace(.{ .root = @enumFromInt(0) }, .initialized, value);
+    const target = try checker.resolveSummaryInputPath(.{ .input_index = 0 }, &.{@enumFromInt(0)}, &.{value}, &state);
+    try std.testing.expectEqual(null, target);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, state.initializednessAtPlace(.{ .root = @enumFromInt(0) }));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(value));
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "symbolic stored references survive snapshots and joins without inventing exact targets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 3 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const first = try state.tracker.establish(.fresh);
+    const second = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = backing });
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)} };
+    const first_value: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(1)}, .dependencies = &.{.{ .root = first }} };
+    const second_value: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(2)}, .dependencies = &.{.{ .root = second }} };
+    try checker.storeSymbolicValue(&state, slot, first_value, true);
+    var changed = try state.clone(a);
+    defer changed.deinit();
+    try checker.storeSymbolicValue(&changed, slot, second_value, true);
+    try std.testing.expect(valueFactsEqual(first_value, (try checker.symbolicValueAt(&state, @enumFromInt(0))).?.value));
+    try std.testing.expect(!statesEqual(&state, &changed));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &state, &changed);
+    const possible = (try checker.symbolicValueAt(&joined, @enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 2), possible.value.symbolic_pointees.len);
+    joined.tracker.end(first);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(possible.value));
+    changed.symbolic_values.clearRetainingCapacity();
+    try checker.joinState(&joined, &state, &changed);
+    const uncertain = (try checker.symbolicValueAt(&joined, @enumFromInt(0))).?;
+    try std.testing.expect(!uncertain.definite);
+    try std.testing.expectEqual(@as(usize, 0), uncertain.value.symbolic_pointees.len);
+    try std.testing.expect(valueDependsOnRoot(uncertain.value, first));
+    try checker.joinState(&joined, &state, &state);
+    try std.testing.expect(statesEqual(&joined, &state));
+}
+
+test "initial symbolic reference reads intern referents independently of slot ownership" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = generation } } };
+    const first = try checker.readSymbolicValue(&state, slot, null);
+    const repeated = try checker.readSymbolicValue(&state, slot, null);
+    try std.testing.expect(valueFactsEqual(first, repeated));
+    try std.testing.expect(first.symbolic_pointees[0] != slot.symbolic_pointees[0]);
+    try std.testing.expect(!state.symbolicStorageDescendsFrom(first.symbolic_pointees[0], slot.symbolic_pointees[0]));
+    try std.testing.expect(!state.symbolicStorageContains(slot.symbolic_pointees[0], first.symbolic_pointees[0]));
+    try std.testing.expect(try checker.symbolicValueAt(&state, first.symbolic_pointees[0]) == null);
+    try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(repeated));
+    try std.testing.expect(checker.symbolicStorageComplete(&state, slot.symbolic_pointees[0]));
+}
+
+test "choice output materialization preserves existing symbolic storage lifetimes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = generation });
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = generation } } };
+    const payload: facts.ValueEffect = .{
+        .input_place_values = &.{.{ .input_index = 0, .projections = &.{.dereference} }},
+        .fresh_dependencies = &.{123},
+    };
+    const result = try checker.instantiateOutput(.{ .variants = &.{.{ .index = 0, .value = &payload }} }, &.{slot}, &state);
+    const observed = try checker.readSymbolicValue(&state, slot, null);
+    try std.testing.expect(state.tracker.dependenciesAreAlive(observed));
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_pointees.items.len);
+    for (result.variants[0].value.dependencies) |dependency| {
+        if (!valueDependsOnRoot(observed, dependency.root))
+            try std.testing.expect(state.tracker.roots.items[@intFromEnum(dependency.root)].state == .conditional);
+    }
+}
+
+test "symbolic choice tag refinement preserves children and drops incompatible branch proofs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)} };
+    const child: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(1)} };
+    try state.symbolic_values.append(.{ .identity = @enumFromInt(1), .value = .{ .known_choice_variant = 7 } });
+    try checker.setSymbolicVariant(&state, slot, 0);
+    try std.testing.expectEqual(@as(usize, 2), state.symbolic_values.items.len);
+    try std.testing.expectEqual(@as(?u32, 7), state.symbolicVariant(child.symbolic_pointees[0]));
+    var other = try state.clone(a);
+    defer other.deinit();
+    try checker.setSymbolicVariant(&other, slot, 1);
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &state, &other);
+    try std.testing.expectEqual(null, joined.symbolicVariant(slot.symbolic_pointees[0]));
+    try std.testing.expectEqual(@as(?u32, 7), joined.symbolicVariant(child.symbolic_pointees[0]));
+    try checker.storeSymbolicValue(&joined, slot, .{ .known_choice_variant = 2 }, true);
+    try std.testing.expectEqual(@as(?u32, 2), joined.symbolicVariant(slot.symbolic_pointees[0]));
+}
+
+test "symbolic cleanup availability refines only a live common incarnation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .initializedness = .maybe_initialized, .backing = backing, .generation = generation });
+    const historical: facts.ValueFacts = .{ .dependencies = &.{.{ .root = generation }} };
+    var live = try state.clone(a);
+    defer live.deinit();
+    try std.testing.expect(checker.refineSymbolicCleanupLive(&live, @enumFromInt(0), false));
+    try std.testing.expect(live.tracker.dependenciesAreAlive(historical));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(historical));
+    live.tracker.end(generation);
+    live.symbolic_pointees.items[0].initializedness = .deinitialized;
+    state.tracker.end(generation);
+    state.symbolic_pointees.items[0].initializedness = .deinitialized;
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &live, &state);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(historical));
+    joined.symbolic_pointees.items[0].initializedness = .maybe_initialized;
+    try std.testing.expect(!checker.refineSymbolicCleanupLive(&joined, @enumFromInt(0), false));
+    joined.symbolic_pointees.items[0].generation = null;
+    try std.testing.expect(!checker.refineSymbolicCleanupLive(&joined, @enumFromInt(0), false));
+}
+
+test "symbolic generation joins renew current observations without renewing historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..2) |_| try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var left = SafetyChecker.FunctionState.init(a);
+    defer left.deinit();
+    left.tracker.namespace = &namespace;
+    const backing = try left.tracker.establish(.fresh);
+    const first = try left.tracker.establish(.fresh);
+    try left.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = first });
+    const reference: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = first } } };
+    try left.setPlace(.{ .root = @enumFromInt(0) }, .initialized, reference);
+    try left.setPlace(.{ .root = @enumFromInt(1) }, .initialized, reference);
+    var right = try left.clone(a);
+    defer right.deinit();
+    right.tracker.end(first);
+    const second = try right.tracker.establish(.fresh);
+    right.symbolic_pointees.items[0].generation = second;
+    try right.setPlace(.{ .root = @enumFromInt(0) }, .initialized, try facts.replaceValueRoots(checker.allocator, reference, &.{first}, second));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    const current = checker.valueAtPlace(&joined, .{ .root = @enumFromInt(0) }).?;
+    const historical = checker.valueAtPlace(&joined, .{ .root = @enumFromInt(1) }).?;
+    const generation = joined.symbolic_pointees.items[0].generation.?;
+    try std.testing.expect(generation != first and generation != second);
+    try std.testing.expect(joined.tracker.dependenciesAreAlive(current));
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(historical));
+    try std.testing.expect(valueDependsOnRoot(historical, first));
+    joined.tracker.end(generation);
+    try std.testing.expect(!joined.tracker.dependenciesAreAlive(current));
+}
+
+test "loop symbolic observations canonicalize only without retained historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+    });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..2) |_| try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1), .mutability = .variable });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var left = SafetyChecker.FunctionState.init(a);
+    defer left.deinit();
+    left.tracker.namespace = &namespace;
+    const backing = try left.tracker.establish(.fresh);
+    const first = try left.tracker.establish(.fresh);
+    try left.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .ty = @enumFromInt(0), .initializedness = .initialized, .backing = backing, .generation = first });
+    const reference: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .dependencies = &.{ .{ .root = backing }, .{ .root = first } } };
+    try left.setPlace(.{ .root = @enumFromInt(0) }, .initialized, reference);
+    try left.setPlace(.{ .root = @enumFromInt(1) }, .initialized, reference);
+    var right = try left.clone(a);
+    defer right.deinit();
+    right.tracker.end(first);
+    const second = try right.tracker.establish(.fresh);
+    right.symbolic_pointees.items[0].generation = second;
+    try right.setPlace(.{ .root = @enumFromInt(0) }, .initialized, try facts.replaceValueRoots(checker.allocator, reference, &.{first}, second));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    var context = SafetyChecker.LoopJoinContext.init(a);
+    defer context.deinit();
+    try checker.widenLoopSymbolicObservations(&context, &joined, &left, &right);
+    const canonical = joined.symbolic_pointees.items[0].generation.?;
+    const stable = try joined.clone(a);
+    var stable_state = stable;
+    defer stable_state.deinit();
+    var repeated = try joined.clone(a);
+    defer repeated.deinit();
+    repeated.tracker.end(canonical);
+    const fresh = try repeated.tracker.establish(.fresh);
+    repeated.symbolic_pointees.items[0].generation = fresh;
+    const observed = checker.valueAtPlace(&repeated, .{ .root = @enumFromInt(0) }).?;
+    try repeated.setPlace(.{ .root = @enumFromInt(0) }, .initialized, try facts.replaceValueRoots(checker.allocator, observed, &.{canonical}, fresh));
+    var next = SafetyChecker.FunctionState.init(a);
+    defer next.deinit();
+    try checker.joinState(&next, &left, &repeated);
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    checker.trimUnreferencedLoopRoots(&context, &next);
+    try std.testing.expectEqual(canonical, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(statesEqual(&stable_state, &next));
+    // A historical copy deliberately retains the old canonical root.
+    const historical = observed;
+    try repeated.setPlace(.{ .root = @enumFromInt(1) }, .initialized, historical);
+    try checker.joinState(&next, &left, &repeated);
+    const uncanonicalized = next.symbolic_pointees.items[0].generation.?;
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(uncanonicalized, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(uncanonicalized != canonical);
+    try std.testing.expect(!next.tracker.dependenciesAreAlive(checker.valueAtPlace(&next, .{ .root = @enumFromInt(1) }).?));
+    // Outcome metadata also retains an observation without a direct loan.
+    const outcome_value: facts.ValueFacts = .{
+        .generation_outcomes = &.{.{ .storage = .{ .root = @enumFromInt(0) }, .generation = canonical, .guard = 1, .invalidates = false }},
+    };
+    try left.setPlace(.{ .root = @enumFromInt(1) }, .initialized, outcome_value);
+    try repeated.setPlace(.{ .root = @enumFromInt(1) }, .initialized, outcome_value);
+    try checker.joinState(&next, &left, &repeated);
+    const guarded_generation = next.symbolic_pointees.items[0].generation.?;
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(guarded_generation, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(guarded_generation != canonical);
+}
+
+test "virtual input storage domains exist before concrete handles" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.declarations.append(a, .{ .kind = .contract_type, .name = .{ .start = 0, .len = 0 }, .source = source, .family_definition = @enumFromInt(0) });
+    try graph.family_definitions.append(a, .{ .source = source, .kind = .contract, .parameter_count = 1, .domain_count = 2 });
+    try graph.types.appendSlice(a, &.{
+        .{ .definition = @enumFromInt(0) },
+        .{ .virtual = @enumFromInt(0) },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+    });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(2), .mutability = .constant });
+    try graph.binding_refs.append(a, @enumFromInt(0));
+    const function: graph_mod.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 0, .len = 1 } };
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    try checker.seedFunctionInputs(@enumFromInt(0), function, &state);
+    const value = checker.valueAtPlace(&state, .{ .root = @enumFromInt(0) }).?;
+    try std.testing.expectEqual(@as(usize, 0), graph.virtualizes.items.len);
+    try std.testing.expectEqual(@as(usize, 2), value.domains.len);
+    for (value.domains, 0..) |domain, index| {
+        try std.testing.expectEqual(@as(u32, @intCast(index)), domain.domain_index);
+        try std.testing.expectEqual(@as(usize, 1), domain.storages.len);
+        try std.testing.expect(domain.storages[0].eql(.{ .root = @enumFromInt(0), .projections = &.{.{ .field = @intCast(index) }} }));
+    }
+}
+
+test "child explicit anchors do not become intrinsic aggregate anchors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const child = facts.ValueEffect{
+        .fresh_owned_roots = &.{91},
+        .fresh_dependencies = &.{91},
+        .explicit_dependency = true,
+    };
+    const effect = facts.ValueEffect{ .fields = &.{.{ .index = 0, .value = &child }} };
+    const owner = try checker.instantiateOutput(effect, &.{}, &state);
+    try std.testing.expect(!owner.explicit_dependency);
+    try std.testing.expect(owner.fields[0].value.explicit_dependency);
+    var explicitly_anchored = effect;
+    explicitly_anchored.explicit_dependency = true;
+    const anchored = try checker.instantiateOutput(explicitly_anchored, &.{}, &state);
+    try std.testing.expect(anchored.explicit_dependency);
+    try std.testing.expect(anchored.fields[0].value.explicit_dependency);
+}
+
+test "a surviving sibling retains its explicit borrow after owner replacement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const old = try state.tracker.establish(.fresh);
+    const new = try state.tracker.establish(.fresh);
+    const owner = facts.ValueFacts{ .owned_roots = &.{old}, .dependencies = &.{.{ .root = old }} };
+    const sibling = facts.ValueFacts{ .explicit_dependency = true, .dependencies = &.{.{ .root = old }} };
+    const parent = facts.ValueFacts{ .owned_roots = &.{old}, .dependencies = &.{.{ .root = old }}, .fields = &.{
+        .{ .index = 0, .value = &owner }, .{ .index = 1, .value = &sibling },
+    } };
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try state.setPlace(try checker.project(storage, .{ .field = 0 }), .initialized, .{
+        .owned_roots = &.{new},
+        .dependencies = &.{.{ .root = new }},
+    });
+    state.tracker.end(old);
+    const refreshed = try checker.reconstructPlaceValue(&state, storage, parent);
+    try std.testing.expect(valueDependsOnDeadRoot(refreshed, &state));
+    try std.testing.expect(refreshed.fields[1].value.explicit_dependency);
+}
+
+test "Safety continuation capability namespaces isolate rejected candidates" {
+    var retained: SafetyChecker.ContinuationState = undefined;
+    retained.init(std.testing.allocator);
+    defer retained.deinit();
+    const original = try retained.state.establishCapability();
+    var rejected: SafetyChecker.ContinuationState = undefined;
+    try retained.fork(&rejected, std.testing.allocator);
+    defer rejected.deinit();
+    const provisional = try rejected.state.establishCapability();
+    rejected.state.consumeCapability(original, true);
+    try std.testing.expectEqual(.available, retained.state.capabilityState(original));
+    try std.testing.expectEqual(.absent, retained.state.capabilityState(provisional));
+    var accepted: SafetyChecker.ContinuationState = undefined;
+    try retained.fork(&accepted, std.testing.allocator);
+    defer accepted.deinit();
+    const published = try accepted.state.establishCapability();
+    // Candidates have separate identity spaces; only one will be published.
+    try std.testing.expectEqual(provisional, published);
+    try std.testing.expectEqual(retained.namespace.next_capability_id + 1, accepted.namespace.next_capability_id);
+    var branch = try accepted.state.clone(std.testing.allocator);
+    defer branch.deinit();
+    const branch_capability = try branch.establishCapability();
+    const continuation_capability = try accepted.state.establishCapability();
+    try std.testing.expect(branch_capability != continuation_capability);
+    try std.testing.expectEqual(.absent, accepted.state.capabilityState(branch_capability));
+}
+
+test "Safety primitive and summary acquisitions stay distinct across concrete branch joins" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var initial = SafetyChecker.FunctionState.init(a);
+    defer initial.deinit();
+    initial.tracker.namespace = &namespace;
+    var left = try initial.clone(a);
+    defer left.deinit();
+    var right = try initial.clone(a);
+    defer right.deinit();
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const first = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .raw_allocated_storage, &.{}, &.{}, &left, source);
+    var fresh = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(a);
+    defer fresh.deinit();
+    const effect: facts.FreshEffectSource = 17;
+    const second = try checker.instantiateFreshCapability(effect, &right, &fresh);
+    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &right, &fresh));
+    try std.testing.expect(first.storage_capabilities[0] != second);
+    left.consumeCapability(first.storage_capabilities[0], true);
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    try std.testing.expectEqual(.consumed, joined.capabilityState(first.storage_capabilities[0]));
+    try std.testing.expectEqual(.available, joined.capabilityState(second));
+    try checker.activate_conditional_capabilities(&joined, first);
+    try std.testing.expectEqual(.consumed, joined.capabilityState(first.storage_capabilities[0]));
+}
+
+test "joining identical aggregate facts reuses their immutable storage" {
+    const a = std.testing.allocator;
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var empty: [0]u8 = .{};
+    var backing = std.heap.FixedBufferAllocator.init(&empty);
+    var checker = SafetyChecker.init(backing.allocator(), &diags, undefined);
+    defer checker.deinit();
+    const leaf: facts.ValueFacts = .{
+        .dependencies = &.{.{ .root = @enumFromInt(1) }},
+        .owned_roots = &.{@enumFromInt(2)},
+        .symbolic_pointees = &.{@enumFromInt(3)},
+        .storage_capabilities = &.{@enumFromInt(4)},
+    };
+    const value: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &leaf }}, .known_choice_variant = 1 };
+    const joined = try checker.mergeValueFacts(value, value);
+    try std.testing.expect(joined.fields.ptr == value.fields.ptr);
+    try std.testing.expect(valueFactsEqual(value, joined));
+    // The fast path must not erase differences in a nested ownership fact.
+    const other_leaf: facts.ValueFacts = .{ .dependencies = &.{.{ .root = @enumFromInt(9) }} };
+    const other: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &other_leaf }}, .known_choice_variant = 1 };
+    try std.testing.expectError(error.OutOfMemory, checker.mergeValueFacts(value, other));
 }

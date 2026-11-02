@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     positive :: Float64 = 2.75
     negative :: Float64 = -2.75
     if truncate_float#(.t: Float64)(.value = positive).result != 2.0 { abort }
@@ -13,7 +13,9 @@ main() -> (.status_code: Int32 = 0) := {
     if truncated != 0.0 { abort }
     bits :: UInt16 = 0
     while true {
-        value ::= trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &bits).reference&
+        value ::= trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+            .base = &bits
+        ).reference&
         integral ::= truncate_float#(.t: Float16)(.value = value).result
         integral_bits ::= trusted_reinterpret_reference#(.from: Float16, .to: UInt16)(
             .base = &integral
@@ -28,7 +30,9 @@ main() -> (.status_code: Int32 = 0) := {
             if lower > value or upper < value { abort }
             if upper - lower > 1.0 { abort }
             if truncate_float#(.t: Float16)(.value = integral).result != integral { abort }
-        } else { if integral_bits != bits { abort } }
+        } else {
+            if integral_bits != bits { abort }
+        }
         if bits == 65535 { break }
         bits = bits + 1
     }

@@ -1,26 +1,28 @@
-DummyInput: Type = (
+DummyInput := (
     .failed : Bool = false
 )
 
-implement Reader#(DummyInput)(
-    .read_byte = (
-            .self : $&DummyInput
-        ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-        ) {
+implement Reader#(DummyInput) (
+    .read_byte = (.self: $&DummyInput) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
+
         result = ..error(.reason = ..stream_read_failed)
     }
 )
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     stdin_storage :: DummyInput = (
         .failed = false
     )
     assume reader ::= $&stdin_storage
-    result ::= read_line(.allocator = $&allocator_storage, .reader = $&stdin_storage)
+    result ::= read_line(.allocator = allocator, .reader = $&stdin_storage)
 
     if is(.value = result, .variant = ..error) {
     } else {

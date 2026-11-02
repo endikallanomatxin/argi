@@ -1,3 +1,5 @@
+MatrixProductArgs := #(.Left: Type, .Right: Type) (.left: &Left, .right: &Right)
+
 -- Shape evidence belongs to the representation, not to the multiplication
 -- algorithm. Element reads preserve the borrowed matrix and validate indices.
 MatrixShape#(.Value: Type): Contract = (
@@ -7,9 +9,10 @@ MatrixShape#(.Value: Type): Contract = (
     .at      : (.self: &Value, .row: UIntNative, .column: UIntNative) -> (.value: Element)
 )
 
-MatrixProduct#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+MatrixProduct#(.Left: Type, .Right: Type): Contract = (
+    .Args     : Type
     .Result   : Type
-    .multiply : (.args: Args) -> (.result: Result)
+    .multiply : Args -> (.result: Result)
 )
 
 implement#(.rows: UIntNative, .columns: UIntNative, .T: Type: Scalar) MatrixShape#(
@@ -36,9 +39,10 @@ implement#(
     .T       : Type: Scalar,
     .Left    : Type: MatrixShape#(.Value: Left, .Rows = rows, .Columns = inner, .Element: T),
     .Right   : Type: MatrixShape#(.Value: Right, .Rows = inner, .Columns = columns, .Element: T)
-) MatrixProduct#(Left, Right, (.left: &Left, .right: &Right)) (
+) MatrixProduct#(Left, Right) (
+    .Args     : Type = MatrixProductArgs#(Left, Right)
     .Result   : Type = Matrix#(.rows = rows, .cols = columns, .t: T)
-    .multiply = (.args: (.left: &Left, .right: &Right)) -> (.result: Result) {
+    .multiply = MatrixProductArgs#(Left, Right) -> (.result: Result) {
         result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = columns, .t: T)))())
         row :: UIntNative = 0
         while row < rows {
@@ -46,12 +50,10 @@ implement#(
             while column < columns {
                 k :: UIntNative = 0
                 while k < inner {
-                    a ::= MatrixShape#(
-                        Left
-                    ).at(.self = args.left, .row = row, .column = k).value
+                    a ::= MatrixShape#(Left).at(.self = left, .row = row, .column = k).value
                     b ::= MatrixShape#(
                         Right
-                    ).at(.self = args.right, .row = k, .column = column).value
+                    ).at(.self = right, .row = k, .column = column).value
                     result.values[row][column] = result.values[row][column] + a * b
                     k = k + 1
                 }
@@ -71,23 +73,13 @@ implement#(
     .columns : UIntNative,
     .T       : Type: Scalar,
     .Right   : Type: MatrixShape#(.Value: Right, .Rows = inner, .Columns = columns, .Element: T)
-) Multiply#(
-    Matrix#(.rows = rows, .cols = inner, .t: T),
-    Right,
-    (.left: &Matrix#(.rows = rows, .cols = inner, .t: T), .right: &Right)
-) (
-    .Result : Type = MatrixProduct#(
-        Matrix#(.rows = rows, .cols = inner, .t: T),
-        Right,
-        (.left: &Matrix#(.rows = rows, .cols = inner, .t: T), .right: &Right)
-    ).Result
-    .multiply = (.args: (.left: &Matrix#(.rows = rows, .cols = inner, .t: T), .right: &Right)) -> (
+) Multiply#(&Matrix#(.rows = rows, .cols = inner, .t: T), &Right) (
+    .Result   : Type = MatrixProduct#(Matrix#(.rows = rows, .cols = inner, .t: T), Right).Result
+    .multiply = MatrixProductArgs#(Matrix#(.rows = rows, .cols = inner, .t: T), Right) -> (
         .result : Result
     ) {
         result = ~MatrixProduct#(
-            Matrix#(.rows = rows, .cols = inner, .t: T),
-            Right,
-            (.left: &Matrix#(.rows = rows, .cols = inner, .t: T), .right: &Right)
-        ).multiply(args)
+            Matrix#(.rows = rows, .cols = inner, .t: T), Right
+        ).multiply(.left = left, .right = right)
     }
 )

@@ -135,6 +135,20 @@ FILE *_argi_fdopen(int32_t descriptor, const char *mode) {
     return stream;
 }
 
+/* Standard endpoints are borrowed byte streams, including when redirected. */
+uintptr_t _argi_standard_stream(int32_t descriptor) {
+    FILE *stream;
+    switch (descriptor) {
+        case 0: stream = stdin; break;
+        case 1: stream = stdout; break;
+        case 2: stream = stderr; break;
+        default: return 0;
+    }
+    if (_setmode(_fileno(stream), _O_BINARY) == -1) return 0;
+    configure_console_utf8(descriptor);
+    return (uintptr_t)stream;
+}
+
 static char *utf8_string(const wchar_t *text) {
     int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, NULL, 0, NULL, NULL);
     if (!count) { errno = EILSEQ; return NULL; }

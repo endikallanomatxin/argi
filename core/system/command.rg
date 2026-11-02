@@ -4,10 +4,10 @@
 ..unexpected_option_value
 ..invalid_cli_schema
 
-CliSpec: Type = (
-    .name : StringView,
+CliSpec := (
+    .name          : StringView,
     .short_name    : StringView  = "",
-    .help : StringView  = "",
+    .help          : StringView  = "",
     .value_name    : StringView  = "",
     .required      : Bool        = false,
     .repeatable    : Bool        = false,
@@ -16,16 +16,18 @@ CliSpec: Type = (
 
 implement ImplicitlyCopyable#(CliSpec) ()
 
-CliValue: Type = (.name: StringView, .value: ?StringView)
+CliValue := (.name: StringView, .value: ?StringView)
 
 implement ImplicitlyCopyable#(CliValue) ()
 
-CliMatches: Type = (
+CliMatches := (
     .options     : DynamicArray#(.t: CliValue),
     .positionals : DynamicArray#(.t: StringView)
 )
 
 CliReasons: Type = (
+    ..invalid_utf8,
+    ..out_of_bounds,
     ..invalid_option,
     ..missing_option_value,
     ..unknown_option,
@@ -36,40 +38,62 @@ CliReasons: Type = (
     ..out_of_memory
 )
 
+_valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
+
+    index :: UIntNative = 0
+    while index < byte_length(&name).count {
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &name, .index = index))
+        if byte <= 32 or byte == 127 or byte == 61 {
+            ok = false
+            return
+        }
+        index = index + 1
+    }
+}
+
 -- Specs and results borrow their text. Callers retain both the argument source
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
-parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
+-- Names exclude ASCII controls, spaces and '='. Defaults require value options.
+parse_cli := #(.t: Type: ArgumentSource#(t)) (
     .source    : &t,
-    .specs     : ArrayViewRO#(.t: CliSpec),
-    .start     : UIntNative = 0,
-    .allocator : $&AllocatorType = reach allocator
-) -> (.result: Errable#(CliMatches, CliReasons)) := {
+    .specs     : ArrayView#(.t: CliSpec),
+    .start     : UIntNative               = 0,
+    .allocator : Virtual#(Allocator)
+) -> (.result: Errable#(CliMatches, CliReasons)) {
+
     assume allocator
     count ::= length(&specs).count
     index :: UIntNative = 0
 
     while index < count {
         spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
-        if spec.name.length == 0 or spec.short_name.length > 1 {
+        if spec.name._length == 0 or spec.short_name._length > 1 {
             result = ..error(.reason = ..invalid_cli_schema)
             return
         }
-        cursor :: UIntNative = 0
-        while cursor < spec.name.length {
-            byte ::= bytes_get(.view = &spec.name, .index = cursor).byte
-            if byte == 61 or byte == 32 or byte == 0 {
-                result = ..error(.reason = ..invalid_cli_schema)
-                return
+        if [
+            _valid_cli_option_name(.name = spec.name).ok == false
+            or _valid_cli_option_name(.name = spec.short_name).ok == false
+        ] {
+            result = ..error(.reason = ..invalid_cli_schema)
+            return
+        }
+        if spec.value_name._length == 0 {
+            match spec.default_value {
+                ..none {}
+                ..some _ {
+                    result = ..error(.reason = ..invalid_cli_schema)
+                    return
+                }
             }
-            cursor = cursor + 1
         }
         previous :: UIntNative = 0
         while previous < index {
             other ::= unwrap_or_abort(.value = get(&specs, .index = previous))
             if [
                 other.name == spec.name
-                or [spec.short_name.length > 0 and other.short_name == spec.short_name]
+                or [spec.short_name._length > 0 and other.short_name == spec.short_name]
             ] {
                 result = ..error(.reason = ..invalid_cli_schema)
                 return
@@ -89,7 +113,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
             ..some argument {
                 match argument.value {
                     ..positional value {
-                        push(.self = $&positionals, .value = value)!
+                        push(.self = $&positionals, .value = value, .allocator = allocator)!
                     }
                     ..option option {
                         found ::= false
@@ -114,7 +138,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
                                     }
                                 }
                                 value :: ?StringView = ..none
-                                if spec.value_name.length > 0 {
+                                if spec.value_name._length > 0 {
                                     value = ..some(
                                         .value = take_value($&parser, .option = option)!
                                     )
@@ -131,6 +155,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
                                 push(
                                     .self  = $&options
                                     .value = CliValue(.name = spec.name, .value = value)
+                                    .allocator = allocator
                                 )!
                                 break
                             }
@@ -167,6 +192,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
                     push(
                         .self  = $&options
                         .value = CliValue(.name = spec.name, .value = defaulted)
+                        .allocator = allocator
                     )!
                     found = true
                 } ..none {}
@@ -182,12 +208,13 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
     result = ..ok(.options = ~options, .positionals = ~positionals)
 }
 
-write_cli_help#(.WriterType: Type: Writer#(WriterType))(
+write_cli_help := #(.WriterType: Type: Writer#(WriterType)) (
     .writer  : $&WriterType,
     .program : StringView,
     .about   : StringView,
-    .specs   : ArrayViewRO#(.t: CliSpec)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
+    .specs   : ArrayView#(.t: CliSpec)
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
+
     write(writer, .value = about)!
     write(writer, .value = "\nUsage: ")!
     write(writer, .value = program)!
@@ -197,14 +224,14 @@ write_cli_help#(.WriterType: Type: Writer#(WriterType))(
     while index < length(&specs).count {
         spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
         write(writer, .value = "  ")!
-        if spec.short_name.length > 0 {
+        if spec.short_name._length > 0 {
             write(writer, .value = "-")!
             write(writer, .value = spec.short_name)!
             write(writer, .value = ", ")!
         }
         write(writer, .value = "--")!
         write(writer, .value = spec.name)!
-        if spec.value_name.length > 0 {
+        if spec.value_name._length > 0 {
             write(writer, .value = " <")!
             write(writer, .value = spec.value_name)!
             write(writer, .value = ">")!

@@ -4,6 +4,7 @@ const init_cmd = @import("0_commands/init.zig");
 const format_cmd = @import("0_commands/format.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
+const repl_cmd = @import("0_commands/repl.zig");
 const test_cmd = @import("0_commands/test.zig");
 const argi_version = @import("0_commands/version.zig");
 
@@ -33,12 +34,14 @@ fn exitRunError(err: anyerror) noreturn {
 fn printHelp() void {
     std.debug.print("Usage: argi <command> [arguments] [options]\n", .{});
     std.debug.print("\nCommands:\n", .{});
-    std.debug.print("  build [path] [flags]                   Build the current package, package path, or module path\n", .{});
+    std.debug.print("  build [path] [flags]                   Build the current module or a selected module path\n", .{});
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
-    std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
-    std.debug.print("  init [name]                            Create an executable package\n", .{});
-    std.debug.print("  init --lib [name]                      Create a library package\n", .{});
+    std.debug.print("  run --vm <directory>                  Execute the experimental scalar/aggregate bytecode subset\n", .{});
+    std.debug.print("  repl [flags]                           Start the persistent bytecode REPL\n", .{});
+    std.debug.print("  test [directory] [flags]               Build and run native Argi tests\n", .{});
+    std.debug.print("  init [name]                            Create an executable module\n", .{});
+    std.debug.print("  init --lib [name]                      Create a library module\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
     std.debug.print("  format [paths...] [--check]              Format .rg files or directories recursively\n", .{});
     std.debug.print("  format <file.rg> --stdout                Print formatted source without writing\n", .{});
@@ -64,6 +67,7 @@ fn printHelp() void {
     std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
     std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
     std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
+    std.debug.print("\nBytecode execution limits (run --vm, repl):\n  {s}\n", .{@import("0_commands/execution_options.zig").help});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});
@@ -121,16 +125,16 @@ pub fn main(init: std.process.Init) !void {
         lsp_cmd.start(io) catch |err| {
             exitCommandError("LSP error", err);
         };
+    } else if (std.mem.eql(u8, command, "repl")) {
+        repl_cmd.run(init.gpa, io, init.environ_map, args[2..]) catch |err| {
+            exitCommandError("REPL error", err);
+        };
     } else if (std.mem.eql(u8, command, "run")) {
-        const exit_code = run_cmd.run(io, init.environ_map, args[2..]) catch |err| {
+        const exit_code = run_cmd.run(init.gpa, io, init.environ_map, args[2..]) catch |err| {
             exitRunError(err);
         };
         std.process.exit(exit_code);
     } else if (std.mem.eql(u8, command, "test")) {
-        if (args.len < 3) {
-            std.debug.print("Error: module directory required\n", .{});
-            std.process.exit(1);
-        }
         const exit_code = test_cmd.run(io, init.environ_map, args[2..]) catch |err| {
             exitCommandError("Test error", err);
         };

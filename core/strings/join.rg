@@ -1,19 +1,21 @@
-_string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringView) -> () := {
+_string_copy_view_into := (.output: $&String, .offset: UIntNative, .source: StringView) -> () {
+
     index :: UIntNative = 0
 
-    while index < source.length {
-        bytes_set(
+    while index < source._length {
+        _string_set_byte(
             .string = output
             .index  = offset + index
-            .value  = bytes_get(.view = &source, .index = index).byte
+            .value  = unwrap_or_abort(.value = bytes_get(.view = &source, .index = index))
         )
         index = index + 1
     }
 }
 
-join#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .parts: ArrayViewRO#(.t: StringView), .separator: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) := {
+join := (
+    .parts: ArrayView#(.t: StringView), .separator: StringView, .allocator: Virtual#(Allocator)
+) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) {
+
     limit ::= _string_max_result_length().length
     count ::= length(&parts).count
     total :: UIntNative = 0
@@ -21,18 +23,18 @@ join#(.AllocatorType: Type: Allocator#(AllocatorType))(
     -- Inspect lengths before allocating or reading any text bytes. Each sum
     -- is checked by subtraction, including the trailing-NUL reservation.
     while index < count {
-        part ::= unwrap_or_abort(.value = get_ro_ref(&parts, .index = index))&
-        if part.length > limit - total {
+        part ::= unwrap_or_abort(.value = get_reference(&parts, .index = index))&
+        if part._length > limit - total {
             result = ..error(.reason = ..size_overflow)
             return
         }
-        total = total + part.length
+        total = total + part._length
         if index > 0 {
-            if separator.length > limit - total {
+            if separator._length > limit - total {
                 result = ..error(.reason = ..size_overflow)
                 return
             }
-            total = total + separator.length
+            total = total + separator._length
         }
         index = index + 1
     }
@@ -44,11 +46,11 @@ join#(.AllocatorType: Type: Allocator#(AllocatorType))(
     while index < count {
         if index > 0 {
             _string_copy_view_into(.output = $&output, .offset = offset, .source = separator)
-            offset = offset + separator.length
+            offset = offset + separator._length
         }
-        part ::= unwrap_or_abort(.value = get_ro_ref(&parts, .index = index))&
+        part ::= unwrap_or_abort(.value = get_reference(&parts, .index = index))&
         _string_copy_view_into(.output = $&output, .offset = offset, .source = part)
-        offset = offset + part.length
+        offset = offset + part._length
         index = index + 1
     }
 

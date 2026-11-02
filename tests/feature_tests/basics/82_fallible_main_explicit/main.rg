@@ -1,6 +1,7 @@
-run_main() -> (.result: Errable#(.t: Void) = ..ok Void()) := {}
+main := (.system: System) -> (.status_code: Int32 = 1) {
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main()!!!
+    assume writer ::= $&system.terminal&.stderr
+    success: Errable#(.t: Void) = ..ok Void()
+    success!!!
     status_code = 0
 }

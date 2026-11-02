@@ -8,15 +8,17 @@ SocketTimeout#(.Socket: Type): Contract = (
     )
 )
 
-local_address#(.Socket: Type: SocketAddress#(Socket)) := (.self: &Socket) -> (
+local_address := #(.Socket: Type: SocketAddress#(Socket)) (.self: &Socket) -> (
     .result : Errable#(NetworkAddress, (..socket_option_failed))
 ) {
+
     result = SocketAddress#(Socket).local(.self = self)
 }
 
-set_timeout#(.Socket: Type: SocketTimeout#(Socket)) := (.self: $&Socket, .milliseconds: UInt32) -> (
+set_timeout := #(.Socket: Type: SocketTimeout#(Socket)) (.self: $&Socket, .milliseconds: UInt32) -> (
     .result : Errable#(Void, (..socket_option_failed))
 ) {
+
     result = SocketTimeout#(
         Socket
     ).configure_timeout(.self = self, .milliseconds = milliseconds)

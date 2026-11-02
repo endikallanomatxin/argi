@@ -1,6 +1,6 @@
 -- Every implementation checks this low-level precondition before acquiring
 -- storage. A zero or non-power-of-two alignment is a programming error.
-_require_allocation_alignment(.alignment: UIntNative) -> () := {
+_require_allocation_alignment := (.alignment: UIntNative) -> () {
     if alignment == 0 { abort }
     remaining ::= alignment
 
@@ -13,9 +13,9 @@ _require_allocation_alignment(.alignment: UIntNative) -> () := {
 
 -- Explicit trusted establishment into raw storage. Callers must prove bounds,
 -- alignment, and initialization before reading; an Allocation alone cannot.
-_trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (
+_trusted_allocation_byte_ro := (.allocation: &Allocation, .offset: UIntNative) -> (
     .reference : &UInt8
-) := {
+) {
     address ::= _reference_offset_address(
         .address = allocation&.data.address, .elements = offset, .element_size = 1
     ).result
@@ -26,9 +26,9 @@ _trusted_allocation_byte_ro(.allocation: &Allocation, .offset: UIntNative) -> (
     reference = read_reference#(.t: UInt8)(.base = mutable).reference
 }
 
-_trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (
+_trusted_allocation_byte_rw := (.allocation: $&Allocation, .offset: UIntNative) -> (
     .reference : $&UInt8
-) := {
+) {
     address ::= _reference_offset_address(
         .address = allocation&.data.address, .elements = offset, .element_size = 1
     ).result
@@ -43,23 +43,42 @@ _trusted_allocation_byte_rw(.allocation: $&Allocation, .offset: UIntNative) -> (
 -- Runtime guards check alignment and both the declared and authenticated
 -- byte extents. The allocator proves the physical region at establishment;
 -- callers cannot expand it by editing the public receipt fields.
-trusted_establish_allocation_slot#(.t: Type)(
-    .allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any
-) -> (.reference: $&t) := {
+-- An explicit index retains the selected logical position and must agree with
+-- the address. An omitted index is raw establishment, without slot identity.
+trusted_establish_allocation_slot := #(.t: Type) (
+    .allocation : &Allocation,
+    .slot       : RawPointer#(.t: t),
+    .anchor     : &Any,
+    .index      : ?UIntNative         = ..none
+) -> (.reference: $&t) {
     _require_allocation_slot_range(
         .allocation = allocation
         .address    = slot.address
         .size       = size_of(.type = t)
         .alignment  = alignment_of(.type = t)
     )
+    match index {
+        ..some selection {
+            _require_allocation_slot_index#(.t: t)(
+                .allocation = allocation, .index = selection.value
+            )
+            expected ::= _reference_offset_address(
+                .address      = allocation&.data.address
+                .elements     = selection.value
+                .element_size = size_of(.type = t)
+            ).result
+            if slot.address != expected { abort }
+        }
+        ..none {}
+    }
     reference = __trusted_reference_from_address#(.to: $&t)(.address = slot.address)
 }
 
 -- Range validation grants bytes only. It never asserts initialized contents
 -- or publishes a reference, so checked slot selection can share these guards.
-_require_allocation_slot_range(
+_require_allocation_slot_range := (
     .allocation: &Allocation, .address: UIntNative, .size: UIntNative, .alignment: UIntNative
-) -> () := {
+) -> () {
     if address < allocation&._storage_address { abort }
     storage_offset ::= address - allocation&._storage_address
 
@@ -72,4 +91,22 @@ _require_allocation_slot_range(
     if size > allocation&.size - offset { abort }
     if alignment == 0 { abort }
     if address % alignment != 0 { abort }
+}
+
+-- Byte extents cannot bound zero-sized slots. Typed requests retain their
+-- logical count privately; raw byte allocations have no such logical extent.
+-- Nonzero reinterpretations still use the checked physical byte range.
+_require_allocation_slot_index := #(.t: Type) (.allocation: &Allocation, .index: UIntNative) -> (
+) {
+    element_size ::= size_of(.type = t)
+    match allocation&._slot_extent {
+        ..some extent {
+            if extent.value.element_size == element_size {
+                if index >= extent.value.count { abort }
+            } else {
+                if element_size == 0 { abort }
+            }
+        }
+        ..none { if element_size == 0 { abort } }
+    }
 }

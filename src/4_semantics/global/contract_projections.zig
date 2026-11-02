@@ -6,19 +6,41 @@ const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
 const generic_mod = @import("generics.zig");
 const primitives = @import("../primitives/schema.zig");
+const ParameterKind = @import("../module/parameterized/storage.zig").ComptimeParameterKind;
 
 const Resolver = @import("contracts.zig").Resolver;
 pub fn resolveAssociatedType(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.GlobalTypeId {
     const self: *Resolver = @ptrCast(@alignCast(context));
-    return (try resolveAssociatedElement(self, base, member, source, true)).type;
+    return (try resolveAssociatedElement(self, base, member, source, .type)).type;
 }
 
 pub fn resolveAssociatedInt(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!i64 {
     const self: *Resolver = @ptrCast(@alignCast(context));
-    return (try resolveAssociatedElement(self, base, member, source, false)).comptime_int;
+    return (try resolveAssociatedElement(self, base, member, source, .comptime_int)).comptime_int;
 }
 
-fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef, want_type: bool) anyerror!global_sg.GenericArgument.Value {
+pub fn resolveAssociatedDefinition(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.DefinitionValue {
+    const self: *Resolver = @ptrCast(@alignCast(context));
+    return (try resolveAssociatedElement(self, base, member, source, .definition)).definition;
+}
+
+pub fn resolveAssociatedValue(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.GenericArgument.Value {
+    const self: *Resolver = @ptrCast(@alignCast(context));
+    return resolveAssociatedElement(self, base, member, source, null);
+}
+
+fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef, kind: ?ParameterKind) anyerror!global_sg.GenericArgument.Value {
+    const want_type = kind != .comptime_int;
+    const wrong_kind = if (kind) |expected| switch (expected) {
+        .type => "associated element is not a type",
+        .comptime_int => "associated element is not an integer constant",
+        .definition => "associated element is not a type family",
+    } else "invalid associated element";
+    const unknown_member = if (kind) |expected| switch (expected) {
+        .type => "unknown associated type",
+        .comptime_int => "unknown associated constant",
+        .definition => "unknown associated type family",
+    } else "unknown associated element";
     if (self.graph.isTypeUnresolved(base)) return error.UnresolvedAssociatedType;
     const generic = switch (self.graph.types.items[@intFromEnum(base)]) {
         .generic => |value| value,
@@ -41,12 +63,12 @@ fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, membe
     for (0..located.definition.parameters.len) |i| {
         const parameter = storage.comptime_parameters.items[located.definition.parameters.start + i];
         if (std.mem.eql(u8, self.modules[located.module_index].text(parameter.name), member)) {
-            if ((parameter.kind == .type) != want_type) return associatedProjectionError(self, want_type, source, if (want_type) "associated element is not a type" else "associated element is not an integer constant", member);
+            if (kind) |expected| if (parameter.kind != expected) return associatedProjectionError(self, want_type, source, wrong_kind, member);
             position = i;
             break;
         }
     }
-    const associated_index = position orelse return associatedProjectionError(self, want_type, source, if (want_type) "unknown associated type" else "unknown associated constant", member);
+    const associated_index = position orelse return associatedProjectionError(self, want_type, source, unknown_member, member);
     var participants: std.ArrayList(global_sg.GlobalTypeId) = .empty;
     defer participants.deinit(self.allocator);
     for (located.definition.participants.start..located.definition.participants.start + located.definition.participants.len) |raw|
@@ -67,7 +89,8 @@ pub fn typeSelectionReady(self: *const Resolver, ty: global_sg.GlobalTypeId, dep
     return switch (self.graph.types.items[@intFromEnum(ty)]) {
         .pointer => |value| typeSelectionReady(self, value.child, depth + 1),
         .array => |value| typeSelectionReady(self, value.element, depth + 1),
-        .nullable, .inferred_errable, .virtual => |child| typeSelectionReady(self, child, depth + 1),
+        .nullable, .virtual => |child| typeSelectionReady(self, child, depth + 1),
+        .inferred_errable => |value| typeSelectionReady(self, value.child, depth + 1),
         .generic => |value| blk: {
             for (self.graph.generic_arguments.items[value.arguments.start..][0..value.arguments.len]) |argument| {
                 if (argument.value == .type and !typeSelectionReady(self, argument.value.type, depth + 1)) break :blk false;
@@ -85,6 +108,35 @@ pub fn typeSelectionReady(self: *const Resolver, ty: global_sg.GlobalTypeId, dep
             break :blk true;
         },
         else => true,
+    };
+}
+
+/// Reason choices grow as newly specialized bodies contribute errors. A
+/// failed lookup involving one is provisional until pending work settles.
+pub fn containsInferredReasons(self: *const Resolver, ty: global_sg.GlobalTypeId, depth: usize) bool {
+    if (depth > 128 or self.graph.isTypeUnresolved(ty)) return false;
+    return switch (self.graph.types.items[@intFromEnum(ty)]) {
+        .inferred_choice => |value| value.kind == .reasons,
+        .pointer => |value| containsInferredReasons(self, value.child, depth + 1),
+        .array => |value| containsInferredReasons(self, value.element, depth + 1),
+        .nullable, .virtual => |child| containsInferredReasons(self, child, depth + 1),
+        .inferred_errable => |value| containsInferredReasons(self, value.child, depth + 1),
+        .generic => |value| blk: {
+            for (self.graph.generic_arguments.items[value.arguments.start..][0..value.arguments.len]) |argument|
+                if (argument.value == .type and containsInferredReasons(self, argument.value.type, depth + 1)) break :blk true;
+            break :blk false;
+        },
+        .structural => |value| blk: {
+            for (self.graph.fields.items[value.fields.start..][0..value.fields.len]) |field|
+                if (containsInferredReasons(self, field.ty, depth + 1)) break :blk true;
+            break :blk false;
+        },
+        .structural_choice => |value| blk: {
+            for (self.graph.variants.items[value.variants.start..][0..value.variants.len]) |variant|
+                if (variant.payload_type) |child| if (containsInferredReasons(self, child, depth + 1)) break :blk true;
+            break :blk false;
+        },
+        else => false,
     };
 }
 
@@ -121,13 +173,14 @@ pub fn resolveAssociatedTypes(self: *Resolver) !void {
                     defer bindings.deinit(self.allocator);
                     break :blk self.generics.instantiateParameterizedType(module_index, computed, &bindings);
                 } else resolveAssociatedType(self, globalizer.globalType(o, reference.projection_base.?), module.text(reference.name), self.sourceFor(module_index, reference.source))) catch |err| switch (err) {
+                    error.ComptimeExecutionPending => continue,
                     error.UnresolvedAssociatedType => {
                         remaining += 1;
                         continue;
                     },
                     else => return err,
                 };
-                try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(result)]);
+                try self.graph.resolveType(self.allocator, destination, self.graph.types.items[@intFromEnum(result)]);
                 changed = true;
             }
         }

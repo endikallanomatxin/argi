@@ -1,34 +1,41 @@
-DummyWriter: Type = (
+DummyWriter := (
     .bytes : String
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(DummyWriter, (.allocator : $&AllocatorProvider)) (
-    .Result: Type = DummyWriter
-    .init = (.args: (.allocator : $&AllocatorProvider)) -> (.result: Result) {
-        allocator ::= ~args.allocator
+DummyWriterInitArgs: Type = (
+    .allocator : Virtual#(Allocator)
+)
 
-        assume allocator
+implement Init#(
+    DummyWriter, DummyWriterInitArgs
+) (
+    .Result : Type = DummyWriter
 
-        result.bytes = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 16))
+    .init = DummyWriterInitArgs -> (.result: Result) {
+
+        _init_allocator ::= ~allocator
+
+        assume allocator := _init_allocator
+
+        result.bytes = unwrap_or_abort(
+            .value = string_with_capacity(.allocator = _init_allocator, .capacity = 16)
+        )
     }
 )
 
 implement Deinit#(DummyWriter) (
-    .deinit = (.self : $&DummyWriter) -> () {
+    .deinit = (.self: $&DummyWriter) -> () {
         deinit(.self = $&self&.bytes)
     }
 )
 
-append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
-        .self      : $&DummyWriter,
-        .byte      : UInt8,
-        .allocator : $&AllocatorType
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+append_test_byte := (
+    .self: $&DummyWriter, .byte: UInt8, .allocator: Virtual#(Allocator)
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
+
     assume allocator
 
-    pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
+    pushed ::= push_ascii(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) {
         result = ..error(.reason = ..stream_write_failed)
         return
@@ -36,11 +43,16 @@ append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok(.value = Void())
 }
 
-main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32) {
 
-    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 16))
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+
+    buffer ::= unwrap_or_abort(
+        .value = string_with_capacity(.allocator = allocator, .capacity = 16)
+    )
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {
         }
@@ -50,31 +62,31 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    if buffer.length != 2 {
+    if byte_length(&buffer).count != 2 {
         status_code = 1
         return
     }
 
-    writer ::= DummyWriter(.allocator = $&allocator_storage)
+    writer ::= DummyWriter(.allocator = allocator)
     i :: UIntNative = 0
-    while i < buffer.length {
+    while i < byte_length(&buffer).count {
         append_test_byte(
             .self      = $&writer
-            .byte      = bytes_get(.view = &buffer, .index = i).byte
-            .allocator = $&allocator_storage
+            .byte      = unwrap_or_abort(.value = bytes_get(.view = &buffer, .index = i))
+            .allocator = allocator
         )
         i = i + 1
     }
-    append_test_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
+    append_test_byte(.self = $&writer, .byte = 10, .allocator = allocator)
 
-    if writer.bytes.length != 3 {
+    if byte_length(&writer.bytes).count != 3 {
         status_code = 2
         return
     }
 
-    first ::= bytes_get(.view = &writer.bytes, .index = 0).byte
-    second ::= bytes_get(.view = &writer.bytes, .index = 1).byte
-    third ::= bytes_get(.view = &writer.bytes, .index = 2).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &writer.bytes, .index = 0))
+    second ::= unwrap_or_abort(.value = bytes_get(.view = &writer.bytes, .index = 1))
+    third ::= unwrap_or_abort(.value = bytes_get(.view = &writer.bytes, .index = 2))
     if first != 79 {
         status_code = 3
         return

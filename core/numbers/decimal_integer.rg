@@ -1,7 +1,7 @@
 -- Fixed base-65536 limbs describe exact decimal/binary rounding intervals
 -- independently of the host library, locale, and allocator. Only the
 -- initialized prefix is used; decimal parsing and formatting share them.
-_FloatDecimalInteger: Type = (
+_FloatDecimalInteger := (
     .words : [256]UInt32 = (
         0,
         0,
@@ -258,13 +258,13 @@ _FloatDecimalInteger: Type = (
         0,
         0,
         0,
-        0,
+        0
     )
     .used : UIntNative = 1
 )
 
-_float_integer_multiply(.self: $&_FloatDecimalInteger, .factor: UInt32, .addend: UInt32 = 0) -> (
-) := {
+_float_integer_multiply := (.self: $&_FloatDecimalInteger, .factor: UInt32, .addend: UInt32 = 0) -> (
+) {
     carry :: UInt32 = addend
     index :: UIntNative = 0
 
@@ -282,9 +282,45 @@ _float_integer_multiply(.self: $&_FloatDecimalInteger, .factor: UInt32, .addend:
     }
 }
 
-_float_integer_compare(.left: &_FloatDecimalInteger, .right: &_FloatDecimalInteger) -> (
+-- The integer is normalized, so its highest used word is nonzero except for zero.
+_float_integer_bit_length := (.self: &_FloatDecimalInteger) -> (.bits: UIntNative) {
+    top ::= self&.words[self&.used - 1]
+    bits = [self&.used - 1] * 16
+    while top > 0 {
+        bits = bits + 1
+        top = top / 2
+    }
+}
+
+-- Shift in place from the high end so source words are not overwritten.
+_float_integer_shift_left := (.self: $&_FloatDecimalInteger, .bits: UIntNative) -> () {
+    if bits == 0 or [self&.used == 1 and self&.words[0] == 0] { return }
+    whole ::= bits / 16
+    partial ::= bits % 16
+    if self&.used + whole > 256 { abort }
+    index ::= self&.used
+    while index > 0 {
+        index = index - 1
+        self&.words[index + whole] = self&.words[index]
+    }
+    index = 0
+    while index < whole {
+        self&.words[index] = 0
+        index = index + 1
+    }
+    self&.used = self&.used + whole
+    factor :: UInt32 = 1
+    count ::= partial
+    while count > 0 {
+        factor = factor * 2
+        count = count - 1
+    }
+    if partial != 0 { _float_integer_multiply(self, .factor = factor) }
+}
+
+_float_integer_compare := (.left: &_FloatDecimalInteger, .right: &_FloatDecimalInteger) -> (
     .order : Int32
-) := {
+) {
     if left&.used < right&.used {
         order = -1
         return
@@ -312,7 +348,7 @@ _float_integer_compare(.left: &_FloatDecimalInteger, .right: &_FloatDecimalInteg
     order = 0
 }
 
-_float_integer_subtract(.self: $&_FloatDecimalInteger, .other: &_FloatDecimalInteger) -> () := {
+_float_integer_subtract := (.self: $&_FloatDecimalInteger, .other: &_FloatDecimalInteger) -> () {
     borrow :: UInt32 = 0
     index :: UIntNative = 0
 
@@ -336,7 +372,7 @@ _float_integer_subtract(.self: $&_FloatDecimalInteger, .other: &_FloatDecimalInt
     }
 }
 
-_float_integer_halve(.self: $&_FloatDecimalInteger) -> () := {
+_float_integer_halve := (.self: $&_FloatDecimalInteger) -> () {
     index :: UIntNative = self&.used
     carry :: UInt32 = 0
 
@@ -350,11 +386,12 @@ _float_integer_halve(.self: $&_FloatDecimalInteger) -> () := {
     if self&.used > 1 and self&.words[self&.used - 1] == 0 { self&.used = self&.used - 1 }
 }
 
-_float_integer_nonzero(.self: &_FloatDecimalInteger) -> (.value: Bool) := {
+_float_integer_nonzero := (.self: &_FloatDecimalInteger) -> (.value: Bool) {
     value = self&.used != 1 or self&.words[0] != 0
 }
 
-_float_integer_from_u64(.value: UInt64) -> (.integer: _FloatDecimalInteger) := {
+_float_integer_from_u64 := (.value: UInt64) -> (.integer: _FloatDecimalInteger) {
+
     integer = _FloatDecimalInteger()
     remaining ::= value
     integer.used = 0
@@ -369,7 +406,7 @@ _float_integer_from_u64(.value: UInt64) -> (.integer: _FloatDecimalInteger) := {
     }
 }
 
-_float_integer_divide_ten(.self: $&_FloatDecimalInteger) -> (.remainder: UInt32) := {
+_float_integer_divide_ten := (.self: $&_FloatDecimalInteger) -> (.remainder: UInt32) {
     remainder = 0
     index ::= self&.used
 
@@ -383,9 +420,9 @@ _float_integer_divide_ten(.self: $&_FloatDecimalInteger) -> (.remainder: UInt32)
     while self&.used > 1 and self&.words[self&.used - 1] == 0 { self&.used = self&.used - 1 }
 }
 
-_float_integer_add_multiple(
+_float_integer_add_multiple := (
     .self: $&_FloatDecimalInteger, .other: &_FloatDecimalInteger, .factor: UInt32
-) -> () := {
+) -> () {
     carry :: UInt32 = 0
     index :: UIntNative = 0
 

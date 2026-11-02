@@ -1,19 +1,22 @@
-measure(.view: StringView) -> (.count: UIntNative) := {
-    count = view.length
+measure := (.view: StringView) -> (.count: UIntNative) {
+    count = byte_length(&view).count
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     text ::= unwrap_or_abort(.value = String(.length = 4))
-    bytes_set(.string = $&text, .index = 0, .value = 65)
-    bytes_set(.string = $&text, .index = 1, .value = 114)
-    bytes_set(.string = $&text, .index = 2, .value = 103)
-    bytes_set(.string = $&text, .index = 3, .value = 105)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 3, .byte = 105))
 
-    first_view ::= as_view(.self = &text)
-    second_view : StringView = first_view
+    first_view ::= view(.self = &text)
+    second_view: StringView = first_view
 
     if measure(.view = second_view).count != 4 {
         status_code = 1

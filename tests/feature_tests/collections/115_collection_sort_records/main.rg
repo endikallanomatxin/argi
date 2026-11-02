@@ -1,28 +1,25 @@
-Record: Type = (.key: Int32, .tag: UIntNative)
+Record := (.key: Int32, .tag: UIntNative)
 
 implement ImplicitlyCopyable#(Record) ()
 
 ByKey: Type = ()
 
-implement OrderPolicy#(ByKey, Record)(
-    .less = (.self: &ByKey, .left: Record, .right: Record) -> (.ok: Bool) {
-        ok = [
-            left.key
-            < right.key
-        ]
+implement OrderPolicy#(ByKey, Record) (
+    .less = (.self: &ByKey, .left: &Record, .right: &Record) -> (.ok: Bool) {
+        ok = [left&.key < right&.key]
     }
 )
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     records: [6]Record = (
         (.key = 3, .tag = 0),
         (.key = 1, .tag = 1),
         (.key = 2, .tag = 2),
         (.key = 1, .tag = 3),
         (.key = 3, .tag = 4),
-        (.key = 2, .tag = 5),
+        (.key = 2, .tag = 5)
     )
-    borrowed_view ::= view(.array = $&records)
+    borrowed_view ::= view(.self = $&records)
     order ::= ByKey()
     sort(.self = $&borrowed_view, .order = &order)
     seen: [6]UIntNative = (0, 0, 0, 0, 0, 0)
@@ -43,14 +40,20 @@ main() -> (.status_code: Int32 = 0) := {
         index = index + 1
     }
     words: [5]StringView = ("b", "ab", "a", "", "a")
-    word_view ::= view(.array = $&words)
+    word_view ::= view(.self = $&words)
     word_order ::= StringViewOrderPolicy()
     sort(.self = $&word_view, .order = &word_order)
-    if words[0] != "" or words[1] != "a" or words[2] != "a" or words[3] != "ab" or words[4] != "b" {
+    if [
+        words[0] != ""
+        or words[1] != "a"
+        or words[2] != "a"
+        or words[3] != "ab"
+        or words[4] != "b"
+    ] {
         abort
     }
     native: [4]UIntNative = (100, 2, 1, 0)
-    native_view ::= view(.array = $&native)
+    native_view ::= view(.self = $&native)
     native_order ::= UIntNativeOrderPolicy()
     sort(.self = $&native_view, .order = &native_order)
     if native[0] != 0 or native[1] != 1 or native[2] != 2 or native[3] != 100 { abort }

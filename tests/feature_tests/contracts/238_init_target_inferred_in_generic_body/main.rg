@@ -1,11 +1,17 @@
-Box#(.T: Type): Type = (.value: T)
-implement#(.T: Type) Init#(Box#(T), (.value: T)) (
-    .Result: Type = Box#(T)
-    .init = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
+Box := #(.T: Type) (.value: T)
+
+BoxInitArgs: Type = #(.T: Type) (.value: T)
+
+implement#(.T: Type) Init#(Box#(T), BoxInitArgs#(T)) (
+    .Result : Type = Box#(T)
+
+    .init = BoxInitArgs#(T) -> (.result: Result) { result = (.value = value) }
 )
-wrap#(.T: Type) := (.value: T) -> (.result: Box#(T)) {
+
+wrap := #(.T: Type) (.value: T) -> (.result: Box#(T)) {
     result = Box(.value = value)
 }
+
 main := () -> (.status_code: Int32 = 0) {
     byte :: UInt8 = 42
     boxed ::= wrap(.value = byte)

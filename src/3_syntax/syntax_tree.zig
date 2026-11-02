@@ -70,7 +70,6 @@ pub const Node = struct {
         choice_option_declaration,
         symbol_declaration_constant,
         symbol_declaration_variable,
-        type_declaration,
         c_enum_declaration,
         c_union_declaration,
         c_struct_declaration,
@@ -78,21 +77,22 @@ pub const Node = struct {
         contract_declaration,
         contract_conformance,
         contract_function_requirement,
+        contract_inferred_operation_requirement,
         contract_domain,
         contract_outcome,
         c_function_pointer_declaration,
         function_declaration,
-        function_declaration_once,
+        function_definition,
+        parameterized_definition,
         test_declaration,
         assignment,
         expression_statement,
         identifier,
         pipe_placeholder,
         assume_statement,
-        reach_directive,
-        reach_alternative,
         move_expression,
         function_call,
+        comptime_entry,
         unwrap_or,
         unwrap_or_do,
         handle_expression,
@@ -100,6 +100,8 @@ pub const Node = struct {
         code_block,
         literal,
         list_literal,
+        parameter_list,
+        specialization_arguments,
         struct_type_literal,
         struct_type_field,
         positional_type_field,
@@ -161,7 +163,7 @@ pub const Node = struct {
         nullable_type,
         inferred_errable_type,
         array_type,
-        generic_type_instantiation,
+        specialization,
         associated_type_projection,
     };
 
@@ -189,12 +191,10 @@ pub const Node = struct {
 pub const Mutability = enum(u32) { constant, variable };
 pub const PointerMutability = enum(u32) { read_only, read_write };
 
-pub const FunctionExtra = struct {
+/// A function value has no binding name or declaration-owned parameters.
+pub const FunctionDefinitionExtra = struct {
     contract_member: u32 = 0,
-    name_token: TokenIndex,
-    generic_params_start: ExtraIndex,
-    generic_params_end: ExtraIndex,
-    generic_params_struct: OptionalNodeIndex,
+    is_once: u32 = 0,
     input: NodeIndex,
     output: NodeIndex,
     body: OptionalNodeIndex,
@@ -202,9 +202,27 @@ pub const FunctionExtra = struct {
     c_abi: u32 = 0,
     safety_contract: OptionalNodeIndex = .none,
 };
-pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex };
+
+pub const ParameterizedDefinitionExtra = struct {
+    captured_parameter_count: u32 = 0,
+    parameters_start: ExtraIndex,
+    parameters_end: ExtraIndex,
+    parameters_struct: OptionalNodeIndex,
+    value: NodeIndex,
+};
+
+pub const ParameterizedDefinition = struct {
+    captured_parameter_count: u32,
+    parameters: []const NodeIndex,
+    parameters_struct: ?NodeIndex,
+    value: NodeIndex,
+};
+
+pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex, comptime_selection: u32 = 0 };
+pub const ComptimeEntryExtra = struct { input: OptionalNodeIndex = .none, output: OptionalNodeIndex = .none, body: NodeIndex };
+pub const ComptimeEntry = struct { input: ?NodeIndex, output: ?NodeIndex, body: NodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
-pub const GenericValueExtra = struct {
+pub const ConformanceExtra = struct {
     implementation_members: OptionalNodeIndex = .none,
     generic_params_start: ExtraIndex,
     generic_params_end: ExtraIndex,
@@ -226,10 +244,7 @@ pub const ContractExtra = struct {
 };
 pub const CallExtra = struct {
     contract_type: OptionalNodeIndex = .none,
-    module_qualifier: OptionalTokenIndex,
-    type_arguments_start: ExtraIndex,
-    type_arguments_end: ExtraIndex,
-    type_arguments_struct: OptionalNodeIndex,
+    callee: NodeIndex,
     input: NodeIndex,
 };
 pub const HandleExtra = struct { value: NodeIndex, result_name: OptionalTokenIndex, error_name: TokenIndex, body: NodeIndex };
@@ -240,6 +255,7 @@ pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body:
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };
 
 pub const FunctionDeclaration = struct {
+    captured_parameter_count: u32 = 0,
     contract_member: bool = false,
     name_token: TokenIndex,
     generic_params: []const NodeIndex,
@@ -262,13 +278,13 @@ pub const OperatorName = enum {
     equal,
     not_equal,
 };
-pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex };
+pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex, comptime_selection: bool = false };
 pub const FunctionCall = struct {
+    callee: NodeIndex,
     contract_type: ?NodeIndex = null,
     callee_token: TokenIndex,
     module_qualifier: ?TokenIndex,
-    type_arguments: []const NodeIndex,
-    type_arguments_struct: ?NodeIndex,
+    specialization_arguments: ?NodeIndex,
     input: NodeIndex,
 };
 pub const StructTypeLiteral = struct { fields: []const NodeIndex };
@@ -292,8 +308,8 @@ pub const ChoiceOptionDeclaration = struct { name_token: TokenIndex };
 pub const Assignment = struct { name_token: TokenIndex, value: NodeIndex };
 pub const ImportStatement = struct { path_token: TokenIndex };
 pub const TypeDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
-pub const CEnumDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
-pub const CUnionDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
+pub const CEnumDeclaration = TypeDeclaration;
+pub const CUnionDeclaration = TypeDeclaration;
 pub const ContractConformance = struct {
     generic_params: []const NodeIndex,
     generic_params_struct: ?NodeIndex,
@@ -310,13 +326,13 @@ pub const ContractDeclaration = struct {
     requires_functions: []const NodeIndex,
     domains: []const NodeIndex,
 };
-pub const ContractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
+pub const ContractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, generic_params: []const NodeIndex = &.{}, generic_params_struct: ?NodeIndex = null, safety_contract: ?NodeIndex = null };
 pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
     pointer: struct { child: NodeIndex, mutability: PointerMutability },
     nullable: NodeIndex,
-    inferred_errable: NodeIndex,
+    inferred_errable: struct { child: NodeIndex, traced: bool },
     array: struct { length_token: TokenIndex, element: NodeIndex },
     generic: GenericType,
     projection: struct { base: NodeIndex, member_token: TokenIndex },
@@ -333,8 +349,6 @@ pub const StructFieldAccess = struct { value: NodeIndex, field_token: TokenIndex
 pub const ChoicePayloadAccess = struct { value: NodeIndex, variant_token: TokenIndex };
 pub const ChoiceLiteral = struct { name_token: TokenIndex, payload: ?NodeIndex };
 pub const ValueField = struct { name_token: ?TokenIndex, value: NodeIndex, position: ?u32 };
-pub const ReachDirective = struct { alternatives: []const NodeIndex };
-pub const ReachAlternative = struct { segments: []const NodeIndex };
 pub const ReturnStatement = struct { value: ?NodeIndex };
 pub const IndexAccess = struct { value: NodeIndex, index: NodeIndex };
 pub const AddressOf = struct { value: NodeIndex, mutability: PointerMutability };
@@ -504,37 +518,72 @@ pub const FileSyntaxTree = struct {
         };
     }
 
-    pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
-        const node_tag = tree.tag(node);
-        if (node_tag != .function_declaration and node_tag != .function_declaration_once and node_tag != .c_function_pointer_declaration) return null;
-        const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
+    pub fn comptimeEntry(tree: *const FileSyntaxTree, node: NodeIndex) ?ComptimeEntry {
+        if (tree.tag(node) != .comptime_entry) return null;
+        const extra = tree.extraData(ComptimeEntryExtra, tree.data(node).extra);
+        return .{ .input = extra.input.unwrap(), .output = extra.output.unwrap(), .body = extra.body };
+    }
+
+    pub fn parameterizedDefinition(tree: *const FileSyntaxTree, node: NodeIndex) ?ParameterizedDefinition {
+        if (tree.tag(node) != .parameterized_definition) return null;
+        const extra = tree.extraData(ParameterizedDefinitionExtra, tree.data(node).extra);
+        return .{
+            .captured_parameter_count = extra.captured_parameter_count,
+            .parameters = tree.nodeRange(.{ .start = extra.parameters_start, .end = extra.parameters_end }),
+            .parameters_struct = extra.parameters_struct.unwrap(),
+            .value = extra.value,
+        };
+    }
+
+    pub fn definitionBody(tree: *const FileSyntaxTree, node: NodeIndex) NodeIndex {
+        return if (tree.parameterizedDefinition(node)) |definition| definition.value else node;
+    }
+
+    pub fn functionDefinition(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDefinitionExtra {
+        if (tree.tag(node) != .function_definition) return null;
+        return tree.extraData(FunctionDefinitionExtra, tree.data(node).extra);
+    }
+
+    /// A binding refers to its definition value; names never belong to the value.
+    pub fn definitionValue(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
+        return switch (tree.tag(node)) {
+            .function_declaration, .c_function_pointer_declaration, .test_declaration, .contract_function_requirement => tree.data(node).token_and_node.node,
+            .c_struct_declaration, .c_enum_declaration, .c_union_declaration, .c_incomplete_declaration => tree.data(node).node,
+            .symbol_declaration_constant => (tree.symbolDeclaration(node) orelse return null).value,
+            else => null,
+        };
+    }
+
+    fn boundFunction(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
+        const value = tree.definitionValue(node) orelse return null;
+        const parameters = tree.parameterizedDefinition(value);
+        const extra = tree.functionDefinition(tree.definitionBody(value)) orelse return null;
         return .{
             .contract_member = extra.contract_member != 0,
-            .name_token = extra.name_token,
-            .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
-            .generic_params_struct = extra.generic_params_struct.unwrap(),
+            .captured_parameter_count = if (parameters) |definition| definition.captured_parameter_count else 0,
+            .name_token = if (tree.tag(node) == .symbol_declaration_constant) tree.mainToken(node) else tree.data(node).token_and_node.token,
+            .generic_params = if (parameters) |definition| definition.parameters else &.{},
+            .generic_params_struct = if (parameters) |definition| definition.parameters_struct else null,
             .input = extra.input,
             .output = extra.output,
             .body = extra.body.unwrap(),
-            .is_once = node_tag == .function_declaration_once,
+            .is_once = extra.is_once != 0,
             .c_options = extra.c_options.unwrap(),
             .c_abi = extra.c_abi != 0,
-            .c_function_pointer = node_tag == .c_function_pointer_declaration,
+            .c_function_pointer = tree.tag(node) == .c_function_pointer_declaration,
+        };
+    }
+
+    pub fn functionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionDeclaration {
+        return switch (tree.tag(node)) {
+            .function_declaration, .c_function_pointer_declaration, .symbol_declaration_constant => tree.boundFunction(node),
+            else => null,
         };
     }
 
     pub fn testDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TestDeclaration {
         if (tree.tag(node) != .test_declaration) return null;
-        const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
-        return .{ .function = .{
-            .name_token = extra.name_token,
-            .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
-            .generic_params_struct = extra.generic_params_struct.unwrap(),
-            .input = extra.input,
-            .output = extra.output,
-            .body = extra.body.unwrap(),
-            .is_once = false,
-        } };
+        return .{ .function = tree.boundFunction(node) orelse return null };
     }
 
     pub fn functionName(tree: *const FileSyntaxTree, db: *const source_db.SourceDb, node: NodeIndex) ?FunctionName {
@@ -560,24 +609,111 @@ pub const FileSyntaxTree = struct {
         };
     }
 
+    /// Only block statements introduce conditional compilation. Follow the
+    /// parsed control structure rather than searching source text for '#if'.
+    pub fn hasComptimeSelection(tree: *const FileSyntaxTree, node: NodeIndex) bool {
+        return tree.hasComptimeSelectionWithin(node, false);
+    }
+
+    // An entry shares its nested compile-time execution, while an ordinary
+    // containing function keeps its own staging boundary.
+    pub fn hasEntryComptimeSelection(tree: *const FileSyntaxTree, node: NodeIndex) bool {
+        return tree.hasComptimeSelectionWithin(node, true);
+    }
+
+    fn hasComptimeSelectionWithin(tree: *const FileSyntaxTree, node: NodeIndex, descend_entries: bool) bool {
+        if (tree.comptimeEntry(node)) |entry|
+            return descend_entries and tree.hasComptimeSelectionWithin(entry.body, true);
+        if (tree.codeBlock(node)) |block| {
+            for (block.statements) |statement| if (tree.hasComptimeSelectionWithin(statement, descend_entries)) return true;
+        } else if (tree.ifStatement(node)) |statement| {
+            return statement.comptime_selection or tree.hasComptimeSelectionWithin(statement.condition, descend_entries) or tree.hasComptimeSelectionWithin(statement.then_block, descend_entries) or
+                (if (statement.else_block) |alternate| tree.hasComptimeSelectionWithin(alternate, descend_entries) else false);
+        } else if (tree.whileStatement(node)) |statement| {
+            return tree.hasComptimeSelectionWithin(statement.condition, descend_entries) or tree.hasComptimeSelectionWithin(statement.body, descend_entries);
+        } else if (tree.forStatement(node)) |statement| {
+            return tree.hasComptimeSelectionWithin(statement.iterable, descend_entries) or tree.hasComptimeSelectionWithin(statement.body, descend_entries);
+        } else if (tree.matchStatement(node)) |statement| {
+            if (tree.hasComptimeSelectionWithin(statement.value, descend_entries)) return true;
+            for (statement.cases) |case| if (tree.hasComptimeSelectionWithin(tree.matchCase(case).?.body, descend_entries)) return true;
+        } else if (tree.tag(node) == .handle_expression) {
+            const handle = tree.extraData(HandleExtra, tree.data(node).extra);
+            return tree.hasComptimeSelectionWithin(handle.value, descend_entries) or tree.hasComptimeSelectionWithin(handle.body, descend_entries);
+        } else if (tree.tag(node) == .error_report_return_block) {
+            const pair = tree.data(node).node_and_node;
+            return tree.hasComptimeSelectionWithin(pair.first, descend_entries) or tree.hasComptimeSelectionWithin(pair.second, descend_entries);
+        } else if (tree.symbolDeclaration(node)) |declaration| {
+            return if (declaration.value) |value| tree.hasComptimeSelectionWithin(value, descend_entries) else false;
+        } else if (tree.assignment(node)) |assignment_node| {
+            return tree.hasComptimeSelectionWithin(assignment_node.value, descend_entries);
+        } else if (tree.returnStatement(node)) |statement| {
+            return if (statement.value) |value| tree.hasComptimeSelectionWithin(value, descend_entries) else false;
+        } else if (tree.functionCall(node)) |call| {
+            return tree.hasComptimeSelectionWithin(call.input, descend_entries);
+        } else if (tree.structValueLiteral(node)) |collection_value| {
+            for (collection_value.fields) |field| if (tree.hasComptimeSelectionWithin(tree.valueField(field).?.value, descend_entries)) return true;
+        } else if (tree.listLiteral(node)) |collection_value| {
+            for (collection_value.elements) |element| if (tree.hasComptimeSelectionWithin(element, descend_entries)) return true;
+        } else if (tree.choiceLiteral(node)) |collection_value| {
+            return if (collection_value.payload) |payload| tree.hasComptimeSelectionWithin(payload, descend_entries) else false;
+        } else if (tree.structFieldAccess(node)) |access| {
+            return tree.hasComptimeSelectionWithin(access.value, descend_entries);
+        } else if (tree.choicePayloadAccess(node)) |access| {
+            return tree.hasComptimeSelectionWithin(access.value, descend_entries);
+        } else if (tree.binaryOperation(node)) |operation| {
+            return tree.hasComptimeSelectionWithin(operation.lhs, descend_entries) or tree.hasComptimeSelectionWithin(operation.rhs, descend_entries);
+        } else if (tree.unaryOperand(node)) |operand| {
+            return tree.hasComptimeSelectionWithin(operand, descend_entries);
+        } else if (tree.assumedDeclaration(node)) |declaration| {
+            return tree.hasComptimeSelectionWithin(declaration, descend_entries);
+        }
+        return false;
+    }
+
     pub fn ifStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?IfStatement {
         if (tree.tag(node) != .if_statement) return null;
         const node_data = tree.data(node).node_and_extra;
         const extra = tree.extraData(IfExtra, node_data.extra);
-        return .{ .condition = node_data.node, .then_block = extra.then_block, .else_block = extra.else_block.unwrap() };
+        return .{ .condition = node_data.node, .then_block = extra.then_block, .else_block = extra.else_block.unwrap(), .comptime_selection = extra.comptime_selection != 0 };
     }
 
     pub fn functionCall(tree: *const FileSyntaxTree, node: NodeIndex) ?FunctionCall {
         if (tree.tag(node) != .function_call) return null;
         const extra = tree.extraData(CallExtra, tree.data(node).extra);
+        var base = extra.callee;
+        var arguments: ?NodeIndex = null;
+        if (tree.tag(base) == .specialization) {
+            const pair = tree.data(base).node_and_node;
+            base = pair.first;
+            arguments = pair.second;
+        }
+        const qualifier: ?TokenIndex = switch (tree.tag(base)) {
+            .type_name => tree.data(base).token_and_optional_token.optional.unwrap(),
+            .struct_field_access => blk: {
+                var root = tree.data(base).token_and_node.node;
+                while (tree.structFieldAccess(root)) |access| root = access.value;
+                break :blk if (tree.tag(root) == .identifier) tree.mainToken(root) else null;
+            },
+            else => null,
+        };
         return .{
+            .callee = extra.callee,
             .contract_type = extra.contract_type.unwrap(),
-            .callee_token = tree.mainToken(node),
-            .module_qualifier = extra.module_qualifier.unwrap(),
-            .type_arguments = tree.nodeRange(.{ .start = extra.type_arguments_start, .end = extra.type_arguments_end }),
-            .type_arguments_struct = extra.type_arguments_struct.unwrap(),
+            .callee_token = if (tree.tag(base) == .struct_field_access) tree.data(base).token_and_node.token else tree.mainToken(base),
+            .module_qualifier = qualifier,
+            .specialization_arguments = arguments,
             .input = extra.input,
         };
+    }
+
+    pub fn parameterList(tree: *const FileSyntaxTree, node: NodeIndex) ?StructTypeLiteral {
+        if (tree.tag(node) != .parameter_list) return null;
+        return .{ .fields = tree.nodeRange(tree.data(node).extra_range) };
+    }
+
+    pub fn specializationArguments(tree: *const FileSyntaxTree, node: NodeIndex) ?StructTypeLiteral {
+        if (tree.tag(node) != .specialization_arguments) return null;
+        return .{ .fields = tree.nodeRange(tree.data(node).extra_range) };
     }
 
     pub fn structTypeLiteral(tree: *const FileSyntaxTree, node: NodeIndex) ?StructTypeLiteral {
@@ -663,46 +799,46 @@ pub const FileSyntaxTree = struct {
         return .{ .path_token = tree.data(node).token };
     }
 
-    const GenericValuePayload = struct {
-        name_token: TokenIndex,
-        generic_params: []const NodeIndex,
-        generic_params_struct: ?NodeIndex,
-        value: NodeIndex,
-    };
-
-    fn genericValuePayload(tree: *const FileSyntaxTree, node: NodeIndex) GenericValuePayload {
-        const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
+    fn boundTypeDefinition(tree: *const FileSyntaxTree, node: NodeIndex) TypeDeclaration {
+        const value = tree.definitionValue(node).?;
+        const parameters = tree.parameterizedDefinition(value);
         return .{
             .name_token = tree.mainToken(node),
-            .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
-            .generic_params_struct = extra.generic_params_struct.unwrap(),
-            .value = extra.value,
+            .generic_params = if (parameters) |definition| definition.parameters else &.{},
+            .generic_params_struct = if (parameters) |definition| definition.parameters_struct else null,
+            .value = tree.definitionBody(value),
         };
     }
 
     pub fn typeDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?TypeDeclaration {
-        if (tree.tag(node) != .type_declaration and tree.tag(node) != .c_struct_declaration and tree.tag(node) != .c_incomplete_declaration) return null;
-        const payload = tree.genericValuePayload(node);
-        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
+        if (tree.tag(node) == .symbol_declaration_constant) {
+            const value = tree.definitionValue(node) orelse return null;
+            const body = tree.definitionBody(value);
+            const tag_ = tree.tag(body);
+            if (tag_ != .struct_type_literal and tag_ != .choice_type_literal) {
+                if (tree.parameterizedDefinition(value) == null or tree.functionDefinition(body) != null or tree.typeReference(body) == null) return null;
+            }
+        } else switch (tree.tag(node)) {
+            .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration => {},
+            else => return null,
+        }
+        return tree.boundTypeDefinition(node);
     }
 
     pub fn cEnumDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?CEnumDeclaration {
         if (tree.tag(node) != .c_enum_declaration) return null;
-        const payload = tree.genericValuePayload(node);
-        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
+        return tree.boundTypeDefinition(node);
     }
 
     pub fn cUnionDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?CUnionDeclaration {
         if (tree.tag(node) != .c_union_declaration) return null;
-        const payload = tree.genericValuePayload(node);
-        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
+        return tree.boundTypeDefinition(node);
     }
 
     pub fn contractConformance(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractConformance {
         if (tree.tag(node) != .contract_conformance) return null;
-        const payload = tree.genericValuePayload(node);
-        const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
-        return .{ .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .contract_type = payload.value, .implementation_members = extra.implementation_members.unwrap().?, .domain_mapping = extra.safety_contract.unwrap() };
+        const extra = tree.extraData(ConformanceExtra, tree.data(node).extra);
+        return .{ .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }), .generic_params_struct = extra.generic_params_struct.unwrap(), .contract_type = extra.value, .implementation_members = extra.implementation_members.unwrap().?, .domain_mapping = extra.safety_contract.unwrap() };
     }
 
     pub fn contractDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractDeclaration {
@@ -721,8 +857,31 @@ pub const FileSyntaxTree = struct {
 
     pub fn contractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractFunctionRequirement {
         if (tree.tag(node) != .contract_function_requirement) return null;
-        const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
-        return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
+        const value = tree.definitionValue(node) orelse return null;
+        const parameters = tree.parameterizedDefinition(value);
+        const extra = tree.functionDefinition(tree.definitionBody(value)) orelse return null;
+        return .{
+            .name_token = tree.mainToken(node),
+            .input = extra.input,
+            .output = extra.output,
+            .generic_params = if (parameters) |definition| definition.parameters else &.{},
+            .generic_params_struct = if (parameters) |definition| definition.parameters_struct else null,
+            .safety_contract = extra.safety_contract.unwrap(),
+        };
+    }
+
+    /// Read a name in a type-use context without changing the expression node.
+    /// Specialization has one callee representation for values and type uses.
+    pub fn typeReference(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {
+        if (tree.tag(node) == .identifier)
+            return .{ .name = .{ .name_token = tree.mainToken(node), .qualifier_token = null } };
+        if (tree.structFieldAccess(node)) |access| {
+            var root = access.value;
+            while (tree.structFieldAccess(root)) |parent| root = parent.value;
+            if (tree.tag(root) != .identifier) return null;
+            return .{ .name = .{ .name_token = access.field_token, .qualifier_token = tree.mainToken(root) } };
+        }
+        return tree.syntaxType(node);
     }
 
     pub fn syntaxType(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {
@@ -734,10 +893,10 @@ pub const FileSyntaxTree = struct {
             .pointer_type => .{ .pointer = .{ .child = tree.data(node).node, .mutability = .read_only } },
             .pointer_type_mut => .{ .pointer = .{ .child = tree.data(node).node, .mutability = .read_write } },
             .nullable_type => .{ .nullable = tree.data(node).node },
-            .inferred_errable_type => .{ .inferred_errable = tree.data(node).node },
+            .inferred_errable_type => .{ .inferred_errable = .{ .child = tree.data(node).node, .traced = tree.tokens.items(.content)[@intFromEnum(tree.mainToken(node))] == .double_bang } },
             .array_type => .{ .array = .{ .length_token = tree.data(node).token_and_node.token, .element = tree.data(node).token_and_node.node } },
             .associated_type_projection => .{ .projection = .{ .base = tree.data(node).node, .member_token = tree.mainToken(node) } },
-            .generic_type_instantiation => .{ .generic = .{ .base = tree.data(node).node_and_node.first, .arguments = tree.data(node).node_and_node.second } },
+            .specialization => .{ .generic = .{ .base = tree.data(node).node_and_node.first, .arguments = tree.data(node).node_and_node.second } },
             .struct_type_literal => .{ .struct_literal = tree.structTypeLiteral(node).? },
             .choice_type_literal => .{ .choice_literal = tree.choiceTypeLiteral(node).? },
             else => return null,
@@ -808,16 +967,6 @@ pub const FileSyntaxTree = struct {
             .positional_value_field => .{ .name_token = null, .value = tree.data(node).u32_and_node.node, .position = tree.data(node).u32_and_node.value },
             else => null,
         };
-    }
-
-    pub fn reachDirective(tree: *const FileSyntaxTree, node: NodeIndex) ?ReachDirective {
-        if (tree.tag(node) != .reach_directive) return null;
-        return .{ .alternatives = tree.nodeRange(tree.data(node).extra_range) };
-    }
-
-    pub fn reachAlternative(tree: *const FileSyntaxTree, node: NodeIndex) ?ReachAlternative {
-        if (tree.tag(node) != .reach_alternative) return null;
-        return .{ .segments = tree.nodeRange(tree.data(node).extra_range) };
     }
 
     pub fn returnStatement(tree: *const FileSyntaxTree, node: NodeIndex) ?ReturnStatement {
@@ -919,6 +1068,7 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .dot => ".",
         .double_dot => "..",
         .comma => ",",
+        .semicolon => ";",
         .keyword_abort => "abort",
         .keyword_return => "return",
         .keyword_if => "if",
@@ -931,9 +1081,10 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .keyword_continue => "continue",
         .keyword_once => "once",
         .keyword_assume => "assume",
-        .keyword_reach => "reach",
         .keyword_import => "import",
         .keyword_test => "test",
+        .keyword_implement => "implement",
+        .keyword_defer => "defer",
         .keyword_and => "and",
         .keyword_or => "or",
         .colon => ":",

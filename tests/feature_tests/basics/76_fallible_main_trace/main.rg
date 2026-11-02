@@ -1,12 +1,15 @@
 ..startup_failed
-fail() -> !Void := {
+
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
+    assume error_tracer
+
     result = ..error(.reason = ..startup_failed)
-}
-run_main() -> !Void = ..ok Void() := {
-    fail() !! "starting application"
+    add_context(.context = "starting application")
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main()!!!
+main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 1) {
+    assume error_tracer
+    assume writer ::= $&system.terminal&.stderr
+    fail()!!!
     status_code = 0
 }

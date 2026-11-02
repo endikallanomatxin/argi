@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     byte :: UInt8 = 0
     digits :: UIntNative = 0
     letters :: UIntNative = 0
@@ -17,7 +17,9 @@ main() -> (.status_code: Int32 = 0) := {
         if ascii_is_alpha(.byte = byte).ok {
             if ascii_is_lower(.byte = lower).ok == false { abort }
             if ascii_is_upper(.byte = upper).ok == false { abort }
-        } else { if lower != byte or upper != byte { abort } }
+        } else {
+            if lower != byte or upper != byte { abort }
+        }
         if byte == 255 { break }
         byte = byte + 1
     }

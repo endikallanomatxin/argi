@@ -3,9 +3,15 @@
 [Contracts and conformance](135_contracts.md) defines the general evidence model,
 including jointly virtualized participants. Explicit unary contracts support
 runtime handles with selected implementation evidence and bound associated
-types/constants. Joint evidence for multiple hidden participants remains pending.
+types/constants. Multiple hidden participants are not currently supported.
 
-Contracts are static and use monomorphization by default. `Virtual#(.contract: A)`
+> [!IDEA]
+> A joint package could retain several hidden participants and their selected
+> conformance evidence. This is an exploratory idea, not scheduled work. It needs
+> a useful consumer, joint lifetime/cleanup rules and representable results;
+> independently virtualized values would not establish that joint conformance.
+
+Contracts are static and use monomorphization by default. `Virtual#(A)`
 requests runtime dispatch through the fixed interface of A, useful for streams,
 allocators, error tracers and heterogeneous values.
 
@@ -41,16 +47,16 @@ Shape#(.Participant: Type): Contract = (
 Box : Type = (.value: Int32)
 implement Shape#(Box) (.get_value = _get_box, .set_value = _set_box)
 
-_get_box(.self: &Box) -> (.value: Int32) := {
+_get_box := (.self: &Box) -> (.value: Int32)  {
     value = self&.value
 }
-_set_box(.self: $&Box, .value: Int32) -> () := {
+_set_box := (.self: $&Box, .value: Int32) -> ()  {
     self&.value = value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 42)
-    shape :: Virtual#(.contract: Shape) = to_virtual(.value = $&box)
+    shape :: Virtual#(Shape) = to_virtual(.value = $&box)
     set_value(.self = $&shape, .value = 43)
     value ::= get_value(.self = &shape)
     if value != 43 { status_code = 1 }
@@ -78,6 +84,11 @@ Positional comptime type arguments omit the argument name. The concrete
 object's implemented contracts and the destination binding's name do not
 select a target contract: one concrete type can implement several contracts.
 
+Converting a reference to an existing `Virtual#(Contract)` to the same contract
+copies its handle, retaining the selected operations, receiver and lifetime
+dependencies. It does not introduce another dispatch layer. The same receiver
+mutability requirements apply; this does not convert between different contracts.
+
 A pipe can borrow the result with `&_` or `$&_`:
 
 ```rg
@@ -87,6 +98,19 @@ assume tracer ::= NoopErrorTracer() | to_virtual#(ErrorTracer)($&_) | $&_
 The concrete temporary and virtual wrapper remain alive for the enclosing
 `assume` scope. Their references cannot escape that scope.
 
+The same pattern supplies a virtual allocator to ordinary collection APIs:
+
+```rg
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+array ::= DynamicArray#(Int32)(.capacity = 16)!
+```
+
+The collection's allocations must remain within the allocator's lifetime.
+Collections retain their own allocation receipts for deallocation; a later growth
+operation may explicitly use another allocator whose lifetime also covers its
+resulting allocation. Generic low-level allocation helpers continue to accept
+concrete and virtual providers.
+
 ## Dispatch
 
 Methods receive a reference to the virtual handle at the call site. Runtime
@@ -95,12 +119,12 @@ that handle's table. The receiver need not be the first input; its position
 comes from the contract.
 
 ```rg
-read_shape(.shape: &Virtual#(.contract: Shape)) -> (.value: Int32) := {
+read_shape := (.shape: &Virtual#(Shape)) -> (.value: Int32)  {
     value = get_value(.self = shape)
 }
 ```
 
-Static code declares an explicit bound such as `#(.Value: Type: Shape#(Value))`. Use `Virtual#(.contract: Shape)` explicitly when dynamic dispatch
+Static code declares an explicit bound such as `#(.Value: Type: Shape#(Value))`. Use `Virtual#(Shape)` explicitly when dynamic dispatch
 is required. This dispatch support does not imply a general nominal
 `implement A#(Virtual#(A))` relationship.
 
@@ -140,9 +164,9 @@ site. A method-local generic does not define one fixed virtual slot. These
 restrictions apply to virtual use; ordinary static contracts may
 continue to use concrete `Participant` types and compile-time specialization.
 
-Fallible methods carry a uniform error-tracer capability input, including
-implementations that always succeed. Errors created by a selected method
-therefore follow the same capability rules as static calls.
+Fallible methods follow the same error and capability rules as static calls.
+Ordinary errors need no tracer; a method that creates or extends a trace
+declares the required tracer input as part of its contract.
 
 Receiver and `Participant` restrictions apply at virtual conversion and dispatch,
 including methods that are never called but occupy a table slot. Virtual
@@ -355,9 +379,7 @@ Factory#(.Participant: Type): Contract = (
             owns(result)
             depends_on(result, self)
         }
-        on result ..error {
-            depends_on(result, error_tracer)
-        }
+        on result ..error {}
     }
 )
 ```
@@ -370,8 +392,9 @@ selectors and duplicate selectors are errors.
 Within the block, the selected output denotes that variant's payload. Common
 clauses remain applicable in every variant; conditional clauses add permissions
 and obligations for the selected outcome. An empty conditional block does not
-cancel a common dependency or invalidation permission. The implicit
-`error_tracer` input can be named in dependencies of fallible methods.
+cancel a common dependency or invalidation permission. Ordinary errors carry
+no tracer dependency. Traced outputs may refer to an explicitly declared
+`error_tracer` input using the same dependency rules as other references.
 No variant can authorize a reference to local storage that ends on return.
 
 Outcome conditions describe the call's effects, rather than only its payload.
@@ -559,7 +582,7 @@ Source#(.Participant: Type): Contract = (
         where invalidates(self.storage)
 )
 
-Cell: Type = (.value: Int32, .other: Int32)
+Cell := (.value: Int32, .other: Int32)
 implement Source#(Cell) (
     .get = (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
     .reset = (.self: $&Cell) -> () { self&.value = 0 }
@@ -599,8 +622,8 @@ but cannot be erased into a virtual handle. Adding an implementation does not
 change the safety obligations of existing virtual calls.
 
 Core's `ArgumentSource` illustrates borrowed results: `length` has an empty
-contract, while `get` permits its successful `StringView` to depend on `self`
-and its error to depend on `error_tracer`. Both native `Arguments` and borrowed
+contract, while `get` permits its successful `StringView` to depend on `self`.
+Its ordinary error has no borrowed dependencies. Both native `Arguments` and borrowed
 `CliArgumentViews` satisfy this signature. A virtual conversion preserves the
 source's dependencies; a wrapper returning `get` cannot outlive locally owned
 argument storage merely because the receiver's concrete layout was erased.
@@ -660,7 +683,7 @@ Permissions on the outer payload also apply to its nested alternatives.
         on result ..some { depends_on(result, self) }
         on result ..none {}
     }
-    on result ..error { depends_on(result, error_tracer) }
+    on result ..error {}
 }
 ```
 

@@ -1,13 +1,13 @@
 Releaser#(.Participant: Type): Contract = (
-    .release: (.self: &Participant, .resource: $&Resource, .consume: Bool) -> (.result: ?Int32) where {
+    .release : (.self: &Participant, .resource: $&Resource, .consume: Bool) -> (.result: ?Int32) where {
         on result ..some { consumes(resource) }
         on result ..none {}
     }
 )
 
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
-Manager: Type = (.unused: Int32)
+Manager := (.unused: Int32)
 
 implement Releaser#(Manager) (.release = _impl_release_Manager)
 
@@ -19,7 +19,9 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .consume: Bool) -> (.result: ?Int32)  {
+_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .consume: Bool) -> (
+    .result : ?Int32
+) {
     if consume {
         deinit(resource)
         result = ..some(.value = 42)
@@ -29,18 +31,14 @@ _impl_release_Manager := (.self: &Manager, .resource: $&Resource, .consume: Bool
     result = ..none
 }
 
-release_again(
-        .releaser : &Virtual#(Releaser),
-        .resource : $&Resource,
-        .consume  : Bool
-    ) -> (
-        .result : ?Int32
-    ) := {
+release_again := (.releaser: &Virtual#(Releaser), .resource: $&Resource, .consume: Bool) -> (
+    .result : ?Int32
+) {
     saved ::= release(releaser, resource, consume)
     result = saved
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
     releaser ::= to_virtual#(Releaser)(&manager)
 

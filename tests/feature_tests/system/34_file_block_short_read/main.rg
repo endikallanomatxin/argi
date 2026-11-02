@@ -1,8 +1,13 @@
-main(.system: System) -> (.status_code: Int32) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+main := (.system: System) -> (.status_code: Int32) {
 
-    path ::= from_literal(.data = "tests/feature_tests/system/34_file_block_short_read_temp.bin")
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+
+    path ::= from_literal(
+        .data = "tests/feature_tests/system/34_file_block_short_read/build/temp.bin"
+    )
 
     if exists(.self = system.file_system, .path = path).ok {
         removed ::= remove(.self = system.file_system, .path = path)
@@ -13,7 +18,9 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    create_result ::= File(.file_system = system.file_system, .path = path, .mode = ..write)
+    create_result ::= open_file(
+        .file_system = system.file_system, .path = path, .mode = ..write
+    )
     if is(.value = create_result, .variant = ..ok) {
     } else {
         status_code = 2
@@ -22,7 +29,7 @@ main(.system: System) -> (.status_code: Int32) := {
     file ::= ~create_result ..ok
 
     write_bytes: Array#(.n = 2, .t: UInt8) = (0, 0)
-    write_buffer ::= view(.array = $&write_bytes)
+    write_buffer ::= view(.self = $&write_bytes)
     first_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 0, .value = 41).result
     second_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 1, .value = 42).result
     if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) {
@@ -46,9 +53,28 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
+    -- A write-only File rejects reads through both protocols before native I/O.
+    denied_read: [1]UInt8 = (99)
+    match read(.self = $&file, .buffer = view($&denied_read)) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..stream_read_failed { abort } }
+    }
+    match Reader#().read_byte(.self = $&file) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..stream_read_failed { abort } }
+    }
+    {
+        buffered ::= BufferedReader(.base = $&file, .buffer = view($&denied_read))
+        match Reader#().read_byte(.self = $&buffered) {
+            ..ok _ { abort }
+            ..error error { if error.reason != ..stream_read_failed { abort } }
+        }
+    }
+    if denied_read[0] != 99 { abort }
+
     close(.self = $&file)
 
-    open_result ::= File(.file_system = system.file_system, .path = path, .mode = ..read)
+    open_result ::= open_file(.file_system = system.file_system, .path = path, .mode = ..read)
     if is(.value = open_result, .variant = ..ok) {
     } else {
         status_code = 6
@@ -57,7 +83,7 @@ main(.system: System) -> (.status_code: Int32) := {
     file = ~open_result ..ok
 
     read_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    read_buffer ::= view(.array = $&read_bytes)
+    read_buffer ::= view(.self = $&read_bytes)
 
     read_result ::= read(.self = $&file, .buffer = read_buffer)
     close(.self = $&file)
@@ -93,6 +119,33 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 11
         return
     }
+
+    -- Closing and reopening separates each native stream's sticky error state.
+    denied_writer ::= unwrap_or_abort(
+        .value = open_file(.file_system = system.file_system, .path = path, .mode = ..read)
+    )
+    match write(.self = $&denied_writer, .value = write_buffer) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..stream_write_failed { abort } }
+    }
+    match BlockWriter#().write_block(.self = $&denied_writer, .buffer = view(&write_bytes)) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..stream_write_failed { abort } }
+    }
+    match Writer#().write_byte(.self = $&denied_writer, .byte = 99) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..stream_write_failed { abort } }
+    }
+    {
+        storage: [1]UInt8 = (0)
+        buffered ::= BufferedWriter(.base = $&denied_writer, .buffer = view($&storage))
+        match Writer#().write_byte(.self = $&buffered, .byte = 99) {
+            ..ok _ { abort }
+            ..error error { if error.reason != ..stream_write_failed { abort } }
+        }
+        if buffered.length != 0 { abort }
+    }
+    unwrap_or_abort(.value = close(.self = $&denied_writer))
 
     removed ::= remove(.self = system.file_system, .path = path)
     if is(.value = removed, .variant = ..ok) {

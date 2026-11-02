@@ -1,24 +1,30 @@
-expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
-        .text        : StringView,
-        .pattern     : StringView,
-        .replacement : StringView,
-        .expected    : StringView,
-        .allocator   : $&AllocatorType
-    ) -> () := {
+expect_replacement := (
+    .text         : StringView,
+    .pattern      : StringView,
+    .replacement  : StringView,
+    .expected     : StringView,
+    .allocator    : Virtual#(Allocator),
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> () {
+    assume error_tracer
     output ::= unwrap_or_abort(
         .value = replace(
-            .self        = text
-            .pattern     = pattern
-            .replacement = replacement
-            .allocator   = allocator
+            .self = text, .pattern = pattern, .replacement = replacement, .allocator = allocator
         )
     )
-    if equals(.left = as_view(.self = &output).view, .right = expected).ok == false { abort }
-    if bytes_get(.view = &output, .index = output.length).byte != 0 { abort }
+    if equals(.left = view(.self = &output).view, .right = expected).ok == false { abort }
+    if [
+        is(
+            .value   = bytes_get(.view = &output, .index = byte_length(&output).count)
+            .variant = ..error
+        )
+        == false
+    ] { abort }
     deinit(.self = $&output)
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume error_tracer ::= $&noop_error_tracer
     expect_replacement(
         .text        = ""
         .pattern     = "a"
@@ -76,10 +82,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .allocator   = system.page_allocator
     )
     source ::= unwrap_or_abort(.value = String(.allocator = system.page_allocator, .length = 3))
-    bytes_set(.string = $&source, .index = 0, .value = 97)
-    bytes_set(.string = $&source, .index = 1, .value = 0)
-    bytes_set(.string = $&source, .index = 2, .value = 98)
-    view ::= as_view(.self = &source).view
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 0, .byte = 97))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 1, .byte = 0))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 2, .byte = 98))
+    view ::= view(.self = &source).view
     -- All three descriptors borrow the same storage. The replacement bytes
     -- are copied once per original match, never searched recursively.
     independent ::= unwrap_or_abort(
@@ -91,12 +97,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     deinit(.self = $&source)
-    if independent.length != 3 { abort }
-    if bytes_get(.view = &independent, .index = 1).byte != 0 { abort }
+    if byte_length(&independent).count != 3 { abort }
+    if unwrap_or_abort(.value = bytes_get(.view = &independent, .index = 1)) != 0 { abort }
     deinit(.self = $&independent)
     binary: [3]UInt8 = (97, 0, 98)
-    binary_view :: StringView = (.data = &binary[0], .length = 3)
-    zero :: StringView = (.data = &binary[1], .length = 1)
+    binary_view: StringView = "a\0b"
+    zero: StringView = "\0"
     expect_replacement(
         .text        = binary_view
         .pattern     = zero

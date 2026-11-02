@@ -1,26 +1,30 @@
-Source: Type = (.value: Int32)
-Small: Type = (.value: Int32)
-Large: Type = (.value: Int32)
+Source := (.value: Int32)
+
+Small := (.value: Int32)
+
+Large := (.value: Int32)
 
 implement Convert#(Source, Small) (
-    .Result: Type = Small
+    .Result  : Type = Small
     .convert = (.value: Source) -> (.result: Result) {
         result = (.value = value.value + 1)
     }
 )
 
 implement Convert#(Source, Large) (
-    .Result: Type = Large
+    .Result  : Type = Large
     .convert = (.value: Source) -> (.result: Result) {
         result = (.value = value.value + 10)
     }
 )
 
-change#(.From: Type, .To: Type) := (.value: From) -> (.result: Convert#(From, To).Result) {
+change := #(.From: Type, .To: Type) (.value: From) -> (.result: Convert#(From, To).Result) {
+
     result = ~[~value | convert#(.to: To)(_)]
 }
 
 main := () -> (.status_code: Int32 = 0) {
+
     source ::= Source(7)
     small ::= source | convert#(.to: Small)(_)
     large ::= source | convert#(.to: Large)(_)

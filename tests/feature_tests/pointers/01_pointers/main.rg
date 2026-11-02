@@ -1,9 +1,9 @@
 -- Test for pointer declaration, referencing, and dereferencing with read/write distinction.
-main () -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     a :: Int32 = 42
 
     -- Read-only pointer to 'a'.
-    ro : &Int32 = &a
+    ro: &Int32 = &a
     b :: Int32 = ro&
 
     if b != 42 {
@@ -12,10 +12,10 @@ main () -> (.status_code: Int32) := {
     }
 
     -- Mutable pointer to 'a'.
-    rw : $&Int32 = $&a
-    rw& = 100
+    rw: $&Int32 = $&a
+    rw&= 100
 
-    if rw& != 100 {
+    if rw&!= 100 {
         status_code = 2
         return
     }

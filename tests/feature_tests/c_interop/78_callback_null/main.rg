@@ -1,16 +1,20 @@
-Comparator(.left: CInt, .right: CInt) -> (.result: CInt) : CFunctionPointer
-_lookup(.present: CInt) -> (.result: Comparator) : CFunction(.symbol = "argi_callback_lookup")
-_accept_null(.callback: Comparator) -> (.result: CInt) : CFunction(.symbol = "argi_callback_accept_null")
+Comparator(.left: CInt, .right: CInt) -> (.result: CInt): CFunctionPointer
 
-argi_callback_null() -> (.result: Comparator) : CFunction(.export = true) := {
+_lookup(.present: CInt) -> (.result: Comparator): CFunction(.symbol = "argi_callback_lookup")
+
+_accept_null(.callback: Comparator) -> (.result: CInt): CFunction(
+    .symbol = "argi_callback_accept_null"
+)
+
+argi_callback_null() -> (.result: Comparator): CFunction(.export = true) := {
     result = zeroed#(.t: Comparator)()
 }
 
-_same(.left: Comparator, .right: Comparator) -> (.result: Bool) := {
+_same := (.left: Comparator, .right: Comparator) -> (.result: Bool) {
     result = left == right
 }
 
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     absent := zeroed#(.t: Comparator)()
     missing := _lookup(.present = 0)

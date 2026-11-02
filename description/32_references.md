@@ -16,6 +16,12 @@ Aliases are checked when they are used. Mutable references may alias in
 sequential code: `$&T` does not imply exclusive access or `noalias`.
 Concurrency requires additional rules.
 
+API names use `Reference` for `&T` and `MutableReference` for `$&T`.
+The latter adds write permission; neither name implies exclusive access.
+`Pointer` is reserved for raw-pointer APIs when distinguishing them from safe
+references. Moving iteration transfers elements; it does not imply that each
+element owns a resource.
+
 In [Rust](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html),
 an active mutable borrow excludes other references to the same value. Argi
 permits multiple `$&` and mixed `&`/`$&` aliases in sequential code; it
@@ -49,20 +55,20 @@ it returns. This includes references to local variables, by-value input slots,
 local arrays, and temporary expression results. Wrapping a reference in a
 struct, choice, virtual value, or owning container does not extend its lifetime.
 The rule also applies to hidden dependencies: an `Allocation` cannot escape
-with a local deallocator, and an `Error` cannot escape with a local tracer.
+with a local deallocator, and an `ErrorWithTrace` cannot escape with a local tracer.
 
 Return an owned value when the caller should receive ownership. If the result
 must borrow storage, create the owner in the caller and pass its reference to
 the helper:
 
 ```rg
-NumberBox: Type = (.value: Int32)
+NumberBox := (.value: Int32)
 
-number(.box: &NumberBox) -> (.result: &Int32) := {
+number := (.box: &NumberBox) -> (.result: &Int32)  {
     result = &box&.value
 }
 
-main() -> () := {
+main := () -> () {
     box ::= NumberBox(7)
     reference ::= number(&box)
 }
@@ -101,7 +107,7 @@ responsibilities there.
 An `assume` declaration can bind a constructed temporary for its local scope:
 
 ```rg
-assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 ```
 
 The allocator is cleaned up at scope exit, and its reference cannot escape

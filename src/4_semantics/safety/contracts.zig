@@ -442,6 +442,7 @@ pub const Failure = struct {
         missing_empty_storage,
         unsupported_opaque_effect,
         unsupported_capability_effect,
+        unsupported_alias_obligation,
         missing_choice_relation,
     };
     kind: Kind,
@@ -464,16 +465,32 @@ pub const Failure = struct {
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
+            .unsupported_alias_obligation => "a caller-side storage alias obligation is not represented by this contract",
         };
     }
 };
+
+// A concrete call retains the implementation's complete inferred summary at
+// its caller. Only alias preconditions can be checked there; output and storage
+// guarantees still have to satisfy the declared contract without weakening it.
+pub fn checkStatic(allocator: std.mem.Allocator, contract: Contract, summary: facts.SafetySummary) anyerror!?Failure {
+    var guarantees = summary;
+    guarantees.storage_observation_conflicts = &.{};
+    return check(allocator, contract, guarantees);
+}
 
 /// Check each implementation independently. No result depends on which other
 /// implementations are linked into the program. Local escapes must already
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
-pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
-    if (contract.general_conditions) return checkGeneralContract(contract, summary);
+/// Temporary proof data and returned failure conditions use the supplied
+/// allocator, which must outlive inspection of the returned diagnostic.
+pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.SafetySummary) anyerror!?Failure {
+    if (summary.storage_observation_conflicts.len != 0) return .{
+        .kind = .unsupported_alias_obligation,
+        .input = summary.storage_observation_conflicts[0].consumed,
+    };
+    if (contract.general_conditions) return checkGeneralContract(allocator, contract, summary);
     for (contract.relocations) |relocation| {
         if (!provesRelocation(relocation, summary.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination };
     }
@@ -584,23 +601,21 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         .kind = .unsupported_capability_effect,
         .input = summary.storage_capability_conflicts[0].first,
     };
-    return checkGuardedRelations(contract.guarded_effects, summary);
+    return checkGuardedRelations(allocator, contract.guarded_effects, summary);
 }
 
-fn checkGeneralContract(contract: Contract, summary: facts.SafetySummary) ?Failure {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
+fn checkGeneralContract(allocator: std.mem.Allocator, contract: Contract, summary: facts.SafetySummary) !?Failure {
     var represented = false;
     for (summary.guarded_effects) |actual| {
-        if (actual.origin != .general or actual.conditions.impossible) continue;
+        if (actual.conditions.impossible) continue;
         represented = true;
-        if (checkGeneralRegion(arena.allocator(), contract, actual.conditions, actual.effects.*) catch return .{ .kind = .missing_choice_relation }) |failure| return failure;
+        if (try checkGeneralRegion(allocator, contract, actual.conditions, actual.effects.*)) |failure| return failure;
     }
     if (!represented or !summary.guarded_returns_complete) {
         var fallback = summary;
         fallback.guarded_effects = &.{};
-        const known = knownOutputConditions(arena.allocator(), summary.outputs) catch return .{ .kind = .missing_choice_relation };
-        if (checkGeneralRegion(arena.allocator(), contract, known, fallback) catch return .{ .kind = .missing_choice_relation }) |failure| return failure;
+        const known = try knownOutputConditions(allocator, summary.outputs);
+        if (try checkGeneralRegion(allocator, contract, known, fallback)) |failure| return failure;
     }
     return null;
 }
@@ -615,7 +630,7 @@ fn checkGeneralRegion(allocator: std.mem.Allocator, contract: Contract, conditio
     var actual = summary;
     actual.guarded_effects = &.{};
     actual.outcome_post_states = &.{};
-    if (check(allowed, actual)) |failure| {
+    if (try check(allocator, allowed, actual)) |failure| {
         var result = failure;
         result.conditions = conditions;
         return result;
@@ -628,7 +643,7 @@ fn checkGeneralRegion(allocator: std.mem.Allocator, contract: Contract, conditio
         allowed.relocations = try std.mem.concat(allocator, Contract.Relocation, &.{ allowed.relocations, required.effects.relocations });
         allowed.emptied_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ allowed.emptied_inputs, required.effects.emptied_inputs });
     }
-    if (check(allowed, actual)) |failure| {
+    if (try check(allocator, allowed, actual)) |failure| {
         var result = failure;
         result.conditions = conditions;
         return result;
@@ -655,7 +670,7 @@ fn appendKnownOutputConditions(allocator: std.mem.Allocator, value: facts.ValueE
 /// condition, but not one proved only under a stricter subset of its exits.
 /// The unconditional summary is also a valid proof when it already establishes
 /// the requested guarantee. Unrelated singleton partitions cannot be combined.
-pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.SafetySummary) ?Failure {
+pub fn checkGuardedRelations(allocator: std.mem.Allocator, required: []const Contract.Guarded, summary: facts.SafetySummary) anyerror!?Failure {
     for (required) |relation| {
         if (relation.conditions.impossible or guardHasUnreachableOutcome(relation.conditions, summary)) continue;
         var has_partition = false;
@@ -663,7 +678,20 @@ pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.
         for (summary.guarded_effects) |actual| {
             if (!relation.conditions.implies(actual.conditions)) continue;
             has_partition = true;
-            if (check(relation.effects.*, actual.effects.*)) |failure| {
+            if (try check(allocator, relation.effects.*, actual.effects.*)) |failure| {
+                last_failure = failure;
+            } else {
+                last_failure = null;
+                break;
+            }
+        }
+        if (has_partition and last_failure == null) continue;
+        // Output partitions are authoritative compact records. Consult their
+        // current fields directly instead of retaining duplicate guarded summaries.
+        for (summary.outcome_post_states) |outcome| {
+            if (!outcome.reachable or !relation.conditions.impliesOutput(outcome.output_index, outcome.parent_variants, outcome.variant_index)) continue;
+            has_partition = true;
+            if (try check(allocator, relation.effects.*, summary.outcomeEffects(outcome))) |failure| {
                 last_failure = failure;
             } else {
                 last_failure = null;
@@ -673,7 +701,7 @@ pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.
         if (has_partition and last_failure == null) continue;
         var fallback = summary;
         fallback.guarded_effects = &.{};
-        if (check(relation.effects.*, fallback) == null) continue;
+        if ((try check(allocator, relation.effects.*, fallback)) == null) continue;
         if (last_failure) |failure| {
             var result = failure;
             result.conditions = relation.conditions;
@@ -725,7 +753,6 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     const dependencies = [_][]const facts.InputPath{
         actual.input_places,
         actual.input_generation_dependencies,
-        actual.input_captured_storages,
         actual.input_receiver_values,
         actual.input_place_values,
         actual.input_owned_roots,
@@ -735,6 +762,9 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
         for (paths) |path| {
             if (!covers(allowed.dependencies, path)) return .{ .kind = .undeclared_dependency, .input = path };
         }
+    }
+    for (actual.input_captured_storages) |capture| {
+        if (!covers(allowed.dependencies, capture.path)) return .{ .kind = .undeclared_dependency, .input = capture.path };
     }
     for (actual.opaque_storage_dependencies) |path| {
         if (!covers(allowed.storage_sources, path) and !covers(allowed.dependencies, path)) return .{ .kind = .undeclared_dependency, .input = path };
@@ -819,9 +849,10 @@ fn retainedPathAllowed(contract: Contract, storage: facts.InputPath, path: facts
 fn retainedValueAllowed(contract: Contract, storage: facts.InputPath, value: facts.ValueEffect) bool {
     if (value.fresh_cleanup_obligation or value.fresh_dependencies.len != 0 or value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or value.unavailable_fresh_storage.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0) return false;
     for (value.input_dependencies) |dependency| if (!retainedPathAllowed(contract, storage, dependency.path)) return false;
-    for ([_][]const facts.InputPath{ value.input_places, value.input_generation_dependencies, value.input_captured_storages, value.input_receiver_values, value.input_place_values, value.input_owned_roots, value.input_storage_capabilities, value.opaque_generation_dependencies, value.opaque_storage_dependencies }) |paths| {
+    for ([_][]const facts.InputPath{ value.input_places, value.input_generation_dependencies, value.input_receiver_values, value.input_place_values, value.input_owned_roots, value.input_storage_capabilities, value.opaque_generation_dependencies, value.opaque_storage_dependencies }) |paths| {
         for (paths) |path| if (!retainedPathAllowed(contract, storage, path)) return false;
     }
+    for (value.input_captured_storages) |capture| if (!retainedPathAllowed(contract, storage, capture.path)) return false;
     for (value.fields) |field| if (!retainedValueAllowed(contract, storage, field.value.*)) return false;
     for (value.variants) |variant| if (!retainedValueAllowed(contract, storage, variant.value.*)) return false;
     return true;
@@ -952,10 +983,10 @@ fn emptyValue(value: facts.ValueEffect) bool {
 test "safety contracts distinguish exact referents from lifetime anchors" {
     const path = facts.InputPath{ .input_index = 1 };
     const contract = Contract{ .outputs = &.{.{ .dependencies = &.{path}, .referent = path }} };
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path }} }} }) == null);
-    try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path, .validity_only = true }} }} }).?.kind);
-    try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{}} }).?.kind);
-    try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{ .input_places = &.{.{ .input_index = 1, .projections = &.{.{ .field = 0 }} }} }} }).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path }} }} })) == null);
+    try std.testing.expectEqual(.incompatible_referent, (try check(std.testing.allocator, contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path, .validity_only = true }} }} })).?.kind);
+    try std.testing.expectEqual(.incompatible_referent, (try check(std.testing.allocator, contract, .{ .outputs = &.{.{}} })).?.kind);
+    try std.testing.expectEqual(.incompatible_referent, (try check(std.testing.allocator, contract, .{ .outputs = &.{.{ .input_places = &.{.{ .input_index = 1, .projections = &.{.{ .field = 0 }} }} }} })).?.kind);
 }
 
 test "safety contracts limit generation invalidation to mapped storage" {
@@ -964,10 +995,10 @@ test "safety contracts limit generation invalidation to mapped storage" {
     const sibling = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 3 }} };
     const contract = Contract{ .outputs = &.{}, .invalidates = &.{domain} };
     const permitted = facts.SafetySummary{ .input_post_states = &.{.{ .target = child, .initializedness = .initialized, .refreshes_storage_generation = true }} };
-    try std.testing.expect(check(contract, permitted) == null);
-    try std.testing.expectEqual(.unsupported_post_state, check(.{ .outputs = &.{} }, permitted).?.kind);
-    try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{.{ .target = sibling, .initializedness = .initialized, .refreshes_storage_generation = true }} }).?.kind);
-    try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .refreshes_storage_generation = true }} }).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, contract, permitted)) == null);
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, .{ .outputs = &.{} }, permitted)).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{.{ .target = sibling, .initializedness = .initialized, .refreshes_storage_generation = true }} })).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .refreshes_storage_generation = true }} })).?.kind);
 }
 
 test "safety contracts do not turn invalidation into ownership consumption" {
@@ -979,19 +1010,22 @@ test "safety contracts do not turn invalidation into ownership consumption" {
         .{ .target = path, .initializedness = .initialized, .opaque_ownership = .definite },
         .{ .target = path, .initializedness = .initialized, .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} } },
     };
-    for (states) |state| try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{state} }).?.kind);
-    try std.testing.expectEqual(.unsupported_capability_effect, check(contract, .{ .storage_capability_uses = &.{.{ .target = path }} }).?.kind);
+    for (states) |state| try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{state} })).?.kind);
+    try std.testing.expectEqual(.unsupported_capability_effect, (try check(std.testing.allocator, contract, .{ .storage_capability_uses = &.{.{ .target = path }} })).?.kind);
+    try std.testing.expectEqual(.unsupported_alias_obligation, (try check(std.testing.allocator, contract, .{
+        .storage_observation_conflicts = &.{.{ .consumed = path, .observed = .{ .input_index = 1 } }},
+    })).?.kind);
 }
 
 test "safety contracts permit fewer dependencies and independent implementations" {
     const allowed = Contract{ .outputs = &.{.{ .dependencies = &.{.{ .input_index = 0 }} }} };
     const independent = facts.SafetySummary{ .outputs = &.{.{}} };
     const dependent = facts.SafetySummary{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} }} };
-    try std.testing.expect(check(allowed, independent) == null);
-    try std.testing.expect(check(allowed, dependent) == null);
+    try std.testing.expect((try check(std.testing.allocator, allowed, independent)) == null);
+    try std.testing.expect((try check(std.testing.allocator, allowed, dependent)) == null);
     const unrelated = facts.SafetySummary{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} }} };
-    try std.testing.expectEqual(.undeclared_dependency, check(allowed, unrelated).?.kind);
-    try std.testing.expect(check(allowed, independent) == null);
+    try std.testing.expectEqual(.undeclared_dependency, (try check(std.testing.allocator, allowed, unrelated)).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, allowed, independent)) == null);
 }
 
 test "safety contracts check dependencies through fields and choice payloads" {
@@ -999,7 +1033,7 @@ test "safety contracts check dependencies through fields and choice payloads" {
     const field = facts.ValueEffect{ .fields = &.{.{ .index = 2, .value = &hidden }} };
     const summary = facts.SafetySummary{ .outputs = &.{.{ .variants = &.{.{ .index = 0, .value = &field }} }} };
     const allowed = Contract{ .outputs = &.{.{ .dependencies = &.{.{ .input_index = 0 }} }} };
-    const failure = check(allowed, summary).?;
+    const failure = (try check(std.testing.allocator, allowed, summary)).?;
     try std.testing.expectEqual(.undeclared_dependency, failure.kind);
     try std.testing.expectEqual(@as(?u32, 0), failure.output_index);
     try std.testing.expectEqual(@as(u32, 1), failure.input.?.input_index);
@@ -1008,8 +1042,8 @@ test "safety contracts check dependencies through fields and choice payloads" {
 test "safety contracts keep validity and ownership permissions separate" {
     const path = facts.InputPath{ .input_index = 0 };
     const summary = facts.SafetySummary{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path, .transfers_ownership = true }} }} };
-    try std.testing.expectEqual(.undeclared_ownership_transfer, check(.{ .outputs = &.{.{ .dependencies = &.{path} }} }, summary).?.kind);
-    try std.testing.expect(check(.{ .outputs = &.{.{ .ownership_transfers = &.{path} }} }, summary) == null);
+    try std.testing.expectEqual(.undeclared_ownership_transfer, (try check(std.testing.allocator, .{ .outputs = &.{.{ .dependencies = &.{path} }} }, summary)).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, .{ .outputs = &.{.{ .ownership_transfers = &.{path} }} }, summary)) == null);
 }
 
 test "safety contracts distinguish sibling storage paths" {
@@ -1018,18 +1052,18 @@ test "safety contracts distinguish sibling storage paths" {
     const child = facts.InputPath{ .input_index = 0, .projections = &[_]projections{ .{ .field = 1 }, .{ .field = 3 } } };
     const sibling = facts.InputPath{ .input_index = 0, .projections = &[_]projections{.{ .field = 2 }} };
     const allowed = Contract{ .outputs = &.{.{ .dependencies = &.{storage} }} };
-    try std.testing.expect(check(allowed, .{ .outputs = &.{.{ .input_generation_dependencies = &.{child} }} }) == null);
-    try std.testing.expectEqual(.undeclared_dependency, check(allowed, .{ .outputs = &.{.{ .input_generation_dependencies = &.{sibling} }} }).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, allowed, .{ .outputs = &.{.{ .input_generation_dependencies = &.{child} }} })) == null);
+    try std.testing.expectEqual(.undeclared_dependency, (try check(std.testing.allocator, allowed, .{ .outputs = &.{.{ .input_generation_dependencies = &.{sibling} }} })).?.kind);
 }
 
 test "safety contracts reject undeclared transitions on individual outcomes" {
     const allowed = Contract{ .outputs = &.{.{}} };
     const state = facts.PlacePostState{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .refreshes_storage_generation = true };
-    try std.testing.expectEqual(.unsupported_post_state, check(allowed, .{
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, allowed, .{
         .outputs = &.{.{}},
         .outcome_post_states = &.{.{ .variant_index = 1, .input_post_states = &.{state} }},
-    }).?.kind);
-    try std.testing.expect(check(allowed, .{ .outputs = &.{.{}}, .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized }} }) == null);
+    })).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, allowed, .{ .outputs = &.{.{}}, .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized }} })) == null);
 }
 
 test "opaque retention permits only declared input provenance" {
@@ -1038,39 +1072,39 @@ test "opaque retention permits only declared input provenance" {
     const unrelated = facts.InputPath{ .input_index = 3 };
     const contract = Contract{ .outputs = &.{}, .retained_inputs = &.{.{ .storage = storage, .input = input }} };
     const retained = facts.ValueEffect{ .input_dependencies = &.{.{ .path = input, .transfers_ownership = true }} };
-    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = retained }} }) == null);
-    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = unrelated, .hidden_dependencies = retained }} }) != null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = retained }} })) == null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .opaque_storage_effects = &.{.{ .storage = unrelated, .hidden_dependencies = retained }} })) != null);
     const nested = facts.ValueEffect{ .fields = &.{.{ .index = 0, .value = &.{ .input_generation_dependencies = &.{unrelated} } }} };
-    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = nested }} }) != null);
-    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = .{ .fresh_owned_roots = &.{1} } }} }) != null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = nested }} })) != null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = .{ .fresh_owned_roots = &.{1} } }} })) != null);
 }
 
 test "opaque empty guarantees require every returning exit" {
     const storage = facts.InputPath{ .input_index = 1 };
     const contract = Contract{ .outputs = &.{}, .emptied_inputs = &.{storage} };
-    try std.testing.expectEqual(.missing_empty_storage, check(contract, .{}).?.kind);
-    try std.testing.expect(check(contract, .{ .opaque_storage_empties = &.{storage} }) == null);
-    try std.testing.expect(check(.{ .outputs = &.{} }, .{ .opaque_storage_empties = &.{storage} }) != null);
+    try std.testing.expectEqual(.missing_empty_storage, (try check(std.testing.allocator, contract, .{})).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .opaque_storage_empties = &.{storage} })) == null);
+    try std.testing.expect((try check(std.testing.allocator, .{ .outputs = &.{} }, .{ .opaque_storage_empties = &.{storage} })) != null);
 }
 
 test "opaque output provenance does not authorize backing storage references" {
     const storage = facts.InputPath{ .input_index = 1 };
     const contract = Contract{ .outputs = &.{.{ .storage_sources = &.{storage} }} };
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .opaque_storage_dependencies = &.{storage} }} }) == null);
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .input_places = &.{storage} }} }) != null);
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = storage, .transfers_ownership = true }} }} }) != null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .outputs = &.{.{ .opaque_storage_dependencies = &.{storage} }} })) == null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .outputs = &.{.{ .input_places = &.{storage} }} })) != null);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = storage, .transfers_ownership = true }} }} })) != null);
 }
 
 test "safety contracts reject hidden storage and capability effects" {
     const allowed = Contract{ .outputs = &.{} };
     const path = facts.InputPath{ .input_index = 0 };
-    try std.testing.expectEqual(.unsupported_opaque_effect, check(allowed, .{
+    try std.testing.expectEqual(.unsupported_opaque_effect, (try check(std.testing.allocator, allowed, .{
         .opaque_storage_effects = &.{.{ .storage = path, .hidden_dependencies = .{} }},
-    }).?.kind);
-    try std.testing.expectEqual(.unsupported_opaque_effect, check(allowed, .{ .opaque_storage_empties = &.{path} }).?.kind);
-    try std.testing.expectEqual(.unsupported_capability_effect, check(allowed, .{
+    })).?.kind);
+    try std.testing.expectEqual(.unsupported_opaque_effect, (try check(std.testing.allocator, allowed, .{ .opaque_storage_empties = &.{path} })).?.kind);
+    try std.testing.expectEqual(.unsupported_capability_effect, (try check(std.testing.allocator, allowed, .{
         .storage_capability_uses = &.{.{ .target = path }},
-    }).?.kind);
+    })).?.kind);
 }
 
 test "safety contracts cover every transitive input validity channel" {
@@ -1086,8 +1120,8 @@ test "safety contracts cover every transitive input validity channel" {
     };
     for (effects) |effect| {
         const summary = facts.SafetySummary{ .outputs = &.{effect} };
-        try std.testing.expectEqual(.undeclared_dependency, check(.{ .outputs = &.{.{}} }, summary).?.kind);
-        try std.testing.expect(check(.{ .outputs = &.{.{ .dependencies = &.{path} }} }, summary) == null);
+        try std.testing.expectEqual(.undeclared_dependency, (try check(std.testing.allocator, .{ .outputs = &.{.{}} }, summary)).?.kind);
+        try std.testing.expect((try check(std.testing.allocator, .{ .outputs = &.{.{ .dependencies = &.{path} }} }, summary)) == null);
     }
 }
 
@@ -1098,9 +1132,9 @@ test "safety contracts allow fresh owner outputs without receiver dependence" {
     }} };
     // Normal output checking establishes whether these fresh facts represent a
     // legal owner return. This matcher checks only the input provenance bound.
-    try std.testing.expectEqual(.undeclared_fresh_owner, check(.{ .outputs = &.{.{}} }, summary).?.kind);
-    try std.testing.expect(check(.{ .outputs = &.{.{ .fresh_owner = true }} }, summary) == null);
-    try std.testing.expectEqual(.output_count, check(.{ .outputs = &.{} }, summary).?.kind);
+    try std.testing.expectEqual(.undeclared_fresh_owner, (try check(std.testing.allocator, .{ .outputs = &.{.{}} }, summary)).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, .{ .outputs = &.{.{ .fresh_owner = true }} }, summary)) == null);
+    try std.testing.expectEqual(.output_count, (try check(std.testing.allocator, .{ .outputs = &.{} }, summary)).?.kind);
 }
 
 test "safety contracts reject ownership and generation changes despite initialized outputs" {
@@ -1116,7 +1150,7 @@ test "safety contracts reject ownership and generation changes despite initializ
         }} } },
     };
     for (changes) |state| {
-        try std.testing.expectEqual(.unsupported_post_state, check(.{ .outputs = &.{} }, .{ .input_post_states = &.{state} }).?.kind);
+        try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, .{ .outputs = &.{} }, .{ .input_post_states = &.{state} })).?.kind);
     }
 }
 
@@ -1140,14 +1174,14 @@ test "named output outcomes retain common permissions independently" {
 test "safety contracts consumption requires destruction without hidden storage replacement" {
     const contract = Contract{ .outputs = &.{}, .consumed_inputs = &.{.{ .input_index = 0 }} };
     const consumed = facts.PlacePostState{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized, .ends_previous_roots = true };
-    try std.testing.expect(check(contract, .{ .input_post_states = &.{consumed} }) == null);
-    try std.testing.expectEqual(.missing_consumption, check(contract, .{}).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .input_post_states = &.{consumed} })) == null);
+    try std.testing.expectEqual(.missing_consumption, (try check(std.testing.allocator, contract, .{})).?.kind);
     const replacement = facts.PlacePostState{
         .target = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} },
         .initializedness = .initialized,
         .may_repopulate_opaque_storage = true,
     };
-    try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{ consumed, replacement } }).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{ consumed, replacement } })).?.kind);
 }
 
 test "safety contracts relocation guarantees both transitions and exact ownership provenance" {
@@ -1162,17 +1196,17 @@ test "safety contracts relocation guarantees both transitions and exact ownershi
         .requires_available_destination = true,
         .refreshes_storage_generation = true,
     };
-    try std.testing.expect(check(contract, .{ .input_post_states = &.{ moved, initialized } }) == null);
-    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{initialized} }).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .input_post_states = &.{ moved, initialized } })) == null);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{initialized} })).?.kind);
     var wrong = initialized;
     wrong.value = .{};
-    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ moved, wrong } }).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{ moved, wrong } })).?.kind);
     wrong = moved;
     wrong.ends_previous_roots = true;
-    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ wrong, initialized } }).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{ wrong, initialized } })).?.kind);
     wrong = initialized;
     wrong.requires_available_destination = false;
-    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ moved, wrong } }).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{ moved, wrong } })).?.kind);
 }
 
 test "safety contracts conditional relocation requires both transitions on the selected exit" {
@@ -1209,31 +1243,31 @@ test "safety contracts conditional relocation requires both transitions on the s
         .input_post_states = &.{ possible_source, possible_destination },
         .outcome_post_states = &exits,
     };
-    try std.testing.expect(check(contract, summary) == null);
+    try std.testing.expect((try check(std.testing.allocator, contract, summary)) == null);
 
     exits[0].input_post_states = &.{initialized};
-    try std.testing.expectEqual(.missing_relocation, check(contract, summary).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, summary)).?.kind);
     exits[0].input_post_states = &.{ moved, possible_destination };
-    try std.testing.expectEqual(.missing_relocation, check(contract, summary).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, summary)).?.kind);
     var wrong = initialized;
     wrong.value = .{};
     exits[0].input_post_states = &.{ moved, wrong };
-    try std.testing.expectEqual(.missing_relocation, check(contract, summary).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, summary)).?.kind);
     exits[0].input_post_states = &.{ moved, initialized };
     var invalid_union = summary;
     var foreign_source = possible_source;
     foreign_source.value = .{ .input_place_values = &.{destination} };
     invalid_union.input_post_states = &.{ foreign_source, possible_destination };
-    try std.testing.expectEqual(.unsupported_post_state, check(contract, invalid_union).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, invalid_union)).?.kind);
     exits[1].input_post_states = &.{ moved, initialized };
-    try std.testing.expectEqual(.unsupported_post_state, check(contract, summary).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, summary)).?.kind);
 
     var missing = summary;
     missing.input_post_states = &.{};
     missing.outcome_post_states = &.{exits[1]};
-    try std.testing.expectEqual(.missing_relocation, check(contract, missing).?.kind);
+    try std.testing.expectEqual(.missing_relocation, (try check(std.testing.allocator, contract, missing)).?.kind);
     missing.outcome_post_states = &.{.{ .output_index = 1, .variant_index = 0, .reachable = false, .input_post_states = &.{} }};
-    try std.testing.expect(check(contract, missing) == null);
+    try std.testing.expect((try check(std.testing.allocator, contract, missing)) == null);
 
     const nested = Contract{
         .outputs = &.{ .{}, .{} },
@@ -1241,9 +1275,9 @@ test "safety contracts conditional relocation requires both transitions on the s
     };
     var nested_summary = summary;
     nested_summary.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{0}, .variant_index = 0, .input_post_states = &.{ moved, initialized } }};
-    try std.testing.expect(check(nested, nested_summary) == null);
+    try std.testing.expect((try check(std.testing.allocator, nested, nested_summary)) == null);
     nested_summary.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{1}, .variant_index = 0, .input_post_states = &.{ moved, initialized } }};
-    try std.testing.expect(check(nested, nested_summary) != null);
+    try std.testing.expect((try check(std.testing.allocator, nested, nested_summary)) != null);
 }
 
 test "conditional opaque sources retain common and nested permissions" {
@@ -1282,10 +1316,10 @@ test "conditional opaque sources retain common and nested permissions" {
     try std.testing.expectEqual(@as(usize, 1), output.outcomes[1].value.storage_sources.len);
 
     const hidden = facts.ValueEffect{ .opaque_storage_dependencies = &.{.{ .input_index = 2, .storage_domain = 3 }} };
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .variants = &.{.{ .index = 0, .value = &hidden }} }} }) == null);
-    try std.testing.expectEqual(.undeclared_dependency, check(contract, .{
+    try std.testing.expect((try check(arena.allocator(), contract, .{ .outputs = &.{.{ .variants = &.{.{ .index = 0, .value = &hidden }} }} })) == null);
+    try std.testing.expectEqual(.undeclared_dependency, (try check(arena.allocator(), contract, .{
         .outputs = &.{.{ .variants = &.{.{ .index = 1, .value = &hidden }} }},
-    }).?.kind);
+    })).?.kind);
 }
 
 test "conditional opaque empty guarantees are checked per selected exit" {
@@ -1307,19 +1341,19 @@ test "conditional opaque empty guarantees are checked per selected exit" {
         .{ .variant_index = 0, .input_post_states = &.{} },
         .{ .variant_index = 1, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
     };
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &exits }) == null);
+    try std.testing.expect((try check(arena.allocator(), contract, .{ .outputs = &.{.{}}, .outcome_post_states = &exits })) == null);
     const missing = [_]facts.OutcomePostStates{
         .{ .variant_index = 0, .input_post_states = &.{} },
         .{ .variant_index = 1, .input_post_states = &.{} },
     };
-    try std.testing.expectEqual(.missing_empty_storage, check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &missing }).?.kind);
+    try std.testing.expectEqual(.missing_empty_storage, (try check(arena.allocator(), contract, .{ .outputs = &.{.{}}, .outcome_post_states = &missing })).?.kind);
     const wrong = [_]facts.OutcomePostStates{
         .{ .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
         exits[1],
     };
-    try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &wrong }).?.kind);
+    try std.testing.expectEqual(.unsupported_opaque_effect, (try check(arena.allocator(), contract, .{ .outputs = &.{.{}}, .outcome_post_states = &wrong })).?.kind);
     const unreachable_exits = [_]facts.OutcomePostStates{.{ .variant_index = 1, .reachable = false, .input_post_states = &.{} }};
-    try std.testing.expect(check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &unreachable_exits }) == null);
+    try std.testing.expect((try check(arena.allocator(), contract, .{ .outputs = &.{.{}}, .outcome_post_states = &unreachable_exits })) == null);
 }
 
 test "joint safety contracts require one complete conditional proof" {
@@ -1336,23 +1370,23 @@ test "joint safety contracts require one complete conditional proof" {
     const empty: facts.SafetySummary = .{};
     const emptied: facts.SafetySummary = .{ .opaque_storage_empties = &empty_storage };
     const correct: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = joint, .effects = &emptied }} };
-    try std.testing.expect(checkGuardedRelations(&required, correct) == null);
-    try std.testing.expect(check(.{ .outputs = &.{}, .guarded_effects = &required }, correct) == null);
-    try std.testing.expectEqual(Failure.Kind.missing_choice_relation, check(.{ .outputs = &.{}, .guarded_effects = &required }, empty).?.kind);
-    try std.testing.expectEqual(Failure.Kind.missing_choice_relation, checkGuardedRelations(&required, empty).?.kind);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &required, correct)) == null);
+    try std.testing.expect((try check(arena.allocator(), .{ .outputs = &.{}, .guarded_effects = &required }, correct)) == null);
+    try std.testing.expectEqual(Failure.Kind.missing_choice_relation, (try check(arena.allocator(), .{ .outputs = &.{}, .guarded_effects = &required }, empty)).?.kind);
+    try std.testing.expectEqual(Failure.Kind.missing_choice_relation, (try checkGuardedRelations(arena.allocator(), &required, empty)).?.kind);
     const unrelated: facts.SafetySummary = .{ .guarded_effects = &.{
         .{ .conditions = input, .effects = &empty },
         .{ .conditions = output, .effects = &empty },
     } };
-    try std.testing.expect(checkGuardedRelations(&required, unrelated) != null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &required, unrelated)) != null);
     // A guarantee already established under an input condition remains true
     // when an output condition is also selected.
     const weaker: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = input, .effects = &emptied }} };
-    try std.testing.expect(checkGuardedRelations(&required, weaker) == null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &required, weaker)) == null);
     const stronger = try choices.conjoin(allocator, joint, try choices.normalize(allocator, &.{.{ .subject = .output, .index = 1, .variant_index = 3 }}));
     const partial: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = stronger, .effects = &emptied }} };
-    try std.testing.expect(checkGuardedRelations(&required, partial) != null);
-    try std.testing.expect(checkGuardedRelations(&required, emptied) == null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &required, partial)) != null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &required, emptied)) == null);
 }
 
 test "guarded conformance reports violations and ignores contradictory selectors" {
@@ -1365,10 +1399,10 @@ test "guarded conformance reports violations and ignores contradictory selectors
     const empty: facts.SafetySummary = .{};
     const invalid: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = guard, .effects = &empty }} };
     const required = [_]Contract.Guarded{.{ .conditions = guard, .effects = &effects }};
-    const failure = checkGuardedRelations(&required, invalid).?;
+    const failure = (try checkGuardedRelations(arena.allocator(), &required, invalid)).?;
     try std.testing.expectEqual(Failure.Kind.missing_consumption, failure.kind);
     try std.testing.expect(failure.conditions.?.eql(guard));
-    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = .{ .impossible = true }, .effects = &effects }}, empty) == null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &.{.{ .conditions = .{ .impossible = true }, .effects = &effects }}, empty)) == null);
 }
 
 test "joint guards distinguish effect permissions from resource guarantees" {
@@ -1390,17 +1424,17 @@ test "joint guards distinguish effect permissions from resource guarantees" {
     };
     const required = [_]Contract.Guarded{.{ .conditions = condition, .effects = &effects }};
     var summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .guarded_effects = &.{.{ .conditions = condition, .effects = &permitted }} };
-    try std.testing.expect(checkGuardedRelations(&required, summary) == null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &required, summary)) == null);
     var bad = permitted;
     bad.outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 3 } }} }};
     // Both unconditional and selected facts contain the undeclared dependency;
     // no complete sound approximation can establish the contract.
     summary.outputs = bad.outputs;
     summary.guarded_effects = &.{.{ .conditions = condition, .effects = &bad }};
-    try std.testing.expectEqual(Failure.Kind.undeclared_dependency, checkGuardedRelations(&required, summary).?.kind);
+    try std.testing.expectEqual(Failure.Kind.undeclared_dependency, (try checkGuardedRelations(arena.allocator(), &required, summary)).?.kind);
     var consumes = effects;
     consumes.consumed_inputs = &.{.{ .input_index = 1 }};
-    try std.testing.expectEqual(Failure.Kind.missing_consumption, checkGuardedRelations(&.{.{ .conditions = condition, .effects = &consumes }}, summary).?.kind);
+    try std.testing.expectEqual(Failure.Kind.missing_consumption, (try checkGuardedRelations(arena.allocator(), &.{.{ .conditions = condition, .effects = &consumes }}, summary)).?.kind);
 }
 
 test "legacy contracts convert payload permissions and authoritative input guarantees together" {
@@ -1438,10 +1472,10 @@ test "unreachable legacy output guards establish vacuous joint guarantees" {
     });
     const guarantee: Contract = .{ .outputs = &.{}, .emptied_inputs = &.{.{ .input_index = 0 }} };
     const summary: facts.SafetySummary = .{ .outcome_post_states = &.{.{ .reachable = false, .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{} }} };
-    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = conditions, .effects = &guarantee }}, summary) == null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &.{.{ .conditions = conditions, .effects = &guarantee }}, summary)) == null);
     var reachable = summary;
     reachable.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{} }};
-    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = conditions, .effects = &guarantee }}, reachable) != null);
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &.{.{ .conditions = conditions, .effects = &guarantee }}, reachable)) != null);
 }
 
 test "outcome conversion partitions nested contracts at leaves and retains enclosing guarantees" {
@@ -1485,10 +1519,10 @@ test "general conformance cannot mistake sparse promises for complete return cov
         .outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} }},
         .guarded_effects = &.{.{ .conditions = condition, .effects = &precise }},
     };
-    try std.testing.expectEqual(Failure.Kind.undeclared_dependency, check(contract, summary).?.kind);
+    try std.testing.expectEqual(Failure.Kind.undeclared_dependency, (try check(arena.allocator(), contract, summary)).?.kind);
     // Exhaustive body inference can validate the selected regions directly.
     summary.guarded_returns_complete = true;
-    try std.testing.expect(check(contract, summary) == null);
+    try std.testing.expect((try check(arena.allocator(), contract, summary)) == null);
 }
 
 test "inherited general contract transitions apply once" {
@@ -1512,15 +1546,15 @@ test "consumption permits emptying owned storage without borrowed or retention e
     const storage: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
     const consumed: facts.PlacePostState = .{ .target = input, .initializedness = .deinitialized, .ends_previous_roots = true };
     const contract: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{input} };
-    try std.testing.expect(check(contract, .{ .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} }) == null);
-    try std.testing.expectEqual(.missing_consumption, check(contract, .{ .opaque_storage_empties = &.{storage} }).?.kind);
+    try std.testing.expect((try check(std.testing.allocator, contract, .{ .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} })) == null);
+    try std.testing.expectEqual(.missing_consumption, (try check(std.testing.allocator, contract, .{ .opaque_storage_empties = &.{storage} })).?.kind);
     const external = [_]facts.InputPath{
         .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } },
         .{ .input_index = 1, .projections = &.{.{ .field = 0 }} },
         .{ .input_index = 0, .storage_domain = 0 },
     };
-    for (external) |path| try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .input_post_states = &.{consumed}, .opaque_storage_empties = &.{path} }).?.kind);
-    try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .input_post_states = &.{consumed}, .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = .{} }} }).?.kind);
+    for (external) |path| try std.testing.expectEqual(.unsupported_opaque_effect, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{consumed}, .opaque_storage_empties = &.{path} })).?.kind);
+    try std.testing.expectEqual(.unsupported_opaque_effect, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{consumed}, .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = .{} }} })).?.kind);
 }
 
 test "selected consumption only permits owned storage empties on that outcome" {
@@ -1530,10 +1564,89 @@ test "selected consumption only permits owned storage empties on that outcome" {
     const selected: Contract = .{ .outputs = &.{.{}}, .consumed_inputs = &.{input} };
     const contract: Contract = .{ .outputs = &.{.{}}, .outcomes = &.{.{ .output_index = 0, .variant_index = 1, .effects = &selected }} };
     var summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} }} };
-    try std.testing.expect(check(contract, summary) == null);
+    try std.testing.expect((try check(std.testing.allocator, contract, summary)) == null);
     summary.outcome_post_states = &.{
         .{ .output_index = 0, .variant_index = 1, .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} },
         .{ .output_index = 0, .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
     };
-    try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, summary).?.kind);
+    try std.testing.expectEqual(.unsupported_opaque_effect, (try check(std.testing.allocator, contract, summary)).?.kind);
+}
+
+test "static contract checks preserve guarantees while callers retain alias obligations" {
+    const path = facts.InputPath{ .input_index = 0 };
+    const contract: Contract = .{ .outputs = &.{} };
+    const summary: facts.SafetySummary = .{ .outputs = &.{}, .storage_observation_conflicts = &.{.{ .consumed = path, .observed = .{ .input_index = 1 } }} };
+    try std.testing.expect((try checkStatic(std.testing.allocator, contract, summary)) == null);
+    try std.testing.expectEqual(.unsupported_alias_obligation, (try check(std.testing.allocator, contract, summary)).?.kind);
+    var effectful = summary;
+    effectful.storage_capability_uses = &.{.{ .target = path }};
+    try std.testing.expectEqual(.unsupported_capability_effect, (try checkStatic(std.testing.allocator, contract, effectful)).?.kind);
+    try std.testing.expectEqual(@as(usize, 1), summary.storage_observation_conflicts.len);
+}
+
+test "guarded contracts read normalized output partitions without derived summary copies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conditions = try @import("choice_conditions.zig").normalize(a, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .projections = &.{.{ .variant = 2 }}, .variant_index = 3 },
+    });
+    const required_effects: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{.{ .input_index = 4 }} };
+    const required = [_]Contract.Guarded{.{ .conditions = conditions, .effects = &required_effects }};
+    var partitions = [_]facts.OutcomePostStates{.{ .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{.{ .target = .{ .input_index = 4 }, .initializedness = .deinitialized, .ends_previous_roots = true }} }};
+    const summary: facts.SafetySummary = .{ .outcome_post_states = &partitions };
+    try std.testing.expectEqual(@as(usize, 0), summary.guarded_effects.len);
+    try std.testing.expect((try checkGuardedRelations(a, &required, summary)) == null);
+    partitions[0].input_post_states = &.{};
+    try std.testing.expectEqual(Failure.Kind.missing_consumption, (try checkGuardedRelations(a, &required, summary)).?.kind);
+    partitions[0].reachable = false;
+    try std.testing.expect((try checkGuardedRelations(a, &required, summary)) == null);
+}
+
+test "independent output partitions cannot prove a joint consumption guarantee" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const conditions = try @import("choice_conditions.zig").normalize(arena.allocator(), &.{
+        .{ .subject = .output, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .variant_index = 1 },
+    });
+    const required_effects: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{ .{ .input_index = 0 }, .{ .input_index = 1 } } };
+    const summary: facts.SafetySummary = .{ .outcome_post_states = &.{
+        .{ .output_index = 0, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized, .ends_previous_roots = true }} },
+        .{ .output_index = 1, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 1 }, .initializedness = .deinitialized, .ends_previous_roots = true }} },
+    } };
+    try std.testing.expect((try checkGuardedRelations(arena.allocator(), &.{.{ .conditions = conditions, .effects = &required_effects }}, summary)) != null);
+}
+
+test "conditional conformance errors propagate and failure conditions retain caller storage" {
+    inline for (.{ false, true }) |fallback| {
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+            fn validate(a: std.mem.Allocator, use_fallback: bool) !void {
+                var arena = std.heap.ArenaAllocator.init(a);
+                defer arena.deinit();
+                const conditions: facts.ChoiceConditions = .{ .terms = &.{.{ .subject = .output, .index = 0, .variant_index = 1 }} };
+                const permitted: Contract = .{ .outputs = &.{.{ .dependencies = &.{.{ .input_index = 0 }} }} };
+                const required: Contract = .{
+                    .general_conditions = true,
+                    .outputs = &.{.{}},
+                    .guarded_effects = &.{.{ .conditions = conditions, .effects = &permitted }},
+                };
+                const actual: facts.SafetySummary = .{ .outputs = &.{.{ .known_choice_variant = 1, .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} }} };
+                var summary = actual;
+                if (!use_fallback) {
+                    summary.guarded_effects = &.{.{ .conditions = conditions, .effects = &actual }};
+                    summary.guarded_returns_complete = true;
+                }
+                const failure = (try check(arena.allocator(), required, summary)).?;
+                try std.testing.expectEqual(Failure.Kind.undeclared_dependency, failure.kind);
+                // Fallback conditions are newly allocated, rather than borrowed
+                // from a summary partition. They must remain live after check.
+                try std.testing.expectEqual(@as(usize, 1), failure.conditions.?.terms.len);
+                try std.testing.expectEqual(@as(u32, 1), failure.conditions.?.terms[0].variant_index);
+                try std.testing.expectEqual(@as(u32, 0), failure.conditions.?.terms[0].index);
+                try std.testing.expectEqual(Failure.Kind.undeclared_dependency, (try checkStatic(arena.allocator(), required, summary)).?.kind);
+            }
+        }.validate, .{fallback});
+    }
 }

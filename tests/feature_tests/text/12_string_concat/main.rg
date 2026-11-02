@@ -1,22 +1,25 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     line :: String = unwrap_or_abort(
-        .value = String(.allocator = $&allocator_storage, .length = 5)
+        .value = String(.allocator = allocator, .length = 5)
     )
-    bytes_set(.string = $&line, .index = 0, .value = 104)
-    bytes_set(.string = $&line, .index = 1, .value = 101)
-    bytes_set(.string = $&line, .index = 2, .value = 108)
-    bytes_set(.string = $&line, .index = 3, .value = 108)
-    bytes_set(.string = $&line, .index = 4, .value = 111)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&line, .index = 0, .byte = 104))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&line, .index = 1, .byte = 101))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&line, .index = 2, .byte = 108))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&line, .index = 3, .byte = 108))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&line, .index = 4, .byte = 111))
 
     combined_result ::= &line + "\n"
     match combined_result {
         ..error _ { status_code = 2 }
         ..ok ~with_newline {
 
-            with_newline_view ::= as_view(.self = &with_newline)
+            with_newline_view ::= view(.self = &with_newline)
 
             if with_newline_view == "hello\n" {
                 status_code = 0

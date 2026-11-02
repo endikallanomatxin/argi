@@ -1,32 +1,33 @@
 CollisionPolicy: Type = ()
 
 implement ImplicitlyCopyable#(CollisionPolicy) ()
-implement HashPolicy#(CollisionPolicy, Int32)(
 
-    .hash = (.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 7 }
+implement HashPolicy#(CollisionPolicy, Int32) (
+    .Query : Type = &Int32
+    .query = (.self: &CollisionPolicy, .key: &Int32) -> (.query: Query) { query = key }
 
-    .eql = (.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = [
-            left
-            == right
-        ]
+    .hash = (.self: &CollisionPolicy, .key: &Int32) -> (.hash: UIntNative) { hash = 7 }
+
+    .equal = (.self: &CollisionPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = [left&== right&]
     }
 )
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     map ::= HashMap#(.key: Int32, .value: Int32, .policy: CollisionPolicy)(
-        .policy    = CollisionPolicy()
-        .allocator = allocator
-    )!
+        .policy = CollisionPolicy(), .allocator = allocator
+    )!!!
     index :: Int32 = 0
     while index < 4 {
-        put(.self = $&map, .key = index, .value = index + 10, .allocator = allocator)!
+        put(.self = $&map, .key = index, .value = index + 10, .allocator = allocator)!!!
         index = index + 1
     }
-    remove(.self = $&map, .key = 0, .allocator = allocator)
-    remove(.self = $&map, .key = 2, .allocator = allocator)
-    put(.self = $&map, .key = 3, .value = 99, .allocator = allocator)!
+    remove(.self = $&map, .key = &0, .allocator = allocator)
+    remove(.self = $&map, .key = &2, .allocator = allocator)
+    put(.self = $&map, .key = 3, .value = 99, .allocator = allocator)!!!
     keys :: Int32 = 0
     values :: Int32 = 0
     count :: UIntNative = 0
@@ -34,19 +35,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     while has_next(.self = &iterator).ok {
         if has_next(.self = &iterator).ok == false { abort }
         entry ::= next(.self = $&iterator).value
-        keys = keys + entry.key
-        values = values + entry.value
+        keys = keys + entry.key&
+        values = values + entry.value&
         count = count + 1
     }
     if count != 2 or keys != 4 or values != 110 { abort }
     if has_next(.self = &iterator).ok { abort }
-    put(.self = $&map, .key = 5, .value = 15, .allocator = allocator)!
+    put(.self = $&map, .key = 5, .value = 15, .allocator = allocator)!!!
     count = 0
     for entry in map { count = count + 1 }
     if count != 3 { abort }
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
     status_code = 0
 }

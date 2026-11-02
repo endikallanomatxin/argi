@@ -1,9 +1,11 @@
 json ::= import ("codecs/serialization/json")
 
-run_main(.system: System) -> !Void = ..ok Void() := {
+main := (.system: System) -> (.status_code: Int32 = 1) {
+
+    assume writer ::= $&system.terminal&.stderr
     json.validate(
         .text = " {\"text\":\"café \\uD83D\\uDE42\", \"values\":[null,true,false,-1.2e+3]} "
-    )!
+    )!!!
     cases :: [12]StringView = (
         "",
         "01",
@@ -20,50 +22,41 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     )
     for text in cases {
         match json.validate(.text = text) {
-            ..ok _ { abort } ..error error { if [
-                    error.reason
-                    != ..invalid_json
-                ] { abort } }
+            ..ok _ { abort } ..error error { if [error.reason != ..invalid_json] { abort } }
         }
     }
     match json.validate(.text = "[[]]", .maximum_depth = 1) {
-        ..ok _ { abort } ..error error { if [
-                error.reason
-                != ..json_depth_exceeded
-            ] { abort } }
+        ..ok _ { abort } ..error error { if [error.reason != ..json_depth_exceeded] { abort } }
     }
-    cursor ::= json.JsonCursor(.text = "[1,true,\"x\"]")!
+    cursor ::= json.JsonCursor(.text = "[1,true,\"x\"]")!!!
     count :: UIntNative = 0
     while true {
-        match json.next(.self = $&cursor)! {
+        match json.next(.self = $&cursor)!!! {
             ..none { break } ..some token {
-                if [
-                    token.value.lexeme.length
-                    == 0
-                ] { abort }
-                count = [
-                    count
-                    + 1
-                ]
+                if [byte_length(&token.value.lexeme).count == 0] { abort }
+                count = [count + 1]
             }
         }
     }
     if count != 7 { abort }
-    match json.next(.self = $&cursor)! { ..none {} ..some _ { abort } }
+    match json.next(.self = $&cursor)!!! { ..none {} ..some _ { abort } }
     assume allocator := system.page_allocator
     decoded ::= json.decode_string(
-        .text      = "\"caf\\u00e9 \\uD83D\\uDE42\\n\""
-        .allocator = allocator
-    )!
-    if as_view(.self = &decoded) != "café 🙂\n" { abort }
+        .text = "\"caf\\u00e9 \\uD83D\\uDE42\\n\"", .allocator = allocator
+    )!!!
+    if view(.self = &decoded) != "café 🙂\n" { abort }
     storage ::= zeroed#(.t: [64]UInt8)()
-    writer ::= ByteWriter(.bytes = view(.array = $&storage))
-    json.write_string(.writer = $&writer, .text = as_view(.self = &decoded))!
-    text :: StringView = (.data = &storage[0], .length = 18)
-    json.validate(.text = text)!
-}
-
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
+    buffer_writer ::= ByteWriter(.bytes = view(.self = $&storage))
+    json.write_string(.writer = $&buffer_writer, .text = view(.self = &decoded))!!!
+    text_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes = unwrap_or_abort(
+                .value = slice(&view(&storage), .start = 0, .count = 18)
+            )
+            .allocator = system.page_allocator
+        )
+    )
+    text ::= view(&text_storage)
+    json.validate(.text = text)!!!
     status_code = 0
 }

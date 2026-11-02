@@ -1,10 +1,10 @@
-SpanOrEnd : Type = (
+SpanOrEnd: Type = (
     ..end
-    ..span (.start: UIntNative, .end: UIntNative)
+    ..span(.start: UIntNative, .end: UIntNative)
 )
 
-main() -> (.status_code: Int32 = 0) := {
-    c : SpanOrEnd = ..span (.start = 3, .end = 8)
+main := () -> (.status_code: Int32 = 0) {
+    c: SpanOrEnd = ..span(.start = 3, .end = 8)
 
     match c {
         ..end {
@@ -23,13 +23,13 @@ main() -> (.status_code: Int32 = 0) := {
         }
     }
 
-    s ::= c..span
+    s ::= c ..span
     if s.start != 3 {
         status_code = 4
         return
     }
 
-    if c..span.start != 3 {
+    if c ..span.start != 3 {
         status_code = 5
         return
     }

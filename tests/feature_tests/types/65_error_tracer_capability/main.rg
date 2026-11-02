@@ -1,40 +1,70 @@
 ..tracer_test_failure
 
-CountingTracer: Type = (.count: UIntNative = 0)
+CountingTracer := (.count: UIntNative = 0)
 
-fail() -> (.result: Errable#(.t: Int32, .reasons: (..tracer_test_failure))) := {
+fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(
+        .t          : Int32,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    )
+) {
+    assume error_tracer
+
     result = ..error(.reason = ..tracer_test_failure)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reasons: (..tracer_test_failure))) := {
+propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
+    .result : Errable#(
+        .t          : Int32,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    )
+) {
+    assume error_tracer
+
     value := fail()!! "custom context"
     result = ..ok value
 }
 
-ok() -> !Int32 := { result = ..ok 7 }
+ok := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
+    assume error_tracer
+    result = ..ok 7
+}
 
-context_text(.counter: $&UIntNative) -> (.view: StringView) := {
+context_text := (.counter: $&UIntNative) -> (.view: StringView) {
     counter&= counter&+ 1
     view = "lazy context"
 }
 
-success(.counter: $&UIntNative) -> !Int32 := {
+success := (.counter: $&UIntNative, .error_tracer: $&Virtual#(ErrorTracer)) -> !!Int32 {
+    assume error_tracer
+
     value := ok()!! context_text(.counter = counter)
     result = ..ok value
 }
 
-forward#(
-        .t : Type
-    )(
-        .value : Errable#(.t: t, .reasons: (..tracer_test_failure))
-    ) -> (
-        .result : Errable#(.t: t, .reasons: (..tracer_test_failure))
-    ) := {
+forward := #(.t: Type) (
+    .value : Errable#(
+        .t          : t,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    ),
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> (
+    .result : Errable#(
+        .t          : t,
+        .reasons    : (..tracer_test_failure),
+        .error_type : ErrorWithTrace#((..tracer_test_failure))
+    )
+) {
+    assume error_tracer
+
     unwrapped := value!! "original tracer"
     result = ..ok unwrapped
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     tracer ::= CountingTracer()
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
@@ -83,24 +113,28 @@ main() -> (.status_code: Int32) := {
     match forwarded_again {
         ..ok _ { status_code = 9 }
         ..error&err {
-            if err&.reason == ..tracer_test_failure { status_code = 0 } else { status_code = 10 }
+            if err&.reason == ..tracer_test_failure {
+                status_code = 0
+            } else {
+                status_code = 10
+            }
         }
     }
 }
 
-implement ErrorTracer#(CountingTracer)(
-    .add_context = (.self: $&CountingTracer, .location: SourceLocationId, .context: StringView) -> () {
+implement ErrorTracer#(CountingTracer) (
+    .add_context = (
+        .self: $&CountingTracer, .location: SourceLocationId, .context: StringView
+    ) -> () {
         self&.count = self&.count + 1
     }
 
     .reset_context = (.self: $&CountingTracer) -> () { self&.count = 0 }
 
-    .report = (
-            .self   : $&CountingTracer,
-            .writer : $&Virtual#(.contract: Writer)
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .report = (.self: $&CountingTracer, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
+
         result = ..ok Void()
     }
 )

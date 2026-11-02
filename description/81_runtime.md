@@ -97,7 +97,7 @@ default. The following `System` shape is hypothetical:
 
 ```rg
 System : Type = (
-    .allocator : $&Allocator
+    .allocator : Virtual#(Allocator)
     .terminal  : $&Terminal
     .file_system  : $&FileSystem
     .network   : $&Network
@@ -141,8 +141,8 @@ runtime.
 For example:
 
 ```rg
-main(.system: System) -> !(.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+main := (.system: System) -> !(.status_code: Int32 = 0) {
+    assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 
     runtime := FiberRuntime(
         .allocator = allocator,
@@ -192,29 +192,28 @@ runtime implementation and the capabilities used to construct it.
 
 ---
 
-## Reached runtime
+## Explicit runtime input
 
-Functions may still receive a runtime through `reach`, but this does not imply
-that they get real concurrency.
+Functions receive a runtime as an ordinary input. This does not imply that
+they get real concurrency.
 
 ```rg
 do_work(
-    .runtime: $&Runtime = reach runtime, system.runtime,
+    .runtime: $&Runtime,
 ) -> !() := {
     runtime | checkpoint($&_)!
     ...
 }
 ```
 
-If the caller only has `system.runtime`, this resolves to the default
-`BlockingRuntime`.
+The caller can pass `system.runtime` to use the default `BlockingRuntime`.
 
-If the caller has created a real runtime and binds it locally, `reach runtime`
-will find the local runtime first:
+The caller can instead create a real runtime and supply it explicitly or
+enable it with lexical `assume`:
 
 ```rg
-main(.system: System) -> !(.status_code: Int32 = 0) := {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+main := (.system: System) -> !(.status_code: Int32 = 0) {
+    assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 
     runtime := FiberRuntime(
         .allocator = allocator,
@@ -236,7 +235,7 @@ No custom runtime created:
     functions use system.runtime -> BlockingRuntime
 
 Custom runtime created locally:
-    functions use local runtime through reach
+    functions receive the local runtime through ordinary arguments
 
 Runtime with OS threads:
     requires explicit thread capability from System
@@ -414,7 +413,7 @@ Example:
 
 ```rg
 heavy_cpu_task(
-    .runtime: $&Runtime = reach runtime, system.runtime,
+    .runtime: $&Runtime,
 ) -> !() := {
     for i in Range(.start = 0, .end = huge_number) {
         do_step(i)
@@ -452,7 +451,7 @@ Example:
 
 ```rg
 parse_large_file(
-    .runtime: $&Runtime = reach runtime, system.runtime,
+    .runtime: $&Runtime,
     .content: &String,
 ) -> !(.ast: Ast) := {
     for token in tokenize(content) {
@@ -508,7 +507,7 @@ In the long term, `main` should run inside the root runtime task, so that main
 itself can call `yield`, `checkpoint`, `sleep`, `await`, channels, etc.
 
 ```rg
-main(.system: System) -> !(.status_code: Int32 = 0) := {
+main := (.system: System) -> !(.status_code: Int32 = 0) {
     runtime : $&Runtime = system.runtime
 
     future := runtime | concurrent($&_, Task({
@@ -666,7 +665,7 @@ Channel operations are side-effects and may suspend the current task.
 Examples / Old code:
 
 ```
-funcion_enviadora (c:Channel) -> () := {
+funcion_enviadora := (c:Channel) -> ()  {
 	time | sleep (&_, 1000)
 	c | send (_, 42)
 }
@@ -779,7 +778,7 @@ estado := runtime | mutex($&_, .value = 0)
 
 > [!IDEA] Automutex
 > ```
-> estado : AutoMutex<Int>
+> estado : AutoMutex#(Int)
 > 
 > incrementar($&estado) := {
 > 	estado++
@@ -997,15 +996,15 @@ Runtime:
 ```
 
 Filesystem, network and clock may remain separate capabilities, but operations
-that can block should use `Runtime` internally or receive it as a reached
+that can block should use `Runtime` internally or receive it as an ordinary
 argument.
 
 Example:
 
 ```rg
 read_file(
-    .file_system: $&FileSystem = reach file_system, system.file_system,
-    .runtime: $&Runtime = reach runtime, system.runtime,
+    .file_system: $&FileSystem,
+    .runtime: $&Runtime,
     .path: String,
 ) -> !(.content: String) := {
     ...

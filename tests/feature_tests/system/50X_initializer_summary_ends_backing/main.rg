@@ -1,5 +1,5 @@
-BackingAllocator: Type = (
-    .page : $&PageAllocator
+BackingAllocator := (
+    .page : Virtual#(Allocator)
 )
 
 implement Deinit#(BackingAllocator) (
@@ -8,42 +8,45 @@ implement Deinit#(BackingAllocator) (
     }
 )
 
-EndBacking: Type = (
+EndBacking := (
     .marker : Bool
 )
 
-implement Init#(EndBacking, (.backing: $&BackingAllocator)) (
-    .Result: Type = EndBacking
-    .init = (.args: (.backing: $&BackingAllocator)) -> (.result: Result) {
-        backing ::= ~args.backing
+EndBackingInitArgs: Type = (.backing: $&BackingAllocator)
+
+implement Init#(EndBacking, EndBackingInitArgs) (
+    .Result : Type = EndBacking
+
+    .init = EndBackingInitArgs -> (.result: Result) {
+        _init_backing ::= ~backing
 
         result = (.marker = false)
-        deinit(.self = backing)
+        deinit(.self = _init_backing)
     }
 )
 
-consume(.value: EndBacking) -> () := {}
+consume := (.value: EndBacking) -> () {}
 
-end_backing(.backing: $&BackingAllocator) -> () := {
+end_backing := (.backing: $&BackingAllocator) -> () {
     consume(.value = EndBacking(.backing = backing))
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     backing ::= BackingAllocator(.page = system.page_allocator)
-    allocator ::= GeneralPurposeAllocator(.allocator = $&backing)
+
+    backing_virtual ::= to_virtual#(Allocator)($&backing)
+    allocator ::= GeneralPurposeAllocator(.allocator = backing_virtual)
     end_backing(.backing = $&backing)
     result ::= allocate_bytes(.self = $&allocator, .size = 8)
     status_code = 0
 }
 
-implement Allocator#(BackingAllocator)(
-    .allocate = (
-            .self      : $&BackingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
-        result = allocate_bytes(.self = self&.page, .size = size, .alignment = alignment)
+implement Allocator#(BackingAllocator) (
+    .allocate = (.self: $&BackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
+
+        result = allocate_bytes(.self = $&self&.page, .size = size, .alignment = alignment)
     }
 )

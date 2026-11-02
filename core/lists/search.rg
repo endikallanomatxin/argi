@@ -1,13 +1,14 @@
 -- Equality search copies only implicitly copyable elements. Returning an
 -- index creates no element loan; structural changes can make it stale.
-find#(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t))(
+find := #(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t)) (
     .self: &Collection, .value: t
-) -> (.index: ?UIntNative) := {
+) -> (.index: ?UIntNative) {
+
     count ::= length(self).count
     position :: UIntNative = 0
 
     while position < count {
-        element ::= unwrap_or_abort(.value = get_ro_ref(self, .index = position))&
+        element ::= unwrap_or_abort(.value = get_reference(self, .index = position))&
         if element == value {
             index = ..some(.value = position)
             return
@@ -18,8 +19,8 @@ find#(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t))(
     index = ..none
 }
 
-contains#(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t))(
+contains := #(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t)) (
     .self: &Collection, .value: t
-) -> (.ok: Bool) := {
+) -> (.ok: Bool) {
     ok = is(.value = find#(.t: t)(self, .value = value).index, .variant = ..some)
 }

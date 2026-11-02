@@ -16,17 +16,22 @@ pub const Engine = struct {
     allocator: std.mem.Allocator,
     summaries: std.AutoHashMap(graph.GlobalFunctionId, facts.SafetySummary),
     dependents: DependentMap,
+    dependencies: DependentMap,
+    virtual_dependencies: std.AutoHashMap(graph.GlobalFunctionId, std.array_list.Managed(graph.GlobalVirtualRegistryId)),
     worklist: std.array_list.Managed(graph.GlobalFunctionId),
     dirty: std.AutoHashMap(graph.GlobalFunctionId, void),
     next_work: usize = 0,
     current: ?graph.GlobalFunctionId = null,
     dependency_error: ?anyerror = null,
+    retain_dependencies: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Engine {
         return .{
             .allocator = allocator,
             .summaries = std.AutoHashMap(graph.GlobalFunctionId, facts.SafetySummary).init(allocator),
             .dependents = DependentMap.init(allocator),
+            .dependencies = DependentMap.init(allocator),
+            .virtual_dependencies = .init(allocator),
             .worklist = FunctionList.init(allocator),
             .dirty = std.AutoHashMap(graph.GlobalFunctionId, void).init(allocator),
         };
@@ -36,6 +41,12 @@ pub const Engine = struct {
         var values = self.dependents.valueIterator();
         while (values.next()) |list| list.deinit();
         self.dependents.deinit();
+        var dependencies = self.dependencies.valueIterator();
+        while (dependencies.next()) |list| list.deinit();
+        self.dependencies.deinit();
+        var virtuals = self.virtual_dependencies.valueIterator();
+        while (virtuals.next()) |list| list.deinit();
+        self.virtual_dependencies.deinit();
         self.summaries.deinit();
         self.worklist.deinit();
         self.dirty.deinit();
@@ -71,9 +82,20 @@ pub const Engine = struct {
         if (self.summaries.get(function)) |previous| {
             if (summaryEql(previous, summary)) return false;
         }
+        // A published approximation must never lose its observer notifications.
+        // Reserve both queue tables before changing the summary itself.
+        const callers = self.dependents.get(function);
+        if (callers) |list| {
+            var pending: usize = 0;
+            for (list.items) |caller| if (!self.dirty.contains(caller)) {
+                pending += 1;
+            };
+            try self.worklist.ensureUnusedCapacity(pending);
+            try self.dirty.ensureUnusedCapacity(@intCast(pending));
+        }
         try self.summaries.put(function, summary);
-        if (self.dependents.get(function)) |callers| {
-            for (callers.items) |caller| try self.markDirty(caller);
+        if (callers) |list| {
+            for (list.items) |caller| try self.markDirty(caller);
         }
         return true;
     }
@@ -89,75 +111,50 @@ pub const Engine = struct {
 
     fn markDirty(self: *Engine, function: graph.GlobalFunctionId) !void {
         if (self.dirty.contains(function)) return;
+        try self.worklist.ensureUnusedCapacity(1);
         try self.dirty.put(function, {});
-        try self.worklist.append(function);
+        self.worklist.appendAssumeCapacity(function);
+    }
+
+    pub fn addDependency(self: *Engine, dependent: graph.GlobalFunctionId, dependency: graph.GlobalFunctionId) !void {
+        const callers = try self.dependents.getOrPut(dependency);
+        if (!callers.found_existing) callers.value_ptr.* = FunctionList.init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalFunctionId, callers.value_ptr.items, dependent) == null) try callers.value_ptr.append(dependent);
+        if (!self.retain_dependencies) return;
+        const required = try self.dependencies.getOrPut(dependent);
+        if (!required.found_existing) required.value_ptr.* = FunctionList.init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalFunctionId, required.value_ptr.items, dependency) == null) try required.value_ptr.append(dependency);
+    }
+
+    pub fn addVirtualDependency(self: *Engine, dependent: graph.GlobalFunctionId, registry: graph.GlobalVirtualRegistryId) !void {
+        const required = try self.virtual_dependencies.getOrPut(dependent);
+        if (!required.found_existing) required.value_ptr.* = .init(self.allocator);
+        if (std.mem.indexOfScalar(graph.GlobalVirtualRegistryId, required.value_ptr.items, registry) == null) try required.value_ptr.append(registry);
+    }
+
+    pub fn observeVirtual(self: *Engine, registry: graph.GlobalVirtualRegistryId) !void {
+        if (!self.retain_dependencies) return;
+        if (self.current) |dependent| try self.addVirtualDependency(dependent, registry);
     }
 
     fn recordDependency(self: *Engine, dependency: graph.GlobalFunctionId) void {
         const dependent = self.current orelse return;
-        const entry = self.dependents.getOrPut(dependency) catch |err| {
-            self.dependency_error = err;
-            return;
-        };
-        if (!entry.found_existing) entry.value_ptr.* = FunctionList.init(self.allocator);
-        for (entry.value_ptr.items) |existing| if (existing == dependent) return;
-        entry.value_ptr.append(dependent) catch |err| {
+        self.addDependency(dependent, dependency) catch |err| {
             self.dependency_error = err;
         };
     }
 };
 
-/// Publish legacy outcome partitions in the general condition vocabulary while
-/// retaining their unconditional fallback. The effect records are complete
-/// approximations, not patches that may erase unrepresented caller effects.
-/// Allocations belong to the immutable summary arena.
-pub fn withOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetySummary) !facts.SafetySummary {
-    if (summary.guarded_effects.len != 0 or summary.outcome_post_states.len == 0) return summary;
-    var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
-    defer guards.deinit(allocator);
-    for (summary.outcome_post_states) |outcome| {
-        if (!outcome.reachable) continue;
-        const projections = try allocator.alloc(facts.Projection, outcome.parent_variants.len);
-        for (outcome.parent_variants, projections) |variant, *projection| projection.* = .{ .variant = variant };
-        const condition = try @import("choice_conditions.zig").normalize(allocator, &.{.{
-            .subject = .output,
-            .index = outcome.output_index,
-            .projections = projections,
-            .variant_index = outcome.variant_index,
-        }});
-        const effects = try allocator.create(facts.SafetySummary);
-        effects.* = summary;
-        effects.guarded_effects = &.{};
-        effects.outcome_post_states = &.{};
-        effects.input_post_states = outcome.input_post_states;
-        effects.invalidated_domains = outcome.invalidated_domains;
-        effects.opaque_storage_empties = outcome.opaque_storage_empties;
-        try guards.append(allocator, .{ .origin = .outcome_partition, .conditions = condition, .effects = effects });
-    }
-    var result = summary;
-    result.guarded_effects = try guards.toOwnedSlice(allocator);
-    return result;
-}
-
-/// Refresh only the compatibility records affected by domain normalization.
-/// General conjunctive records remain immutable and retain their identities.
-pub fn refreshOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetySummary) !facts.SafetySummary {
-    var general: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
-    defer general.deinit(allocator);
-    for (summary.guarded_effects) |guarded| if (guarded.origin == .general) try general.append(allocator, guarded);
-    var result = summary;
-    result.guarded_effects = &.{};
-    result = try withOutcomeGuards(allocator, result);
-    result.guarded_effects = try std.mem.concat(allocator, facts.GuardedSafetyEffects, &.{ general.items, result.guarded_effects });
-    return result;
-}
-
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
     for (a.guarded_effects, b.guarded_effects) |left, right| {
-        if (left.origin != right.origin or !left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
+        if (!left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
     }
     if (!domainsEql(a.invalidated_domains, b.invalidated_domains)) return false;
+    if (a.storage_observations.len != b.storage_observations.len or a.storage_observation_conflicts.len != b.storage_observation_conflicts.len) return false;
+    for (a.storage_observations, b.storage_observations) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.storage_observation_conflicts, b.storage_observation_conflicts) |left, right|
+        if (left.captures_reachable != right.captures_reachable or !inputPathEql(left.consumed, right.consumed) or !inputPathEql(left.observed, right.observed)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -193,7 +190,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (!domainsEql(a.input_domains, b.input_domains)) return false;
     if (a.domain_values.len != b.domain_values.len) return false;
-    for (a.domain_values, b.domain_values) |x, y| if (x.domain_index != y.domain_index or !valueEffectEql(x.value.*, y.value.*)) return false;
+    if (a.domain_values.ptr != b.domain_values.ptr) for (a.domain_values, b.domain_values) |x, y| {
+        if (x.domain_index != y.domain_index or (x.value != y.value and !valueEffectEql(x.value.*, y.value.*))) return false;
+    };
     if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
         a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
@@ -221,18 +220,20 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     }
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_receiver_values, b.input_receiver_values) |left, right| if (!inputPathEql(left, right)) return false;
-    for (a.input_captured_storages, b.input_captured_storages) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_captured_storages, b.input_captured_storages) |left, right| if (left.phase != right.phase or !inputPathEql(left.path, right.path)) return false;
     for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_place_values, b.input_place_values) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_owned_roots, b.input_owned_roots) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_generation_dependencies, b.opaque_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_storage_dependencies, b.opaque_storage_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
-    for (a.fields, b.fields) |left, right| {
-        if (left.index != right.index or !valueEffectEql(left.value.*, right.value.*)) return false;
-    }
-    for (a.variants, b.variants) |left, right| {
-        if (left.index != right.index or !valueEffectEql(left.value.*, right.value.*)) return false;
-    }
+    // Published effects share immutable subtrees across branch snapshots.
+    // Identity proves equality only for that subtree, never for its envelope.
+    if (a.fields.ptr != b.fields.ptr) for (a.fields, b.fields) |left, right| {
+        if (left.index != right.index or (left.value != right.value and !valueEffectEql(left.value.*, right.value.*))) return false;
+    };
+    if (a.variants.ptr != b.variants.ptr) for (a.variants, b.variants) |left, right| {
+        if (left.index != right.index or (left.value != right.value and !valueEffectEql(left.value.*, right.value.*))) return false;
+    };
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_dependencies, b.fresh_dependencies)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_owned_roots, b.fresh_owned_roots)) return false;
     if (a.input_storage_capabilities.len != b.input_storage_capabilities.len) return false;
@@ -244,6 +245,42 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     return true;
 }
 
+test "shared effect subtrees preserve envelope and projection distinctions" {
+    const leaf: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{7} };
+    const other_leaf: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{8} };
+    const effect: facts.ValueEffect = .{
+        .fields = &.{.{ .index = 0, .value = &leaf }},
+        .variants = &.{.{ .index = 1, .value = &leaf }},
+        .domain_values = &.{.{ .domain_index = 2, .value = &leaf }},
+    };
+    try std.testing.expect(valueEffectEql(effect, effect));
+
+    var changed = effect;
+    changed.explicit_dependency = true;
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.fields = effect.fields[0..0];
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.fields = &.{.{ .index = 1, .value = &leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.variants = &.{.{ .index = 2, .value = &leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.domain_values = &.{.{ .domain_index = 3, .value = &leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.fields = &.{.{ .index = 0, .value = &other_leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.variants = &.{.{ .index = 1, .value = &other_leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+    changed = effect;
+    changed.domain_values = &.{.{ .domain_index = 2, .value = &other_leaf }};
+    try std.testing.expect(!valueEffectEql(effect, changed));
+}
+
 fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| if (x.domain_index != y.domain_index or !inputPathEql(x.path, y.path)) return false;
@@ -252,6 +289,8 @@ fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
 
 fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     if (!inputPathEql(a.target, b.target) or
+        a.initialization != b.initialization or
+        a.reference_refresh != b.reference_refresh or
         a.initializedness != b.initializedness or
         a.ends_previous_roots != b.ends_previous_roots or
         a.refreshes_storage_generation != b.refreshes_storage_generation or
@@ -259,6 +298,11 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
         a.opaque_ownership != b.opaque_ownership or
         a.may_repopulate_opaque_storage != b.may_repopulate_opaque_storage or
         !valueEffectEql(a.value, b.value)) return false;
+    if ((a.reference_targets == null) != (b.reference_targets == null)) return false;
+    if (a.reference_targets) |paths| {
+        if (paths.len != b.reference_targets.?.len) return false;
+        for (paths, b.reference_targets.?) |left, right| if (!inputPathEql(left, right)) return false;
+    }
     if ((a.opaque_storage == null) != (b.opaque_storage == null)) return false;
     if (a.opaque_storage) |left| if (!inputPathEql(left, b.opaque_storage.?)) return false;
     return true;
@@ -268,6 +312,20 @@ fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
     if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
     return true;
+}
+
+test "summary equality retains ordered storage observations and caller alias obligations" {
+    const first = facts.InputPath{ .input_index = 0 };
+    const second = facts.InputPath{ .input_index = 1, .projections = &.{.{ .field = 0 }} };
+    const observed = facts.SafetySummary{ .storage_observations = &.{second} };
+    try std.testing.expect(!summaryEql(.{}, observed));
+    var constrained = observed;
+    constrained.storage_observation_conflicts = &.{.{ .consumed = first, .observed = second }};
+    try std.testing.expect(!summaryEql(observed, constrained));
+    var reversed = constrained;
+    reversed.storage_observation_conflicts = &.{.{ .consumed = second, .observed = first }};
+    try std.testing.expect(!summaryEql(constrained, reversed));
+    try std.testing.expect(summaryEql(constrained, constrained));
 }
 
 test "opaque storage summary identity includes its receiver domain" {
@@ -400,50 +458,93 @@ test "guarded summaries retain input output conjunctions and every effect dimens
     try std.testing.expect(!summaryEql(summary, changed_guard));
 }
 
-test "legacy outcome summaries publish nested output conditions with a conservative fallback" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const input_states = [_]facts.PlacePostState{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .refreshes_storage_generation = true }};
-    const original: facts.SafetySummary = .{
-        .input_post_states = &input_states,
-        .required_opaque_inputs = &.{.{ .input_index = 0 }},
-        .outcome_post_states = &.{
-            .{ .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{}, .opaque_storage_empties = &.{.{ .input_index = 0 }} },
-            .{ .reachable = false, .output_index = 1, .variant_index = 4, .input_post_states = &.{} },
-        },
-    };
-    const represented = try withOutcomeGuards(arena.allocator(), original);
-    try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects.len);
-    try std.testing.expectEqual(@as(usize, 2), represented.guarded_effects[0].conditions.terms.len);
-    try std.testing.expectEqual(@as(usize, 1), represented.input_post_states.len);
-    try std.testing.expectEqual(@as(usize, 0), represented.guarded_effects[0].effects.input_post_states.len);
-    try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects[0].effects.required_opaque_inputs.len);
-    try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects[0].effects.opaque_storage_empties.len);
-    try std.testing.expect(summaryEql(represented, try withOutcomeGuards(arena.allocator(), represented)));
+test "summary equality distinguishes stored reference identities from lifetime facts" {
+    const slot: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const left: facts.InputPath = .{ .input_index = 1 };
+    const right: facts.InputPath = .{ .input_index = 2 };
+    const unknown: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized }} };
+    const first: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{left} }} };
+    const second: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{right} }} };
+    try std.testing.expect(!summaryEql(unknown, first));
+    try std.testing.expect(!summaryEql(first, second));
+    try std.testing.expect(summaryEql(first, first));
+    const refreshed: facts.SafetySummary = .{ .input_post_states = &.{.{ .target = slot, .initializedness = .initialized, .reference_targets = &.{left}, .reference_refresh = true }} };
+    try std.testing.expect(!summaryEql(first, refreshed));
 }
 
-test "outcome guard refresh preserves general conjunctions and replaces stale mapped effects" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{
-        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
-        .{ .subject = .output, .index = 1, .variant_index = 2 },
-    });
-    const independent: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 3 }} };
-    const initial: facts.SafetySummary = .{ .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{} }} };
-    var converted = try withOutcomeGuards(allocator, initial);
-    const stale = converted.guarded_effects[0].effects;
-    converted.guarded_effects = try std.mem.concat(allocator, facts.GuardedSafetyEffects, &.{
-        &.{.{ .conditions = conditions, .effects = &independent }},
-        converted.guarded_effects,
-    });
-    converted.outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 4 }, .initializedness = .initialized, .refreshes_storage_generation = true }} }};
-    const refreshed = try refreshOutcomeGuards(allocator, converted);
-    try std.testing.expectEqual(@as(usize, 2), refreshed.guarded_effects.len);
-    try std.testing.expect(refreshed.guarded_effects[0].effects == &independent);
-    try std.testing.expect(refreshed.guarded_effects[0].conditions.eql(conditions));
-    try std.testing.expectEqual(@as(u32, 4), refreshed.guarded_effects[1].effects.input_post_states[0].target.input_index);
-    try std.testing.expectEqual(@as(usize, 0), stale.input_post_states.len);
-    try std.testing.expect(summaryEql(refreshed, try refreshOutcomeGuards(allocator, refreshed)));
+test "outcome effect views retain common obligations and current normalized fields" {
+    const fallback = [_]facts.PlacePostState{.{ .target = .{ .input_index = 0 }, .initializedness = .maybe_initialized }};
+    const selected = [_]facts.PlacePostState{.{ .target = .{ .input_index = 4 }, .initializedness = .initialized, .refreshes_storage_generation = true }};
+    const empties = [_]facts.InputPath{.{ .input_index = 1 }};
+    const common_opaque = [_]facts.InputPath{.{ .input_index = 2 }};
+    const independent: facts.SafetySummary = .{};
+    var outcomes = [_]facts.OutcomePostStates{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{} }};
+    const summary: facts.SafetySummary = .{
+        .input_post_states = &fallback,
+        .required_opaque_inputs = &common_opaque,
+        .outcome_post_states = &outcomes,
+        .guarded_effects = &.{.{ .conditions = .{}, .effects = &independent }},
+    };
+    const before = summary.outcomeEffects(outcomes[0]);
+    outcomes[0].input_post_states = &selected;
+    outcomes[0].opaque_storage_empties = &empties;
+    const after = summary.outcomeEffects(outcomes[0]);
+    try std.testing.expectEqual(@as(usize, 0), before.input_post_states.len);
+    try std.testing.expectEqual(@as(u32, 4), after.input_post_states[0].target.input_index);
+    try std.testing.expect(after.input_post_states.ptr == selected[0..].ptr);
+    try std.testing.expect(after.required_opaque_inputs.ptr == common_opaque[0..].ptr);
+    try std.testing.expect(after.opaque_storage_empties.ptr == empties[0..].ptr);
+    try std.testing.expectEqual(@as(usize, 0), after.outcome_post_states.len);
+    try std.testing.expectEqual(@as(usize, 0), after.guarded_effects.len);
+    try std.testing.expectEqual(@as(usize, 1), summary.input_post_states.len);
+    try std.testing.expect(summary.guarded_effects[0].effects == &independent);
+}
+
+test "summary work publication remains retryable after allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn seed(a: std.mem.Allocator) !void {
+            var engine = Engine.init(a);
+            defer engine.deinit();
+            const function: graph.GlobalFunctionId = @enumFromInt(0);
+            engine.seed(&.{function}) catch |err| {
+                try std.testing.expectEqual(@as(usize, 0), engine.dirty.count());
+                try std.testing.expect(engine.nextDirty() == null);
+                return err;
+            };
+            try std.testing.expectEqual(function, engine.nextDirty().?);
+            try std.testing.expect(engine.nextDirty() == null);
+        }
+    }.seed, .{});
+}
+
+test "summary changes publish every observer or preserve the old approximation" {
+    inline for (.{ false, true }) |existing| {
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+            fn update(a: std.mem.Allocator, retained: bool) !void {
+                var engine = Engine.init(a);
+                defer engine.deinit();
+                const callee: graph.GlobalFunctionId = @enumFromInt(0);
+                const first: graph.GlobalFunctionId = @enumFromInt(1);
+                const second: graph.GlobalFunctionId = @enumFromInt(2);
+                try engine.addDependency(first, callee);
+                try engine.addDependency(second, callee);
+                if (retained) try engine.ensureEmpty(callee);
+                const changed: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 0 }} };
+                _ = engine.updateSummary(callee, changed) catch |err| {
+                    if (retained) {
+                        try std.testing.expect(summaryEql(.{}, engine.summaries.get(callee).?));
+                    } else try std.testing.expect(engine.summaries.get(callee) == null);
+                    try std.testing.expectEqual(@as(usize, 0), engine.dirty.count());
+                    try std.testing.expect(engine.nextDirty() == null);
+                    return err;
+                };
+                try std.testing.expect(summaryEql(changed, engine.summaries.get(callee).?));
+                try std.testing.expectEqual(first, engine.nextDirty().?);
+                try std.testing.expectEqual(second, engine.nextDirty().?);
+                try std.testing.expect(engine.nextDirty() == null);
+                try std.testing.expect(!try engine.updateSummary(callee, changed));
+                try std.testing.expect(engine.nextDirty() == null);
+            }
+        }.update, .{existing});
+    }
 }

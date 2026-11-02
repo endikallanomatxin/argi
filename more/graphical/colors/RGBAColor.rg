@@ -1,4 +1,4 @@
-RGBAColor: Type = (
+RGBAColor := (
     .r : Float32
     .g : Float32
     .b : Float32

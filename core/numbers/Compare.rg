@@ -6,9 +6,9 @@ Compare#(.Left: Type, .Right: Type): Contract = (
 
 CompareRelations#(.Left: Type, .Right: Type): Contract = (
     Compare#(Left, Right)
-    .less_than : (.left: Left, .right: Right) -> (.ok: Bool)
+    .less_than             : (.left: Left, .right: Right) -> (.ok: Bool)
     .less_than_or_equal    : (.left: Left, .right: Right) -> (.ok: Bool)
-    .greater_than : (.left: Left, .right: Right) -> (.ok: Bool)
+    .greater_than          : (.left: Left, .right: Right) -> (.ok: Bool)
     .greater_than_or_equal : (.left: Left, .right: Right) -> (.ok: Bool)
 )
 
@@ -35,15 +35,15 @@ implement#(.Left: Type: Compare#(Left, Right), .Right: Type) CompareRelations#(L
     }
 )
 
-is_less_than(.order: Ordering) -> (.ok: Bool) := { ok = order == ..less }
+is_less_than := (.order: Ordering) -> (.ok: Bool) { ok = order == ..less }
 
-is_less_than_or_equal(.order: Ordering) -> (.ok: Bool) := {
+is_less_than_or_equal := (.order: Ordering) -> (.ok: Bool) {
     ok = order == ..less or order == ..equal
 }
 
-is_greater_than(.order: Ordering) -> (.ok: Bool) := { ok = order == ..greater }
+is_greater_than := (.order: Ordering) -> (.ok: Bool) { ok = order == ..greater }
 
-is_greater_than_or_equal(.order: Ordering) -> (.ok: Bool) := {
+is_greater_than_or_equal := (.order: Ordering) -> (.ok: Bool) {
     ok = [order == ..greater or order == ..equal]
 }
 

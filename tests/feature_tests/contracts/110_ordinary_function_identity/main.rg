@@ -1,9 +1,8 @@
-square :=
-    (.value: Int32) -> (.result: Int32) {
+square := (.value: Int32) -> (.result: Int32) {
     result = value * value
 }
 
-identity#(.T: Type) := (.value: T) -> (.result: T) {
+identity := #(.T: Type) (.value: T) -> (.result: T) {
     result = value
 }
 

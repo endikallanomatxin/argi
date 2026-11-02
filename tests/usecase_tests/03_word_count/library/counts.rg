@@ -1,14 +1,12 @@
-count_text(
-    .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+count_text := (
+    .self      : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .text      : StringView,
-    .allocator : $&PageAllocator
-) -> !Void = ..ok Void() := {
+    .allocator : Virtual#(Allocator)
+) -> !Void = ..ok Void() {
     assume allocator
 
-    validate_utf8(text)!
-
     for token in split_whitespace(text) {
-        match get_ref(self, token).result {
+        match get_mutable_reference(self, token).result {
             ..none {
                 word ::= format(token)!
                 put(self, ~word, 1)!
@@ -20,36 +18,39 @@ count_text(
     }
 }
 
-count_directory(
-    .self        : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
-    .path        : StringView,
-    .limit       : UIntNative,
-    .buffer      : ArrayView#(.t: UInt8),
-    .file_system : $&FileSystem,
-    .allocator   : $&PageAllocator
-) -> !Void = ..ok Void() := {
+count_directory := (
+    .self         : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
+    .path         : StringView,
+    .limit        : UIntNative,
+    .buffer       : MutableArrayView#(.t: UInt8),
+    .file_system  : $&FileSystem,
+    .allocator    : Virtual#(Allocator),
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> !!Void = ..ok Void() {
+    assume error_tracer
     assume allocator
     assume file_system
 
-    directory ::= Directory(.path = path)!! path
+    directory ::= Directory(.self = file_system, .path = path)!! path
 
     while true {
         match next($&directory)!! path {
             ..none { return }
             ..some ~entry {
-                name ::= as_view(&entry.value.name)
-                joined ::= join_views(&path, &name)!
-                full_path ::= as_view(&joined)
+                name ::= view(&entry.value.name)
+                joined ::= join_views(&path, &name)!! path
+                full_path ::= view(&joined)
                 info ::= metadata(file_system, full_path)!! full_path
 
                 if info.kind == ..file {
-                    file_reader ::= File(
+                    file_reader ::= open_file(
                         .file_system = file_system, .path = full_path, .mode = ..read
                     )!! full_path
                     text ::= read_all_limited($&file_reader, buffer, limit)!! full_path
                     close($&file_reader)!! full_path
 
-                    count_text(self, as_view(&text))!! full_path
+                    decoded ::= string_from_bytes(.bytes = view(&text))!! full_path
+                    count_text(self, view(&decoded))!! full_path
                 }
             }
         }

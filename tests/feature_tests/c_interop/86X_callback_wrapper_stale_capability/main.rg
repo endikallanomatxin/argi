@@ -1,7 +1,13 @@
-Comparator(.left: CInt, .right: CInt) -> (.result: CInt) : CFunctionPointer
-compare(.left: CInt, .right: CInt) -> (.result: CInt) : CFunction := { result = left - right }
-_invoke(.callback: Comparator) -> (.result: CInt) := { result = callback(7, 2) }
-main() -> (.status_code: Int32 = 0) := {
+Comparator(.left: CInt, .right: CInt) -> (.result: CInt): CFunctionPointer
+
+compare(.left: CInt, .right: CInt) -> (.result: CInt): CFunction := { result = left - right }
+
+_invoke := (.callback: Comparator, .ffi: $&ForeignFunctionInterface) -> (.result: CInt) {
+    assume ffi
+    result = callback(7, 2)
+}
+
+main := () -> (.status_code: Int32 = 0) {
     storage ::= ForeignFunctionInterface()
     assume ffi := $&storage
     callback := Comparator(.function = compare)

@@ -1,6 +1,7 @@
 -- Decode ASCII digits without integer casts. The target-domain counter stays
 -- within 0..35, so every supported integer type can represent it.
-_integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
+_integer_parse_digit := #(.t: Type: Int) (.byte: UInt8) -> (.value: ?t) {
+
     normalized :: UInt8 = byte
 
     if normalized >= 65 and normalized <= 90 {
@@ -11,8 +12,8 @@ _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
     index :: UIntNative = 0
     digit :: t = 0
 
-    while index < alphabet.length {
-        if bytes_get(.view = &alphabet, .index = index).byte == normalized {
+    while index < alphabet._length {
+        if unwrap_or_abort(.value = bytes_get(.view = &alphabet, .index = index)) == normalized {
             value = ..some(.value = digit)
             return
         }
@@ -23,22 +24,23 @@ _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
     value = ..none
 }
 
-_integer_parse#(.t: Type: Int)(
+_integer_parse := #(.t: Type: Int) (
     .text: StringView, .base: UInt8, .minimum: t, .maximum: t, .allow_negative: Bool
-) -> (.result: Errable#(t, (..invalid_base, ..invalid_input, ..out_of_range))) := {
+) -> (.result: Errable#(t, (..invalid_base, ..invalid_input, ..out_of_range))) {
+
     if base < 2 or base > 36 {
         result = ..error(.reason = ..invalid_base)
         return
     }
 
-    if text.length == 0 {
+    if text._length == 0 {
         result = ..error(.reason = ..invalid_input)
         return
     }
 
     index :: UIntNative = 0
     negative ::= false
-    first ::= bytes_get(.view = &text, .index = 0).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
 
     if first == 45 {
         if allow_negative == false {
@@ -51,7 +53,7 @@ _integer_parse#(.t: Type: Int)(
         if first == 43 { index = 1 }
     }
 
-    if index == text.length {
+    if index == text._length {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -66,9 +68,9 @@ _integer_parse#(.t: Type: Int)(
 
     accumulated :: t = 0
 
-    while index < text.length {
+    while index < text._length {
         decoded ::= _integer_parse_digit#(.t: t)(
-            .byte = bytes_get(.view = &text, .index = index).byte
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
         ).value
         match decoded {
             ..none {
@@ -109,85 +111,94 @@ _integer_parse#(.t: Type: Int)(
     result = ..ok accumulated
 }
 
-parse_uint8(.text: StringView, .base: UInt8 = 10) -> (
+parse_uint8 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(UInt8, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: UInt8)(
         .text = text, .base = base, .minimum = 0, .maximum = 255, .allow_negative = false
     ).result
 }
 
-parse_uint16(.text: StringView, .base: UInt8 = 10) -> (
+parse_uint16 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(UInt16, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: UInt16)(
         .text = text, .base = base, .minimum = 0, .maximum = 65535, .allow_negative = false
     ).result
 }
 
-parse_uint32(.text: StringView, .base: UInt8 = 10) -> (
+parse_uint32 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(UInt32, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: UInt32)(
         .text = text, .base = base, .minimum = 0, .maximum = 4294967295, .allow_negative = false
     ).result
 }
 
-parse_uint64(.text: StringView, .base: UInt8 = 10) -> (
+parse_uint64 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(UInt64, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: UInt64)(
-        .text = text
-        .base = base
+        .text           = text
+        .base           = base
         .minimum        = 0
         .maximum        = 18446744073709551615
         .allow_negative = false
     ).result
 }
 
-parse_int8(.text: StringView, .base: UInt8 = 10) -> (
+parse_int8 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(Int8, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: Int8)(
         .text = text, .base = base, .minimum = -128, .maximum = 127, .allow_negative = true
     ).result
 }
 
-parse_int16(.text: StringView, .base: UInt8 = 10) -> (
+parse_int16 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(Int16, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: Int16)(
         .text = text, .base = base, .minimum = -32768, .maximum = 32767, .allow_negative = true
     ).result
 }
 
-parse_int32(.text: StringView, .base: UInt8 = 10) -> (
+parse_int32 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(Int32, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: Int32)(
-        .text = text
-        .base = base
+        .text           = text
+        .base           = base
         .minimum        = -2147483648
         .maximum        = 2147483647
         .allow_negative = true
     ).result
 }
 
-parse_int64(.text: StringView, .base: UInt8 = 10) -> (
+parse_int64 := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(Int64, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     result = _integer_parse#(.t: Int64)(
-        .text = text
-        .base = base
+        .text           = text
+        .base           = base
         .minimum        = -9223372036854775808
         .maximum        = 9223372036854775807
         .allow_negative = true
     ).result
 }
 
-parse_uintnative(.text: StringView, .base: UInt8 = 10) -> (
+parse_uintnative := (.text: StringView, .base: UInt8 = 10) -> (
     .result : Errable#(UIntNative, (..invalid_base, ..invalid_input, ..out_of_range))
-) := {
+) {
+
     zero :: UIntNative = 0
     maximum ::= integer_limits(.value = zero).maximum
 

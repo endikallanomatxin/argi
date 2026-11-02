@@ -1,6 +1,6 @@
 -- Validated borrowed text keeps unlimited SemVer numeric components without
 -- allocation or integer overflow. Private boundaries always describe _text.
-VersionView: Type = (
+VersionView := (
     ._text      : StringView
     ._major_end : UIntNative
     ._minor_end : UIntNative
@@ -10,44 +10,55 @@ VersionView: Type = (
 
 implement ImplicitlyCopyable#(VersionView) ()
 
-_digit(.byte: UInt8) -> (.ok: Bool) := { ok = byte >= 48 and byte <= 57 }
+_digit := (.byte: UInt8) -> (.ok: Bool) { ok = byte >= 48 and byte <= 57 }
 
-_numeric_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: Bool) := {
+_numeric_end := (.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: Bool) {
+
     end = start
 
-    while end < text&.length {
-        if _digit(.byte = bytes_get(.view = text, .index = end).byte).ok {} else { break }
+    while end < byte_length(&text&).count {
+        if _digit(.byte = unwrap_or_abort(.value = bytes_get(.view = text, .index = end))).ok {
+        } else {
+            break
+        }
         end = end + 1
     }
 
     ok = end > start
 
     if end - start > 1 {
-        if bytes_get(.view = text, .index = start).byte == 48 { ok = false }
+        if unwrap_or_abort(.value = bytes_get(.view = text, .index = start)) == 48 {
+            ok = false
+        }
     }
 }
 
-_identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool) := {
+_identifiers_valid := (.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool) {
+
     ok = false
 
-    if text.length == 0 { return }
+    if byte_length(&text).count == 0 { return }
     start :: UIntNative = 0
     i :: UIntNative = 0
     numeric ::= true
 
-    while i <= text.length {
-        boundary :: Bool = i == text.length
-        if i < text.length { boundary = bytes_get(.view = &text, .index = i).byte == 46 }
+    while i <= byte_length(&text).count {
+        boundary :: Bool = i == byte_length(&text).count
+        if i < byte_length(&text).count {
+            boundary = [unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 46]
+        }
         if boundary {
             if i == start { return }
             if numeric and allow_numeric_zeroes == false and i - start > 1 {
-                if bytes_get(.view = &text, .index = start).byte == 48 { return }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = start)) == 48 {
+                    return
+                }
             }
-            if i == text.length { break }
+            if i == byte_length(&text).count { break }
             start = i + 1
             numeric = true
         } else {
-            byte ::= bytes_get(.view = &text, .index = i).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
             if _digit(.byte = byte).ok {
             } else {
                 numeric = false
@@ -63,27 +74,28 @@ _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool
     ok = true
 }
 
-parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) := {
+parse := (.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) {
+
     first ::= _numeric_end(.text = &text, .start = 0)
 
-    if first.ok == false or first.end == text.length {
+    if first.ok == false or first.end == byte_length(&text).count {
         result = ..error(.reason = ..invalid_input)
         return
     }
 
-    if bytes_get(.view = &text, .index = first.end).byte != 46 {
+    if unwrap_or_abort(.value = bytes_get(.view = &text, .index = first.end)) != 46 {
         result = ..error(.reason = ..invalid_input)
         return
     }
 
     second ::= _numeric_end(.text = &text, .start = first.end + 1)
 
-    if second.ok == false or second.end == text.length {
+    if second.ok == false or second.end == byte_length(&text).count {
         result = ..error(.reason = ..invalid_input)
         return
     }
 
-    if bytes_get(.view = &text, .index = second.end).byte != 46 {
+    if unwrap_or_abort(.value = bytes_get(.view = &text, .index = second.end)) != 46 {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -97,11 +109,13 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
 
     pre_end :: UIntNative = third.end
 
-    if third.end < text.length {
-        if bytes_get(.view = &text, .index = third.end).byte == 45 {
+    if third.end < byte_length(&text).count {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = third.end)) == 45 {
             pre_end = third.end + 1
-            while pre_end < text.length {
-                if bytes_get(.view = &text, .index = pre_end).byte == 43 { break }
+            while pre_end < byte_length(&text).count {
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = pre_end)) == 43 {
+                    break
+                }
                 pre_end = pre_end + 1
             }
             pre ::= string_view_slice(
@@ -115,13 +129,15 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
         }
     }
 
-    if pre_end < text.length {
-        if bytes_get(.view = &text, .index = pre_end).byte != 43 {
+    if pre_end < byte_length(&text).count {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = pre_end)) != 43 {
             result = ..error(.reason = ..invalid_input)
             return
         }
         build ::= string_view_slice(
-            .view = &text, .start = pre_end + 1, .length = text.length - pre_end - 1
+            .view   = &text
+            .start  = pre_end + 1
+            .length = [byte_length(&text).count - pre_end - 1]
         )
         if _identifiers_valid(.text = build, .allow_numeric_zeroes = true).ok {
         } else {
@@ -139,24 +155,31 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
     )
 }
 
-implement Init#(VersionView, (.text: StringView)) (
-    .Result : Type = Errable#(VersionView, (..invalid_input))
-    .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        text ::= args.text
+VersionViewInitArgs: Type = (
+    .text : StringView
+)
 
-        result = parse(.text = text)
+implement Init#(VersionView, VersionViewInitArgs) (
+    .Result : Type = Errable#(VersionView, (..invalid_input))
+
+    .init = VersionViewInitArgs -> (.result: Result) {
+
+        _init_text ::= text
+
+        result = parse(.text = _init_text)
     }
 )
 
-implement TextViewOf#(&VersionView) (
-    .text_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
+implement Viewable#(&VersionView) (
+    .Result    : Type = StringView
+    .make_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
 )
 
-major(.self: &VersionView) -> (.text: StringView) := {
+major := (.self: &VersionView) -> (.text: StringView) {
     text = string_view_slice(.view = &self&._text, .start = 0, .length = self&._major_end)
 }
 
-minor(.self: &VersionView) -> (.text: StringView) := {
+minor := (.self: &VersionView) -> (.text: StringView) {
     text = string_view_slice(
         .view   = &self&._text
         .start  = self&._major_end + 1
@@ -164,7 +187,7 @@ minor(.self: &VersionView) -> (.text: StringView) := {
     )
 }
 
-patch(.self: &VersionView) -> (.text: StringView) := {
+patch := (.self: &VersionView) -> (.text: StringView) {
     text = string_view_slice(
         .view   = &self&._text
         .start  = self&._minor_end + 1
@@ -172,7 +195,7 @@ patch(.self: &VersionView) -> (.text: StringView) := {
     )
 }
 
-pre_release(.self: &VersionView) -> (.text: StringView) := {
+pre_release := (.self: &VersionView) -> (.text: StringView) {
     if self&._pre_end == self&._patch_end {
         text = string_view_slice(.view = &self&._text, .start = 0, .length = 0)
         return
@@ -185,8 +208,8 @@ pre_release(.self: &VersionView) -> (.text: StringView) := {
     )
 }
 
-build_metadata(.self: &VersionView) -> (.text: StringView) := {
-    if self&._pre_end == self&._text.length {
+build_metadata := (.self: &VersionView) -> (.text: StringView) {
+    if self&._pre_end == byte_length(&self&._text).count {
         text = string_view_slice(.view = &self&._text, .start = 0, .length = 0)
         return
     }
@@ -194,16 +217,17 @@ build_metadata(.self: &VersionView) -> (.text: StringView) := {
     text = string_view_slice(
         .view   = &self&._text
         .start  = self&._pre_end + 1
-        .length = self&._text.length - self&._pre_end - 1
+        .length = byte_length(&self&._text).count - self&._pre_end - 1
     )
 }
 
-_lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
+_lexical_compare := (.left: StringView, .right: StringView) -> (.order: Int32) {
+
     i :: UIntNative = 0
 
-    while i < left.length and i < right.length {
-        a ::= bytes_get(.view = &left, .index = i).byte
-        b ::= bytes_get(.view = &right, .index = i).byte
+    while i < byte_length(&left).count and i < byte_length(&right).count {
+        a ::= unwrap_or_abort(.value = bytes_get(.view = &left, .index = i))
+        b ::= unwrap_or_abort(.value = bytes_get(.view = &right, .index = i))
         if a < b {
             order = -1
             return
@@ -217,19 +241,19 @@ _lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
 
     order = 0
 
-    if left.length < right.length { order = -1 }
-    if left.length > right.length { order = 1 }
+    if byte_length(&left).count < byte_length(&right).count { order = -1 }
+    if byte_length(&left).count > byte_length(&right).count { order = 1 }
 }
 
 -- Validated numeric text has no leading zeroes. Length comparison therefore
 -- establishes magnitude before a same-length lexical comparison.
-_numeric_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
-    if left.length < right.length {
+_numeric_compare := (.left: StringView, .right: StringView) -> (.order: Int32) {
+    if byte_length(&left).count < byte_length(&right).count {
         order = -1
         return
     }
 
-    if left.length > right.length {
+    if byte_length(&left).count > byte_length(&right).count {
         order = 1
         return
     }
@@ -237,27 +261,30 @@ _numeric_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     order = _lexical_compare(.left = left, .right = right).order
 }
 
-_identifier_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .numeric: Bool) := {
+_identifier_end := (.text: &StringView, .start: UIntNative) -> (
+    .end: UIntNative, .numeric: Bool
+) {
+
     end = start
     numeric = true
 
-    while end < text&.length {
-        byte ::= bytes_get(.view = text, .index = end).byte
+    while end < byte_length(&text&).count {
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = text, .index = end))
         if byte == 46 { break }
         if _digit(.byte = byte).ok {} else { numeric = false }
         end = end + 1
     }
 }
 
-_pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
+_pre_compare := (.left: StringView, .right: StringView) -> (.order: Int32) {
     order = 0
 
-    if left.length == 0 {
-        if right.length > 0 { order = 1 }
+    if byte_length(&left).count == 0 {
+        if byte_length(&right).count > 0 { order = 1 }
         return
     }
 
-    if right.length == 0 {
+    if byte_length(&right).count == 0 {
         order = -1
         return
     }
@@ -265,7 +292,7 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     a :: UIntNative = 0
     b :: UIntNative = 0
 
-    while a < left.length and b < right.length {
+    while a < byte_length(&left).count and b < byte_length(&right).count {
         ae ::= _identifier_end(.text = &left, .start = a)
         be ::= _identifier_end(.text = &right, .start = b)
         if ae.numeric and be.numeric == false {
@@ -284,9 +311,9 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
             order = _lexical_compare(.left = av, .right = bv).order
         }
         if order != 0 { return }
-        if ae.end == left.length or be.end == right.length {
-            if ae.end < left.length { order = 1 }
-            if be.end < right.length { order = -1 }
+        if ae.end == byte_length(&left).count or be.end == byte_length(&right).count {
+            if ae.end < byte_length(&left).count { order = 1 }
+            if be.end < byte_length(&right).count { order = -1 }
             return
         }
         a = ae.end + 1
@@ -294,7 +321,7 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     }
 }
 
-compare(.left: &VersionView, .right: &VersionView) -> (.order: Int32) := {
+compare := (.left: &VersionView, .right: &VersionView) -> (.order: Int32) {
     order = _numeric_compare(
         .left = major(.self = left).text, .right = major(.self = right).text
     ).order
@@ -315,31 +342,33 @@ compare(.left: &VersionView, .right: &VersionView) -> (.order: Int32) := {
     ).order
 }
 
-same_precedence(.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
+same_precedence := (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) {
     ok = compare(.left = left, .right = right).order == 0
 }
 
-equals(.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
+equals := (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) {
     ok = left&._text == right&._text
 }
 
-implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &VersionView)) (
-    .equal = (.args: (.left: &VersionView, .right: &VersionView)) -> (.ok: Bool) {
-        ok = equals(.left = args.left, .right = args.right).ok
+implement Equal#(&VersionView, &VersionView) (
+    .equal = (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) {
+        ok = equals(.left = left, .right = right).ok
     }
 )
 
-implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
-    .render = (.value: &VersionView, .allocator: $&Provider) -> (
+implement StringFormatting#(&VersionView) (
+    .render = (.value: &VersionView, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
-        result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
+
+        result = ~format(.value = view(.self = value).view, .allocator = allocator)
     }
-    .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (
+    .append = (.out: $&String, .value: &VersionView, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) {
+
         result = format_into(
-            .out = out, .value = as_view(.self = value).view, .allocator = allocator
+            .out = out, .value = view(.self = value).view, .allocator = allocator
         )
     }
 )
@@ -347,6 +376,7 @@ implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider)
 implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
     .Result      : Type = WriteValue#(Stream, StringView).Result
     .write_value = (.self: $&Stream, .value: &VersionView) -> (.result: Result) {
-        result = ~write(.self = self, .value = as_view(.self = value).view)
+
+        result = ~write(.self = self, .value = view(.self = value).view)
     }
 )

@@ -1,2 +1,3 @@
-Callback() -> (.a: CInt, .b: CInt) : CFunctionPointer
-main() -> () := {}
+Callback() -> (.a: CInt, .b: CInt): CFunctionPointer
+
+main := () -> () {}

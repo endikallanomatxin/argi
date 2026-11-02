@@ -1,20 +1,19 @@
 Mode: Type = (..quiet, ..verbose)
-Options#(.T: Type): Type = (.value: T, .mode: Mode, .enabled: Bool, .marker: Char)
 
-implement#(.T: Type) Init#(Options#(T), (
-        .value: T
-        .mode: Mode = ..quiet
-        .enabled: Bool = true
-        .marker: Char = 'Q'
-    )) (
-    .Result: Type = Options#(T)
-    .init = (.args: (
-        .value: T
-        .mode: Mode = ..quiet
-        .enabled: Bool = true
-        .marker: Char = 'Q'
-    )) -> (.result: Result) {
-        result = (.value = args.value, .mode = args.mode, .enabled = args.enabled, .marker = args.marker)
+Options := #(.T: Type) (.value: T, .mode: Mode, .enabled: Bool, .marker: UnicodeScalar)
+
+OptionsInitArgs: Type = #(.T: Type) (
+    .value   : T,
+    .mode    : Mode          = ..quiet,
+    .enabled : Bool          = true,
+    .marker  : UnicodeScalar = 'Q'
+)
+
+implement#(.T: Type) Init#(Options#(T), OptionsInitArgs#(T)) (
+    .Result : Type = Options#(T)
+
+    .init = OptionsInitArgs#(T) -> (.result: Result) {
+        result = (.value = value, .mode = mode, .enabled = enabled, .marker = marker)
     }
 )
 

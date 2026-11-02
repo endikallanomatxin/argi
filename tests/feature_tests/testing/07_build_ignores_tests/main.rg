@@ -1,7 +1,9 @@
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     status_code = 0
 }
 
-test ignored_during_build(.system: System) -> !() := {
-    testing.fail(.message = "tests must be excluded from argi build")!
+test ignored_during_build := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> !!() {
+    assume error_tracer
+
+    testing.fail_with_trace(.message = "tests must be excluded from argi build")!
 }

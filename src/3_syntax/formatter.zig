@@ -8,9 +8,9 @@ const source_files = @import("../1_base/source_files.zig");
 
 const Tag = std.meta.Tag(tok.Content);
 const List = std.array_list.Managed(u8);
-const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, hanging: bool = false, reflow: bool = false, comma_free: bool = false };
+const Frame = struct { tag: Tag, multiline: bool, expand: bool = false, hanging: bool = false, reflow: bool = false, comma_free: bool = false, dense: bool = false };
 const line_width = 96;
-const max_alignment_padding = 8;
+const max_alignment_padding = 24;
 const InsertedToken = struct { ordinal: usize, tag: Tag };
 
 /// Formatting uses the complete token stream, including discarded target
@@ -43,7 +43,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     defer arena.deinit();
     const temporary = arena.allocator();
     const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&temporary, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&temporary, &files);
     defer diagnostics.deinit();
     var lex = tokenizer.Tokenizer.init(temporary, &diagnostics, source, diagnostics.source_db.fileId(0));
     const tokens = try lex.tokenize();
@@ -72,7 +72,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         if (layout.item_start[i] and stack.items.len != 0) {
             const frame = stack.items[stack.items.len - 1];
             if (frame.reflow and frame.tag == .open_parenthesis and previous != .open_parenthesis) {
-                if (frame.expand and !frame.hanging) {
+                if (frame.expand and !frame.hanging and !frame.dense) {
                     pending_newlines = @max(pending_newlines, 1);
                 } else if (previous != .comma) {
                     trimSpaces(&out);
@@ -81,13 +81,16 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                     try out.append(',');
                     previous = .comma;
                 }
+                if (frame.dense and frame.expand and !frame.hanging and
+                    out.items.len - line_start + 1 + layout.item_width[i] + 1 > line_width)
+                    pending_newlines = @max(pending_newlines, 1);
             }
         }
         if (tag == .comma and stack.items.len != 0) {
             const frame = stack.items[stack.items.len - 1];
             var next = i + 1;
             while (next < tokens.len and tokens.contents[next] == .new_line) : (next += 1) {}
-            if (frame.reflow and (!frame.expand or frame.hanging) and tokens.contents[next] == .close_parenthesis) {
+            if (frame.reflow and !frame.dense and (!frame.expand or frame.hanging) and std.meta.activeTag(tokens.contents[next]) == .close_parenthesis) {
                 removed[i] = true;
                 continue;
             }
@@ -142,7 +145,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 indent += 4;
             };
             try out.appendNTimes(' ', indent);
-        } else if (layout.space_before[i] or needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0)) try out.append(' ');
+        } else if (!layout.tight_before[i] and (layout.space_before[i] or needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0))) try out.append(' ');
         const start: usize = tokens.locations[i].offset;
         const end: usize = if (i + 1 < tokens.len) tokens.locations[i + 1].offset else source.len;
         const text = std.mem.trimEnd(u8, source[start..end], " \t\r\n");
@@ -151,7 +154,9 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         previous = tag;
         if (tag == .open_parenthesis or tag == .open_bracket or tag == .open_brace) {
             const reflow = layout.reflow[i] and canFlatten(tokens, source, i, layout);
-            const multiline = containsNewline(tokens, i);
+            const multiline = for (tokens.contents[i..][0 .. layout.ends[i] - i]) |content| {
+                if (content == .new_line) break true;
+            } else false;
             const expand = if (reflow)
                 layout.table_rows[i] or out.items.len - line_start - 1 + line_alignment_padding + layout.chain_suffix[i] + compactLength(tokens, source, i, layout.ends[i] + 1, layout) > line_width
             else
@@ -165,12 +170,12 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             // A hanging group keeps its arguments together on a fresh line.
             // The closing delimiter and any suffix resume on the next line.
             const hanging = !layout.table_rows[i] and tag == .open_parenthesis and reflow and expand and continuation_indent + compactLength(tokens, source, i, layout.ends[i] + 1, layout) - 2 <= line_width;
-            try stack.append(.{ .tag = tag, .multiline = if (reflow) expand else multiline or expand, .expand = expand, .hanging = hanging, .reflow = reflow, .comma_free = layout.struct_literals[i] });
+            try stack.append(.{ .tag = tag, .multiline = if (reflow) expand else multiline or expand, .expand = expand, .hanging = hanging, .reflow = reflow, .comma_free = layout.struct_literals[i], .dense = reflow and layout.packed_lists[i] });
             if (expand) pending_newlines = 1;
         }
         // Expanded collections use complete rows rather than spilling only
         // the last argument onto a continuation line.
-        if (tag == .comma and stack.items.len != 0 and stack.items[stack.items.len - 1].expand and !stack.items[stack.items.len - 1].hanging and stack.items[stack.items.len - 1].tag == .open_parenthesis)
+        if (tag == .comma and stack.items.len != 0 and stack.items[stack.items.len - 1].expand and !stack.items[stack.items.len - 1].dense and !stack.items[stack.items.len - 1].hanging and stack.items[stack.items.len - 1].tag == .open_parenthesis)
             pending_newlines = @max(pending_newlines, 1);
         for (0..layout.wrap_after[i]) |_| {
             const frame = stack.pop().?;
@@ -220,7 +225,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         // Token identity alone is insufficient: newlines can end expressions.
         // Refuse an edit that changes the syntax of an initially valid file.
         const result_files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = result }};
-        var result_diagnostics = diagnostic.Diagnostics.init(&temporary, &result_files);
+        var result_diagnostics = try diagnostic.Diagnostics.init(&temporary, &result_files);
         defer result_diagnostics.deinit();
         var parser = try syntaxer.Syntaxer.init(temporary, formatted_tokens, result, &result_diagnostics);
         defer parser.deinit();
@@ -241,6 +246,8 @@ const Layout = struct {
     expand: []bool,
     reflow: []bool,
     table_rows: []bool,
+    packed_lists: []bool,
+    item_width: []usize,
     chain_suffix: []usize,
     item_start: []bool,
     item_padding: []usize,
@@ -252,6 +259,7 @@ const Layout = struct {
     scalar_groups: []bool,
     struct_literals: []bool,
     space_before: []bool,
+    tight_before: []bool,
     syntax_tags: ?[]const syn.Node.Tag = null,
     root_count: usize = 0,
 
@@ -281,6 +289,8 @@ const Layout = struct {
             .expand = try allocator.alloc(bool, tokens.len),
             .reflow = try allocator.alloc(bool, tokens.len),
             .table_rows = try allocator.alloc(bool, tokens.len),
+            .packed_lists = try allocator.alloc(bool, tokens.len),
+            .item_width = try allocator.alloc(usize, tokens.len),
             .chain_suffix = try allocator.alloc(usize, tokens.len),
             .item_start = try allocator.alloc(bool, tokens.len),
             .item_padding = try allocator.alloc(usize, tokens.len),
@@ -292,12 +302,15 @@ const Layout = struct {
             .scalar_groups = try allocator.alloc(bool, tokens.len),
             .struct_literals = try allocator.alloc(bool, tokens.len),
             .space_before = try allocator.alloc(bool, tokens.len),
+            .tight_before = try allocator.alloc(bool, tokens.len),
         };
         @memset(layout.ends, 0);
         @memset(layout.breaks, 0);
         @memset(layout.expand, false);
         @memset(layout.reflow, false);
         @memset(layout.table_rows, false);
+        @memset(layout.packed_lists, false);
+        @memset(layout.item_width, 0);
         @memset(layout.chain_suffix, 0);
         @memset(layout.item_start, false);
         @memset(layout.item_padding, 0);
@@ -309,6 +322,7 @@ const Layout = struct {
         @memset(layout.scalar_groups, false);
         @memset(layout.struct_literals, false);
         @memset(layout.space_before, false);
+        @memset(layout.tight_before, false);
         var opens = std.array_list.Managed(usize).init(allocator);
         for (tokens.contents, 0..) |content, i| switch (content) {
             .open_parenthesis, .open_bracket, .open_brace => try opens.append(i),
@@ -331,7 +345,7 @@ const Layout = struct {
         // does not syntax successfully. Preserve its manual layout in that case;
         // never guess statement boundaries from adjacent identifiers.
         const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
-        var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+        var diagnostics = try diagnostic.Diagnostics.init(&allocator, &files);
         defer diagnostics.deinit();
         var parser = try syntaxer.Syntaxer.init(allocator, tokens, source, &diagnostics);
         defer parser.deinit();
@@ -347,8 +361,19 @@ const Layout = struct {
         };
         for (0..tree.nodes.len) |raw| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.parameterList(node) != null or tree.specializationArguments(node) != null) {
+                const open = @intFromEnum(tree.mainToken(node));
+                layout.reflow[open] = true;
+                if (tree.parameterList(node) != null) {
+                    var following = layout.ends[open] + 1;
+                    while (following < tokens.len and tokens.contents[following] == .new_line) : (following += 1) {}
+                    if (following < tokens.len and tokens.contents[following] == .open_parenthesis) layout.space_before[following] = true;
+                }
+            }
             if (tree.contractConformance(node)) |conformance| {
-                layout.space_before[@intFromEnum(tree.mainToken(conformance.implementation_members))] = true;
+                const members_open = @intFromEnum(tree.mainToken(conformance.implementation_members));
+                layout.space_before[members_open] = true;
+                layout.tight_before[members_open] = false;
                 if (conformance.generic_params_struct) |group| layout.reflow[@intFromEnum(tree.mainToken(group))] = true;
             }
             if (tree.syntaxType(node)) |ty| switch (ty) {
@@ -361,6 +386,10 @@ const Layout = struct {
 
             const members: ?[]const syn.NodeIndex = if (tree.structTypeLiteral(node)) |literal|
                 literal.fields
+            else if (tree.parameterList(node)) |literal|
+                literal.fields
+            else if (tree.specializationArguments(node)) |literal|
+                literal.fields
             else if (tree.structValueLiteral(node)) |literal|
                 literal.fields
             else if (tree.listLiteral(node)) |literal|
@@ -368,14 +397,16 @@ const Layout = struct {
             else
                 null;
             if (members) |items| {
-                layout.group[groupOpening(&tree, node, tokens)] = true;
+                const opening = groupOpening(&tree, node, tokens);
+                layout.group[opening] = true;
                 // Reserve the padding a compact row would receive from its
                 // siblings, even when an expanded child currently separates them.
-                var name_width: usize = 0;
-                for (items) |item| if (memberName(&tree, item)) |name| {
-                    name_width = @max(name_width, tokenText(tokens, source, @intFromEnum(name)).len);
-                };
-                for (items) |item| {
+                const widths = try allocator.alloc(?usize, items.len);
+                defer allocator.free(widths);
+                for (items, 0..) |item, index| widths[index] = if (memberName(&tree, item)) |name| tokenText(tokens, source, @intFromEnum(name)).len else null;
+                const targets = try alignmentTargets(allocator, widths);
+                defer allocator.free(targets);
+                for (items, 0..) |item, index| {
                     var start = if (tree.valueField(item)) |value_field|
                         if (value_field.name_token) |name| @intFromEnum(name) else expressionSpan(&tree, value_field.value, tokens, layout).first
                     else if (tree.structTypeField(item)) |type_field|
@@ -385,7 +416,7 @@ const Layout = struct {
                     if (start > 0 and tokens.contents[start - 1] == .dot) start -= 1;
                     layout.item_start[start] = true;
                     if (memberName(&tree, item)) |name|
-                        layout.item_padding[start] = alignmentPadding(name_width, tokenText(tokens, source, @intFromEnum(name)).len);
+                        layout.item_padding[start] = targets[index] - tokenText(tokens, source, @intFromEnum(name)).len;
                 }
             }
             if (tree.tag(node) == .struct_value_literal) {
@@ -396,8 +427,17 @@ const Layout = struct {
                 if (tokens.contents[open] == .open_bracket) layout.scalar_groups[open] = false;
             }
         }
+        for (tokens.contents, 0..) |content, index| {
+            if (content != .keyword_once) continue;
+            var next = index + 1;
+            while (next < tokens.contents.len and tokens.contents[next] == .new_line) : (next += 1) {}
+            if (next < tokens.contents.len and tokens.contents[next] != .comment)
+                for (index + 1..next) |newline| {
+                    layout.suppress_newlines[newline] = true;
+                };
+        }
         for (tree.roots, 0..) |root, index| {
-            if (index != 0 and (isGlobalDeclaration(tree.tag(root)) or isGlobalDeclaration(tree.tag(tree.roots[index - 1])))) {
+            if (index != 0 and (isGlobalDeclaration(&tree, root) or isGlobalDeclaration(&tree, tree.roots[index - 1]))) {
                 var start = firstToken(&tree, root);
                 // Keep leading documentation comments attached to declarations.
                 var cursor = start;
@@ -416,12 +456,20 @@ const Layout = struct {
             if (tree.functionDeclaration(node) orelse if (tree.testDeclaration(node)) |test_decl| test_decl.function else null) |function| {
                 layout.markSignature(&tree, tokens, function.generic_params_struct, function.input, function.output);
             }
+            if (tree.comptimeEntry(node)) |entry| if (entry.input) |input| {
+                layout.markSignature(&tree, tokens, null, input, entry.output.?);
+                layout.space_before[@intFromEnum(tree.mainToken(input))] = true;
+            };
             if (tree.contractFunctionRequirement(node)) |requirement| {
-                layout.markSignature(&tree, tokens, null, requirement.input, requirement.output);
+                layout.markSignature(&tree, tokens, requirement.generic_params_struct, requirement.input, requirement.output);
             }
             if (tree.functionCall(node)) |call| {
-                layout.reflow[@intFromEnum(tree.mainToken(call.input))] = true;
-                if (call.type_arguments_struct) |args| layout.reflow[@intFromEnum(tree.mainToken(args))] = true;
+                const input_open = @intFromEnum(tree.mainToken(call.input));
+                layout.reflow[input_open] = true;
+                if (call.specialization_arguments) |args| {
+                    layout.reflow[@intFromEnum(tree.mainToken(args))] = true;
+                    layout.tight_before[input_open] = true;
+                }
             }
 
             if (tree.codeBlock(node)) |block| {
@@ -479,17 +527,39 @@ const Layout = struct {
                     layout.reflow[child] = true;
             }
         }
+        // Contract bodies use newline-separated requirements, whose boundaries
+        // must remain intact even if a nested signature can be reflowed.
+        for (0..tree.nodes.len) |raw| {
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            const contract = tree.contractDeclaration(node) orelse continue;
+            var cursor: usize = @intFromEnum(contract.name_token);
+            if (contract.participants_struct) |participants| cursor = layout.ends[@intFromEnum(tree.mainToken(participants))] + 1;
+            while (cursor + 1 < tokens.len and tokens.contents[cursor] != .equal) : (cursor += 1) {}
+            if (cursor + 1 < tokens.len and tokens.contents[cursor + 1] == .open_parenthesis)
+                layout.reflow[cursor + 1] = false;
+        }
         // Keep literal tables legible even when the complete table fits inline.
         for (0..tree.nodes.len) |raw_node| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw_node)));
             const literal = tree.listLiteral(node) orelse continue;
-            if (literal.elements.len < 2) continue;
-            var rows = true;
+            if (literal.elements.len == 0) continue;
+            var rows = literal.elements.len > 1;
             for (literal.elements) |element| {
                 if (tree.listLiteral(element) == null) rows = false;
             }
+            const open = @intFromEnum(tree.mainToken(node));
+            if (!rows and canFlatten(tokens, source, open, layout)) {
+                var compact_elements = true;
+                for (literal.elements) |element| {
+                    if (tree.listLiteral(element) != null or tree.structValueLiteral(element) != null)
+                        compact_elements = false;
+                }
+                if (compact_elements) {
+                    layout.packed_lists[open] = true;
+                    layout.reflow[open] = true;
+                }
+            }
             if (rows) {
-                const open = @intFromEnum(tree.mainToken(node));
                 layout.table_rows[open] = true;
                 layout.reflow[open] = true;
                 for (literal.elements) |element| layout.reflow[@intFromEnum(tree.mainToken(element))] = true;
@@ -560,6 +630,17 @@ const Layout = struct {
             }
             @memset(enclosed[span.first .. span.last + 1], true);
             markOperatorChain(&tree, node, node, tokens, &layout, handled);
+        }
+        for (0..tree.nodes.len) |raw_node| {
+            const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw_node)));
+            const literal = tree.listLiteral(node) orelse continue;
+            if (!layout.packed_lists[@intFromEnum(tree.mainToken(node))]) continue;
+            for (literal.elements) |element| {
+                const span = expressionSpan(&tree, element, tokens, layout);
+                layout.item_start[firstToken(&tree, element)] = false;
+                layout.item_start[span.first] = true;
+                layout.item_width[span.first] = compactLength(tokens, source, span.first, span.last + 1, layout);
+            }
         }
         return layout;
     }
@@ -648,9 +729,22 @@ fn markOperatorChain(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, root:
     markOperatorChain(tree, binary.rhs, root, tokens, layout, handled);
 }
 
-fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
-    return switch (tag) {
-        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .contract_declaration, .contract_conformance, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
+fn isGlobalDeclaration(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) bool {
+    if (tree.definitionValue(node)) |value| {
+        if (tree.parameterizedDefinition(value) != null) return true;
+        if (tree.functionDefinition(value) != null) return true;
+        if (tree.structTypeLiteral(value) != null or tree.choiceTypeLiteral(value) != null) return true;
+    }
+    return switch (tree.tag(node)) {
+        .test_declaration,
+        .c_function_pointer_declaration,
+        .contract_declaration,
+        .contract_conformance,
+        .c_enum_declaration,
+        .c_union_declaration,
+        .c_struct_declaration,
+        .c_incomplete_declaration,
+        => true,
         else => false,
     };
 }
@@ -671,10 +765,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
         .projection => |projection| first = @min(first, firstToken(tree, projection.base)),
         else => {},
     };
-    if (tree.functionDeclaration(node)) |function| {
-        if (function.is_once and first != 0) first -= 1;
-        return first;
-    }
+    if (tree.functionDeclaration(node) != null) return first;
     const child: ?syn.NodeIndex = switch (tree.tag(node)) {
         .expression_statement, .error_propagation, .error_report_return, .error_report_return_block, .nullable_test, .dereference => tree.unaryOperand(node),
         .handle_expression => tree.extraData(syn.HandleExtra, tree.data(node).extra).value,
@@ -706,6 +797,7 @@ fn memberName(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?syn.TokenIn
     if (tree.valueField(node)) |value| return value.name_token;
     if (tree.structTypeField(node)) |value| return value.name_token;
     if (tree.functionDeclaration(node)) |value| return value.name_token;
+    if (tree.tag(node) == .contract_inferred_operation_requirement) return tree.mainToken(node);
     if (tree.contractFunctionRequirement(node)) |value| return value.name_token;
     return null;
 }
@@ -732,13 +824,13 @@ fn compactLength(tokens: tok.View, source: []const u8, start: usize, end: usize,
         if (tag == .comma) {
             var next = index + 1;
             while (next < end and tokens.contents[next] == .new_line) : (next += 1) {}
-            if (next < end and tokens.contents[next] == .close_parenthesis and layout.reflow[layout.ends[next]]) continue;
+            if (next < end and std.meta.activeTag(tokens.contents[next]) == .close_parenthesis and layout.reflow[layout.ends[next]] and !layout.packed_lists[layout.ends[next]]) continue;
         }
         if (layout.item_start[index] and previous != .open_parenthesis and previous != .comma and previous != null) {
             length += 1;
             previous = .comma;
         }
-        if (previous) |left| if (needsSpace(left, tag, tokens, index)) {
+        if (previous) |left| if (!layout.tight_before[index] and needsSpace(left, tag, tokens, index)) {
             length += 1;
         };
         length += tokenText(tokens, source, index).len;
@@ -795,11 +887,20 @@ fn operandEnd(tag: Tag) bool {
 
 fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .comment) return true;
-    if (left == .arrow and right == .bang) return true;
-    if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
+    if (left == .arrow and (right == .bang or right == .double_bang)) return true;
+    if ((left == .bang or left == .double_bang) and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
+    if (right == .semicolon) return false;
+    if (left == .semicolon) return true;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
-    if (right == .dot or right == .hash or right == .bang or right == .double_bang or right == .triple_bang) return false;
+    // A named compile-time directive starts an operand. Generic argument
+    // groups attach # to the preceding declaration or callee.
+    if (right == .hash) {
+        if (index + 1 < tokens.len and tokens.contents[index + 1] == .open_parenthesis)
+            return !operandEnd(left) and left != .keyword_implement and left != .open_parenthesis and left != .open_bracket;
+        return left != .open_parenthesis and left != .open_bracket;
+    }
+    if (right == .dot or right == .bang or right == .double_bang or right == .triple_bang) return false;
     if (left == .dot or left == .double_dot or left == .hash or left == .dollar or left == .tilde or left == .question_mark) return false;
     if (left == .open_parenthesis or left == .open_bracket) return false;
     if (right == .double_colon) return true;
@@ -872,9 +973,32 @@ fn field(line: []const u8) ?Field {
     return .{ .indent = indent, .name_end = end, .marker_end = marker_end, .equal = equal };
 }
 
-fn alignmentPadding(width: usize, actual: usize) usize {
-    const padding = width - actual;
-    return if (padding <= max_alignment_padding) padding else 0;
+/// Remove the longest outliers from a column until its padding fits, then
+/// align those outliers in subsequent columns. Sorting widths keeps the
+/// grouping independent of source order without moving any source rows.
+fn alignmentTargets(allocator: std.mem.Allocator, widths: []const ?usize) ![]usize {
+    const Entry = struct {
+        width: usize,
+        index: usize,
+        fn less(_: void, a: @This(), b: @This()) bool {
+            return a.width < b.width;
+        }
+    };
+    var entries: std.ArrayList(Entry) = .empty;
+    defer entries.deinit(allocator);
+    for (widths, 0..) |width, index| if (width) |value| try entries.append(allocator, .{ .width = value, .index = index });
+    std.mem.sort(Entry, entries.items, {}, Entry.less);
+    const targets = try allocator.alloc(usize, widths.len);
+    @memset(targets, 0);
+    var start: usize = 0;
+    while (start < entries.items.len) {
+        var end = start + 1;
+        while (end < entries.items.len and entries.items[end].width - entries.items[start].width <= max_alignment_padding) : (end += 1) {}
+        const target = entries.items[end - 1].width;
+        for (entries.items[start..end]) |entry| targets[entry.index] = target;
+        start = end;
+    }
+    return targets;
 }
 
 fn alignFields(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
@@ -909,23 +1033,37 @@ fn alignFields(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
             continue;
         };
         var end = i;
-        var name_width: usize = 0;
-        var type_width: usize = 0;
         while (end < lines.items.len) : (end += 1) {
             if (literal_lines[end]) break;
             const row = field(lines.items[end]) orelse break;
             if (row.indent != first.indent) break;
-            name_width = @max(name_width, row.name_end - row.indent);
-            const type_end = row.equal orelse lines.items[end].len;
-            if (lines.items[end][row.marker_end - 1] != '=')
-                type_width = @max(type_width, std.mem.trim(u8, lines.items[end][row.marker_end..type_end], " ").len);
         }
-        for (lines.items[i..end]) |line| {
+        const widths = try allocator.alloc(?usize, end - i);
+        defer allocator.free(widths);
+        for (lines.items[i..end], 0..) |line, index| {
+            const row = field(line).?;
+            widths[index] = row.name_end - row.indent;
+        }
+        const names = try alignmentTargets(allocator, widths);
+        defer allocator.free(names);
+        // Default assignments align by their complete prefix, so different
+        // name columns cannot accidentally create a second excessive gap.
+        for (lines.items[i..end], 0..) |line, index| {
+            const row = field(line).?;
+            var marker = row.name_end;
+            while (line[marker] == ' ') marker += 1;
+            const type_end = row.equal orelse line.len;
+            const type_len = std.mem.trim(u8, line[row.marker_end..type_end], " ").len;
+            widths[index] = if (line[row.marker_end - 1] == '=') null else names[index] + 1 + row.marker_end - marker + (if (type_len == 0) @as(usize, 0) else type_len + 1);
+        }
+        const defaults = try alignmentTargets(allocator, widths);
+        defer allocator.free(defaults);
+        for (lines.items[i..end], 0..) |line, index| {
             const row = field(line).?;
             var marker = row.name_end;
             while (line[marker] == ' ') marker += 1;
             try out.appendSlice(line[0..row.name_end]);
-            try out.appendNTimes(' ', alignmentPadding(name_width, row.name_end - row.indent) + 1);
+            try out.appendNTimes(' ', names[index] - (row.name_end - row.indent) + 1);
             try out.appendSlice(line[marker..row.marker_end]);
             const type_end = row.equal orelse line.len;
             const type_text = std.mem.trimStart(u8, line[row.marker_end..type_end], " ");
@@ -934,7 +1072,7 @@ fn alignFields(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 try out.appendSlice(std.mem.trimEnd(u8, type_text, " "));
             }
             if (row.equal) |equal| {
-                try out.appendNTimes(' ', alignmentPadding(type_width, std.mem.trim(u8, type_text, " ").len) + 1);
+                try out.appendNTimes(' ', defaults[index] - widths[index].? + 1);
                 try out.appendSlice(line[equal..]);
             }
             try out.append('\n');
@@ -956,8 +1094,8 @@ fn expectFormat(source: []const u8, expected: []const u8) !void {
 
 test "formatter preserves manual layout and aligns multiline fields" {
     try expectFormat(
-        "Point:Type=(\n.x:Int32=1\n.long_name:UInt8=2\n)\nmain()->(.status_code:Int32=0):={ status_code=1 }\n",
-        "Point: Type = (\n    .x         : Int32 = 1\n    .long_name : UInt8 = 2\n)\n\nmain() -> (.status_code: Int32 = 0) := { status_code = 1 }\n",
+        "Point := (\n.x:Int32=1\n.long_name:UInt8=2\n)\nmain := ()->(.status_code:Int32=0){ status_code=1 }\n",
+        "Point := (\n    .x         : Int32 = 1\n    .long_name : UInt8 = 2\n)\n\nmain := () -> (.status_code: Int32 = 0) { status_code = 1 }\n",
     );
 }
 
@@ -970,8 +1108,8 @@ test "formatter preserves comments literals grouping and target branches" {
 
 test "formatter keeps list breaks and separates field groups" {
     try expectFormat(
-        "x:Type=(\n.a:Int8\n\n-- group\n.long:Int64\n.b:UInt8\n)\nf(.x=1,.y=-2)\n",
-        "x: Type = (\n    .a : Int8\n\n    -- group\n    .long : Int64\n    .b    : UInt8\n)\n\nf(.x = 1, .y = -2)\n",
+        "x := (\n.a:Int8\n\n-- group\n.long:Int64\n.b:UInt8\n)\nf(.x=1,.y=-2)\n",
+        "x := (\n    .a : Int8\n\n    -- group\n    .long : Int64\n    .b    : UInt8\n)\n\nf(.x = 1, .y = -2)\n",
     );
 }
 
@@ -1018,22 +1156,22 @@ test "formatter preserves field-like text inside multiline strings" {
 
 test "formatter expands signature groups independently" {
     try expectFormat(
-        "add#(.n:UIntNative,.t:Type:Scalar)(.left:&Vector#(.n=n,.t:t),.right:&Vector#(.n=n,.t:t))->(.result:Vector#(.n=n,.t:t)):={ result=left }\n",
-        "add#(.n: UIntNative, .t: Type: Scalar)(\n    .left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t)\n) -> (.result: Vector#(.n = n, .t: t)) := { result = left }\n",
+        "add := #(.n:UIntNative,.t:Type:Scalar) (.left:&Vector#(.n=n,.t:t),.right:&Vector#(.n=n,.t:t))->(.result:Vector#(.n=n,.t:t)){ result=left }\n",
+        "add := #(.n: UIntNative, .t: Type: Scalar) (\n    .left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t)\n) -> (.result: Vector#(.n = n, .t: t)) { result = left }\n",
     );
 }
 
 test "formatter retains short signatures and expands multiple statements" {
     try expectFormat(
-        "Counter:Type=(.value:Int32)\nbump(.self:$&Counter)->():={self&.value=self&.value+1}\nrun()->():={i::UIntNative=0 while i<2 {values[i]=values[i]+1 i=i+1} return}\n",
-        "Counter: Type = (.value: Int32)\n\nbump(.self: $&Counter) -> () := { self&.value = self&.value + 1 }\n\nrun() -> () := {\n    i :: UIntNative = 0\n    while i < 2 {\n        values[i] = values[i] + 1\n        i = i + 1\n    }\n    return\n}\n",
+        "Counter := (.value:Int32)\nbump := (.self:$&Counter)->(){self&.value=self&.value+1}\nrun := ()->(){i::UIntNative=0 while i<2 {values[i]=values[i]+1 i=i+1} return}\n",
+        "Counter := (.value: Int32)\n\nbump := (.self: $&Counter) -> () { self&.value = self&.value + 1 }\n\nrun := () -> () {\n    i :: UIntNative = 0\n    while i < 2 {\n        values[i] = values[i] + 1\n        i = i + 1\n    }\n    return\n}\n",
     );
 }
 
 test "formatter keeps declaration comments attached and manual blank lines" {
     try expectFormat(
-        "First:Type=()\n-- documentation\nSecond:Type=()\nf()->():={\n\nreturn\n\n}\n",
-        "First: Type = ()\n\n-- documentation\nSecond: Type = ()\n\nf() -> () := {\n\n    return\n\n}\n",
+        "First:Type=()\n-- documentation\nSecond:Type=()\nf := ()->(){\n\nreturn\n\n}\n",
+        "First: Type = ()\n\n-- documentation\nSecond: Type = ()\n\nf := () -> () {\n\n    return\n\n}\n",
     );
 }
 
@@ -1046,7 +1184,7 @@ test "formatter expands long calls into complete argument rows" {
 
 fn testSyntaxTree(allocator: std.mem.Allocator, source: []const u8) !?syn.FileSyntaxTree {
     const files = [_]source_files.SourceFile{.{ .path = "format.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
+    var diagnostics = try diagnostic.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
     var lex = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     const tokens = try lex.tokenize();
@@ -1070,17 +1208,29 @@ fn expectSameSyntax(allocator: std.mem.Allocator, source: []const u8, formatted:
     try std.testing.expectEqualSlices(syn.Node.Tag, original.nodes.items(.tag), result.nodes.items(.tag));
 }
 
+test "formatter preserves anonymous compile-time entry structure" {
+    try expectFormat("#run{calculate()}\n", "#run { calculate() }\n");
+    try expectFormat(
+        "answer::=#run()->(.result:Int32){result=42}\n",
+        "answer ::= #run () -> (.result: Int32) { result = 42 }\n",
+    );
+    try expectFormat(
+        "answer::=#run(.system:System)->(.result:Int32){assume writer::=$&system.terminal&.stdout\nresult=42}\n",
+        "answer ::= #run (.system: System) -> (.result: Int32) {\n    assume writer ::= $&system.terminal&.stdout\n    result = 42\n}\n",
+    );
+}
+
 test "formatter preserves prefixes and grouping at statement boundaries" {
     try expectFormat(
-        "f()->():={assume allocator:=source mod.write(.value=1)!!\"context\"\n[values[index]]=2 return}\n",
-        "f() -> () := {\n    assume allocator := source\n    mod.write(.value = 1)!! \"context\"\n    [values[index]] = 2\n    return\n}\n",
+        "f := ()->(){assume allocator:=source mod.write(.value=1)!!\"context\"\n[values[index]]=2 return}\n",
+        "f := () -> () {\n    assume allocator := source\n    mod.write(.value = 1)!! \"context\"\n    [values[index]] = 2\n    return\n}\n",
     );
 }
 
 test "formatter separates scoped cleanup implementations from ordinary declarations" {
     try expectFormat(
-        "Point:Type=(.value:Int32)\nonce acquire(.value:Int32)->(.result:Point):={result=(.value=value)}\nimplement Deinit#(Point)(.deinit=(.self:$&Point)->(){})\n",
-        "Point: Type = (.value: Int32)\n\nonce acquire(.value: Int32) -> (.result: Point) := { result = (.value = value) }\n\nimplement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})\n",
+        "Point := (.value:Int32)\nacquire := once (.value:Int32)->(.result:Point){result=(.value=value)}\nimplement Deinit#(Point)(.deinit=(.self:$&Point)->(){})\n",
+        "Point := (.value: Int32)\n\nacquire := once (.value: Int32) -> (.result: Point) { result = (.value = value) }\n\nimplement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})\n",
     );
 }
 
@@ -1141,34 +1291,34 @@ test "formatter retains inline struct commas and nested inline separators" {
 
 test "formatter preserves inferred fallible output defaults" {
     try expectFormat(
-        "main()->!Void=..ok Void():={work()!}\n",
-        "main() -> !Void = ..ok Void() := { work()! }\n",
+        "main := ()->!Void=..ok Void(){work()!}\n",
+        "main := () -> !Void = ..ok Void() { work()! }\n",
     );
 }
 
 test "formatter preserves local error handlers" {
     try expectFormat(
-        "main()->():={value:=fallible() handle error,result{result=0}}\n",
-        "main() -> () := { value := fallible() handle error, result { result = 0 } }\n",
+        "main := ()->(){value:=fallible() handle error,result{result=0}}\n",
+        "main := () -> () { value := fallible() handle error, result { result = 0 } }\n",
     );
     try expectFormat(
-        "main()->():={fallible() handle error{report(error)!}}\n",
-        "main() -> () := { fallible() handle error { report(error)! } }\n",
+        "main := ()->(){fallible() handle error{report(error)!}}\n",
+        "main := () -> () { fallible() handle error { report(error)! } }\n",
     );
 }
 
 test "formatter preserves reporting return postfix" {
-    try expectFormat("main()->():={value:=attempt()!!!}\n", "main() -> () := { value := attempt()!!! }\n");
+    try expectFormat("main := ()->(){value:=attempt()!!!}\n", "main := () -> () { value := attempt()!!! }\n");
 }
 
 test "formatter preserves reporting return action blocks" {
     try expectFormat(
-        "main()->(.status_code:Int32=0):={attempt()!!!{status_code=1}}\n",
-        "main() -> (.status_code: Int32 = 0) := { attempt()!!! { status_code = 1 } }\n",
+        "main := ()->(.status_code:Int32=0){attempt()!!!{status_code=1}}\n",
+        "main := () -> (.status_code: Int32 = 0) { attempt()!!! { status_code = 1 } }\n",
     );
     try expectFormat(
-        "main()->():={if [ready()!!!{return}]{work()}}\n",
-        "main() -> () := { if [ready()!!! { return }] { work() } }\n",
+        "main := ()->(){if [ready()!!!{return}]{work()}}\n",
+        "main := () -> () { if [ready()!!! { return }] { work() } }\n",
     );
 }
 
@@ -1178,8 +1328,8 @@ test "formatter flattens calls and signatures regardless of existing breaks" {
         "f(.first = 1, .second = 2)\n",
     );
     try expectFormat(
-        "identity#(\n.T: Type\n)(\n.value: T\n) -> (\n.result: T\n) := { result = value }\n",
-        "identity#(.T: Type)(.value: T) -> (.result: T) := { result = value }\n",
+        "identity := #(\n.T: Type\n) (\n.value: T\n) -> (\n.result: T\n) { result = value }\n",
+        "identity := #(.T: Type) (.value: T) -> (.result: T) { result = value }\n",
     );
     try expectFormat(
         "C#(.T: Type): Contract = (\n.op: (\n.value: T\n) -> (\n.result: T\n)\n)\nimplement C#(Int32) (\n.op =\n(.value: Int32) -> (.result: Int32) { result = value }\n)\n",
@@ -1200,14 +1350,14 @@ test "formatter counts indentation at the call width boundary" {
     const payload = try allocator.alloc(u8, 84);
     defer allocator.free(payload);
     @memset(payload, 'a');
-    const source = try std.fmt.allocPrint(allocator, "main() -> () := {{\ncall(\n\"{s}\"\n)\n}}\n", .{payload});
+    const source = try std.fmt.allocPrint(allocator, "main := () -> () {{\ncall(\n\"{s}\"\n)\n}}\n", .{payload});
     defer allocator.free(source);
-    const expected = try std.fmt.allocPrint(allocator, "main() -> () := {{\n    call(\"{s}\")\n}}\n", .{payload});
+    const expected = try std.fmt.allocPrint(allocator, "main := () -> () {{\n    call(\"{s}\")\n}}\n", .{payload});
     defer allocator.free(expected);
     try expectFormat(source, expected);
-    const wide = try std.fmt.allocPrint(allocator, "main() -> () := {{\ncall(\"{s}a\")\n}}\n", .{payload});
+    const wide = try std.fmt.allocPrint(allocator, "main := () -> () {{\ncall(\"{s}a\")\n}}\n", .{payload});
     defer allocator.free(wide);
-    const expanded = try std.fmt.allocPrint(allocator, "main() -> () := {{\n    call(\n        \"{s}a\"\n    )\n}}\n", .{payload});
+    const expanded = try std.fmt.allocPrint(allocator, "main := () -> () {{\n    call(\n        \"{s}a\"\n    )\n}}\n", .{payload});
     defer allocator.free(expanded);
     try expectFormat(wide, expanded);
 }
@@ -1255,14 +1405,14 @@ test "formatter chooses inline hanging and vertical calls at 96 columns" {
         const text = try allocator.alloc(u8, length);
         defer allocator.free(text);
         @memset(text, 'x');
-        const source = try std.fmt.allocPrint(allocator, "main() -> () := {{\n    result := combine(\"{s}\", \"{s}\").value\n}}\n", .{ text, text });
+        const source = try std.fmt.allocPrint(allocator, "main := () -> () {{\n    result := combine(\"{s}\", \"{s}\").value\n}}\n", .{ text, text });
         defer allocator.free(source);
         const expected = if (length == 10)
-            try std.fmt.allocPrint(allocator, "main() -> () := {{\n    result := combine(\"{s}\", \"{s}\").value\n}}\n", .{ text, text })
+            try std.fmt.allocPrint(allocator, "main := () -> () {{\n    result := combine(\"{s}\", \"{s}\").value\n}}\n", .{ text, text })
         else if (length == 41)
-            try std.fmt.allocPrint(allocator, "main() -> () := {{\n    result := combine(\n        \"{s}\", \"{s}\"\n    ).value\n}}\n", .{ text, text })
+            try std.fmt.allocPrint(allocator, "main := () -> () {{\n    result := combine(\n        \"{s}\", \"{s}\"\n    ).value\n}}\n", .{ text, text })
         else
-            try std.fmt.allocPrint(allocator, "main() -> () := {{\n    result := combine(\n        \"{s}\"\n        \"{s}\"\n    ).value\n}}\n", .{ text, text });
+            try std.fmt.allocPrint(allocator, "main := () -> () {{\n    result := combine(\n        \"{s}\"\n        \"{s}\"\n    ).value\n}}\n", .{ text, text });
         defer allocator.free(expected);
         try expectFormat(source, expected);
     }
@@ -1270,19 +1420,51 @@ test "formatter chooses inline hanging and vertical calls at 96 columns" {
 
 test "formatter expands conditional chains consistently" {
     try expectFormat(
-        "main() -> () := {\nif a { first() } else if b { second() third() } else { last() }\n}\n",
-        "main() -> () := {\n    if a {\n        first()\n    } else if b {\n        second()\n        third()\n    } else {\n        last()\n    }\n}\n",
+        "main := () -> () {\nif a { first() } else if b { second() third() } else { last() }\n}\n",
+        "main := () -> () {\n    if a {\n        first()\n    } else if b {\n        second()\n        third()\n    } else {\n        last()\n    }\n}\n",
     );
     try expectFormat(
-        "main() -> () := {\nif a { first() } else { last() }\n}\n",
-        "main() -> () := {\n    if a { first() } else { last() }\n}\n",
+        "main := () -> () {\nif a { first() } else { last() }\n}\n",
+        "main := () -> () {\n    if a { first() } else { last() }\n}\n",
     );
 }
 
 test "formatter bounds field name and default alignment" {
     try expectFormat(
-        "T: Type = (\n.a: Int32 = 1\n.an_extremely_long_field_name: Int32 = 2\n)\n",
-        "T: Type = (\n    .a : Int32 = 1\n    .an_extremely_long_field_name : Int32 = 2\n)\n",
+        "T := (\n.a: Int32 = 1\n.an_extremely_long_field_name: Int32 = 2\n)\n",
+        "T := (\n    .a : Int32 = 1\n    .an_extremely_long_field_name : Int32 = 2\n)\n",
+    );
+}
+
+test "formatter permits up to 24 spaces of alignment padding" {
+    const allocator = std.testing.allocator;
+    const letters = "abcdefghijklmnopqrstuvwxyz";
+    const spaces = "                         ";
+    for ([_]usize{ 9, 24, 25 }) |padding| {
+        const name = letters[0 .. padding + 1];
+        const extra = if (padding <= 24) padding else 0;
+        const source = try std.fmt.allocPrint(allocator, "T := (\n.a: Int32 = 1\n.{s}: Int32 = 2\n)\n", .{name});
+        defer allocator.free(source);
+        const expected = try std.fmt.allocPrint(allocator, "T := (\n    .a{s} : Int32 = 1\n    .{s} : Int32 = 2\n)\n", .{ spaces[0..extra], name });
+        defer allocator.free(expected);
+        try expectFormat(source, expected);
+
+        const defaults = try std.fmt.allocPrint(allocator, "T := (\n.a: A = 1\n.b: {s} = 2\n)\n", .{name});
+        defer allocator.free(defaults);
+        const aligned_defaults = try std.fmt.allocPrint(allocator, "T := (\n    .a : A{s} = 1\n    .b : {s} = 2\n)\n", .{ spaces[0..extra], name });
+        defer allocator.free(aligned_defaults);
+        try expectFormat(defaults, aligned_defaults);
+    }
+}
+
+test "formatter retries alignment after removing long outliers" {
+    try expectFormat(
+        "call(\n.this_name_is_far_beyond_the_first_column = 3\n.a = 1\n.this_name_is_far_beyond_the_first_column_suffix = 4\n.short_name = 2\n)\n",
+        "call(\n    .this_name_is_far_beyond_the_first_column        = 3\n    .a          = 1\n    .this_name_is_far_beyond_the_first_column_suffix = 4\n    .short_name = 2\n)\n",
+    );
+    try expectFormat(
+        "T := (\n.a: A = 1\n.b: ShortType = 2\n.c: ExceptionallyLongTypeNameForSecondaryColumn = 3\n.d: ExceptionallyLongTypeNameForSecondaryColumnSuffix = 4\n)\n",
+        "T := (\n    .a : A         = 1\n    .b : ShortType = 2\n    .c : ExceptionallyLongTypeNameForSecondaryColumn       = 3\n    .d : ExceptionallyLongTypeNameForSecondaryColumnSuffix = 4\n)\n",
     );
 }
 
@@ -1317,5 +1499,127 @@ test "formatter budgets member calls after generic arguments" {
     try expectFormat(
         "transposed ::= math.MatrixTransposition#(math.Matrix#(.rows = 3, .cols = 2, .t: Float64)).transpose(&design)\n",
         "transposed ::= math.MatrixTransposition#(\n    math.Matrix#(.rows = 3, .cols = 2, .t: Float64)\n).transpose(&design)\n",
+    );
+}
+
+test "formatter separates compile-time execution prefixes from assignments" {
+    try expectFormat(
+        "answer:=#run()->(.value:Int32){value=42}\n",
+        "answer := #run () -> (.value: Int32) { value = 42 }\n",
+    );
+    try expectFormat(
+        "main := ()->(.result:Int32=0){result=#run ()->(.answer:Int32){answer=calculate(.value=40)}}\n",
+        "main := () -> (.result: Int32 = 0) {\n    result = #run () -> (.answer: Int32) { answer = calculate(.value = 40) }\n}\n",
+    );
+}
+
+test "formatter retains conditional compilation directive boundaries" {
+    try expectFormat(
+        "main := () -> () {\n#if true { f() }#else { g() }\n}\n",
+        "main := () -> () {\n    #if true { f() } #else { g() }\n}\n",
+    );
+}
+
+test "formatter preserves modern test declaration syntax" {
+    try expectFormat(
+        "test example:=(.system:System)->!(){testing.expect(true)!}\n",
+        "test example := (.system: System) -> !() { testing.expect(true)! }\n",
+    );
+}
+
+test "formatter preserves implementation and defer keywords" {
+    try expectFormat(
+        "implement Marker#(Value)()\nmain:=()->(){defer cleanup()}\n",
+        "implement Marker#(Value) ()\n\nmain := () -> () { defer cleanup() }\n",
+    );
+}
+
+test "formatter preserves explicit semicolon statement boundaries" {
+    try expectFormat(
+        "x:=1;y:=2;\nmain:=()->(){return;}\n",
+        "x := 1; y := 2;\n\nmain := () -> () { return; }\n",
+    );
+    try expectFormat(
+        "main:=()->(){x:=1;y:=2;}\n",
+        "main := () -> () {\n    x := 1;\n    y := 2;\n}\n",
+    );
+}
+
+test "formatter distinguishes specialization groups from comparisons" {
+    try expectFormat(
+        "read:=(.value:Box#(Int32))->(.result:Int32){result=value.value}\n",
+        "read := (.value: Box#(Int32)) -> (.result: Int32) { result = value.value }\n",
+    );
+    try expectFormat(
+        "Box:=#(.T:Type)(.value:T)\nidentity:=#(.T:Type)(.value:T)->(.result:T){result=value}\n",
+        "Box := #(.T: Type) (.value: T)\n\nidentity := #(.T: Type) (.value: T) -> (.result: T) { result = value }\n",
+    );
+    try expectFormat(
+        "result:=identity#(Int32)(.value=42)\nother:=Box#(Box#(Int32))\ncomparison:=a<b or c>=d\n",
+        "result := identity#(Int32)(.value = 42)\nother := Box#(Box#(Int32))\ncomparison := a < b or c >= d\n",
+    );
+}
+
+test "formatter reflows parameter and specialization lists with the ordinary width budget" {
+    try expectFormat(
+        "Box:=#(\n.T:Type\n)(.value:T)\nvalue:=Box#(\nInt32\n)(.value=42)\n",
+        "Box := #(.T: Type) (.value: T)\n\nvalue := Box#(Int32)(.value = 42)\n",
+    );
+    try expectFormat(
+        "Example:=#(.FirstCompileTimeTypeParameterWithLongName:Type,.OtherCompileTimeTypeParameterWithLongName:Type)(.value:FirstCompileTimeTypeParameterWithLongName)\n",
+        "Example := #(\n    .FirstCompileTimeTypeParameterWithLongName : Type,\n    .OtherCompileTimeTypeParameterWithLongName : Type\n) (.value: FirstCompileTimeTypeParameterWithLongName)\n",
+    );
+}
+
+test "formatter attaches parameters to contract and implementation headers" {
+    try expectFormat(
+        "Example #( .Item: Type ): Contract = ()\nimplement #( .Item: Type ) Example#(.Item: Item) ()\n",
+        "Example#(.Item: Type): Contract = ()\n\nimplement#(.Item: Type) Example#(.Item: Item) ()\n",
+    );
+}
+
+test "formatter preserves implementation-defined operation requirements" {
+    try expectFormat("Factory#(.T:Type):Contract=(.make:_)\n", "Factory#(.T: Type): Contract = (.make: _)\n");
+}
+
+test "formatter retains once with a named input signature across whitespace" {
+    try expectFormat(
+        "Args := (.value:Int32)\nacquire := once\n\nArgs -> (.result:Int32){result=value}\n",
+        "Args := (.value: Int32)\n\nacquire := once Args -> (.result: Int32) { result = value }\n",
+    );
+}
+
+test "formatter keeps traced output markers distinct from context operators" {
+    try expectFormat("f:=()->!!Int32{result=..ok 1}\n", "f := () -> !!Int32 { result = ..ok 1 }\n");
+}
+
+test "formatter packs expression lists using the available width" {
+    try expectFormat(
+        "values := (\n[-1 + 2],\nitem.value,\nget(.index=0)\n)\n",
+        "values := ([-1 + 2], item.value, get(.index = 0))\n",
+    );
+    try expectFormat("values := (\n42,\n)\n", "values := (42,)\n");
+    try expectFormat(
+        "values: [6]UIntNative = (\n0,\n1,\n2,\n3,\n4,\n5\n)\n",
+        "values: [6]UIntNative = (0, 1, 2, 3, 4, 5)\n",
+    );
+    try expectFormat(
+        "values := (first_value, second_value, third_value, fourth_value, fifth_value, sixth_value, seventh_value, eighth_value)\n",
+        "values := (\n    first_value, second_value, third_value, fourth_value, fifth_value, sixth_value,\n    seventh_value, eighth_value\n)\n",
+    );
+    try expectFormat(
+        "values := (first_value, -- explanation\nsecond_value)\n",
+        "values := (\n    first_value,\n    -- explanation\n    second_value\n)\n",
+    );
+}
+
+test "formatter preserves error handling on completed pipe stages" {
+    try expectFormat(
+        "main:=()->(){\nvalue|first(_)!|second(_)!!!\nvalue|call(_)!!!{return}\n}\n",
+        "main := () -> () {\n    value | first(_)! | second(_)!!!\n    value | call(_)!!! { return }\n}\n",
+    );
+    try expectFormat(
+        "result:=value|call(.value=_,.other=fallible()!)!!\"context\"\n",
+        "result := value | call(.value = _, .other = fallible()!)!! \"context\"\n",
     );
 }

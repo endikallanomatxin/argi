@@ -34,6 +34,8 @@ pub const View = struct {
 };
 
 pub const Location = struct {
+    pub const unavailable: Location = .{ .file = .unknown, .offset = 0 };
+
     file: source_db.FileId,
     offset: u32,
 };
@@ -77,6 +79,7 @@ pub const Content = union(enum(u8)) {
     dot: struct {},
     double_dot: struct {},
     comma: struct {},
+    semicolon: struct {},
 
     // Keywords
     keyword_abort: struct {},
@@ -91,9 +94,10 @@ pub const Content = union(enum(u8)) {
     keyword_continue: struct {},
     keyword_once: struct {},
     keyword_assume: struct {},
-    keyword_reach: struct {},
     keyword_import: struct {},
     keyword_test: struct {},
+    keyword_implement: struct {},
+    keyword_defer: struct {},
     keyword_and: struct {},
     keyword_or: struct {},
 
@@ -141,7 +145,7 @@ pub const TokenLiteral = union(enum(u8)) {
     scientific_float_literal: TextRange,
     // TODO: Use `r` as a separator for repeating decimals.
 
-    char_literal: u8,
+    char_literal: u32,
     string_literal: TextRange,
 };
 
@@ -156,7 +160,7 @@ pub const Literal = union(enum) {
     binary_int_literal: []const u8,
     regular_float_literal: []const u8,
     scientific_float_literal: []const u8,
-    char_literal: u8,
+    char_literal: u32,
     string_literal: []const u8,
 };
 
@@ -206,4 +210,23 @@ pub fn decodeStringLiteral(allocator: std.mem.Allocator, raw: []const u8) ![]con
         });
     }
     return try decoded.toOwnedSlice();
+}
+
+/// Context-free token categories shared by editor presentations. Semantic
+/// classification (functions, fields, actual types) belongs to their analyzers.
+pub const LexicalClass = enum { identifier, keyword, number, string, comment, operator };
+
+pub fn lexicalClass(content: Content) ?LexicalClass {
+    return switch (content) {
+        .comment => .comment,
+        .identifier => .identifier,
+        .literal => |literal| switch (literal) {
+            .string_literal, .char_literal => .string,
+            .bool_literal => .keyword,
+            else => .number,
+        },
+        .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_test, .keyword_implement, .keyword_defer, .keyword_and, .keyword_or => .keyword,
+        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .operator,
+        else => null,
+    };
 }

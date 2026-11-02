@@ -21,19 +21,16 @@ pub const ParameterizedAutoDeinitId = enum(u32) { _ };
 pub const ParameterizedVirtualRegistryId = enum(u32) { _ };
 pub const ParameterizedVirtualizeId = enum(u32) { _ };
 pub const ParameterizedVirtualCallId = enum(u32) { _ };
-pub const ParameterizedReachSegmentId = enum(u32) { _ };
-pub const ParameterizedReachAlternativeId = enum(u32) { _ };
-pub const ParameterizedReachId = enum(u32) { _ };
 pub const ParameterizedNullableUnwrapId = enum(u32) { _ };
-pub const ParameterizedTestingExpectErrorId = enum(u32) { _ };
 pub const ParameterizedErrorPropagationId = enum(u32) { _ };
-pub const ParameterizedErrorContextId = enum(u32) { _ };
 pub const ParameterizedPendingId = enum(u32) { _ };
 pub const ParameterizedMatchCaseId = enum(u32) { _ };
 
 pub const Ids = struct {
     pub const DeclId = ParameterizedDeclId;
+    pub const FamilyDefinitionId = ParameterizedDeclId;
     pub const TypeId = ParameterizedTypeId;
+    pub const TypeDefinitionId = entities.ModuleTypeDefinitionId;
     pub const FunctionId = ParameterizedFunctionId;
     pub const BindingId = ParameterizedBindingId;
     pub const NodeId = ParameterizedNodeId;
@@ -49,13 +46,8 @@ pub const Ids = struct {
     pub const VirtualRegistryId = ParameterizedVirtualRegistryId;
     pub const VirtualizeId = ParameterizedVirtualizeId;
     pub const VirtualCallId = ParameterizedVirtualCallId;
-    pub const ReachSegmentId = ParameterizedReachSegmentId;
-    pub const ReachAlternativeId = ParameterizedReachAlternativeId;
-    pub const ReachId = ParameterizedReachId;
     pub const NullableUnwrapId = ParameterizedNullableUnwrapId;
-    pub const TestingExpectErrorId = ParameterizedTestingExpectErrorId;
     pub const ErrorPropagationId = ParameterizedErrorPropagationId;
-    pub const ErrorContextId = ParameterizedErrorContextId;
 };
 
 pub const DeclarationRef = union(enum) {
@@ -75,10 +67,14 @@ pub const VariantRef = union(enum) {
 
 pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo };
 
+pub const AssociatedProjection = struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef };
+
 pub const IntExpression = union(enum) {
     literal: i64,
+    // Retain ordinary executable IR for staged compile-time evaluation.
+    execution: ParameterizedNodeId,
     parameter: ComptimeParameterId,
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     binary: struct {
         operator: IntBinaryOperator,
         left: ParameterizedIntExprId,
@@ -89,8 +85,13 @@ pub const IntExpression = union(enum) {
 
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
+    definition: struct {
+        origin: entities.ModuleTypeDefinitionId,
+        body: ParameterizedTypeId,
+        arguments: primitives.Range(ParameterizedGenericArgId),
+    },
     parameter: ComptimeParameterId,
-    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
+    projection: AssociatedProjection,
     external: entities.ExternalRefId,
     array: struct {
         length: ParameterizedIntExprId,
@@ -101,7 +102,13 @@ pub const Type = union(enum) {
     resolved: primitives.SemanticType(Ids),
 };
 
-pub const Decl = struct { target: DeclarationRef };
+pub const DefinitionRef = union(enum) {
+    projection: AssociatedProjection,
+    module: entities.ModuleDeclId,
+    external: entities.ExternalRefId,
+    parameter: ComptimeParameterId,
+};
+pub const Decl = struct { target: DefinitionRef };
 pub const Function = struct { target: FunctionRef };
 pub const Variant = union(enum) {
     reference: VariantRef,
@@ -113,6 +120,11 @@ pub const GenericArgument = struct {
     value: Value,
 
     pub const Value = union(enum) {
+        projection: AssociatedProjection,
+        definition: union(enum) {
+            literal: primitives.DefinitionValue(Ids),
+            parameter: ComptimeParameterId,
+        },
         type: ParameterizedTypeId,
         comptime_int: ParameterizedIntExprId,
     };
@@ -133,34 +145,33 @@ pub const AutoDeinit = primitives.AutoDeinit(Ids);
 pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
-pub const ReachAlternative = primitives.ReachAlternative(Ids);
-pub const Reach = primitives.Reach(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
-pub const TestingExpectError = primitives.TestingExpectError(Ids);
 pub const ErrorPropagation = primitives.ErrorPropagation(Ids);
-pub const ErrorContext = primitives.ErrorContext(Ids);
 pub const ResolvedNode = primitives.Node(Ids);
 
 pub const PendingExpressionKind = enum(u8) {
+    entry_capture,
     unknown_identifier,
+    assume_name,
     comptime_parameter,
     pipe,
     unwrap_or,
     unwrap_or_do,
     nullable_test,
     generic_call,
+    entity_application,
     explicit_cast,
     choice_literal,
     field_access,
     choice_payload,
     error_propagation,
-    error_context,
     index,
     index_store,
     binary,
     comparison,
     logical,
     if_statement,
+    comptime_if,
     while_statement,
     for_each,
     match,
@@ -177,6 +188,10 @@ pub const PendingExpressionKind = enum(u8) {
 };
 
 pub const PendingExpressionDetail = union(enum(u8)) {
+    entity_application: ParameterizedTypeId,
+    callee_value: ParameterizedNodeId,
+    capture_module_value: entities.ModuleNodeId,
+    capture_owner: ?entities.ModuleFunctionId,
     none,
     comptime_parameter: ComptimeParameterId,
     binary: primitives.BinaryOperator,
@@ -188,6 +203,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
 };
 
 pub const PendingExpression = struct {
+    comptime_run: bool = false,
     contract_type: ?ParameterizedTypeId = null,
     requires_errable: bool = false,
     kind: PendingExpressionKind,
@@ -236,6 +252,17 @@ pub const Node = union(enum) {
 };
 
 pub const Storage = struct {
+    /// Inspect a definition's representation without changing its identity.
+    pub fn representation(self: *const Storage, id: ParameterizedTypeId) Type {
+        var current = id;
+        for (0..self.types.items.len) |_| {
+            const value = self.types.items[@intFromEnum(current)];
+            if (value != .definition) return value;
+            current = value.definition.body;
+        }
+        unreachable;
+    }
+
     int_expressions: std.ArrayList(IntExpression) = .empty,
     types: std.ArrayList(Type) = .empty,
     declarations: std.ArrayList(Decl) = .empty,
@@ -257,13 +284,8 @@ pub const Storage = struct {
     virtual_registries: std.ArrayList(VirtualMethodRegistry) = .empty,
     virtualizes: std.ArrayList(Virtualize) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
-    reach_segments: std.ArrayList(primitives.StringRange) = .empty,
-    reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
-    reaches: std.ArrayList(Reach) = .empty,
     nullable_unwraps: std.ArrayList(NullableUnwrap) = .empty,
-    testing_expect_errors: std.ArrayList(TestingExpectError) = .empty,
     error_propagations: std.ArrayList(ErrorPropagation) = .empty,
-    error_contexts: std.ArrayList(ErrorContext) = .empty,
     pending: std.ArrayList(Pending) = .empty,
     match_cases: std.ArrayList(MatchCase) = .empty,
 
@@ -280,15 +302,13 @@ pub const Storage = struct {
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         inline for (.{
-            &self.int_expressions,          &self.types,          &self.declarations,       &self.functions,
-            &self.variants,                 &self.fields,         &self.generic_arguments,  &self.bindings,
-            &self.unresolved_binding_types, &self.nodes,          &self.blocks,             &self.value_fields,
-            &self.switch_cases,             &self.switches,       &self.auto_deinit_fields, &self.auto_deinits,
-            &self.virtual_registries,       &self.virtualizes,    &self.virtual_calls,      &self.reach_segments,
-            &self.reach_alternatives,       &self.reaches,        &self.nullable_unwraps,   &self.testing_expect_errors,
-            &self.error_propagations,       &self.error_contexts, &self.pending,            &self.match_cases,
-            &self.node_refs,                &self.type_refs,      &self.binding_refs,       &self.function_refs,
-            &self.virtual_registry_refs,
+            &self.int_expressions,          &self.types,        &self.declarations,       &self.functions,
+            &self.variants,                 &self.fields,       &self.generic_arguments,  &self.bindings,
+            &self.unresolved_binding_types, &self.nodes,        &self.blocks,             &self.value_fields,
+            &self.switch_cases,             &self.switches,     &self.auto_deinit_fields, &self.auto_deinits,
+            &self.virtual_registries,       &self.virtualizes,  &self.virtual_calls,      &self.nullable_unwraps,
+            &self.error_propagations,       &self.pending,      &self.match_cases,        &self.node_refs,
+            &self.type_refs,                &self.binding_refs, &self.function_refs,      &self.virtual_registry_refs,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -313,13 +333,8 @@ pub const Storage = struct {
             self.virtual_registries.items.len * @sizeOf(VirtualMethodRegistry) +
             self.virtualizes.items.len * @sizeOf(Virtualize) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
-            self.reach_segments.items.len * @sizeOf(primitives.StringRange) +
-            self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +
-            self.reaches.items.len * @sizeOf(Reach) +
             self.nullable_unwraps.items.len * @sizeOf(NullableUnwrap) +
-            self.testing_expect_errors.items.len * @sizeOf(TestingExpectError) +
             self.error_propagations.items.len * @sizeOf(ErrorPropagation) +
-            self.error_contexts.items.len * @sizeOf(ErrorContext) +
             self.pending.items.len * @sizeOf(Pending) +
             self.match_cases.items.len * @sizeOf(MatchCase) +
             self.node_refs.items.len * @sizeOf(ParameterizedNodeId) +

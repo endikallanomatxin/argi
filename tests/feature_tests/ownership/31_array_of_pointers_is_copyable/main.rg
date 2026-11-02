@@ -1,8 +1,11 @@
-Resource : Type = ()
+Resource: Type = ()
 
-implement Init#(Resource, ()) (
-    .Result: Type = Resource
-    .init = (.args: ()) -> (.result: Result) {
+ResourceInitArgs: Type = ()
+
+implement Init#(Resource, ResourceInitArgs) (
+    .Result : Type = Resource
+
+    .init = ResourceInitArgs -> (.result: Result) {
         result = ()
     }
 )
@@ -13,16 +16,16 @@ implement Deinit#(Resource) (
     }
 )
 
-consume_ptr(.ptr: &Resource) -> (.status_code: Int32) := {
+consume_ptr := (.ptr: &Resource) -> (.status_code: Int32) {
     status_code = 0
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     first := Resource()
     second := Resource()
 
     pointers :: [2]&Resource = (&first, &second)
-    copied : [2]&Resource = pointers
+    copied: [2]&Resource = pointers
 
     if consume_ptr(.ptr = copied[0]).status_code != 0 {
         status_code = 1

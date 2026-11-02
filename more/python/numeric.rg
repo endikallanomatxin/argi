@@ -18,9 +18,10 @@ _buffer_copy(
     .copied      : $&UIntNative
 ) -> (.status: Int32): CFunction(.symbol = "_argi_python_buffer_copy")
 
-_array_storage#(.t: Type, .view_type: Type)(.self: &Python, .values: view_type) -> (
+_array_storage := #(.t: Type, .view_type: Type) (.self: &Python, .values: view_type) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
+
     assume ffi := self&._ffi
     count ::= length(&values).count
     address :: UIntNative = 0
@@ -38,9 +39,10 @@ _array_storage#(.t: Type, .view_type: Type)(.self: &Python, .values: view_type) 
     )
 }
 
-_copy_numeric#(.t: Type)(.self: &Object, .destination: ArrayView#(.t: t), .kind: Int32) -> (
-    .result : Errable#(UIntNative, (..python_error))
-) := {
+_copy_numeric := #(.t: Type) (
+    .self: &Object, .destination: MutableArrayView#(.t: t), .kind: Int32
+) -> (.result: Errable#(UIntNative, (..python_error))) {
+
     assume ffi := self&._python&._ffi
     capacity ::= length(&destination).count
     address :: UIntNative = 0
@@ -69,9 +71,10 @@ _copy_numeric#(.t: Type)(.self: &Object, .destination: ArrayView#(.t: t), .kind:
     result = ..ok copied
 }
 
-_numpy_array(.self: &Python, .storage: &Object, .dtype: StringView) -> (
+_numpy_array := (.self: &Python, .storage: &Object, .dtype: StringView) -> (
     .result : Errable#(Object, (..python_error))
-) := {
+) {
+
     numpy ::= import_module(.self = self, .name = "numpy")!
     dtype_object ::= string(.self = self, .value = dtype)!
     arguments: [1]&Object = (storage)
@@ -86,7 +89,7 @@ _numpy_array(.self: &Python, .storage: &Object, .dtype: StringView) -> (
     )
 }
 
-_native_dtype() -> (.value: StringView) := {
+_native_dtype := () -> (.value: StringView) {
     if size_of(.type = UIntNative) == 4 { value = "=u4" } else { value = "=u8" }
 }
 
@@ -100,25 +103,27 @@ _PythonNumericView#(.View: Type): Contract = (
     .Element : Type
 )
 
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(MutableArrayView#(.t: t)) (
+    .Element : Type = t
+)
+
 implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t: t)) (
     .Element : Type = t
 )
 
-implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayViewRO#(.t: t)) (
-    .Element : Type = t
-)
-
-numeric_buffer#(.View: Type: _PythonNumericView#(View)) := (.self: &Python, .values: View) -> (
+numeric_buffer := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .values: View) -> (
     .result : Errable#(Object, (..python_error))
 ) {
+
     result = ~_array_storage#(.t: _PythonNumericView#(View).Element)(
         .self = self, .values = values
     )
 }
 
-numeric_array#(.View: Type: _PythonNumericView#(View)) := (.self: &Python, .values: View) -> (
+numeric_array := #(.View: Type: _PythonNumericView#(View)) (.self: &Python, .values: View) -> (
     .result : Errable#(Object, (..python_error))
 ) {
+
     storage ::= numeric_buffer(.self = self, .values = values)!
     result = ~_numpy_array(
         .self    = self
@@ -127,9 +132,10 @@ numeric_array#(.View: Type: _PythonNumericView#(View)) := (.self: &Python, .valu
     )
 }
 
-copy_numeric#(.t: Type: _PythonNumericScalar#(t)) := (
-    .self: &Object, .destination: ArrayView#(.t: t)
+copy_numeric := #(.t: Type: _PythonNumericScalar#(t)) (
+    .self: &Object, .destination: MutableArrayView#(.t: t)
 ) -> (.result: Errable#(UIntNative, (..python_error))) {
+
     result = _copy_numeric(
         .self = self, .destination = destination, .kind = _PythonNumericScalar#(t).native_kind()
     )

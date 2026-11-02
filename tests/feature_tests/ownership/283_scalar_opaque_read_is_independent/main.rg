@@ -1,18 +1,21 @@
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.capacity = 1))
     destination ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.capacity = 1))
 
-    push(.self = $&source, .value = 7)
+    push(.self = $&source, .value = 7, .allocator = allocator)
     value_result ::= get(.self = &source, .index = 0).result
     if is(.value = value_result, .variant = ..error) {
         status_code = 1
         return
     }
-    value ::= value_result..ok
-    push(.self = $&destination, .value = value)
+    value ::= value_result ..ok
+    push(.self = $&destination, .value = value, .allocator = allocator)
 
     deinit(.self = $&source)
     destination_result ::= get(.self = &destination, .index = 0).result
@@ -20,7 +23,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    if destination_result..ok != 7 {
+    if destination_result ..ok != 7 {
         deinit(.self = $&destination)
         status_code = 1
         return

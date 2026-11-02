@@ -1,4 +1,4 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -6,15 +6,13 @@ implement Deinit#(Resource) (
     }
 )
 
-transfer_pair_if(
-        .first              : $&Resource,
-        .first_destination  : $&Resource,
-        .second             : $&Resource,
-        .second_destination : $&Resource,
-        .move               : Bool
-    ) -> (
-        .result : ?Int32
-    ) := {
+transfer_pair_if := (
+    .first              : $&Resource,
+    .first_destination  : $&Resource,
+    .second             : $&Resource,
+    .second_destination : $&Resource,
+    .move               : Bool
+) -> (.result: ?Int32) {
     if move {
         relocate(first, first_destination)
         relocate(second, second_destination)
@@ -25,7 +23,7 @@ transfer_pair_if(
     result = ..none
 }
 
-main() -> () := {
+main := () -> () {
     source ::= Resource(42)
     first_destination ::= Resource(0)
     second_destination ::= Resource(0)

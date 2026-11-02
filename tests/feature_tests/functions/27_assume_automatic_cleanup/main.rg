@@ -1,13 +1,15 @@
-CleanupCount: Type = (.value: Int32)
-Tracked : Type = ()
+drops :: Int32 = 0
+
+Tracked: Type = ()
+
 implement Deinit#(Tracked) (
-    .deinit = (.self: $&Tracked, .count: $&CleanupCount = reach count) -> () {
-        count&.value = count&.value + 1
+    .deinit = (.self: $&Tracked, .amount: Int32 = 1) -> () {
+        drops = drops + amount
     }
 )
-main() -> (.status_code: Int32 = 0) := {
-    count_storage ::= CleanupCount(.value = 0)
-    assume count ::= $&count_storage
+
+main := () -> (.status_code: Int32 = 0) {
+    assume amount: Int32 = 3
     if true { tracked ::= Tracked() }
-    if count_storage.value != 1 { status_code = 1 }
+    if drops != 3 { status_code = 1 }
 }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const lexical = @import("lexical.zig");
 
 /// In-memory buffer for a source file.
 pub const SourceFile = struct {
@@ -22,7 +23,10 @@ const ResolvedImport = struct {
     resolved_dir: []u8,
 };
 
+pub const ImportAlias = struct { name: []const u8, dir: []const u8 };
+
 pub const CoreResolutionOptions = struct {
+    import_aliases: []const ImportAlias = &.{},
     explicit_sysroot: ?[]const u8 = null,
     environ_map: ?*const std.process.Environ.Map = null,
     fallback_core_dir: []const u8 = "core",
@@ -317,7 +321,8 @@ fn collectImportDirsFromSource(
     target: @import("target.zig").Config,
 ) !void {
     var error_offset: usize = 0;
-    const selected = @import("target_selection.zig").select(alloc.*, source_code, target, &error_offset) catch |err| {
+    const selected = @import("target_selection.zig").selectImports(alloc.*, source_code, target, &error_offset) catch |err| {
+        if (err == error.OutOfMemory) return err;
         var line: usize = 1;
         var column: usize = 1;
         for (source_code[0..@min(error_offset, source_code.len)]) |byte| {
@@ -358,6 +363,110 @@ fn collectImportDirsFromSource(
     }
 }
 
+// Discover only directory prefixes actually named through an import alias.
+// Tokenizing keeps strings/comments and discarded target branches out of this scan.
+fn collectModuleImports(
+    alloc: *const std.mem.Allocator,
+    io: std.Io,
+    sources: []const SourceFile,
+    imports: *ImportList,
+    target: @import("target.zig").Config,
+) !void {
+    return collectModuleImportsWithAliases(alloc, io, sources, imports, target, &.{});
+}
+
+fn collectModuleImportsWithAliases(alloc: *const std.mem.Allocator, io: std.Io, sources: []const SourceFile, imports: *ImportList, target: @import("target.zig").Config, retained_aliases: []const ImportAlias) !void {
+    for (sources) |source| try collectImportDirsFromSource(alloc, io, source.path, source.code, imports, target);
+    if (imports.items.len == 0 and retained_aliases.len == 0) return;
+    var arena = std.heap.ArenaAllocator.init(alloc.*);
+    defer arena.deinit();
+    const temporary = arena.allocator();
+    const Token = @import("../2_tokens/token.zig");
+    const Scan = struct { source: SourceFile, tokens: Token.View };
+    const Alias = ImportAlias;
+    var scans: std.ArrayList(Scan) = .empty;
+    var aliases: std.ArrayList(Alias) = .empty;
+    try aliases.appendSlice(temporary, retained_aliases);
+    for (sources) |source| {
+        var error_offset: usize = 0;
+        const selected = try @import("target_selection.zig").selectImports(temporary, source.code, target, &error_offset);
+        var diagnostics = try @import("diagnostic.zig").Diagnostics.init(&temporary, &.{source});
+        var lexer = @import("../2_tokens/tokenizer.zig").Tokenizer.init(temporary, &diagnostics, selected, diagnostics.source_db.fileId(0));
+        const tokens = lexer.tokenize() catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => continue, // Ordinary parsing diagnoses invalid sources.
+        };
+        if (diagnostics.hasErrors()) continue;
+        try scans.append(temporary, .{ .source = source, .tokens = tokens });
+        for (tokens.contents, 0..) |token, index| {
+            if (token != .keyword_import) continue;
+            // Module aliases use `name := import(...)` (also accept mutable spelling).
+            var before = index;
+            while (before != 0 and (tokens.contents[before - 1] == .new_line or tokens.contents[before - 1] == .comment)) before -= 1;
+            if (before == 0 or tokens.contents[before - 1] != .equal) continue;
+            before -= 1;
+            while (before != 0 and (tokens.contents[before - 1] == .colon or tokens.contents[before - 1] == .double_colon)) before -= 1;
+            if (before == 0 or tokens.contents[before - 1] != .identifier) continue;
+            const directive = parseImportDirective(selected, tokens.locations[index].offset) orelse continue;
+            const name = tokens.contents[before - 1].identifier.slice(selected);
+            const dir = try resolveImportDir(&temporary, io, source.path, directive.path);
+            try aliases.append(temporary, .{ .name = name, .dir = dir });
+        }
+    }
+    for (scans.items) |scan| {
+        for (scan.tokens.contents, 0..) |token, index| {
+            if (token != .identifier) continue;
+            if (index != 0 and scan.tokens.contents[index - 1] == .dot) continue;
+            const name = token.identifier.slice(scan.source.code);
+            for (aliases.items) |alias| {
+                if (!std.mem.eql(u8, name, alias.name)) continue;
+                var dir = alias.dir;
+                var cursor = index + 1;
+                while (cursor + 1 < scan.tokens.len and scan.tokens.contents[cursor] == .dot and scan.tokens.contents[cursor + 1] == .identifier) {
+                    const child = scan.tokens.contents[cursor + 1].identifier.slice(scan.source.code);
+                    const candidate = try std.fs.path.join(temporary, &.{ dir, child });
+                    if (!dirExists(io, candidate)) break;
+                    try validateDirectoryPrivacy(scan.source.path, candidate, alias.dir);
+                    dir = candidate;
+                    cursor += 2;
+                    var known = false;
+                    for (imports.items) |entry| if (std.mem.eql(u8, entry.resolved_dir, dir)) {
+                        known = true;
+                        break;
+                    };
+                    if (!known) try imports.append(.{
+                        .raw_path = try alloc.dupe(u8, dir),
+                        .importer_path = try alloc.dupe(u8, scan.source.path),
+                        .resolved_dir = try alloc.dupe(u8, dir),
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn validateDirectoryPrivacy(importer_path: []const u8, resolved_path: []const u8, trusted_path: ?[]const u8) !void {
+    const allocator = std.heap.page_allocator;
+    const importer = try std.fs.path.resolve(allocator, &.{std.fs.path.dirname(importer_path) orelse "."});
+    defer allocator.free(importer);
+    const resolved = try std.fs.path.resolve(allocator, &.{resolved_path});
+    defer allocator.free(resolved);
+    const trusted_prefix = if (trusted_path) |path| try std.fs.path.resolve(allocator, &.{path}) else null;
+    defer if (trusted_prefix) |path| allocator.free(path);
+    var components = std.fs.path.componentIterator(resolved);
+    while (components.next()) |component| {
+        // Installation directories and an already-checked imported root do not
+        // become private submodules merely because their host path starts '_'.
+        if (trusted_prefix) |prefix| if (component.path.len <= prefix.len and std.mem.startsWith(u8, prefix, component.path)) continue;
+        if (!std.mem.startsWith(u8, component.name, "_")) continue;
+        const parent = std.fs.path.dirname(component.path) orelse continue;
+        if (std.mem.eql(u8, importer, parent) or
+            (std.mem.startsWith(u8, importer, parent) and importer.len > parent.len and std.fs.path.isSep(importer[parent.len]))) continue;
+        std.debug.print("{s}: error: submodule '{s}' is private to '{s}' and its descendants\n", .{ importer_path, component.name, parent });
+        return error.PrivateModule;
+    }
+}
+
 const ParsedImportDirective = struct {
     import_offset: usize,
     path: []const u8,
@@ -372,23 +481,17 @@ pub fn firstImportDirectiveOffset(source_code: []const u8) ?usize {
 fn nextImportDirective(source_code: []const u8, offset: *usize) ?ParsedImportDirective {
     while (offset.* < source_code.len) {
         if (source_code[offset.*] == '-' and offset.* + 1 < source_code.len and source_code[offset.* + 1] == '-') {
-            offset.* += 2;
-            while (offset.* < source_code.len and source_code[offset.*] != '\n') : (offset.* += 1) {}
+            offset.* = lexical.commentEnd(source_code, offset.*);
             continue;
         }
 
-        if (source_code[offset.*] == '"') {
-            skipQuoted(source_code, offset, '"');
-            continue;
-        }
-
-        if (source_code[offset.*] == '\'') {
-            skipQuoted(source_code, offset, '\'');
+        if (source_code[offset.*] == '"' or source_code[offset.*] == '\'') {
+            offset.* = lexical.quoted(source_code, offset.*).end;
             continue;
         }
 
         if (source_code[offset.*] != 'i' or
-            (offset.* > 0 and (isIdentifierByte(source_code[offset.* - 1]) or source_code[offset.* - 1] == '#')))
+            (offset.* > 0 and (lexical.identifierContinue(source_code[offset.* - 1]) or source_code[offset.* - 1] == '#')))
         {
             offset.* += 1;
             continue;
@@ -405,26 +508,8 @@ fn nextImportDirective(source_code: []const u8, offset: *usize) ?ParsedImportDir
     return null;
 }
 
-fn skipQuoted(source_code: []const u8, offset: *usize, quote: u8) void {
-    offset.* += 1;
-    while (offset.* < source_code.len) : (offset.* += 1) {
-        if (source_code[offset.*] == '\\') {
-            offset.* += 1;
-            continue;
-        }
-        if (source_code[offset.*] == quote) {
-            offset.* += 1;
-            return;
-        }
-    }
-}
-
 fn skipWhitespace(source_code: []const u8, offset: *usize) void {
     while (offset.* < source_code.len and std.ascii.isWhitespace(source_code[offset.*])) : (offset.* += 1) {}
-}
-
-fn isIdentifierByte(byte: u8) bool {
-    return std.ascii.isAlphanumeric(byte) or byte == '_';
 }
 
 fn parseImportDirective(source_code: []const u8, import_offset: usize) ?ParsedImportDirective {
@@ -433,35 +518,24 @@ fn parseImportDirective(source_code: []const u8, import_offset: usize) ?ParsedIm
     if (offset + import_name.len > source_code.len) return null;
     if (!std.mem.eql(u8, source_code[offset .. offset + import_name.len], import_name)) return null;
     offset += import_name.len;
-    if (offset < source_code.len and isIdentifierByte(source_code[offset])) return null;
+    if (offset < source_code.len and lexical.identifierContinue(source_code[offset])) return null;
 
     skipWhitespace(source_code, &offset);
     if (offset >= source_code.len or source_code[offset] != '(') return null;
     offset += 1;
     skipWhitespace(source_code, &offset);
     if (offset >= source_code.len or source_code[offset] != '"') return null;
-    offset += 1;
-
-    const path_start = offset;
-    while (offset < source_code.len) : (offset += 1) {
-        if (source_code[offset] == '\\') {
-            offset += 1;
-            continue;
-        }
-        if (source_code[offset] == '"') {
-            const path = source_code[path_start..offset];
-            offset += 1;
-            skipWhitespace(source_code, &offset);
-            if (offset >= source_code.len or source_code[offset] != ')') return null;
-            return .{
-                .import_offset = import_offset,
-                .path = path,
-                .next_offset = offset + 1,
-            };
-        }
-    }
-
-    return null;
+    const literal = lexical.quoted(source_code, offset);
+    if (!literal.closed) return null;
+    const path = source_code[offset + 1 .. literal.content_end];
+    offset = literal.end;
+    skipWhitespace(source_code, &offset);
+    if (offset >= source_code.len or source_code[offset] != ')') return null;
+    return .{
+        .import_offset = import_offset,
+        .path = path,
+        .next_offset = offset + 1,
+    };
 }
 
 fn freeImportList(alloc: *const std.mem.Allocator, imports: *ImportList) void {
@@ -490,18 +564,27 @@ pub fn resolveImportDir(
 ) ![]u8 {
     if (std.mem.startsWith(u8, import_path, "./") or std.mem.startsWith(u8, import_path, "../")) {
         const base_dir = std.fs.path.dirname(importer_path) orelse ".";
-        return try std.fs.path.resolve(alloc.*, &.{ base_dir, import_path });
+        const resolved = try std.fs.path.resolve(alloc.*, &.{ base_dir, import_path });
+        errdefer alloc.free(resolved);
+        try validateDirectoryPrivacy(importer_path, resolved, null);
+        return resolved;
     }
 
     if (std.mem.startsWith(u8, import_path, ".../")) {
         const project_root = try findProjectRoot(alloc, io, importer_path);
         defer alloc.free(project_root);
-        return try std.fs.path.resolve(alloc.*, &.{ project_root, import_path[4..] });
+        const resolved = try std.fs.path.resolve(alloc.*, &.{ project_root, import_path[4..] });
+        errdefer alloc.free(resolved);
+        try validateDirectoryPrivacy(importer_path, resolved, null);
+        return resolved;
     }
 
     const more_root = try resolveToolMoreDir(alloc, io);
     defer alloc.free(more_root);
-    return try std.fs.path.resolve(alloc.*, &.{ more_root, import_path });
+    const resolved = try std.fs.path.resolve(alloc.*, &.{ more_root, import_path });
+    errdefer alloc.free(resolved);
+    try validateDirectoryPrivacy(importer_path, resolved, more_root);
+    return resolved;
 }
 
 fn scanImports(
@@ -576,6 +659,35 @@ test "first import offset uses lexical import scanner" {
     try std.testing.expect(std.mem.indexOf(u8, source[0..offset], "dep :=") != null);
 }
 
+test "import discovery shares quoted boundaries with conditional selection" {
+    const prefixes = [_][]const u8{
+        "message := \"escaped \\\" #if hidden { import(\\\"./ignored\\\") }\"\n",
+        "quote := '\\''\n-- #if hidden { import(\"./ignored\") }\n",
+        "message := \"\\q #if hidden { import(\\\"./ignored\\\") }\"\n",
+    };
+    const suffix = "dep := import(\"./real\")";
+    for (prefixes) |prefix| {
+        const source = try std.mem.concat(std.testing.allocator, u8, &.{ prefix, suffix });
+        defer std.testing.allocator.free(source);
+        var offset: usize = 0;
+        const parsed = nextImportDirective(source, &offset) orelse return error.ExpectedImport;
+        try std.testing.expectEqualStrings("./real", parsed.path);
+        var error_offset: usize = 0;
+        var plan = try @import("conditional_source.zig").Plan.parse(std.testing.allocator, source, &error_offset);
+        defer plan.deinit(std.testing.allocator);
+        try std.testing.expectEqual(@as(usize, 0), plan.branches.items.len);
+    }
+    for ([_][]const u8{ "\"trailing\\", "'trailing\\", "import(\"trailing\\" }) |source| {
+        var offset: usize = 0;
+        try std.testing.expectEqual(null, nextImportDirective(source, &offset));
+        try std.testing.expect(offset <= source.len);
+    }
+    const escaped = "import(\"./escaped\\\"path\") tail";
+    const parsed = parseImportDirective(escaped, 0) orelse return error.ExpectedImport;
+    try std.testing.expectEqualStrings("./escaped\\\"path", parsed.path);
+    try std.testing.expectEqualStrings(" tail", escaped[parsed.next_offset..]);
+}
+
 fn printImportCycle(stack: []const []const u8, repeated_dir: []const u8) void {
     std.debug.print("import cycle detected: ", .{});
     var start_idx: usize = 0;
@@ -633,11 +745,10 @@ fn validateModuleGraphAcyclic(
     var imports = ImportList.init(alloc.*);
     defer freeImportList(alloc, &imports);
 
-    for (module_files.items) |source| {
-        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports, target);
-    }
+    try collectModuleImports(alloc, io, module_files.items, &imports, target);
 
     for (imports.items) |entry| {
+        if (visited_dirs.contains(entry.resolved_dir)) continue;
         try ensureImportDirExists(io, entry);
         try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, stack, target);
     }
@@ -678,11 +789,10 @@ fn collectModuleOrder(
     var imports = ImportList.init(alloc.*);
     defer freeImportList(alloc, &imports);
 
-    for (module_files.items) |source| {
-        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports, target);
-    }
+    try collectModuleImports(alloc, io, module_files.items, &imports, target);
 
     for (imports.items) |entry| {
+        if (visited_dirs.contains(entry.resolved_dir)) continue;
         try ensureImportDirExists(io, entry);
         try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, ordered_dirs, target);
     }
@@ -745,6 +855,24 @@ pub fn collectModule(
     module_dir: []const u8,
 ) !std.array_list.Managed(SourceFile) {
     return try collectModuleWithOptions(alloc, io, .{ .fallback_core_dir = core_dir }, module_dir);
+}
+
+/// Load the installed core without inventing a user module or an entrypoint.
+/// Retained interactive frontends can prepare these same module artifacts once.
+pub fn collectCoreWithOptions(alloc: *const std.mem.Allocator, io: std.Io, options: CoreResolutionOptions) !std.array_list.Managed(SourceFile) {
+    var list = std.array_list.Managed(SourceFile).init(alloc.*);
+    errdefer freeList(alloc, &list);
+    const directory = try resolveToolCoreDir(alloc, io, options);
+    defer alloc.free(directory);
+    var seen = DirSet.init(alloc.*);
+    defer {
+        var it = seen.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        seen.deinit();
+    }
+    try collectRgFilesRecursively(alloc, io, &list, directory, &seen, options.source_overrides);
+    markBundledCore(list.items);
+    return list;
 }
 
 pub fn collectModuleWithOptions(
@@ -815,10 +943,69 @@ pub fn collectModuleWithOptions(
     );
 
     for (ordered_dirs.items) |dir_path| {
+        const before = list.items.len;
         try collectRgFilesInDir(alloc, io, &list, dir_path, null, &seen_files, options.source_overrides);
+        // Retain namespace-only modules in the frontend's directory grouping.
+        // This empty buffer is in memory only; no source file is created on disk.
+        if (list.items.len == before) try list.append(.{
+            .path = try std.fs.path.join(alloc.*, &.{ dir_path, ".argi-empty-module.rg" }),
+            .code = try alloc.dupe(u8, ""),
+        });
     }
 
     return list;
+}
+
+/// Discover only an in-memory submission's dependencies. Accepted module
+/// directories are immutable leaves: neither reread nor rediscover their files.
+/// Source paths use the caller's real import base, independently of submission IDs.
+pub fn collectImportedModules(
+    alloc: *const std.mem.Allocator,
+    io: std.Io,
+    source: SourceFile,
+    retained_dirs: []const []const u8,
+    options: CoreResolutionOptions,
+) !std.array_list.Managed(SourceFile) {
+    var arena = std.heap.ArenaAllocator.init(alloc.*);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    var imports = ImportList.init(scratch);
+    try collectModuleImportsWithAliases(&scratch, io, &.{source}, &imports, options.target, options.import_aliases);
+    var visited = DirSet.init(scratch);
+    var ordered_seen = DirSet.init(scratch);
+    for (retained_dirs) |dir| {
+        try visited.put(dir, {});
+        try ordered_seen.put(dir, {});
+    }
+    var stack = std.array_list.Managed([]const u8).init(scratch);
+    var ordered = std.array_list.Managed([]const u8).init(scratch);
+    for (imports.items) |entry| {
+        if (visited.contains(entry.resolved_dir)) continue;
+        try ensureImportDirExists(io, entry);
+        try validateModuleGraphAcyclic(&scratch, io, entry.resolved_dir, null, null, options.source_overrides, &visited, &stack, options.target);
+    }
+    for (imports.items) |entry|
+        try collectModuleOrder(&scratch, io, entry.resolved_dir, null, null, options.source_overrides, &ordered_seen, &ordered, options.target);
+    var files = std.array_list.Managed(SourceFile).init(scratch);
+    var seen = DirSet.init(scratch);
+    for (ordered.items) |dir| {
+        const before = files.items.len;
+        try collectRgFilesInDir(&scratch, io, &files, dir, null, &seen, options.source_overrides);
+        if (files.items.len == before) try files.append(.{
+            .path = try std.fs.path.join(scratch, &.{ dir, ".argi-empty-module.rg" }),
+            .code = "",
+        });
+    }
+    var result = std.array_list.Managed(SourceFile).init(alloc.*);
+    errdefer freeList(alloc, &result);
+    for (files.items) |file| {
+        const path = try alloc.dupe(u8, file.path);
+        errdefer alloc.free(path);
+        const code = try alloc.dupe(u8, file.code);
+        errdefer alloc.free(code);
+        try result.append(.{ .path = path, .code = code });
+    }
+    return result;
 }
 
 pub fn collectWithEntrySource(
@@ -917,7 +1104,12 @@ pub fn collectWithEntrySourceWithOptions(
 
     for (ordered_dirs.items) |dir_path| {
         const skip_path = if (std.mem.eql(u8, dir_path, user_dir)) user_path else null;
+        const before = list.items.len;
         try collectRgFilesInDir(alloc, io, &list, dir_path, skip_path, &seen_files, options.source_overrides);
+        if (list.items.len == before and !std.mem.eql(u8, dir_path, user_dir)) try list.append(.{
+            .path = try std.fs.path.join(alloc.*, &.{ dir_path, ".argi-empty-module.rg" }),
+            .code = try alloc.dupe(u8, ""),
+        });
     }
 
     // ─── user entry point at the end ────────────────────────────────────
@@ -948,4 +1140,26 @@ pub fn freeList(
         alloc.free(f.code);
     }
     list.deinit();
+}
+
+test "module directory privacy ignores the installation prefix" {
+    try validateDirectoryPrivacy("/outside/main.rg", "/tools/_installation/more/math/linear_algebra", "/tools/_installation/more");
+    try validateDirectoryPrivacy("/project/tree/branch/main.rg", "/project/tree/_detail", null);
+    try validateDirectoryPrivacy("/outside/main.rg", "/tools/_installation/more/math/linear_algebra", "/tools/_installation/more/math");
+}
+
+test "import discovery propagates source indexing and token allocation failures" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    for (0..128) |_| try source.appendSlice(std.testing.allocator, "value := 42\n");
+    try @import("../test_support.zig").checkAllocationAndResizeFailures(std.testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator, code: []const u8) !void {
+            var imports = ImportList.init(allocator);
+            defer freeImportList(&allocator, &imports);
+            const sources = [_]SourceFile{.{ .path = "memory/main.rg", .code = code }};
+            // Retained aliases require the token scan even without a new import.
+            try collectModuleImportsWithAliases(&allocator, std.testing.io, &sources, &imports, .{}, &.{.{ .name = "retained", .dir = "." }});
+            try std.testing.expectEqual(@as(usize, 0), imports.items.len);
+        }
+    }.run, .{source.items});
 }

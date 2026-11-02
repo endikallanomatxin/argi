@@ -1,0 +1,36 @@
+Resource := (.active: Bool)
+State := (.used: Bool)
+
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {}
+)
+
+produce := (.state: $&State) -> (.result: Resource) {
+    if state&.used {
+        result = (.active = false)
+    } else {
+        state&.used = true
+        result = (.active = true)
+    }
+}
+
+observe := (.value: &Resource) -> (.result: Bool) {
+    result = value&.active
+}
+
+exercise := () -> (.result: Int32) {
+    state :: State = (.used = false)
+    while observe(.value = &produce(.state = $&state)) {}
+    if state.used == false { abort }
+    result = 42
+}
+
+main := () -> (.status_code: Int32 = 0) {
+    compiled ::= #run () -> (.value: Int32) { value = exercise() }
+    if compiled != 42 { abort }
+    #if exercise() == 42 {
+        status_code = exercise()
+    } else {
+        abort
+    }
+}

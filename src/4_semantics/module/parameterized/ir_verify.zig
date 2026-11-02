@@ -15,6 +15,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
         },
         .literal => {},
+        .execution => |id| try require(verify.idFits(id, storage.nodes.items.len)),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .binary => |value| {
             if (value.source) |source| try require(verify.sourceFits(source, graph.file_offsets.items.len));
@@ -24,6 +25,12 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     };
 
     for (storage.types.items) |ty| switch (ty) {
+        .definition => |value| {
+            try require(verify.idFits(value.origin, graph.semantic.type_definitions.items.len));
+            try require(verify.idFits(value.body, storage.types.items.len));
+            try require(verify.rangeFits(value.arguments, storage.generic_arguments.items.len));
+        },
+
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .projection => |value| {
@@ -44,7 +51,19 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
         .resolved => |resolved| try payload.semanticType(ir.Ids, resolved, bounds),
     };
 
-    for (storage.declarations.items) |decl| try declarationRef(graph, decl.target);
+    for (storage.declarations.items) |decl| switch (decl.target) {
+        .projection => |projection| {
+            try require(verify.idFits(projection.base, storage.types.items.len));
+            try require(verify.stringFits(projection.member, graph.strings.items));
+            try require(verify.sourceFits(projection.source, graph.file_offsets.items.len));
+        },
+        .module => |id| try require(verify.idFits(id, graph.declarations.items.len)),
+        .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
+        .parameter => |id| {
+            try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len));
+            try require(graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(id)].kind == .definition);
+        },
+    };
     for (storage.functions.items) |function| switch (function.target) {
         .module => |id| try require(verify.idFits(id, graph.functions.items.len)),
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
@@ -61,6 +80,21 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.generic_arguments.items) |value| {
         try require(verify.stringFits(value.name, graph.strings.items));
         switch (value.value) {
+            .projection => |projection| {
+                try require(verify.idFits(projection.base, storage.types.items.len));
+                try require(verify.stringFits(projection.member, graph.strings.items));
+                try require(verify.sourceFits(projection.source, graph.file_offsets.items.len));
+            },
+            .definition => |definition| switch (definition) {
+                .parameter => |id| {
+                    try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len));
+                    try require(graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(id)].kind == .definition);
+                },
+                .literal => |literal| {
+                    try require(verify.idFits(literal.origin, storage.declarations.items.len));
+                    try require(verify.rangeFits(literal.captures, storage.generic_arguments.items.len));
+                },
+            },
             .type => |id| try require(verify.idFits(id, storage.types.items.len)),
             .comptime_int => |id| try require(verify.idFits(id, storage.int_expressions.items.len)),
         }
@@ -94,13 +128,8 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.virtual_registries.items) |value| try payload.virtualRegistry(ir.Ids, value, bounds);
     for (storage.virtualizes.items) |value| try payload.virtualize(ir.Ids, value, bounds);
     for (storage.virtual_calls.items) |value| try payload.virtualCall(ir.Ids, value, bounds);
-    for (storage.reach_segments.items) |range| try require(verify.stringFits(range, graph.strings.items));
-    for (storage.reach_alternatives.items) |value| try payload.reachAlternative(ir.Ids, value, bounds);
-    for (storage.reaches.items) |value| try payload.reach(ir.Ids, value, bounds);
     for (storage.nullable_unwraps.items) |value| try payload.nullableUnwrap(ir.Ids, value, bounds);
-    for (storage.testing_expect_errors.items) |value| try payload.testingExpectError(ir.Ids, value, bounds);
     for (storage.error_propagations.items) |value| try payload.errorPropagation(ir.Ids, value, bounds);
-    for (storage.error_contexts.items) |value| try payload.errorContext(ir.Ids, value, bounds);
 
     for (storage.pending.items) |pending| try verifyPending(graph, pending);
     for (storage.match_cases.items) |case| {
@@ -140,6 +169,37 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
         },
         .resolve_expression => |value| {
             try require(verify.rangeFits(value.operands, storage.node_refs.items.len));
+            if (value.kind == .entry_capture) {
+                try require(value.name != null);
+                switch (value.detail) {
+                    .none => try require(value.operands.len == 1),
+                    .capture_module_value => |node| {
+                        try require(value.operands.len == 0);
+                        try require(verify.idFits(node, graph.semantic.nodes.items.len));
+                    },
+                    .capture_owner => |owner| {
+                        try require(value.operands.len == 0);
+                        try require(verify.optionalIdFits(owner, graph.functions.items.len));
+                    },
+                    else => return error.InvalidModuleParameterizedIR,
+                }
+            }
+            if (value.kind == .comptime_if) {
+                try require(value.operands.len == 2 or value.operands.len == 3);
+                for (storage.node_refs.items[value.operands.start + 1 ..][0 .. value.operands.len - 1]) |branch| {
+                    try require(verify.idFits(branch, storage.nodes.items.len));
+                    const node = storage.nodes.items[@intFromEnum(branch)];
+                    try require(node == .resolved and node.resolved.content == .code_block);
+                }
+            }
+            if (value.detail == .callee_value) {
+                try require(value.kind == .generic_call);
+                try require(verify.idFits(value.detail.callee_value, storage.nodes.items.len));
+            }
+            if (value.kind == .entity_application) {
+                try require(value.detail == .entity_application);
+                try require(verify.idFits(value.detail.entity_application, storage.types.items.len));
+            }
             try require(verify.optionalIdFits(value.assumed_arguments, storage.nodes.items.len));
             if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
             if (value.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
@@ -166,6 +226,8 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
     return .{
         .files = graph.file_offsets.items.len,
         .declarations = storage.declarations.items.len,
+        .family_definitions = storage.declarations.items.len,
+        .type_definitions = graph.semantic.type_definitions.items.len,
         .types = storage.types.items.len,
         .functions = storage.functions.items.len,
         .bindings = storage.bindings.items.len,
@@ -182,13 +244,8 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtual_registries = storage.virtual_registries.items.len,
         .virtualizes = storage.virtualizes.items.len,
         .virtual_calls = storage.virtual_calls.items.len,
-        .reach_segments = storage.reach_segments.items.len,
-        .reach_alternatives = storage.reach_alternatives.items.len,
-        .reaches = storage.reaches.items.len,
         .nullable_unwraps = storage.nullable_unwraps.items.len,
-        .testing_expect_errors = storage.testing_expect_errors.items.len,
         .error_propagations = storage.error_propagations.items.len,
-        .error_contexts = storage.error_contexts.items.len,
         .node_refs = storage.node_refs.items.len,
         .type_refs = storage.type_refs.items.len,
         .binding_refs = storage.binding_refs.items.len,
@@ -232,4 +289,13 @@ test "parameterized IR verifier accepts semantic variants and qualified generic 
     } });
     try graph.semantic.parameterized_storage.ir.nodes.append(allocator, .{ .pending = @enumFromInt(0) });
     try verifyIR(&graph);
+}
+
+test "parameterized entry captures require one source operand and a name" {
+    const std = @import("std");
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.semantic.parameterized_storage.ir.pending.append(a, .{ .resolve_expression = .{ .kind = .entry_capture, .source = .{ .file_index = 0, .offset = 0 } } });
+    try std.testing.expectError(error.InvalidModuleParameterizedIR, verifyIR(&graph));
 }

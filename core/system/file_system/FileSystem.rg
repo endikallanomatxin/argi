@@ -1,35 +1,39 @@
-FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
+_FileSystemInitArgs := (.ffi: $&ForeignFunctionInterface)
+
+FileSystem := (._ffi: $&ForeignFunctionInterface)
 
 ..path_open_failed
 ..path_remove_failed
 ..path_rename_failed
 
-once _acquire_file_system := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
-    .result : FileSystem
-) {
-    ffi ::= args.ffi
+_acquire_file_system := once _FileSystemInitArgs -> (.result: FileSystem) {
 
     result._ffi = ffi
 }
 
-implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+FileSystemInitArgs: Type = _FileSystemInitArgs
+
+implement Init#(FileSystem, FileSystemInitArgs) (
     .Result : Type = FileSystem
-    .init   = _acquire_file_system
+
+    .init = _acquire_file_system
 )
 
-_read_c_file#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: &Char, .allocator: $&Provider
+_read_c_file := (
+    .self: &FileSystem, .path: &CChar, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
     )
 ) {
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -71,7 +75,7 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
         }
 
         payload ::= next_value ..ok
-        grew ::= push_byte($&text, .byte = payload, .allocator = allocator)
+        grew ::= _string_push_byte($&text, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
@@ -92,22 +96,25 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
         return
     }
 
+    _ ::= _validate_string(.self = &text)!
     result = ..ok ~text
 }
 
-_read_string_file#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: &String, .allocator: $&Provider
+_read_string_file := (
+    .self: &FileSystem, .path: &String, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
     )
 ) {
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -116,19 +123,21 @@ _read_string_file#(.Provider: Type: Allocator#(Provider)) := (
     result = read_file(self, .path = c_path, .allocator = allocator)
 }
 
-_read_view_file#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: StringView, .allocator: $&Provider
+_read_view_file := (
+    .self: &FileSystem, .path: StringView, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
     )
 ) {
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -142,19 +151,21 @@ _read_view_file#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-_read_path_file#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: &Path, .allocator: $&Provider
+_read_path_file := (
+    .self: &FileSystem, .path: &Path, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
     )
 ) {
+
     assume ffi := self&._ffi
     assume allocator
 

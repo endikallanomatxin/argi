@@ -1,9 +1,11 @@
 -- Explicit trusted ownership boundaries usable by any library. The checker
--- still enforces every invariant it can prove; callers maintain runtime-slot
--- initializedness and exactly-once destruction manually. In particular,
--- trusted_opaque_drop requires exactly one live value that has not already been moved out
--- or dropped; opaque slots intentionally have no dynamic occupancy tracking.
-trusted_opaque_move#(.t: Type)(.destination: $&t, .source: t) -> () := {
+-- still enforces every invariant it can prove; callers maintain the opaque
+-- container bookkeeping and exactly-once transfers/destruction. Prepared slots
+-- retain initialization and cleanup evidence, but do not prove that bookkeeping.
+-- trusted_opaque_drop requires one live value, or the tracked remaining children
+-- of prepared storage after partial consumption. Untracked raw storage promises
+-- a complete value. A whole move or drop cannot be followed by another drop.
+trusted_opaque_move := #(.t: Type) (.destination: $&t, .source: t) -> () {
     destination&= source
 }
 
@@ -14,9 +16,9 @@ trusted_opaque_move#(.t: Type)(.destination: $&t, .source: t) -> () := {
 -- dependencies introduced later by mutation through an opaque slot pointer.
 -- Pointer provenance retains the concrete storage generation observed when
 -- the pointer was created; refreshing the domain never rebinds old aliases.
-trusted_opaque_move_in#(.t: Type, .storage_type: Type)(
+trusted_opaque_move_in := #(.t: Type, .storage_type: Type) (
     .storage: $&storage_type, .destination: $&t, .source: t
-) -> () := {
+) -> () {
     destination&= source
 }
 
@@ -24,9 +26,9 @@ trusted_opaque_move_in#(.t: Type, .storage_type: Type)(
 -- slot becomes empty and the returned value becomes responsible for cleanup.
 -- `storage` identifies the conservative domain; it has no runtime role. The
 -- caller guarantees that `slot` contains exactly one live value.
-trusted_opaque_move_out#(.t: Type, .storage_type: Type)(.storage: $&storage_type, .slot: $&t) -> (
-    .result : t
-) := {
+trusted_opaque_move_out := #(.t: Type, .storage_type: Type) (
+    .storage: $&storage_type, .slot: $&t
+) -> (.result: t) {
     result = slot&
 }
 
@@ -38,15 +40,15 @@ trusted_opaque_move_out#(.t: Type, .storage_type: Type)(.storage: $&storage_type
 -- Passing trusted_opaque_move_in once is not a permanent relocatability proof. Relocation
 -- is rejected when current aggregate facts show that later mutation introduced
 -- a dependency on the source opaque domain's storage generation.
-trusted_opaque_relocate#(.t: Type)(.source: $&t, .destination: $&t) -> () := {
+trusted_opaque_relocate := #(.t: Type) (.source: $&t, .destination: $&t) -> () {
 }
 
-trusted_opaque_drop#(.t: Type)(.slot: $&t) -> () := {
-    deinit(.self = slot)
+trusted_opaque_drop := #(.t: Type) (.slot: $&t) -> () {
+    -- Ownership finalization supplies the selected whole-value/structural cleanup plan.
 }
 
 -- The caller guarantees every opaque runtime value in `storage` was already
 -- destroyed. This discharges only the checker's domain-level hidden temporal
 -- dependencies; it does not free storage or refresh its generation.
-trusted_opaque_mark_empty#(.t: Type)(.storage: $&t) -> () := {
+trusted_opaque_mark_empty := #(.t: Type) (.storage: $&t) -> () {
 }

@@ -1,1 +1,4 @@
-main() -> () := { manager ::= ProcessManager() }
+main := () -> () {
+
+    manager ::= ProcessManager()
+}

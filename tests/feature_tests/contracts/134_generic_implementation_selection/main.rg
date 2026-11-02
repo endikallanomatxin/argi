@@ -1,11 +1,11 @@
 Copyable#(.Value: Type): Contract = (
-    .Result: Type
-    .copy: (.value: Value) -> (.result: Result)
+    .Result : Type
+    .copy   : (.value: Value) -> (.result: Result)
 )
 
 implement#(.T: Type) Copyable#(T) (
-    .Result: Type = T
-    .copy = (.value: T) -> (.result: Result) { result = value }
+    .Result : Type = T
+    .copy   = (.value: T) -> (.result: Result) { result = value }
 )
 
 main := () -> (.status_code: Int32 = 0) {

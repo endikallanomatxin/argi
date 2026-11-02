@@ -1,4 +1,5 @@
-sum_iterable#(.T: Type: Iterable#(T))(.items: &T) -> (.sum: Int32) := {
+sum_iterable := #(.T: Type: Iterable#(T)) (.items: &T) -> (.sum: Int32) {
+
     iterator ::= to_iterator(.value = items)
     sum = 0
 
@@ -8,15 +9,20 @@ sum_iterable#(.T: Type: Iterable#(T))(.items: &T) -> (.sum: Int32) := {
     }
 }
 
-main(.system: System) -> (.status_code: Int32) := {
+main := (.system: System) -> (.status_code: Int32) {
+
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
-    values : Array#(.n = 3, .t: Int32) = (3, 4, 5)
+    allocator_concrete := $&allocator_storage
+    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    assume allocator := virtual_allocator
+    values: Array#(.n = 3, .t: Int32) = (3, 4, 5)
     array_sum :: Int32 = sum_iterable(.items = &values).sum
 
-    dyn :: DynamicArray#(.t: Int32) = unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
-    dyn | push(.self = $&_, .value = 2)
-    dyn | push(.self = $&_, .value = 6)
+    dyn :: DynamicArray#(.t: Int32) = unwrap_or_abort(
+        .value = DynamicArray#(.t: Int32)(.capacity = 2)
+    )
+    dyn | push(.self = $&_, .value = 2, .allocator = allocator)
+    dyn | push(.self = $&_, .value = 6, .allocator = allocator)
     dynamic_sum :: Int32 = sum_iterable(.items = &dyn).sum
 
     if array_sum != 12 {

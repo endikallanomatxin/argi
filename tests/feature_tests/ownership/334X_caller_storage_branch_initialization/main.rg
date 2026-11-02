@@ -1,4 +1,4 @@
-Resource: Type = (.value: Int32)
+Resource := (.value: Int32)
 
 drops :: Int32 = 0
 
@@ -8,7 +8,7 @@ implement Deinit#(Resource) (
     }
 )
 
-choose(.left: Bool) -> (.result: &Resource) := {
+choose := (.left: Bool) -> (.result: &Resource) {
     if left {
         first :: Resource = (.value = 3)
         result = &first
@@ -18,7 +18,7 @@ choose(.left: Bool) -> (.result: &Resource) := {
     }
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     {
         left ::= choose(.left = true)
         right ::= choose(.left = false)

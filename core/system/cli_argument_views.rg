@@ -1,11 +1,14 @@
-CliArgumentViews: Type = (._values: ArrayViewRO#(.t: StringView))
+CliArgumentViews := (._values: ArrayView#(.t: StringView))
 
-implement Init#(CliArgumentViews, (.values: ArrayViewRO#(.t: StringView))) (
+CliArgumentViewsInitArgs: Type = (.values: ArrayView#(.t: StringView))
+
+implement Init#(CliArgumentViews, CliArgumentViewsInitArgs) (
     .Result : Type = CliArgumentViews
-    .init   = (.args: (.values: ArrayViewRO#(.t: StringView))) -> (.result: Result) {
-        values ::= args.values
 
-        result = (._values = values)
+    .init = CliArgumentViewsInitArgs -> (.result: Result) {
+        _init_values ::= values
+
+        result = (._values = _init_values)
     }
 )
 
@@ -15,8 +18,10 @@ implement ArgumentSource#(CliArgumentViews) (
     }
 
     .get = (.self: &CliArgumentViews, .index: UIntNative) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
     ) {
-        result = get(&self&._values, .index = index)
+
+        value ::= get(&self&._values, .index = index)!
+        result = ..ok value
     }
 )

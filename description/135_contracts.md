@@ -4,14 +4,14 @@
 
 An ordinary function has one identity in its module namespace. It can be generic,
 but its name cannot be overloaded, including by changing compile-time parameter
-count or types. Ordinary declarations use the existing `#(...)` parameter syntax:
+count or types. Ordinary definitions place their `#(...)` parameters on the value after `:=`:
 
 ```argi
 square := (.value: Int32) -> (.result: Int32) {
     result = value * value
 }
 
-identity#(.T: Type) := (.value: T) -> (.result: T) {
+identity := #(.T: Type) (.value: T) -> (.result: T) {
     result = value
 }
 ```
@@ -36,7 +36,8 @@ members under the composing contract.
 
 ## Implementations and specialization
 
-`implement` supplies a contract's operations and associated elements for a tuple
+The reserved keyword `implement` supplies a contract's operations and associated
+elements for a tuple
 of participants. It does not use an assignment after the contract application:
 
 ```argi
@@ -57,6 +58,11 @@ implement Product#(Row, Column) (
 )
 ```
 
+Members may also use a specialized definition directly, for example
+`.copy = copy_value#(T)`. Its compile-time arguments retain the implementation's
+lexical bindings. Function-value expressions are resolved through the ordinary
+captured-expression machinery; pending aliases do not force premature evaluation.
+
 Generic binders belong after `implement`, for example
 `implement#(.T: Type) Copyable#(Box#(T)) (...)`. Applicable conformances are ranked
 by structural pattern specificity. Select one uniquely most specific conformance;
@@ -68,6 +74,16 @@ not cause fallback to a less specific conformance.
 An external implementation must be declared in the contract's defining module
 or the defining module of a nominal participant. Validate visible overlaps
 without giving source order or import order any priority.
+
+Incremental sessions distinguish a registered operation signature from its
+completed body. Registration alone does not freeze the body's conformance
+choices. The first selected use completes and checks the body within one
+semantic transaction. Lexical names retain their definition context; concrete
+participants can select evidence introduced after that definition. Once
+completed, the specialization keeps its body and selected evidence. New type
+arguments may produce new specializations; materializing one never rewrites
+another. Rejected materialization restores the pending signature and publishes
+neither body proofs nor executable units.
 
 ## Calling operations
 
@@ -94,13 +110,35 @@ provide compile-time guarantees; specialization and monomorphization produce
 ordinary concrete calls. Constraints are checks on known or inferred parameters,
 not a general constraint-solving mechanism.
 
+An associated family is also a compile-time value. For example, passing
+`Factory#(Owner).Args` to a family parameter preserves the selected definition
+and its captures. The known participants select the conformance first; the
+associated value does not infer an otherwise unknown participant.
+
 ## Standard operations
 
-Construction uses `Init#(T, Args)`, with an associated `Result` and an `init`
-operation. `T(...)` supplies fields of `Args`, including their defaults. `Result`
-is `T` or an `Errable` containing `T`; eligible types without a custom Init retain
-structural construction. Alternative construction uses explicitly named functions
-or conversions instead of constructor overloads.
+Construction uses `Init#(Target, Args)`. Both participants are concrete types;
+Args is the nominal input record and retains its defaults. The associated Result
+must be Target or an Errable containing Target. The fixed requirement is
+`.init: Args -> (.result: Result)`.
+
+`T(...)` fixes the target and infers the remaining participants from applicable
+input signatures and lexically assumed arguments. Implementation parameters must be determined by those participants. Library
+allocator inputs are virtual capabilities rather than inferred type parameters. Several Init
+conformances may share a target. Different inferred argument types require
+qualification; specificity only compares conformances for the same complete tuple.
+Return types never select construction. Untyped call literals receive their
+nominal context from candidate signatures, not structural type identity.
+
+Eligible types without a custom Init retain structural construction. Alternative
+factories may still use explicitly named functions. Initializer behavior and
+compiler-managed storage initialization/cleanup remain separate responsibilities.
+
+Unqualified calls can infer participants from implementation-owned inputs,
+including ordinary generic aliases and operation-local compile-time parameters.
+Inputs must identify a unique operation and participant tuple; an expected output
+type does not disambiguate either. Signature probes discard their semantic
+effects, and preserve any newly inferred nominal types until actual selection.
 
 Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
 must be `Target` or an `Errable` containing it. Explicit conversion syntax is
@@ -116,29 +154,30 @@ Operators identify standard contracts such as Add, Multiply and Equal. Their
 conformances use the same participant dispatch and obey explicit copy, move and
 reference rules.
 
-Binary arithmetic contracts include an argument-record participant:
+Binary arithmetic contracts select by their two operand types:
 
 ```argi
-Add#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+Add#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
-    .add: (.args: Args) -> (.result: Result)
+    .add: _
 )
 ```
 
-The Args pattern contains the operands and any additional operation capabilities.
-For example, a string implementation can include a reference to a generic
-allocator with a reach default. Its provider is inferred from that field, so
-selection remains static without adding a provider to every arithmetic contract
-or erasing the allocator. Operand participants and Args are inferred together
-from implementation input patterns; Result contributes no inference bindings.
-The selected Args record completes defaults and reached capabilities before
-invoking the scoped operation, following the same selection rules as Init.
-Addition now uses this lowering for concrete and specialized generic expressions.
-Bundled string concatenation implementations retain a statically selected allocator.
-Equality uses `Equal#(Left, Right, Args)` with an `equal` operation returning
-Bool. The `!=` symbol negates the same selected operation and evaluates it once.
+Each implementation supplies its operation signature. Its ordinary inputs include
+both operands and any auxiliary capabilities. An allocator provider can be a
+compile-time parameter of that callable, inferred from an explicit or lexically assumed input after the conformance has been selected. It does not distinguish
+conformances. The operation returns `(.result: Result)`; Result never selects an
+implementation. Borrowed operands use reference participants and explicit
+reference arguments. Concrete and specialized generic expressions share this
+selected-evidence path.
+
+Equality uses `Equal#(Left, Right)` with an `equal` operation taking the two
+operand types directly and returning `(.ok: Bool)`. Borrowed equality uses
+reference participants, such as `Equal#(&Key, &Key)`. Auxiliary inputs belong
+to the operation signature and cannot distinguish conformances for one tuple.
+The `!=` symbol negates the same selected operation and evaluates it once.
 Bundled StringView, time values, Path and semver comparisons use Equal; auxiliary
-capabilities can be fields with reach defaults, including in generic bodies.
+capabilities are ordinary inputs, including in generic bodies.
 Both addition and equality require explicit references for borrowed operands;
 there is no implicit receiver address. Legacy operator declarations and their
 metadata registries are removed. Arithmetic symbols select Add, Subtract,
@@ -147,6 +186,10 @@ representation hooks; primitive lowering happens after evidence selection and
 preserves constant expressions. It never replaces a custom implementation.
 Scalar equality also selects Equal evidence before primitive lowering, preserving
 IEEE NaN behavior and evaluating != once.
+Choices without payloads use the same selected-evidence path to compare tags.
+The operands must have the same type; matching variant names do not make two
+independent nominal choices interchangeable. Choices with payloads require their
+own equality implementation.
 
 Ordered comparisons use two contracts with ordinary Left and Right participants:
 
@@ -170,7 +213,7 @@ operations outside these standard contracts.
 `TotalOrder#(Left, Right)` requires Compare and promises a total ordering, including
 that compare never returns unordered. Mathematical consistency, transitivity and
 coherence with any corresponding Equal implementation remain implementer obligations.
-Integers, Bool and Char provide this evidence; floating-point types do not.
+Integers, Bool and UnicodeScalar provide this evidence; floating-point types do not.
 
 C enum and C function-pointer equality also select Equal evidence. Their private
 representation classification is compiler-provided; it does not provide ordering
@@ -252,10 +295,9 @@ Bundled OrderPolicy uses explicit policy and element participants, scoped inline
 implementations and qualified calls throughout sort, binary search and priority
 queues. Its former global less functions and unary conformance declarations have
 been removed. Sort, binary_search and _sift_down use unique ordinary declarations.
-Bundled HashPolicy and BorrowedHashPolicy also use explicit policy/key
-participants and scoped hash/eql implementations throughout maps, sets and
-iteration. Their global operation families have been removed. Borrowed integer
-hashing reuses the corresponding value-key implementation.
+Bundled HashPolicy uses explicit policy/key participants and scoped query/hash/equal
+operations that borrow keys throughout maps and sets. A single HashMap
+implementation supports copyable and noncopyable elements.
 Generic function instance validation shares the same tuple-aware contract check
 used during selection.
 
@@ -274,8 +316,6 @@ explicit virtual handles; conformance never changes a field's representation.
 Virtual and to_virtual use `.contract` or positional arguments; the former
 `.abstract` label is rejected. Unknown argument names are checked before
 contextual inference.
-Final validation and remaining cleanup are tracked in
-`plan/contract_dispatch_refactor.md`.
 
 BufferReading scopes complete input-buffer reads. Its generic Reader fallback
 copies bytes through read_byte, while File and TcpConnection select native block
@@ -308,12 +348,11 @@ ordinary functions compete by identity, never by cross-contract specificity.
 Multiple applicable identities require explicit qualification. Static and
 generic bodies share this lookup; unary virtual inputs retain their identity.
 
-Scoped requirement inputs retain lexical reach defaults. Unqualified operation
-selection can infer direct participants from visible capability bindings and
-field paths, including unary virtual evidence. A missing capability does not
-supply an inferred type. Selected calls materialize the requirement defaults
-through the ordinary reached-argument path. Conformance ambiguities remain
-diagnostics after speculative selection rolls back.
+Scoped requirement inputs use ordinary defaults and lexical assumptions.
+Selection infers participants from explicitly supplied or assumed input fields,
+including unary virtual evidence. A missing input never supplies an inferred
+type or extends a caller signature. Conformance ambiguities remain diagnostics
+after speculative selection rolls back.
 
 Bundled iteration protocols now use explicit collection/state participants and
 associated `Item`/`IteratorType` elements. `for` calls the selected conversion,
@@ -327,7 +366,7 @@ BlockReader and BlockWriter use explicit stream participants and selected virtua
 evidence. Their static/virtual algorithm copies have been consolidated.
 StreamTransfer scopes the general and buffered endpoint implementations to one
 two-participant identity; specialization never chooses between unrelated contracts.
-BorrowedOrderPolicy supplies owning collection comparisons without consuming
+OrderPolicy supplies owning collection comparisons without consuming
 elements. Bound unary virtual types retain their fixed interface evidence when
 passed through ordinary generic functions or static contract implementations.
 
@@ -338,9 +377,9 @@ not redefine inherited operations. Named associated constraints infer generic
 leaves only after participants select the evidence, without using a desired
 result to select an implementation.
 
-Collection indexing now follows this model: IndexableMutable requires Indexable
-and supplies only writable indexing. Resizable uses collection and allocation
-provider participants for growth, while its Removable dependency supplies
+Collection indexing now follows this model: MutableIndexable requires Indexable
+and supplies only writable indexing. Resizable selects growth by collection
+and accepts a virtual allocator capability, while its Removable dependency supplies
 allocation-free removal under its own unary identity. Generic collection
 algorithms preserve their collection type and derive element constraints from
 selected Item evidence. Validation of newly selected evidence joins ordinary
@@ -354,9 +393,12 @@ parameterized bodies. The source protocol and CLI view adapter live separately
 from option-tokenization and schema code.
 
 Generic operation aliases infer their ordinary function parameters from the
-selected requirement's input signature. The aliased declaration is fixed; no
-second overload search or result-directed inference occurs. Selected bounds and
-result compatibility remain checked. Equivalent generic implementation patterns
+selected requirement's input signature. A named alias can retain a completely
+or partially specialized function value; its captured arguments stay fixed, and
+only remaining parameters are inferred. Reuse preserves the producer identity
+and `once` restriction. No second overload search or result-directed inference
+occurs. Selected bounds and result compatibility remain checked. Equivalent
+generic implementation patterns
 and extension ownership are checked even for dormant templates.
 
 ImplicitlyCopyable and InfalliblyCopyable now have explicit Value participants.
@@ -364,17 +406,17 @@ The former grants duplication permission; the latter owns the explicit copy
 operation. Implicitly copyable types receive a generic infallible implementation.
 Ownership recognizes declared copy capabilities independently of global function
 names, so an explicit owning copy operation never grants implicit duplication.
-FalliblyCopyable now selects the value and allocator provider jointly. String,
+FalliblyCopyable selects the value type and receives a virtual allocator capability. String,
 Path and DynamicArray provide scoped operations; array copying has one generic
-implementation and preserves the element's associated reasons and tracer.
+implementation and preserves the element's associated reasons and any existing trace.
 Ownership queries these conformances rather than functions named copy.
 
 The standard Init contract now owns canonical construction for migrated types.
 Type calls select Init evidence, complete its Args record and invoke its init
-operation; Result must be the participant itself or one bundled Errable containing
+operation; Result must be the target participant or one bundled Errable containing
 it. Concrete and explicit generic calls, including parameterized bodies, share
 this route. Closed anonymous Args records retain ordinary field defaults; generic
-argument shapes retain scalar and lexical reach defaults. Failed construction
+argument shapes retain ordinary defaults and lexical assumptions. Failed construction
 probes roll back evidence and generic side effects.
 
 Initializer safety and projected output dependencies recognize selected Init
@@ -398,7 +440,8 @@ evidence as explicit deinit calls. Its self input is consuming. Generic and
 specialized conformances, ordinary operation aliases, imported owners and nested
 structural cleanup share that route. A lifecycle wrapper gives the selected
 operation destruction semantics without changing a reused ordinary function.
-Optional/reached capability inputs still propagate through tracked calls.
+Auxiliary capability inputs must appear in the operation signature and are
+supplied explicitly or through the caller's lexical assumptions.
 
 Bundled Deinit implementations include allocation receipts and backing
 allocations, arena owners/domains, collection shape markers, fixed tracers, native
@@ -462,14 +505,14 @@ below.
 Numeric limits use IntegerBounds evidence behind the unique integer_limits
 entry. Private IEEE encoding/replacement uses _FloatRepresentation; these
 operations remain representation-specific, not a public Float extension hook.
-StringFormatting selects value and allocator provider jointly; unique format and
+StringFormatting selects the value type and receives a virtual allocator; unique format and
 format_into entries reuse selected render/append operations. Concatenation
 provides the unique concat entry for borrowed strings and string views.
 
 ContiguousView associates the base pointer type and shares checked subranges
 without erasing mutability. CollectionLength/CollectionCapacity select nominal
 collection queries. ByteCursor scopes stateful cursor queries, while *_uint*_at
-operations name independent indexed byte access. TextViewOf and TextBytes retain
+operations name independent indexed byte access. Viewable and TextBytes retain
 borrowed text projections. TimeCompare, NanosecondCount and ReadLimit replace
 ordinary query overload families without selecting by result type.
 
@@ -488,8 +531,9 @@ execute only when the default is actually used, with ordinary safety and cleanup
 TestEquality scopes assertion diagnostics. The ordinary expect_equal entry is
 unique; closed numeric/text conformances specialize the generic equality-based
 implementation. External nominal values can provide their own checked assertion
-operation. StringMapKey normalizes borrowed textual keys without retaining them
-in lookup results; StringHashMap has/delete reuse one canonical view-key algorithm.
+operation. HashPolicy associates one canonical query representation for stored keys;
+map lookup contracts share that representation without retaining query inputs
+in lookup results.
 
 Closeable selects resource closing through close_resource, with an associated
 Result preserving each error protocol. Its unique ordinary close entry forwards
@@ -503,15 +547,15 @@ participants and generic reference patterns. It does not grant extension rights
 through structural fields or arbitrary generic type arguments, and references to
 foreign types alone grant no extension rights.
 
-The semver library supplies TextViewOf for borrowed VersionView, StringFormatting
-with the selected allocator Provider, and WriteValue by delegating to the stream's
-StringView evidence. It exposes no separate format/as_view overloads. Writing a
+The semver library supplies Viewable for borrowed VersionView, StringFormatting
+with a virtual allocator input, and WriteValue by delegating to the stream's
+StringView evidence. It exposes no separate format/view overloads. Writing a
 version preserves the stream's selected Result, including counts or fallible writes.
 
 Queue and QueueInsertion scope removal and insertion without ordinary overloads.
 Queue associates Item and its selected removal Result, preserving optional heap
-results and bounded-ring Errable results. QueueInsertion selects the allocation
-Provider separately and retains lexical allocator defaults. Generic functions
+results and bounded-ring Errable results. QueueInsertion selects the collection and accepts a virtual allocator through
+ordinary lexical allocator assumptions. Generic functions
 can forward the selected removal result without imposing one representation.
 
 Nominal input matching uses the declaration's compile-time parameter order for
@@ -538,6 +582,8 @@ Static calls and virtual construction resolve those paths from the selected
 conformance. The existing ownership proofs reject missing, invalid or aliased
 domains. A domain mapping supplies no storage acquisition permission. Contracts
 with multiple participants still require an explicit domain receiver model.
+Virtual inputs retain the declared domains even before any concrete handle is
+constructed; checking an interface does not depend on available implementations.
 
 A unary virtual interface may bind associated types and constants. Every
 associated element must be fixed in the interface; the concrete selected

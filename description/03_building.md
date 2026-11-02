@@ -1,8 +1,11 @@
 # Building
 
 > [!IDEA]
-> This is an early proposal for a procedural build layer. Current packages use
-> `argi.toml` and `[executables.*]` as described in `02_modules.md`.
+> The module and distribution model in [Modules](02_modules.md) is authoritative.
+> `argi.toml` is optional declarative module configuration whose managed `[lock]`
+> section records exact resolved dependencies, and optional `build.rg` provides programmable
+> automation. Managed lock section handling and build-script execution are not implemented.
+> The exploratory examples below are design notes, not supported configuration.
 
 We use LLVM.
 
@@ -25,7 +28,7 @@ approach is useful when more control is needed. Find a balance between the two.
 
 Find a balance between the two.
 
-Possible future `project.rgo`:
+Historical metadata sketch (superseded by `argi.toml`; not a proposed file format):
 
 ```rg
 (

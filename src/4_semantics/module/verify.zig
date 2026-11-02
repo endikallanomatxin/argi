@@ -15,6 +15,8 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try payload.declaration(entities.Ids, declaration, bounds);
     }
 
+    for (graph.semantic.family_definitions.items) |definition| try payload.familyDefinition(entities.Ids, definition, bounds);
+    for (graph.semantic.type_definitions.items) |definition| try payload.typeDefinition(entities.Ids, definition, bounds);
     for (graph.symbols.items) |symbol| {
         try require(verify.stringFits(symbol.name, graph.strings.items));
         try require(verify.rangeFits(symbol.declarations, graph.symbol_declarations.items.len));
@@ -50,7 +52,6 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try payload.function(entities.Ids, try views.functionView(graph, @enumFromInt(@as(u32, @intCast(index)))), bounds);
 
     const semantic = &graph.semantic;
-    try verifyOverlays(graph);
 
     for (semantic.unresolved_binding_types.items, 0..) |id, index| {
         try require(verify.idFits(id, semantic.bindings.items.len));
@@ -66,6 +67,10 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
             try require(verify.optionalIdFits(value.reinitialize_cleanup, semantic.nodes.items.len));
         } else try payload.binding(entities.Ids, value, bounds);
     }
+    for (semantic.block_assumptions.items) |value| {
+        try require(verify.idFits(value.block, semantic.blocks.items.len));
+        try require(verify.rangeFits(value.bindings, semantic.binding_refs.items.len));
+    }
     for (semantic.blocks.items) |value| try payload.block(entities.Ids, value, bounds);
     for (semantic.value_fields.items) |value| try payload.valueField(entities.Ids, value, bounds);
     for (semantic.switch_cases.items) |value| try payload.switchCase(entities.Ids, value, bounds);
@@ -75,13 +80,8 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.virtual_registries.items) |value| try payload.virtualRegistry(entities.Ids, value, bounds);
     for (semantic.virtualizes.items) |value| try payload.virtualize(entities.Ids, value, bounds);
     for (semantic.virtual_calls.items) |value| try payload.virtualCall(entities.Ids, value, bounds);
-    for (semantic.reach_segments.items) |range| try require(verify.stringFits(range, graph.strings.items));
-    for (semantic.reach_alternatives.items) |value| try payload.reachAlternative(entities.Ids, value, bounds);
-    for (semantic.reaches.items) |value| try payload.reach(entities.Ids, value, bounds);
     for (semantic.nullable_unwraps.items) |value| try payload.nullableUnwrap(entities.Ids, value, bounds);
-    for (semantic.testing_expect_errors.items) |value| try payload.testingExpectError(entities.Ids, value, bounds);
     for (semantic.error_propagations.items) |value| try payload.errorPropagation(entities.Ids, value, bounds);
-    for (semantic.error_contexts.items) |value| try payload.errorContext(entities.Ids, value, bounds);
 
     for (semantic.scopes.items) |scope| {
         if (scope.parent != .none) try require(verify.idFits(scope.parent, semantic.scopes.items.len));
@@ -110,6 +110,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.binding_refs.items) |id| try require(verify.idFits(id, semantic.bindings.items.len));
     for (semantic.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (semantic.virtual_registry_refs.items) |id| try require(verify.idFits(id, semantic.virtual_registries.items.len));
+    for (semantic.comptime_requests.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
     for (semantic.roots.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
 }
 
@@ -141,44 +142,63 @@ fn verifyFilePartitions(graph: *const graph_mod.ModuleSemanticGraph) !void {
         type_reference_cursor += file.type_reference_count;
     }
 
-    try require(declaration_cursor == graph.declarations.items.len);
+    try require(graph.generated_declaration_count <= graph.declarations.items.len);
+    try require(declaration_cursor == graph.declarations.items.len - graph.generated_declaration_count);
+    for (graph.declarations.items[declaration_cursor..], declaration_cursor..) |declaration, index| {
+        try require(declaration.kind == .function);
+        try require(declaration.module_file_index < graph.file_offsets.items.len);
+        if (declaration.function_id) |function| {
+            try require(verify.idFits(function, graph.functions.items.len));
+            try require(@intFromEnum(graph.functions.items[@intFromEnum(function)].declaration) == index);
+        } else {
+            var templates: usize = 0;
+            for (graph.semantic.parameterized_storage.parameterized_functions.items) |function| {
+                if (@intFromEnum(function.declaration) == index and function.concrete_function == null) templates += 1;
+            }
+            try require(templates == 1);
+        }
+        for (graph.symbol_declarations.items) |exported| try require(@intFromEnum(exported) != index);
+    }
     try require(type_reference_cursor == graph.type_references.items.len);
-}
-
-fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
-    for (graph.semantic.declaration_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.declaration, graph.declarations.items.len));
-        try require(!hasDeclarationOverlayBefore(graph, index, value.declaration));
-    }
-    for (graph.semantic.function_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.function, graph.functions.items.len));
-        try require(!hasFunctionOverlayBefore(graph, index, value.function));
-        try require(verify.optionalIdFits(value.body, graph.semantic.blocks.items.len));
-        try require(verify.rangeFits(value.input_bindings, graph.semantic.binding_refs.items.len));
-        try require(verify.rangeFits(value.output_bindings, graph.semantic.binding_refs.items.len));
-        try require(verify.optionalIdFits(value.inferred_error_reasons, views.typeCount(graph)));
-        if (value.foreign_symbol) |name| try require(verify.stringFits(name, graph.strings.items));
-    }
-    for (graph.semantic.field_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.field, views.fieldCount(graph)));
-        try require(!hasFieldOverlayBefore(graph, index, value.field));
-
-        try require(verify.optionalIdFits(value.default_value, graph.semantic.nodes.items.len));
-    }
-    for (graph.semantic.variant_semantics.items, 0..) |value, index| {
-        try require(verify.idFits(value.variant, views.variantCount(graph)));
-        try require(!hasVariantOverlayBefore(graph, index, value.variant));
-        try require(verify.optionalIdFits(value.option_decl, graph.declarations.items.len));
-    }
 }
 
 fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entities.PendingOperation) !void {
     const semantic = &graph.semantic;
     switch (operation) {
+        .resolve_function_signature => |value| {
+            try require(verify.idFits(value.function, graph.functions.items.len));
+            const templates = graph.semantic.parameterized_storage.parameterized_functions.items;
+            try require(value.template_index < templates.len);
+            try require(templates[value.template_index].concrete_function == value.function);
+        },
         .resolve_type => |value| {
             try require(verify.idFits(value.external, semantic.external_refs.items.len));
             try require(semantic.external_refs.items[@intFromEnum(value.external)].kind == .type);
             try require(verify.idFits(value.destination, views.typeCount(graph)));
+        },
+        .resolve_entity_value => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.expression, semantic.parameterized_storage.ir.types.items.len));
+        },
+        .resolve_value_type => |value| {
+            try require(verify.idFits(value.value, semantic.nodes.items.len));
+            try require(verify.idFits(value.destination, views.typeCount(graph)));
+        },
+        .resolve_aggregate_literal => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.optionalIdFits(value.assumed_arguments, semantic.nodes.items.len));
+            switch (value.target) {
+                .type => |ty| try require(verify.idFits(ty, views.typeCount(graph))),
+                .pointee, .element => |node| try require(verify.idFits(node, semantic.nodes.items.len)),
+            }
+            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
+        },
+        .resolve_entry_call => |value| {
+            try require(verify.idFits(value.node, semantic.nodes.items.len));
+            try require(verify.idFits(value.callee, graph.functions.items.len));
+            const node = semantic.nodes.items[@intFromEnum(value.node)];
+            try require(node == .resolved and node.resolved.content == .function_call);
+            try require(node.resolved.content.function_call.callee == value.callee);
         },
         .resolve_call => |value| {
             try require(verify.optionalIdFits(value.contract_type, views.typeCount(graph)));
@@ -188,13 +208,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(semantic.external_refs.items[@intFromEnum(value.callee)].kind == .function);
             try require(verify.idFits(value.input, semantic.nodes.items.len));
             try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
-        },
-        .resolve_local_reach => |value| {
-            try require(verify.idFits(value.node, semantic.nodes.items.len));
-            try require(verify.idFits(value.reach, semantic.nodes.items.len));
-            try require(verify.idFits(value.binding, semantic.bindings.items.len));
-            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
-            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_field => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
@@ -251,7 +264,6 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
         .resolve_error_propagation => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.errable_value, semantic.nodes.items.len));
-            try require(verify.optionalIdFits(value.context, semantic.nodes.items.len));
         },
         .resolve_nullable_test => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
@@ -262,6 +274,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.binding, semantic.bindings.items.len));
             try require(verify.idFits(value.iterable, semantic.nodes.items.len));
             try require(verify.idFits(value.body, semantic.blocks.items.len));
+            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_match => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));
@@ -310,6 +323,8 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
     return .{
         .files = graph.file_offsets.items.len,
         .declarations = graph.declarations.items.len,
+        .type_definitions = graph.semantic.type_definitions.items.len,
+        .family_definitions = graph.semantic.family_definitions.items.len,
         .types = views.typeCount(graph),
         .functions = graph.functions.items.len,
         .bindings = semantic.bindings.items.len,
@@ -326,37 +341,16 @@ fn makeBounds(graph: *const graph_mod.ModuleSemanticGraph) payload.Bounds {
         .virtual_registries = semantic.virtual_registries.items.len,
         .virtualizes = semantic.virtualizes.items.len,
         .virtual_calls = semantic.virtual_calls.items.len,
-        .reach_segments = semantic.reach_segments.items.len,
-        .reach_alternatives = semantic.reach_alternatives.items.len,
-        .reaches = semantic.reaches.items.len,
         .nullable_unwraps = semantic.nullable_unwraps.items.len,
-        .testing_expect_errors = semantic.testing_expect_errors.items.len,
         .error_propagations = semantic.error_propagations.items.len,
-        .error_contexts = semantic.error_contexts.items.len,
         .node_refs = semantic.node_refs.items.len,
+        .captured_expressions = semantic.parameterized_storage.ir.nodes.items.len,
         .type_refs = semantic.type_refs.items.len,
         .binding_refs = semantic.binding_refs.items.len,
         .function_refs = semantic.function_refs.items.len,
         .virtual_registry_refs = semantic.virtual_registry_refs.items.len,
         .strings = graph.strings.items,
     };
-}
-
-fn hasDeclarationOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleDeclId) bool {
-    for (graph.semantic.declaration_semantics.items[0..end]) |value| if (value.declaration == id) return true;
-    return false;
-}
-fn hasFunctionOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleFunctionId) bool {
-    for (graph.semantic.function_semantics.items[0..end]) |value| if (value.function == id) return true;
-    return false;
-}
-fn hasFieldOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleFieldId) bool {
-    for (graph.semantic.field_semantics.items[0..end]) |value| if (value.field == id) return true;
-    return false;
-}
-fn hasVariantOverlayBefore(graph: *const graph_mod.ModuleSemanticGraph, end: usize, id: entities.ModuleVariantId) bool {
-    for (graph.semantic.variant_semantics.items[0..end]) |value| if (value.variant == id) return true;
-    return false;
 }
 
 fn rangeFitsRaw(start: u32, len: u32, total: usize) bool {
@@ -374,6 +368,27 @@ test "module verifier accepts an empty semantic module" {
     var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try allocator.dupe(u8, "empty") };
     defer graph.deinit(allocator);
     try verifyModule(&graph);
+}
+
+test "module verifier checks generated declaration partitions and function provenance" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "entry") };
+    defer graph.deinit(a);
+    const text = try @import("../primitives/strings.zig").append(&graph.strings, a, "entry.rg");
+    try graph.file_offsets.append(a, .{ .path = text, .declaration_base = 0, .declaration_count = 0, .type_reference_base = 0, .type_reference_count = 0 });
+    try graph.declarations.append(a, .{ .kind = .function, .name = text, .source_offset = 7, .module_file_index = 0, .function_id = @enumFromInt(0) });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.generated_declaration_count = 1;
+    try verifyModule(&graph);
+    graph.file_offsets.items[0].declaration_count = 1;
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.file_offsets.items[0].declaration_count = 0;
+    graph.declarations.items[0].function_id = null;
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
+    graph.declarations.items[0].function_id = @enumFromInt(0);
+    try graph.symbol_declarations.append(a, @enumFromInt(0));
+    try std.testing.expectError(error.InvalidModuleSemanticGraph, verifyModule(&graph));
 }
 
 test "module verifier accepts a well formed external type hole" {

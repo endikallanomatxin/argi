@@ -1,40 +1,40 @@
-EnvironmentVariables: Type = (._ffi: $&ForeignFunctionInterface)
+_EnvironmentVariablesInitArgs := (.ffi: $&ForeignFunctionInterface)
 
-once _acquire_environment_variables := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+EnvironmentVariables := (._ffi: $&ForeignFunctionInterface)
+
+_acquire_environment_variables := once _EnvironmentVariablesInitArgs -> (
     .result : EnvironmentVariables
 ) {
-    ffi ::= args.ffi
 
     result._ffi = ffi
 }
 
-implement Init#(EnvironmentVariables, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+EnvironmentVariablesInitArgs: Type = _EnvironmentVariablesInitArgs
+
+implement Init#(EnvironmentVariables, EnvironmentVariablesInitArgs) (
     .Result : Type = EnvironmentVariables
-    .init   = _acquire_environment_variables
+
+    .init = _acquire_environment_variables
 )
 
-environment_variables_get_c_string(.key: &Char) -> (.value: ?StringView) := {
-    raw_ptr ::= getenv(.name = key).value
-    raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
+environment_variables_get_c_string := (.key: &CChar, .ffi: $&ForeignFunctionInterface) -> (
+    .result : Errable#(?StringView, (..invalid_utf8))
+) {
 
+    raw_ptr ::= getenv(.name = key, .ffi = ffi).value
+    raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
     if raw_addr == 0 {
-        value = ..none
+        result = ..ok ..none
         return
     }
-
-    value = ..some(
-        .value = (
-            .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
-                .base = raw_ptr
-            ).reference
-            .length = strlen(.string = raw_ptr).length
-        )
-    )
+    _ ::= validate_utf8_bytes(.bytes = _c_string_bytes(.text = raw_ptr))!
+    result = ..ok ..some(.value = _trusted_c_string_view(.text = raw_ptr))
 }
 
-lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &EnvironmentVariables, .key: StringView, .allocator: $&Provider
-) -> (.result: Errable#(?StringView, (..out_of_memory))) {
+lookup_environment := (
+    .self: &EnvironmentVariables, .key: StringView, .allocator: Virtual#(Allocator)
+) -> (.result: Errable#(?StringView, (..out_of_memory, ..invalid_utf8))) {
+
     assume ffi := self&._ffi
     assume allocator
 
@@ -43,21 +43,18 @@ lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
     match converted {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~c_key {
-            result = ..ok environment_variables_get_c_string(.key = c_key.text)
+            result = ..ok environment_variables_get_c_string(.key = c_key.text)!
         }
     }
 }
 
-has#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .self: &EnvironmentVariables, .key: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(Bool, (..out_of_memory))) := {
+has := (
+    .self: &EnvironmentVariables, .key: StringView, .allocator: Virtual#(Allocator)
+) -> (.result: Errable#(Bool, (..out_of_memory, ..invalid_utf8))) {
+
     assume ffi := self&._ffi
     assume allocator
 
-    found ::= lookup_environment(self, .key = key, .allocator = allocator)
-
-    match found {
-        ..ok payload { result = ..ok payload ?}
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-    }
+    found ::= lookup_environment(self, .key = key, .allocator = allocator)!
+    result = ..ok found ?
 }

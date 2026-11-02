@@ -1,5 +1,6 @@
 -- A small consumer of declarative options, owned paths and directory walking.
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
+
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     assume file_system := system.file_system
@@ -18,7 +19,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
 
     if length(system.args).count == 2 {
-        argument ::= argument_view_at(system.args, 1)
+        argument ::= unwrap_or_abort(.value = argument_view_at(system.args, 1))
         if argument == "--help" or argument == "-h" {
             write_cli_help(
                 .program = "tree"
@@ -48,7 +49,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
 
-    walker ::= DirectoryWalker(.path = root, .maximum_depth = maximum_depth)!!! {
+    walker ::= DirectoryWalker(
+        .self = file_system, .path = root, .maximum_depth = maximum_depth
+    )!!! {
         status_code = 1
     }
 
@@ -56,7 +59,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         match [next($&walker)!!! { status_code = 1 }] {
             ..none { break }
             ..some ~entry {
-                print(as_view(&entry.value.path), .writer = output)!!! { status_code = 1 }
+                print(view(&entry.value.path), .writer = output)!!! { status_code = 1 }
             }
         }
     }

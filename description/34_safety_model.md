@@ -73,6 +73,13 @@ use(p)            // error: stale reference
 The use check does not require all references to leave scope before a root
 can end.
 
+A vacant record or fixed-length array becomes readable when all its fields or
+statically identified elements are initialized, including nested fields.
+Individual initialized fields and elements can be read before their siblings
+are ready. Empty aggregates require an explicit initialization; an empty shape
+alone is not evidence of an available value. Structural completeness proves
+initialization without reviving ended storage generations or stale references.
+
 For a value whose validity relation is not visible in its representation,
 `depend_on#(.t: T)(.value = value, .on = &owner).result` attaches the
 owner's storage generation to the returned value. Its existing cleanup
@@ -107,7 +114,7 @@ aliases retain their original provenance.
 
 ## Opaque storage
 
-Containers such as `DynamicArray<T>` may contain runtime slots whose individual
+Containers such as `DynamicArray#(T)` may contain runtime slots whose individual
 cleanup responsibilities cannot be represented precisely. An Opaque Storage
 Domain, identified by a storage Place, conservatively retains hidden
 dependencies.
@@ -239,11 +246,11 @@ Uses on mutually exclusive branches are alternatives, even when the caller
 supplies aliases for their inputs. Loops and recursive forwarding must not allow
 one authorization to be consumed repeatedly.
 
-An `ArrayView<T>` length must describe initialized elements inside its
+An `ArrayView#(T)` or `MutableArrayView#(T)` length must describe initialized elements inside its
 physical region. Checking an index against length is necessary but cannot
 validate a forged region. A zero-length region contains no readable element,
 and constructing a view must not require dereferencing a nonexistent first
-element. `MaybeUninit<T>` provides storage for `T`; occupancy must be proved
+element. `MaybeUninit#(T)` provides storage for `T`; occupancy must be proved
 separately before reading or destroying a `T`.
 
 At a trusted boundary, the caller must discharge the physical obligations
@@ -287,7 +294,7 @@ selected payload.
 Each function has an inferred Safety Summary. It records required live input
 dependencies, value effects, Place post-states, and opaque-storage effects.
 Callers instantiate these symbolic effects at their own Places and roots.
-safety contracts bound the effects allowed through virtual dispatch.
+Safety contracts bound the effects allowed through virtual dispatch.
 Concrete implementations must satisfy their contract independently, and virtual
 calls use that contract. See `134_virtual_types.md` for dependency declarations
 and the remaining implementation gaps during migration from combined summaries.
@@ -295,6 +302,21 @@ and the remaining implementation gaps during migration from combined summaries.
 `$&T` does not imply `noalias`. Calls such as `f($&x, $&x)` and
 `f($&x, &x)` may be temporally safe under the current model. Exclusivity and
 data-race guarantees are separate language concerns.
+
+Summaries preserve ordered storage observations: consuming a value and later
+reading through another input requires those destinations not to overlap.
+The caller checks this requirement using its actual storage identities. Two
+independent inputs remain usable; an alias of the consumed incarnation stays
+invalid even when the destination is reinitialized. Reading before consumption
+is permitted, except when a later loop iteration can observe the ended value.
+References stored in one by-value argument retain separate referent identities
+and the same caller-side checks. Statically selected implementations retain these
+inferred obligations at every concrete call, including forwarding calls. Their
+outputs and storage effects must still satisfy the contract. Virtual safety
+contracts currently reject implementations that require an unrepresented alias
+obligation.
+An erased `Any` anchor retains its storage-validity requirements but exposes no
+stored representation; checking that anchor is not a value observation.
 
 ## Trusted boundary
 
@@ -361,10 +383,11 @@ conservatively rather than gaining a guarantee that needs both results.
 
 > [!IMPLEMENTATION]
 > General summary guards represent conjunctions of entry-input and output
-> selectors, with shared records for every effect dimension. Existing outcome
-> partitions are published in this representation alongside their conservative
-> fallback. General conditional contracts can be checked against complete
-> guarded summaries; proving only a stricter subset of the declared condition
+> selectors, with shared records for every effect dimension. Compact single-output
+> partitions retain their effect records alongside the conservative fallback and
+> are matched directly during contract checks. General conditional contracts can
+> be checked against complete guarded summaries; proving only a stricter subset
+> of the declared condition
 > is insufficient. Existing output contracts use this proof path after concrete
 > domain resolution; unreachable output partitions have vacuous guarantees.
 > Stable terminal matches and branches can infer joint structural entry/input
@@ -376,8 +399,16 @@ conservatively rather than gaining a guarantee that needs both results.
 > dependencies once all output terms from the same call are known. Copies retain
 > correlation; overwritten values and independent calls do not. Straight-line
 > wrappers can forward the exact outputs of one call while preserving their
-> input/output coordinates. Reassignment, unknown control flow, additional
-> effects and nontrivial cleanup keep the unconditional summary.
+> input/output coordinates. Joint dependency guards still require a complete
+> proof through subsequent writes, control flow and cleanup.
+> Post-state inference keeps at most three partitions for one selected output:
+> matching, nonmatching and unknown. Branch-assigned outputs, default tags and
+> direct error propagation retain their effects through later statements;
+> output replacement merges prior histories instead of erasing their effects.
+> An exhaustive match on a direct ordinary call evaluates arguments once and
+> applies call effects within each branch. Whole-storage transitions through
+> stored results, indirect output writes and loops rewriting discriminants keep
+> conservative effects. A result test never restores an older caller snapshot.
 > General guards carry complete effect records. Payload refinement changes
 > dependencies only; it never creates ownership, acquisition receipts or a new
 > storage generation. Generation and opaque-state refinement retain the existing
