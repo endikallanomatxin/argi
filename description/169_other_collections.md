@@ -69,6 +69,15 @@ lifetime obligations; stored key contents must remain unchanged.
   nor destroys element contents.
 - `length`, `capacity`, and `deinit` report entry count, report slot count, and
   destroy remaining entries and release storage, respectively.
+- `copy(.self: &HashMap, .allocator: Virtual#(Allocator))` is available through
+  `FalliblyCopyable` when the key, value, and policy types each support that
+  protocol. It copies the policy and every occupied key/value pair into
+  independent table storage, preserving slot capacity and rebuilding hashes
+  under the copied policy. Tombstones are not copied, and iteration order may
+  change. Borrowed fields in copied values retain their original dependencies.
+  Its error reasons combine the key, value, and policy copy reasons with
+  `out_of_memory`. Any failure destroys partial copies and leaves the source
+  unchanged; copying never grants implicit copy permission to a map.
 
 `for entry in map` borrows `.key: &K` and `.value: &V` for every element type.
 `to_ro_entry_iterator` uses that same iterator. `to_rw_entry_iterator` returns

@@ -138,6 +138,11 @@ If an element-wise container copy fails part way through, it must destroy the
 already copied prefix exactly once before releasing its new backing storage.
 The original container remains unchanged.
 
+`HashMap` supports this protocol when its keys, values, and hash policy are all
+`FalliblyCopyable`. Its errors include failures from copying each of those types
+and allocating the destination table. A map whose elements or policy do not
+support copying remains usable as a movable owner.
+
 
 ## Explicit move
 
