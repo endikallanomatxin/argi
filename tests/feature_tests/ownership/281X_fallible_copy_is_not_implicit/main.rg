@@ -4,7 +4,7 @@ FallibleValue := (
 
 implement FalliblyCopyable#(FallibleValue) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &FallibleValue, .allocator: $&Virtual#(Allocator)) -> (
+    .copy    = (.self: &FallibleValue, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(.t: FallibleValue, .reasons: (..copy_failed))
     ) {
 

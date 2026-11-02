@@ -50,12 +50,12 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
 
     {
-        first ::= unwrap_or_abort(allocate#(Tracked)(allocator))
-        second ::= unwrap_or_abort(allocate#(Tracked)(allocator))
+        first ::= unwrap_or_abort(allocate#(Tracked)($&allocator))
+        second ::= unwrap_or_abort(allocate#(Tracked)($&allocator))
         first_slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&first, 0).reference
         ).reference

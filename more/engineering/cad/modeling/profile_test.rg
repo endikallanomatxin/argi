@@ -1,5 +1,5 @@
 test extrusion_profile_smoke := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [3]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -12,7 +12,7 @@ test extrusion_profile_smoke := (.system: System) -> !() {
 }
 
 test extrusion_profile_collinear_corners := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -27,7 +27,7 @@ test extrusion_profile_collinear_corners := (.system: System) -> !() {
 }
 
 test extrusion_profile_rejects_self_intersection := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (3.0, 3.0, 0.0),
@@ -44,7 +44,7 @@ test extrusion_profile_rejects_self_intersection := (.system: System) -> !() {
 }
 
 test extrusion_profile_rejects_nonplanar_contours := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),
@@ -60,7 +60,7 @@ test extrusion_profile_rejects_nonplanar_contours := (.system: System) -> !() {
 }
 
 test extrusion_profile_rejects_overlapping_regions := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [8]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (4.0, 0.0, 0.0),
@@ -86,7 +86,7 @@ test extrusion_profile_rejects_overlapping_regions := (.system: System) -> !() {
 }
 
 test extrusion_profile_rejects_repeated_closing_point := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -102,7 +102,7 @@ test extrusion_profile_rejects_repeated_closing_point := (.system: System) -> !(
 }
 
 test extrusion_profile_projects_nearly_planar_input := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -139,7 +139,7 @@ test extrusion_profile_projects_nearly_planar_input := (.system: System) -> !() 
 }
 
 test extrusion_profile_plane_independent_of_region_order := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -200,7 +200,7 @@ test extrusion_profile_plane_independent_of_region_order := (.system: System) ->
 }
 
 test extrusion_profile_reports_numerical_ambiguity := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [3]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 1.0, 0.0),

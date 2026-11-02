@@ -17,7 +17,7 @@ bridge_planar_face := #(.Scalar: Type: Float) (
     .face      : FaceId,
     .exterior  : BoundaryPoint#(Scalar),
     .hole      : BoundaryPoint#(Scalar),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(FaceBridge#(Scalar), SplitErrors)) {
 
     original ::= face_info(model, .face = face)!
@@ -216,7 +216,7 @@ _bridge_append := (
     .destination : $&DynamicArray#(_BoundaryUse),
     .range       : _BoundaryRange,
     .offset      : UIntNative,
-    .allocator   : $&Virtual#(Allocator)
+    .allocator   : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
 
     cursor ::= offset

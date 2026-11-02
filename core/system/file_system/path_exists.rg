@@ -6,7 +6,7 @@ PathExistence#(.PathValue: Type): Contract = (
 
 AllocatingPathExistence#(.PathValue: Type): Contract = (
     .Result : Type
-    .exists : (.self: &FileSystem, .path: PathValue, .allocator: $&Virtual#(Allocator)) -> (.result: Result)
+    .exists : (.self: &FileSystem, .path: PathValue, .allocator: Virtual#(Allocator)) -> (.result: Result)
 )
 
 _path_exists_c := (.self: &FileSystem, .path: &CChar) -> (.ok: Bool) {
@@ -21,7 +21,7 @@ _path_exists_string := (.self: &FileSystem, .path: &String) -> (.ok: Bool) {
 }
 
 _path_exists_view := (
-    .self: &FileSystem, .path: StringView, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Bool, (..out_of_memory))) {
 
     assume ffi := self&._ffi

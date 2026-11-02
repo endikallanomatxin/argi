@@ -33,7 +33,7 @@ _GeometryPools := #(.Scalar: Type: Float) (
 )
 
 _GeometryPoolsInitArgs := #(.Scalar: Type: Float) (
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.Scalar: Type: Float) Init#(
@@ -69,7 +69,7 @@ implement#(.Scalar: Type: Float) Init#(
 )
 
 _pool_add_surface := #(.Scalar: Type: Float) (
-    .pools: $&_GeometryPools#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Virtual#(Allocator)
+    .pools: $&_GeometryPools#(Scalar), .surface: g.Surface#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(SurfaceId, BuildErrors)) {
 
     index ::= length(&pools&.surfaces).count
@@ -147,7 +147,7 @@ _pool_surface := #(.Scalar: Type: Float) (.pools: &_GeometryPools#(Scalar), .sur
 }
 
 _pool_add_curve := #(.Scalar: Type: Float) (
-    .pools: $&_GeometryPools#(Scalar), .curve: Curve#(Scalar), .allocator: $&Virtual#(Allocator)
+    .pools: $&_GeometryPools#(Scalar), .curve: Curve#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(CurveId, BuildErrors)) {
 
     index ::= length(&pools&.curves).count
@@ -204,7 +204,7 @@ _pool_append_face_surface := #(.Scalar: Type: Float) (
     .pools     : $&_GeometryPools#(Scalar),
     .faces     : $&DynamicArray#(SurfaceId),
     .surface   : g.Surface#(Scalar),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BuildErrors)) {
 
     id ::= _pool_add_surface(.pools = pools, .surface = surface, .allocator = allocator)!
@@ -265,7 +265,7 @@ geometry_storage_info := #(.Scalar: Type: Float) (.model: &Model#(Scalar)) -> (
 _pool_type_size := #(.T: Type) () -> (.bytes: UIntNative) { bytes = size_of(.type = T) }
 
 _copy_geometry_pools := #(.Scalar: Type: Float) (
-    .source: &_GeometryPools#(Scalar), .allocator: $&Virtual#(Allocator)
+    .source: &_GeometryPools#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(_GeometryPools#(Scalar), BuildErrors)) {
     surfaces ::= copy(&source&.surfaces, .allocator = allocator)!
     planes ::= copy(&source&.planes, .allocator = allocator)!

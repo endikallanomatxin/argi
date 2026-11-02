@@ -198,7 +198,7 @@ implement Init#(Directory, DirectoryInitArgs) (
 )
 
 _next_directory := (
-    .self: $&Directory, .allocator: $&Virtual#(Allocator)
+    .self: $&Directory, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)) {
 
     assume ffi := self&._filesystem&._ffi
@@ -331,7 +331,7 @@ TemporaryDirectoryInitArgs: Type = (
     .self      : &FileSystem,
     .parent    : StringView,
     .prefix    : StringView   = "argi-",
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement Init#(

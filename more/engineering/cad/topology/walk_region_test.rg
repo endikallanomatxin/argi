@@ -20,7 +20,7 @@ _walk_test_use := #(.Scalar: Type: Float) (
 }
 
 test model_walk_split_retains_bridge := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _bridge_owned(.allocator = allocator)!
     bottom ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 0))!
     top ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 2))!
@@ -60,7 +60,7 @@ test model_walk_split_retains_bridge := (.system: System) -> !() {
 }
 
 test model_walk_split_between_joined_contours := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _bridge_owned(.allocator = allocator)!
     outer ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 3))!
     inner ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 5))!
@@ -94,7 +94,7 @@ test model_walk_split_between_joined_contours := (.system: System) -> !() {
 }
 
 test model_walk_multiple_bridges_and_cut_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _split_two_holes#(Float32)()
     source ::= [
         from_planar_faces(
@@ -141,7 +141,7 @@ test model_walk_multiple_bridges_and_cut_float32 := (.system: System) -> !() {
 }
 
 test model_walk_cut_splits_bridge_and_maps_history := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _bridge_owned(.allocator = allocator)!
     edge ::= edge_info(&source, .edge = (.value = 8))!
     top ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 2))!
@@ -184,7 +184,7 @@ test model_walk_cut_splits_bridge_and_maps_history := (.system: System) -> !() {
 }
 
 test model_walk_bridge_branch_and_cut := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _split_two_holes#(Float64)()
     source ::= [
         from_planar_faces(
@@ -241,7 +241,7 @@ test model_walk_bridge_branch_and_cut := (.system: System) -> !() {
 }
 
 test model_walk_repeated_vertex_selects_side := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _bridge_owned(.allocator = allocator)!
     top ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 2))!
     wrong_side ::= _walk_test_use(&source, .loop = (.value = 0), .vertex = (.value = 0))!

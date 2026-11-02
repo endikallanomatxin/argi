@@ -70,6 +70,6 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     escape(.allocator = allocator_concrete)
 }

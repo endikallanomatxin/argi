@@ -49,7 +49,7 @@ _boundary_contours := #(.Scalar: Type: Float) (
     .ranges     : ArrayView#(_BoundaryRange),
     .points     : &DynamicArray#(g.Point#(Scalar)),
     .edge_count : UIntNative,
-    .allocator  : $&Virtual#(Allocator)
+    .allocator  : Virtual#(Allocator)
 ) -> (.result: Errable#(_BoundaryContours#(Scalar), _BoundaryErrors)) {
 
     count ::= length(uses).count
@@ -181,7 +181,7 @@ _walk_region := #(.Scalar: Type: Float) (
     .plane      : g.Plane#(Scalar),
     .positive   : Bool,
     .tolerance  : Scalar,
-    .allocator  : $&Virtual#(Allocator)
+    .allocator  : Virtual#(Allocator)
 ) -> (.result: Errable#(_PlanarContours#(Scalar), SplitErrors)) {
 
     ranges: [1]_BoundaryRange = (range)
@@ -248,7 +248,7 @@ _walk_region := #(.Scalar: Type: Float) (
 }
 
 _walk_validate_region := #(.Scalar: Type: Float) (
-    .region: &_PlanarContours#(Scalar), .tolerance: Scalar, .allocator: $&Virtual#(Allocator)
+    .region: &_PlanarContours#(Scalar), .tolerance: Scalar, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BuildErrors)) {
     regions: [1]UIntNative = (
         length(&region&.lengths).count
@@ -273,7 +273,7 @@ _walk_validate_cut := #(.Scalar: Type: Float) (
     .bridge    : Bool              = false,
     .plane     : g.Plane#(Scalar),
     .tolerance : Scalar,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
 
     coordinates ::= DynamicArray#(g.Point#(Scalar))(.allocator = allocator)!

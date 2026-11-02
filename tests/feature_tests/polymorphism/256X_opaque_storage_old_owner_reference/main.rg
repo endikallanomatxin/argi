@@ -21,12 +21,12 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
-    storage ::= unwrap_or_abort(allocate#(Allocation)(allocator))
+    assume allocator := virtual_allocator
+    storage ::= unwrap_or_abort(allocate#(Allocation)($&allocator))
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(
         unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
     ).reference
-    value ::= unwrap_or_abort(allocate_bytes(allocator, .size = 1))
+    value ::= unwrap_or_abort(allocate_bytes($&allocator, .size = 1))
     previous ::= unsafe_allocation.trusted_allocation_byte_ro(&value, 0).reference
     cell ::= Cell()
     erased ::= to_virtual#(Store)(&cell)

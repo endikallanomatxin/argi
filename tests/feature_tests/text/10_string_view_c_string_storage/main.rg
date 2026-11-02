@@ -13,7 +13,7 @@ main := (.system: System) -> (.status_code: Int32) {
     )
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     literal ::= from_literal(.data = "abc")
     data ::= trusted_reinterpret_reference#(.from: CChar, .to: UInt8)(.base = literal).reference

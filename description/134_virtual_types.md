@@ -101,7 +101,7 @@ The concrete temporary and virtual wrapper remain alive for the enclosing
 The same pattern supplies a virtual allocator to ordinary collection APIs:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
 array ::= DynamicArray#(Int32)(.capacity = 16)!
 ```
 

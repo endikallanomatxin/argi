@@ -60,7 +60,7 @@ InfalliblyCopyable#(.Value: Type): Contract = (
 
 FalliblyCopyable#(.Value: Type): Contract = (
     .reasons: Type
-    .copy: (.self: &Value, .allocator: $&Virtual#(Allocator))
+    .copy: (.self: &Value, .allocator: Virtual#(Allocator))
         -> (.result: Errable#(Value, reasons))
 )
 

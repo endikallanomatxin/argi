@@ -27,7 +27,7 @@ DynamicMatrixInitArgs: Type = #(.t: Type: Scalar) (
     .rows      : UIntNative,
     .cols      : UIntNative,
     .values    : ArrayView#(.t: t),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.t: Type: Scalar) Init#(
@@ -100,7 +100,7 @@ _math_set_dynamic_matrix := #(.t: Type: Scalar) (
 implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = (
-        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Virtual#(Allocator)
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
 
@@ -129,7 +129,7 @@ implement#(.t: Type: Scalar) Add#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)
 implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.t: t)) (
     .Result   : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .multiply = (
-        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Virtual#(Allocator)
+        .left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
 
@@ -176,7 +176,7 @@ implement#(.t: Type: Scalar) Multiply#(&DynamicMatrix#(.t: t), &DynamicMatrix#(.
 )
 
 _math_transpose_dynamic_matrix := #(.t: Type: Scalar) (
-    .self: &DynamicMatrix#(.t: t), .allocator: $&Virtual#(Allocator)
+    .self: &DynamicMatrix#(.t: t), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicMatrix#(.t: t), (..out_of_memory))) {
 
 
@@ -207,7 +207,7 @@ DynamicVector := #(.t: Type: Scalar) (._values: DynamicArray#(.t: t))
 
 DynamicVectorInitArgs: Type = #(.t: Type: Scalar) (
     .values    : ArrayView#(.t: t),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.t: Type: Scalar) Init#(
@@ -283,7 +283,7 @@ _math_dot_dynamic_vector := #(.t: Type: Scalar) (
 implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
     .add    = (
-        .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t), .allocator: $&Virtual#(Allocator)
+        .left: &DynamicVector#(.t: t), .right: &DynamicVector#(.t: t), .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
 
@@ -311,7 +311,7 @@ implement#(.t: Type: Scalar) Add#(&DynamicVector#(.t: t), &DynamicVector#(.t: t)
 )
 
 _math_scale_dynamic_vector := #(.t: Type: Scalar) (
-    .self: &DynamicVector#(.t: t), .factor: t, .allocator: $&Virtual#(Allocator)
+    .self: &DynamicVector#(.t: t), .factor: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicVector#(.t: t), (..out_of_memory))) {
 
 

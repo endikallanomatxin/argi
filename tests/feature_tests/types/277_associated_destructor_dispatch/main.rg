@@ -20,7 +20,7 @@ implement Deinit#(Other) (
     }
 )
 
-exercise := (.allocator: $&Virtual#(Allocator)) -> (
+exercise := (.allocator: Virtual#(Allocator)) -> (
 ) {
 
     assume allocator

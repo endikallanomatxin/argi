@@ -11,7 +11,7 @@ main := () -> (.status_code: Int32) {
     )
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 8)
     if is(.value = result, .variant = ..error) {
         status_code = allocator_storage.allocations * 10 + allocator_storage.deallocations - 10

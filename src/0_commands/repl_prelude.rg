@@ -7,4 +7,4 @@ _repl_terminal ::= Terminal()
 assume writer ::= $&_repl_terminal.stdout
 _repl_allocator ::= CAllocator(.ffi = ffi)
 _repl_allocator_handle ::= to_virtual#(Allocator)($&_repl_allocator)
-assume allocator ::= $&_repl_allocator_handle
+assume allocator ::= _repl_allocator_handle

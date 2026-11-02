@@ -51,7 +51,7 @@ implement Init#(CsvReader, CsvReaderInitArgs) (
 
 -- Errors are terminal, and no partially decoded record escapes.
 next := (
-    .self: $&CsvReader, .allocator: $&Virtual#(Allocator)
+    .self: $&CsvReader, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) {
 
 

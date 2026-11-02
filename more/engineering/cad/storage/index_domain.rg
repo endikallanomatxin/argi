@@ -7,7 +7,7 @@ implement#(.Kind: Type) ImplicitlyCopyable#(Index#(Kind)) ()
 
 IndexDomain := (._marker: DynamicArray#(UInt8))
 
-IndexDomainInitArgs := (.allocator: $&Virtual#(Allocator))
+IndexDomainInitArgs := (.allocator: Virtual#(Allocator))
 
 implement Init#(IndexDomain, IndexDomainInitArgs) (
     .Result : Type = Errable#(IndexDomain, (..out_of_memory))

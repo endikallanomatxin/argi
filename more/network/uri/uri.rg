@@ -439,7 +439,7 @@ _authority_valid := (.text: StringView) -> (.ok: Bool = false) {
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
 build := (
-    .value: UriView, .allocator: $&Virtual#(Allocator)
+    .value: UriView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) {
 
     if [
@@ -541,7 +541,7 @@ build := (
 }
 
 encode_component := (
-    .text: StringView, .allocator: $&Virtual#(Allocator)
+    .text: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
@@ -584,7 +584,7 @@ encode_component := (
 }
 
 decode_component := (
-    .text: StringView, .allocator: $&Virtual#(Allocator)
+    .text: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) {
 
 

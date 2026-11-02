@@ -5,12 +5,12 @@ main := () -> (.status_code: Int32 = 0) {
     failing :: FailingAllocator = (.attempts = 0)
 
     failing_virtual ::= to_virtual#(Allocator)($&failing)
-    string_result ::= String(.allocator = $&failing_virtual, .length = 1)
+    string_result ::= String(.allocator = failing_virtual, .length = 1)
     match string_result {
         ..ok _ { status_code = 1 }
         ..error ~err { if err.reason != ..out_of_memory { status_code = 4 } }
     }
-    path_result ::= path_with_view(.allocator = $&failing_virtual, .view = "path")
+    path_result ::= path_with_view(.allocator = failing_virtual, .view = "path")
     match path_result {
         ..ok _ { status_code = 2 }
         ..error ~err { if err.reason != ..out_of_memory { status_code = 5 } }

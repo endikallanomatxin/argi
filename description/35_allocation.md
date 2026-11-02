@@ -34,7 +34,10 @@ slot. The allocation may still be released normally.
 
 ## Allocator capabilities in library APIs
 
-General allocating APIs receive `$&Virtual#(Allocator)`. Allocators do not add
+General allocating APIs receive `Virtual#(Allocator)` by value. Copying this
+borrowed handle copies its receiver and method-table pointers, not the concrete
+allocator. The handle and every resulting allocation retain the concrete
+allocator's lifetime dependencies. Allocators do not add
 participants to collection, formatting, concatenation or copying contracts.
 `FalliblyCopyable#(Value)` retains the selected value implementation's associated
 failure reasons. Constructors use virtual allocator fields in their Args records.
@@ -42,7 +45,7 @@ failure reasons. Constructors use virtual allocator fields in their Args records
 Convert once at the capability boundary and use ordinary lexical assumptions:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
 items ::= DynamicArray#(Int32)(.capacity = 16)!
 push($&items, .value = 42)!
 ```
@@ -244,7 +247,7 @@ implicit default allocator. `GeneralPurposeAllocator` receives a backing
 allocator. A program selects its allocator, for example:
 
 ```rg
-assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 ```
 
 Allocators compose: a `PageAllocator` may back a

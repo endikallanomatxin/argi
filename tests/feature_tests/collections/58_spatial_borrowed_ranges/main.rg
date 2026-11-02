@@ -6,7 +6,7 @@ window := (.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: 
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
-exercise := (.allocator: $&Virtual#(Allocator)) -> (
+exercise := (.allocator: Virtual#(Allocator)) -> (
     .status : Int32 = 0
 ) {
 
@@ -66,7 +66,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     arena :: ArenaAllocator
     arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
     arena_virtual ::= to_virtual#(Allocator)($&arena)
-    regional ::= exercise(.allocator = $&arena_virtual).status
+    regional ::= exercise(.allocator = arena_virtual).status
     if regional != 0 { status_code = regional }
     reset(.self = $&arena)
     deinit(.self = $&arena)

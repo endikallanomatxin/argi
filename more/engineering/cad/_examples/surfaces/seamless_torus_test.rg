@@ -2,7 +2,7 @@
 -- Its analytic support uses a frame and two radii. A genus-one face represents
 -- the whole surface; traversing its boundary therefore visits no loops.
 test usage_periodic_surfaces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame ::= [
         g.frame#(Float64)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!
     ]

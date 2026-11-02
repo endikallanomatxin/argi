@@ -14,7 +14,7 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     values: Array#(.n = 3, .t: Int32) = (3, 4, 5)
     array_sum :: Int32 = sum_iterable(.items = &values).sum
 

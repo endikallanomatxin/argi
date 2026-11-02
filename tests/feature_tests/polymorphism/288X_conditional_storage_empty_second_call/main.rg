@@ -82,7 +82,7 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     implementation ::= make_slot(allocator_concrete)
     deinit($&implementation.storage)
 }

@@ -1,7 +1,7 @@
 -- A rectangular spacer with a rectangular clearance opening. The same selected
 -- profile can be published as a planar face or extruded into a closed model.
 test usage_sketch_spacer_extrusion := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     sketch ::= s.SketchBuilder#(.Scalar: Float64)()!
     outline ::= sketch | s.rectangle($&_, .width = 8.0, .height = 6.0)!
     opening ::= sketch | s.rectangle($&_, .width = 2.0, .height = 2.0)!

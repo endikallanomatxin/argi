@@ -5,7 +5,7 @@ A parameter chart is not a topological cell decomposition: its cuts, poles and
 period boundaries do not create model edges or vertices.
 
 ```rg
-assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
 frame ::= g.frame#(Float64)(
     .origin = (.x = 0.0, .y = 0.0, .z = 0.0),
     .axis = (.x = 0.0, .y = 0.0, .z = 1.0)

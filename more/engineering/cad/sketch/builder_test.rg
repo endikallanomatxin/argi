@@ -1,5 +1,5 @@
 test sketch_builder_pipe_references_survive_growth_and_publication := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     builder ::= SketchBuilder#(.Scalar: Float64)()!
     outer ::= builder | rectangle($&_, .width = 8.0, .height = 6.0)!
     builder | circle($&_, .diameter = 0.5)!
@@ -11,7 +11,7 @@ test sketch_builder_pipe_references_survive_growth_and_publication := (.system: 
 }
 
 test sketch_builder_rejects_invalid_shape_without_appending := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     builder ::= SketchBuilder#(.Scalar: Float32)()!
     [
         testing.expect_error(
@@ -34,7 +34,7 @@ test sketch_builder_rejects_invalid_shape_without_appending := (.system: System)
 }
 
 test sketch_builder_init_uses_allocator_assumption := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     builder: SketchBuilder#(Float64) = [SketchBuilder#(Float64)()!]
     builder | rectangle($&_, .width = 2.0, .height = 1.0)!
     drawing ::= builder | finish_sketch(~_)!

@@ -40,7 +40,7 @@ _split_emit_loop := (
     .offset      : UIntNative,
     .count       : UIntNative,
     .chord       : ?_BoundaryUse,
-    .allocator   : $&Virtual#(Allocator)
+    .allocator   : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
 
     first ::= length(&destination&.halfedges).count
@@ -83,7 +83,7 @@ split_planar_face := #(.Scalar: Type: Float) (
     .face      : FaceId,
     .start     : BoundaryPoint#(Scalar),
     .end       : BoundaryPoint#(Scalar),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(FaceSplit#(Scalar), SplitErrors)) {
 
     original ::= face_info(model, .face = face)!

@@ -1,18 +1,18 @@
 # System
 
 An executable may declare `main(.system: System)`. The program entry scope
-creates the process resources, passes references to them through `System`, and
+creates the process resources, passes borrowed capabilities through `System`, and
 cleans them up after `main` returns. A `main` that needs none of these
 capabilities may omit the input.
 
 `System` is a bundle of capabilities, not an allocator or an owner of the
-process resources. Copying it copies references to those resources; the
+process resources. Copying it copies references and virtual handles; the
 copies remain subject to their lifetimes.
 
 ```rg
 System : Type = (
     .memory: $&Memory
-    .page_allocator: $&PageAllocator
+    .page_allocator: Virtual#(Allocator)
     .terminal: $&Terminal
     .args: $&Arguments
     .env_vars: $&EnvironmentVariables
@@ -40,7 +40,7 @@ may be passed explicitly or supplied through lexical `assume`. There is no impli
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
 }
 ```
 

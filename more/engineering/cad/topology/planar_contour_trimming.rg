@@ -38,7 +38,7 @@ _admit_planar_contour_region := #(.Scalar: Type: Float) (
     .lengths   : ArrayView#(UIntNative),
     .reversed  : Bool,
     .tolerance : Scalar,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BrepErrors)) {
     count ::= length(uses).count
     spans ::= DynamicArray#(g.ContourSpan#(Scalar))(.capacity = count, .allocator = allocator)!

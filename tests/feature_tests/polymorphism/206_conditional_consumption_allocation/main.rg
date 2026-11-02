@@ -14,8 +14,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
-    allocation ::= unwrap_or_abort(allocate_bytes(.self = allocator, .size = 1))
+    assume allocator := virtual_allocator
+    allocation ::= unwrap_or_abort(allocate_bytes(.self = $&allocator, .size = 1))
     result ::= release_if($&allocation, false)
 
     match result {

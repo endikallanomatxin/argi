@@ -3,7 +3,7 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     text ::= unwrap_or_abort(.value = String(.length = 2))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 79))

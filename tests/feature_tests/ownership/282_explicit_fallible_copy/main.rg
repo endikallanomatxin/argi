@@ -4,7 +4,7 @@ FallibleValue := (
 
 implement FalliblyCopyable#(FallibleValue) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &FallibleValue, .allocator: $&Virtual#(Allocator)) -> (
+    .copy    = (.self: &FallibleValue, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(.t: FallibleValue, .reasons: (..copy_failed))
     ) {
 
@@ -20,7 +20,7 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     first :: FallibleValue = (.value = 21)
     copied ::= FalliblyCopyable#(
         FallibleValue

@@ -2,7 +2,7 @@
 -- The bridge appears twice in the resulting walk, in opposite directions.
 -- It connects loops without opening the closed shell or creating another face.
 test usage_bridge_closed_face := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _closed_pocket(.allocator = allocator)!
     first_loop ::= t.face_loop(&source, .face = (.value = 0))!
     exterior ::= [t.loop_info(&source, .loop = first_loop)!].first

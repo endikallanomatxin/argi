@@ -284,14 +284,14 @@ passes through a wider floating-point type, avoiding double rounding.
 
 ## Integer formatting
 
-`format(.value: T, .allocator: $&Allocator)` returns an owning `String` for
+`format(.value: T, .allocator: Virtual#(Allocator))` returns an owning `String` for
 `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, and
 `UIntNative`. Decimal output uses ASCII digits, no separators, and a leading
 minus sign only for negative values. Zero is `"0"`; signed minima and unsigned
 maxima retain their full range. The result uses one allocation sized for the
 text and its zero terminator.
 
-`format_into(.out: $&String, .value: T, .allocator: $&Allocator)` appends the
+`format_into(.out: $&String, .value: T, .allocator: Virtual#(Allocator))` appends the
 same representation. Decimal conversion uses fixed local storage; only growth
 of the destination string can allocate. A failed reservation leaves the
 existing string unchanged. String formatting returns `out_of_memory` on an

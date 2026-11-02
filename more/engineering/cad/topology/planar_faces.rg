@@ -5,7 +5,7 @@ _planar_face_planes := #(.Scalar: Type: Float) (
     .contour_lengths  : ArrayView#(UIntNative),
     .face_loop_counts : ArrayView#(UIntNative),
     .tolerance        : Scalar,
-    .allocator        : $&Virtual#(Allocator)
+    .allocator        : Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(g.Plane#(Scalar)), BuildErrors)) {
 
     halfedges ::= length(&vertex_indices).count

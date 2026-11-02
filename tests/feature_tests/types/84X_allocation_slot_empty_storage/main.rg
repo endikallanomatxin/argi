@@ -1,7 +1,7 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocation ::= unwrap_or_abort(
-        .value = allocate_bytes(.self = system.page_allocator, .size = 0, .alignment = 8)
+        .value = allocate_bytes(.self = $&system.page_allocator, .size = 0, .alignment = 8)
     )
     address ::= allocation.data.address
     raw ::= raw_pointer#(.t: UIntNative)(.address = address).raw

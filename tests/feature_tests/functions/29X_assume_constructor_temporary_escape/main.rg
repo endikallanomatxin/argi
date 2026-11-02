@@ -4,7 +4,7 @@ bad := (.system: System) -> (.result: $&GeneralPurposeAllocator) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     result = allocator
 }
 

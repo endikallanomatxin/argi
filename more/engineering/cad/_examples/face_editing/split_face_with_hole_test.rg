@@ -2,7 +2,7 @@
 -- pocket.rg defines the input geometry. This example focuses on selecting
 -- boundary positions, inspecting the result and merging the two faces again.
 test usage_split_closed_face_with_hole := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _closed_pocket(.allocator = allocator)!
     exterior ::= [
         t.loop_info(&source, .loop = [t.face_loop(&source, .face = (.value = 0))!])!

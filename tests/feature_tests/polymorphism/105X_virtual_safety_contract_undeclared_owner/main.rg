@@ -3,13 +3,14 @@ Factory#(.Participant: Type): Contract = (
     where depends_on(value, self)
 )
 
-Cell := (.allocator: $&Virtual#(Allocator))
+Cell := (.allocator: Virtual#(Allocator))
 
 implement Factory#(Cell) (.make = _impl_make_Cell)
 
 _impl_make_Cell := (.self: &Cell) -> (.value: Errable#(Allocation, (..out_of_memory))) {
 
-    value = allocate_bytes(self&.allocator, .size = 1, .alignment = 1)
+    allocator ::= self&.allocator
+    value = allocate_bytes($&allocator, .size = 1, .alignment = 1)
 }
 
 main := (.system: System) -> () {

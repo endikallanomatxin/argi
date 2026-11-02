@@ -57,12 +57,12 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     backing :: BackingAllocator = BackingAllocator(.ffi = system.ffi)
     backing_virtual ::= to_virtual#(Allocator)($&backing)
     array ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: Tracked)(.allocator = $&backing_virtual, .capacity = 3)
+        .value = DynamicArray#(.t: Tracked)(.allocator = backing_virtual, .capacity = 3)
     )
 
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
@@ -80,9 +80,9 @@ main := (.system: System) -> (.status_code: Int32) {
                         ..error _ { status_code = 12 }
                         ..ok ~third_payload {
                             third ::= ~third_payload
-                            push(.allocator = $&backing_virtual, .self = $&array, .value = ~first)
-                            push(.allocator = $&backing_virtual, .self = $&array, .value = ~second)
-                            push(.allocator = $&backing_virtual, .self = $&array, .value = ~third)
+                            push(.allocator = backing_virtual, .self = $&array, .value = ~first)
+                            push(.allocator = backing_virtual, .self = $&array, .value = ~second)
+                            push(.allocator = backing_virtual, .self = $&array, .value = ~third)
 
                             if first_drops != 0 or second_drops != 0 or third_drops != 0 {
                                 status_code = 20

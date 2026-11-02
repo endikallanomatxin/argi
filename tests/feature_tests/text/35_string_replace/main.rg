@@ -3,7 +3,7 @@ expect_replacement := (
     .pattern      : StringView,
     .replacement  : StringView,
     .expected     : StringView,
-    .allocator    : $&Virtual#(Allocator),
+    .allocator    : Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
 ) -> () {
     assume error_tracer

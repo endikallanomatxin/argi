@@ -6,9 +6,9 @@ store_wrapper := #(.t: Type) (.slot: $&t, .value: t) -> () {
 
 main := (.system: System) -> (.status_code: Int32) {
 
-    source_result ::= allocate_bytes(.self = system.page_allocator, .size = 1)
+    source_result ::= allocate_bytes(.self = $&system.page_allocator, .size = 1)
     slot_result ::= allocate_bytes(
-        .self = system.page_allocator, .size = size_of(.type = Allocation)
+        .self = $&system.page_allocator, .size = size_of(.type = Allocation)
     )
 
     match source_result {

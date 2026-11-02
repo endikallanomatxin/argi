@@ -6,7 +6,7 @@ idx := import ("../storage")
 -- halfedge corresponds to its first span. History relies on these semantic
 -- ordering guarantees, not the physical layout or numeric IDs of halfedges.
 profile_brep := #(.Scalar: Type: Float) (
-    .profile: &PlanarProfile#(Scalar), .allocator: $&Virtual#(Allocator)
+    .profile: &PlanarProfile#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(t.Model#(Scalar), t.BrepErrors)) {
     builder ::= t.BrepBuilder#(Scalar)(.tolerance = profile&._tolerance, .allocator = allocator)!
     plane: g.Plane#(Scalar) = (.origin = profile&._frame.origin, .normal = profile&._frame.z)
@@ -113,7 +113,7 @@ _profile_edge := #(.Scalar: Type: Float) (
     .index     : UIntNative,
     .count     : UIntNative,
     .full      : Bool,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(t.TrimUse#(Scalar), t.BrepErrors)) {
     start ::= _profile_world_point(.frame = frame, .point = span.start).value
     end ::= _profile_world_point(.frame = frame, .point = span.end).value

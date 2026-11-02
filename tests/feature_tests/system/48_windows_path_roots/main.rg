@@ -11,7 +11,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drive ::= path_with_view(.view = "C:\\file.txt") | unwrap_or_abort(_)
     if is_absolute(&drive).ok {
     } else {

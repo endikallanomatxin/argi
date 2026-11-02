@@ -18,6 +18,6 @@ create := (.counter: $&Counter) -> () {
 main := (.system: System) -> () {
 
     assume allocator := system.page_allocator
-    counter ::= Counter(.allocation = ~unwrap_or_abort(allocate_bytes(allocator, .size = 1)))
+    counter ::= Counter(.allocation = ~unwrap_or_abort(allocate_bytes($&allocator, .size = 1)))
     create($&counter)
 }

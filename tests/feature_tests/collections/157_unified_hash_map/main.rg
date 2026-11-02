@@ -4,7 +4,7 @@ main := () -> (.status_code: Int32 = 1) {
     allocator_storage ::= CAllocator(.ffi = ffi)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: String, .value: Int32, .policy: StandardHashPolicy)(
             .policy = StandardHashPolicy()

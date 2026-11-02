@@ -60,7 +60,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
     value ::= extract(allocator_concrete, $&drops)
     if value.drops&!= 0 { status_code = 1 }

@@ -4,7 +4,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     allocated ::= allocate_bytes(.self = $&allocator_storage, .size = 4)
     match allocated {
         ..ok ~payload {

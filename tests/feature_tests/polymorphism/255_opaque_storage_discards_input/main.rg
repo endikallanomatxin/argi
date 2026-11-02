@@ -26,9 +26,9 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
-    storage ::= unwrap_or_abort(allocate_bytes(allocator, .size = 1))
+    storage ::= unwrap_or_abort(allocate_bytes($&allocator, .size = 1))
     cell ::= Cell()
     erased ::= to_virtual#(Store)(&cell)
     put(&erased, $&storage, Tracked($&drops))

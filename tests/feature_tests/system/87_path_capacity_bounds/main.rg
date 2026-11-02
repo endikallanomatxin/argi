@@ -6,7 +6,7 @@ main := () -> (.status_code: Int32 = 0) {
     right: StringView = "right"
     failing ::= FailingAllocator()
     failing_virtual ::= to_virtual#(Allocator)($&failing)
-    match join_views(.left = &left, .right = &right, .allocator = $&failing_virtual) {
+    match join_views(.left = &left, .right = &right, .allocator = failing_virtual) {
         ..ok _ { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }
     }

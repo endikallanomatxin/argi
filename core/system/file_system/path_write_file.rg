@@ -6,7 +6,7 @@ FileWriting#(.PathValue: Type): Contract = (
 
 AllocatingFileWriting#(.PathValue: Type): Contract = (
     .Result     : Type
-    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: $&Virtual#(Allocator)) -> (
+    .write_file : (.self: &FileSystem, .path: PathValue, .text: &String, .allocator: Virtual#(Allocator)) -> (
         .result : Result
     )
 )
@@ -96,7 +96,7 @@ _path_write_file_string := (.self: &FileSystem, .path: &String, .text: &String) 
 }
 
 _path_write_file_view := (
-    .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: StringView, .text: &String, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         Void,

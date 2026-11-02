@@ -39,19 +39,19 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     assume error_tracer ::= $&trace_handle
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     allocator_virtual ::= to_virtual#(Allocator)($&allocator)
-    queue ::= Deque#(.t: Tracked)(.capacity = 2, .allocator = $&allocator_virtual)!!!
-    push_back(.self = $&queue, .value = Tracked(.id = 1), .allocator = $&allocator_virtual)!!!
-    push_back(.self = $&queue, .value = Tracked(.id = 2), .allocator = $&allocator_virtual)!!!
+    queue ::= Deque#(.t: Tracked)(.capacity = 2, .allocator = allocator_virtual)!!!
+    push_back(.self = $&queue, .value = Tracked(.id = 1), .allocator = allocator_virtual)!!!
+    push_back(.self = $&queue, .value = Tracked(.id = 2), .allocator = allocator_virtual)!!!
     first ::= pop_front(.self = $&queue)!!!
-    push_back(.self = $&queue, .value = Tracked(.id = 3), .allocator = $&allocator_virtual)!!!
+    push_back(.self = $&queue, .value = Tracked(.id = 3), .allocator = allocator_virtual)!!!
     allocator.fail = true
     captures_before ::= tracer.captures
-    match reserve(.self = $&queue, .capacity = 3, .allocator = $&allocator_virtual) {
+    match reserve(.self = $&queue, .capacity = 3, .allocator = allocator_virtual) {
         ..ok _ { abort } ..error _ {}
     }
     reserve_captures ::= tracer.captures - captures_before
     captures_before = tracer.captures
-    match push_front(.self = $&queue, .value = Tracked(.id = 4), .allocator = $&allocator_virtual) {
+    match push_front(.self = $&queue, .value = Tracked(.id = 4), .allocator = allocator_virtual) {
         ..ok _ { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
@@ -65,12 +65,12 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         maximum = maximum * 256 + 255
         index = index + 1
     }
-    match reserve(.self = $&queue, .capacity = maximum, .allocator = $&allocator_virtual) {
+    match reserve(.self = $&queue, .capacity = maximum, .allocator = allocator_virtual) {
         ..ok _ { abort } ..error _ {}
     }
     if allocator.allocations != 1 or allocator.deallocations != 0 { abort }
     allocator.fail = false
-    reserve(.self = $&queue, .capacity = 8, .allocator = $&allocator_virtual)!!!
+    reserve(.self = $&queue, .capacity = 8, .allocator = allocator_virtual)!!!
     if allocator.allocations != 2 or allocator.deallocations != 1 or drops != 1 { abort }
     front ::= pop_front(.self = $&queue)!!!
     back ::= pop_back(.self = $&queue)!!!

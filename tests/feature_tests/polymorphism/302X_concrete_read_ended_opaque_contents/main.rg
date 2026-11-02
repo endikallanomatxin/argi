@@ -30,8 +30,8 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
-    implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
+    assume allocator := virtual_allocator
+    implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)($&allocator)))
 
     {
         drops :: Int32 = 0

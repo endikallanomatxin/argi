@@ -18,7 +18,7 @@
 
     system :: System = (
         .memory         = $&memory_storage,
-        .page_allocator = $&page_allocator_handle,
+        .page_allocator = page_allocator_handle,
         .terminal       = terminal,
         .args           = $&args_storage,
         .env_vars       = $&env_vars_storage,

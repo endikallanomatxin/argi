@@ -6,7 +6,7 @@ OwnedByteLine := (.bytes: DynamicArray#(.t: UInt8), .terminated: Bool)
 -- before reading each payload byte, so allocation failure does not consume it.
 read_line_owned := #(
     .SelfType: Type: Reader#(SelfType)
-) (.self: $&SelfType, .maximum: UIntNative, .allocator: $&Virtual#(Allocator)) -> (
+) (.self: $&SelfType, .maximum: UIntNative, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
 ) {
 
@@ -74,7 +74,7 @@ implement#(.t: Type: Reader#(t)) Init#(OwnedLineReader#(.t: t), OwnedLineReaderI
 )
 
 next := #(.t: Type: Reader#(t)) (
-    .self: $&OwnedLineReader#(.t: t), .allocator: $&Virtual#(Allocator)
+    .self: $&OwnedLineReader#(.t: t), .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
 ) {

@@ -2,7 +2,7 @@
 -- Face indices wind outwards. The constructor infers Float64 and three
 -- vertices per face from the arrays; the final loop shows boundary traversal.
 test usage_closed_tetrahedron := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

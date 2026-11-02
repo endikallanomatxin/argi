@@ -2,7 +2,7 @@
 -- are unchanged; only face orientation and boundary traversal are reversed.
 -- As with other immutable edits, the result owns a fresh checked-handle domain.
 reverse_orientation := #(.Scalar: Type: Float) (
-    .model: &Model#(Scalar), .allocator: $&Virtual#(Allocator)
+    .model: &Model#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     topology ::= _reverse_topology(.source = &model&._topology, .allocator = allocator)!
     points ::= copy(&model&._points, .allocator = allocator)!
@@ -19,7 +19,7 @@ reverse_orientation := #(.Scalar: Type: Float) (
     )
 }
 
-_reverse_topology := (.source: &Topology, .allocator: $&Virtual#(Allocator)) -> (
+_reverse_topology := (.source: &Topology, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(Topology, BuildErrors)
 ) {
     previous ::= _topology_predecessors(.topology = source, .allocator = allocator)!

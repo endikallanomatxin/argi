@@ -5,7 +5,7 @@ _split_hole_contours := #(.Scalar: Type: Float) (
     .boundary   : &_SplitBoundary,
     .points     : &DynamicArray#(g.Point#(Scalar)),
     .edge_count : UIntNative,
-    .allocator  : $&Virtual#(Allocator)
+    .allocator  : Virtual#(Allocator)
 ) -> (.result: Errable#(_BoundaryContours#(Scalar), SplitErrors)) {
 
     count ::= face.loop_count - 1
@@ -54,7 +54,7 @@ _split_partition_holes := #(.Scalar: Type: Float) (
     .exterior   : ArrayView#(g.Point#(Scalar)),
     .plane      : g.Plane#(Scalar),
     .tolerance  : Scalar,
-    .allocator  : $&Virtual#(Allocator)
+    .allocator  : Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(Bool), SplitErrors)) {
 
     owners ::= DynamicArray#(Bool)(.allocator = allocator, .capacity = hole_count)!
@@ -108,7 +108,7 @@ _split_validate_region := #(.Scalar: Type: Float) (
     .owners    : &DynamicArray#(Bool),
     .first     : Bool,
     .tolerance : Scalar,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, SplitErrors)) {
 
     count ::= length(&holes&.lengths).count

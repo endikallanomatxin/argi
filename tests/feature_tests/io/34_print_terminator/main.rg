@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     base ::= RecordingWriter(.expected = "a\nb<>c\r\nd\nd=.!x")
     assume writer ::= $&base
 

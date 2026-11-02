@@ -38,7 +38,7 @@ SketchBuilderInitArgs := #(.Scalar: Type: Float) (
     .plane     : SketchPlane      = ..xy,
     .origin    : g.Point#(Scalar) = (0.0, 0.0, 0.0),
     .tolerance : Scalar           = 0.000001,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.Scalar: Type: Float) Init#(
@@ -71,7 +71,7 @@ implement#(.Scalar: Type: Float) Init#(
 -- The frame fixes origin, local X/Y axes and normal. It must be right-handed
 -- and orthonormal; placement is never silently normalized, scaled or reflected.
 sketch_builder_on_frame := #(.Scalar: Type: Float) (
-    .frame: g.Frame#(Scalar), .tolerance: Scalar = 0.000001, .allocator: $&Virtual#(Allocator)
+    .frame: g.Frame#(Scalar), .tolerance: Scalar = 0.000001, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(SketchBuilder#(Scalar), t.BuildErrors)) {
     if is_finite(tolerance).ok == false or tolerance <= 0.0 {
         result = ..error(.reason = ..invalid_tolerance)
@@ -95,7 +95,7 @@ sketch_builder_on_frame := #(.Scalar: Type: Float) (
 contour := #(.Scalar: Type: Float) (
     .builder   : $&SketchBuilder#(Scalar),
     .spans     : ArrayView#(g.ContourSpan#(Scalar)),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     count ::= length(&spans).count
     lengths: [1]UIntNative = (count,)

@@ -20,7 +20,7 @@ write := #(.Collection: Type: MutableIndexable#(.Item: Int32)) (.items: $&Collec
 }
 
 resize := #(.Collection: Type: Resizable#(.Item: Int32)) (
-    .items: $&Collection, .allocator: $&Virtual#(Allocator)
+    .items: $&Collection, .allocator: Virtual#(Allocator)
 ) -> (.value: Int32) {
 
     unwrap_or_abort(.value = push(.self = items, .value = 3, .allocator = allocator))
@@ -37,7 +37,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     dynamic ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
     if resize(.items = $&dynamic, .allocator = allocator).value != 7 { abort }
     unwrap_or_abort(.value = push(.self = $&dynamic, .value = 2, .allocator = allocator))

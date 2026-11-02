@@ -24,7 +24,7 @@ DirectoryWalkerInitArgs: Type = (
     .self          : &FileSystem,
     .path          : StringView,
     .maximum_depth : UIntNative   = 64,
-    .allocator     : $&Virtual#(Allocator)
+    .allocator     : Virtual#(Allocator)
 )
 
 implement Init#(
@@ -70,7 +70,7 @@ implement Deinit#(DirectoryWalker) (
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
 _next_directory_walker := (
-    .self: $&DirectoryWalker, .allocator: $&Virtual#(Allocator)
+    .self: $&DirectoryWalker, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(?WalkEntry, _FilesystemReasons)) {
 
     assume allocator

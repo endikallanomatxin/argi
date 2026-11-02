@@ -37,7 +37,7 @@ _merge_emit_loop := (
     .destination : $&_MergeConnectivity,
     .cycle       : _MergeLoop,
     .merged      : Bool,
-    .allocator   : $&Virtual#(Allocator)
+    .allocator   : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, MergeErrors)) {
 
     first ::= length(&destination&.halfedges).count
@@ -86,7 +86,7 @@ _merge_emit_loop := (
 }
 
 merge_coplanar_faces := #(.Scalar: Type: Float) (
-    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: $&Virtual#(Allocator)
+    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(FaceMerge#(Scalar), MergeErrors)) {
 
     face_info(model, .face = first)!

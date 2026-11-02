@@ -1,4 +1,4 @@
-escape := (.allocator: $&Virtual#(Allocator)) -> (
+escape := (.allocator: Virtual#(Allocator)) -> (
     .result : DynamicArray#(&Int32)
 ) {
 
@@ -14,5 +14,5 @@ main := (.system: System) -> () {
 
     allocator ::= GeneralPurposeAllocator(system.page_allocator)
     handle ::= to_virtual#(Allocator)($&allocator)
-    escaped ::= escape($&handle)
+    escaped ::= escape(handle)
 }

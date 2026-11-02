@@ -8,7 +8,7 @@ _digit := (.byte: UInt8) -> (.value: UInt8 = 255) {
 
 -- Lowercase output, with checked capacity. Text and bytes never alias output.
 encode := (
-    .bytes: ArrayView#(.t: UInt8), .allocator: $&Virtual#(Allocator)
+    .bytes: ArrayView#(.t: UInt8), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) {
 
     assume allocator
@@ -50,7 +50,7 @@ encode := (
 
 -- Validate completely before allocating or publishing any decoded bytes.
 decode := (
-    .text: StringView, .allocator: $&Virtual#(Allocator)
+    .text: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_hex, ..out_of_memory))) {
 
     assume allocator

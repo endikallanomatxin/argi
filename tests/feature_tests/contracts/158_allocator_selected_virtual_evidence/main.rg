@@ -2,10 +2,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     page :: PageAllocator = PageAllocator(.memory = system.memory)
     erased := system.page_allocator
-    allocation ::= unwrap_or_abort(allocate#(UInt32)(erased, .count = 2))
+    allocation ::= unwrap_or_abort(allocate#(UInt32)($&erased, .count = 2))
     if allocation.size != 8 or allocation.alignment < 4 { abort }
     deinit($&allocation)
-    single ::= unwrap_or_abort(allocate#(UInt32)(erased))
+    single ::= unwrap_or_abort(allocate#(UInt32)($&erased))
     if single.size != 4 { abort }
     deinit($&single)
     empty ::= unwrap_or_abort(

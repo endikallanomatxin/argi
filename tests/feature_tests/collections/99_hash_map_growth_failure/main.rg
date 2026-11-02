@@ -12,18 +12,18 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
-            .policy = StandardHashPolicy(), .allocator = $&allocator_virtual
+            .policy = StandardHashPolicy(), .allocator = allocator_virtual
         )
     )
     index :: Int32 = 0
     while index < 4 {
         unwrap_or_abort(
-            .value = put(.self = $&map, .key = index, .value = index, .allocator = $&allocator_virtual)
+            .value = put(.self = $&map, .key = index, .value = index, .allocator = allocator_virtual)
         )
         index = index + 1
     }
     allocator.fail = true
-    match put(.self = $&map, .key = 4, .value = 4, .allocator = $&allocator_virtual).result {
+    match put(.self = $&map, .key = 4, .value = 4, .allocator = allocator_virtual).result {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
@@ -37,11 +37,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         index = index + 1
     }
     unwrap_or_abort(
-        .value = put(.self = $&map, .key = 0, .value = 99, .allocator = $&allocator_virtual)
+        .value = put(.self = $&map, .key = 0, .value = 99, .allocator = allocator_virtual)
     )
     if allocator.allocations != 2 or allocator.deallocations != 0 { abort }
     allocator.fail = false
-    unwrap_or_abort(.value = put(.self = $&map, .key = 4, .value = 4, .allocator = $&allocator_virtual))
+    unwrap_or_abort(.value = put(.self = $&map, .key = 4, .value = 4, .allocator = allocator_virtual))
     if allocator.allocations != 4 or allocator.deallocations != 2 { abort }
     deinit(.self = $&map)
     if allocator.deallocations != 4 { abort }

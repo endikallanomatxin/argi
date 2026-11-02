@@ -5,7 +5,7 @@ from_periodic_surface := #(.Scalar: Type: Float) (
     .cap_cylinder : Bool                = false,
     .height       : Scalar              = 1.0,
     .tolerance    : Scalar              = 0.000001,
-    .allocator    : $&Virtual#(Allocator)
+    .allocator    : Virtual#(Allocator)
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
 
     if is_finite(tolerance).ok == false or tolerance <= 0.0 {

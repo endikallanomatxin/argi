@@ -3,7 +3,7 @@ m := import ("../modeling")
 -- Select one declared contour as exterior; every other declared contour is a
 -- hole. Output order is exterior first, then remaining source contours in order.
 profile := #(.Scalar: Type: Float) (
-    .sketch: &Sketch#(Scalar), .exterior: ContourRef, .allocator: $&Virtual#(Allocator)
+    .sketch: &Sketch#(Scalar), .exterior: ContourRef, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(m.PlanarProfile#(Scalar), t.BuildErrors)) {
     order ::= _profile_all_contours(sketch, .exterior = exterior, .allocator = allocator)!
     selected ::= _profile_from_order(sketch, .order = view(&order), .allocator = allocator)!
@@ -13,7 +13,7 @@ profile := #(.Scalar: Type: Float) (
 -- Explicit selection: exterior first, then holes in caller order. All other
 -- drawing contours are ignored; the reusable drawing is never modified.
 profile_from_contours := #(.Scalar: Type: Float) (
-    .sketch: &Sketch#(Scalar), .contours: ArrayView#(ContourRef), .allocator: $&Virtual#(Allocator)
+    .sketch: &Sketch#(Scalar), .contours: ArrayView#(ContourRef), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(m.PlanarProfile#(Scalar), t.BuildErrors)) {
     order ::= _profile_explicit_contours(sketch, .contours = contours, .allocator = allocator)!
     selected ::= _profile_from_order(sketch, .order = view(&order), .allocator = allocator)!
@@ -21,7 +21,7 @@ profile_from_contours := #(.Scalar: Type: Float) (
 }
 
 _profile_all_contours := #(.Scalar: Type: Float) (
-    .sketch: &Sketch#(Scalar), .exterior: ContourRef, .allocator: $&Virtual#(Allocator)
+    .sketch: &Sketch#(Scalar), .exterior: ContourRef, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(UIntNative), t.BuildErrors)) {
     outer ::= idx.resolve_index(.domain = &sketch&._domain, .index = exterior._index)!
     get(&sketch&._contours, .index = outer)!
@@ -37,7 +37,7 @@ _profile_all_contours := #(.Scalar: Type: Float) (
 }
 
 _profile_explicit_contours := #(.Scalar: Type: Float) (
-    .sketch: &Sketch#(Scalar), .contours: ArrayView#(ContourRef), .allocator: $&Virtual#(Allocator)
+    .sketch: &Sketch#(Scalar), .contours: ArrayView#(ContourRef), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(UIntNative), t.BuildErrors)) {
     count ::= length(&contours).count
     if count == 0 {
@@ -59,7 +59,7 @@ _profile_explicit_contours := #(.Scalar: Type: Float) (
 -- Both public paths share geometry assembly and admission. Hole winding reverses
 -- span order and direction, without tessellation or arrangement inference.
 _profile_from_order := #(.Scalar: Type: Float) (
-    .sketch: &Sketch#(Scalar), .order: ArrayView#(UIntNative), .allocator: $&Virtual#(Allocator)
+    .sketch: &Sketch#(Scalar), .order: ArrayView#(UIntNative), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(m.PlanarProfile#(Scalar), t.BuildErrors)) {
     count ::= length(&order).count
     span_count :: UIntNative = 0

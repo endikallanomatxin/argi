@@ -82,7 +82,7 @@ test model_normalized_curve_derivatives_float64 := (.system: System) -> !() {
 }
 
 _check_interval_derivatives := #(.Scalar: Type: Float) (
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> !Void {
 
     original ::= _partitioned_oblique_cylinder#(.Scalar: Scalar)(.allocator = allocator)!
@@ -147,12 +147,12 @@ _check_interval_derivatives := #(.Scalar: Type: Float) (
 }
 
 test model_interval_derivatives_period_crossing_and_orientation_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     [_check_interval_derivatives#(.Scalar: Float32)(.allocator = allocator)!]
 }
 
 test model_interval_derivatives_period_crossing_and_orientation_float64 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     [_check_interval_derivatives#(.Scalar: Float64)(.allocator = allocator)!]
 }
 

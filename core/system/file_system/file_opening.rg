@@ -10,7 +10,7 @@ AllocatingFileOpening#(.PathValue: Type): Contract = (
         .file_system : &FileSystem,
         .path        : PathValue,
         .mode        : FileOpenMode = ..read,
-        .allocator   : $&Virtual#(Allocator)
+        .allocator   : Virtual#(Allocator)
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory)))
 )
 
@@ -64,7 +64,7 @@ implement AllocatingFileOpening#(StringView) (
         .file_system : &FileSystem,
         .path        : StringView,
         .mode        : FileOpenMode = ..read,
-        .allocator   : $&Virtual#(Allocator)
+        .allocator   : Virtual#(Allocator)
     ) -> (.result: Errable#(File, (..path_open_failed, ..out_of_memory))) {
 
         assume ffi := file_system&._ffi

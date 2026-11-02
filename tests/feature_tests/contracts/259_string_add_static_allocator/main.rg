@@ -1,5 +1,5 @@
 join := (
-    .left: &StringView, .right: &StringView, .allocator: $&Virtual#(Allocator)
+    .left: &StringView, .right: &StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator
@@ -11,7 +11,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     left ::= "hello"
     right ::= " world"
     first ::= unwrap_or_abort(.value = &left + &right)

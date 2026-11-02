@@ -8,7 +8,7 @@ implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () { record_drop() }
 )
 
-partial := (.allocator: $&Virtual#(Allocator)) -> (
+partial := (.allocator: Virtual#(Allocator)) -> (
     .result : Errable#(DynamicArray#(Owner), (..out_of_memory, ..copy_failed))
 ) {
 
@@ -19,7 +19,7 @@ partial := (.allocator: $&Virtual#(Allocator)) -> (
     result = ..error(.reason = ..copy_failed)
 }
 
-nested := (.allocator: $&Virtual#(Allocator)) -> () {
+nested := (.allocator: Virtual#(Allocator)) -> () {
 
     assume allocator
     inner ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 2))
@@ -31,7 +31,7 @@ nested := (.allocator: $&Virtual#(Allocator)) -> () {
     push_assume_capacity#(DynamicArray#(Owner))($&outer, .value = ~inner)
 }
 
-explicit := (.allocator: $&Virtual#(Allocator)) -> () {
+explicit := (.allocator: Virtual#(Allocator)) -> () {
 
     assume allocator
     values ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 1))

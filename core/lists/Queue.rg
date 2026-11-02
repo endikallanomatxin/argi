@@ -9,7 +9,7 @@ Queue#(.Collection: Type): Contract = (
 QueueInsertion#(.Collection: Type): Contract = (
     Queue#(Collection)
     .Result : Type
-    .push   : (.self: $&Collection, .value: Queue#(Collection).Item, .allocator: $&Virtual#(Allocator)) -> (
+    .push   : (.self: $&Collection, .value: Queue#(Collection).Item, .allocator: Virtual#(Allocator)) -> (
         .result : Result
     )
 )

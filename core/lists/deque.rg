@@ -4,7 +4,7 @@ Deque := #(.t: Type) (._ring: RingBuffer#(.t: t))
 
 DequeInitArgs: Type = #(.t: Type) (
     .capacity  : UIntNative = 8,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.t: Type) Init#(
@@ -36,7 +36,7 @@ implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
 )
 
 reserve := #(.t: Type) (
-    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: $&Virtual#(Allocator)
+    .self: $&Deque#(.t: t), .capacity: UIntNative, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     if capacity <= self&._ring._capacity {
@@ -44,7 +44,7 @@ reserve := #(.t: Type) (
         return
     }
 
-    new_allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
+    new_allocation ::= allocate#(.t: t)($&allocator, .count = capacity)!
     index :: UIntNative = 0
 
     while index < self&._ring._length {
@@ -76,7 +76,7 @@ reserve := #(.t: Type) (
 }
 
 _deque_ensure_room := #(.t: Type) (
-    .self: $&Deque#(.t: t), .allocator: $&Virtual#(Allocator)
+    .self: $&Deque#(.t: t), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     if self&._ring._length < self&._ring._capacity {
@@ -97,7 +97,7 @@ _deque_ensure_room := #(.t: Type) (
 }
 
 push_back := #(.t: Type) (
-    .self: $&Deque#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)
+    .self: $&Deque#(.t: t), .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -119,7 +119,7 @@ push_back := #(.t: Type) (
 }
 
 push_front := #(.t: Type) (
-    .self: $&Deque#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)
+    .self: $&Deque#(.t: t), .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator

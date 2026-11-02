@@ -4,7 +4,7 @@ _merge_validate_contours := #(.Scalar: Type: Float) (
     .contours  : &_BoundaryContours#(Scalar),
     .plane     : g.Plane#(Scalar),
     .tolerance : Scalar,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, MergeErrors)) {
 
     count ::= length(&contours&.lengths).count

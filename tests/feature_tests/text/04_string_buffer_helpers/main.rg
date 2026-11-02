@@ -3,7 +3,7 @@ DummyWriter := (
 )
 
 DummyWriterInitArgs: Type = (
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement Init#(
@@ -30,7 +30,7 @@ implement Deinit#(DummyWriter) (
 )
 
 append_test_byte := (
-    .self: $&DummyWriter, .byte: UInt8, .allocator: $&Virtual#(Allocator)
+    .self: $&DummyWriter, .byte: UInt8, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) {
 
     assume allocator
@@ -48,7 +48,7 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     buffer ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = allocator, .capacity = 16)

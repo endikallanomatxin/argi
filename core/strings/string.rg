@@ -24,7 +24,7 @@ String := (
 )
 
 string_with_length := (
-    .allocator: $&Virtual#(Allocator), .length: UIntNative
+    .allocator: Virtual#(Allocator), .length: UIntNative
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator
@@ -35,7 +35,7 @@ string_with_length := (
     }
 
     allocation_size ::= length + 1
-    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes($&allocator, .size = allocation_size)!
     out :: String = (._allocation = ~allocation, ._length = length, ._shape = (.marker = 0))
     i :: UIntNative = 0
 
@@ -50,7 +50,7 @@ string_with_length := (
 }
 
 string_with_capacity := (
-    .allocator: $&Virtual#(Allocator), .capacity: UIntNative
+    .allocator: Virtual#(Allocator), .capacity: UIntNative
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator
@@ -68,7 +68,7 @@ string_with_capacity := (
     }
 
     allocation_size ::= actual_capacity + 1
-    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes($&allocator, .size = allocation_size)!
     out :: String = (._allocation = ~allocation, ._length = 0, ._shape = (.marker = 0))
     _string_set_byte(.string = $&out, .index = 0, .value = 0)
 
@@ -76,7 +76,7 @@ string_with_capacity := (
 }
 
 StringInitArgs: Type = (
-    .allocator : $&Virtual#(Allocator),
+    .allocator : Virtual#(Allocator),
     .length    : UIntNative = 0
 )
 
@@ -97,7 +97,7 @@ implement Deinit#(String) (
 
 implement FalliblyCopyable#(String) (
     .reasons : Type = (..out_of_memory)
-    .copy    = (.self: &String, .allocator: $&Virtual#(Allocator)) -> (
+    .copy    = (.self: &String, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
 
@@ -109,7 +109,7 @@ implement FalliblyCopyable#(String) (
         }
 
         allocation_size ::= self&._length + 1
-        allocation ::= allocate_bytes(allocator, .size = allocation_size)!
+        allocation ::= allocate_bytes($&allocator, .size = allocation_size)!
         out :: String = (
             ._allocation = ~allocation, ._length = self&._length, ._shape = (.marker = 0)
         )
@@ -234,7 +234,7 @@ _string_growth_capacity := (.self: &String, .min_capacity: UIntNative) -> (.valu
 }
 
 ensure_capacity := (
-    .self: $&String, .capacity: UIntNative, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .capacity: UIntNative, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -243,7 +243,7 @@ ensure_capacity := (
 }
 
 ensure_capacity_growing := (
-    .self: $&String, .target_capacity: UIntNative, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .target_capacity: UIntNative, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -261,7 +261,7 @@ ensure_capacity_growing := (
     }
 
     new_allocation_size ::= target_capacity + 1
-    allocate_result ::= allocate_bytes(allocator, .size = new_allocation_size)
+    allocate_result ::= allocate_bytes($&allocator, .size = new_allocation_size)
 
     match allocate_result {
         ..ok ~payload {
@@ -331,7 +331,7 @@ _string_append_bytes := (.self: $&String, .source: ArrayView#(.t: UInt8)) -> () 
 }
 
 _string_push_byte := (
-    .self: $&String, .byte: UInt8, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .byte: UInt8, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -363,7 +363,7 @@ _string_push_byte := (
 }
 
 push_c_string := (
-    .self: $&String, .text: &CChar, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .text: &CChar, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory, ..invalid_utf8))) {
 
     assume allocator
@@ -409,7 +409,7 @@ push_c_string := (
 }
 
 push_view := (
-    .self: $&String, .view: StringView, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .view: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -478,7 +478,7 @@ _trusted_c_string_view := (.text: &CChar) -> (.view: StringView) {
 }
 
 concat_views := (
-    .left: &StringView, .right: &StringView, .allocator: $&Virtual#(Allocator)
+    .left: &StringView, .right: &StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator
@@ -519,7 +519,7 @@ concat_views := (
 implement Add#(&String, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = (
-        .left: &String, .right: &CChar, .allocator: $&Virtual#(Allocator)
+        .left: &String, .right: &CChar, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -536,7 +536,7 @@ implement Add#(&String, &CChar) (
 implement Add#(&String, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = (
-        .left: &String, .right: &StringView, .allocator: $&Virtual#(Allocator)
+        .left: &String, .right: &StringView, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -550,7 +550,7 @@ implement Add#(&String, &StringView) (
 implement Add#(&String, StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = (
-        .left: &String, .right: StringView, .allocator: $&Virtual#(Allocator)
+        .left: &String, .right: StringView, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -562,7 +562,7 @@ implement Add#(&String, StringView) (
 implement Add#(&String, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = (
-        .left: &String, .right: &String, .allocator: $&Virtual#(Allocator)
+        .left: &String, .right: &String, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -577,7 +577,7 @@ implement Add#(&String, &String) (
 implement Add#(&StringView, &CChar) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = (
-        .left: &StringView, .right: &CChar, .allocator: $&Virtual#(Allocator)
+        .left: &StringView, .right: &CChar, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -593,7 +593,7 @@ implement Add#(&StringView, &CChar) (
 implement Add#(&StringView, &StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = (
-        .left: &StringView, .right: &StringView, .allocator: $&Virtual#(Allocator)
+        .left: &StringView, .right: &StringView, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -605,7 +605,7 @@ implement Add#(&StringView, &StringView) (
 implement Add#(&StringView, StringView) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = (
-        .left: &StringView, .right: StringView, .allocator: $&Virtual#(Allocator)
+        .left: &StringView, .right: StringView, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -616,7 +616,7 @@ implement Add#(&StringView, StringView) (
 implement Add#(&StringView, &String) (
     .Result : Type = Errable#(String, (..out_of_memory))
     .add    = (
-        .left: &StringView, .right: &String, .allocator: $&Virtual#(Allocator)
+        .left: &StringView, .right: &String, .allocator: Virtual#(Allocator)
     ) -> (.result: Result) {
 
         assume allocator
@@ -628,7 +628,7 @@ implement Add#(&StringView, &String) (
 )
 
 implement Concatenation#(StringView, &String) (
-    .join = (.left: StringView, .right: &String, .allocator: $&Virtual#(Allocator)) -> (
+    .join = (.left: StringView, .right: &String, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
 
@@ -640,7 +640,7 @@ implement Concatenation#(StringView, &String) (
 )
 
 implement Concatenation#(StringView, StringView) (
-    .join = (.left: StringView, .right: StringView, .allocator: $&Virtual#(Allocator)) -> (
+    .join = (.left: StringView, .right: StringView, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
 
@@ -651,7 +651,7 @@ implement Concatenation#(StringView, StringView) (
 )
 
 implement Concatenation#(&String, StringView) (
-    .join = (.left: &String, .right: StringView, .allocator: $&Virtual#(Allocator)) -> (
+    .join = (.left: &String, .right: StringView, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
 
@@ -663,7 +663,7 @@ implement Concatenation#(&String, StringView) (
 )
 
 implement Concatenation#(&String, &String) (
-    .join = (.left: &String, .right: &String, .allocator: $&Virtual#(Allocator)) -> (
+    .join = (.left: &String, .right: &String, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
 
@@ -678,7 +678,7 @@ implement Concatenation#(&String, &String) (
 -- Copy before validation: allocator callbacks may mutate borrowed input bytes.
 -- Only the independent, fully validated text escapes this function.
 string_from_bytes := (
-    .bytes: ArrayView#(UInt8), .allocator: $&Virtual#(Allocator)
+    .bytes: ArrayView#(UInt8), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) {
 
     assume allocator
@@ -690,7 +690,7 @@ string_from_bytes := (
 }
 
 push_ascii := (
-    .self: $&String, .byte: UInt8, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .byte: UInt8, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) {
 
     assume allocator
@@ -703,7 +703,7 @@ push_ascii := (
 }
 
 push_scalar := (
-    .self: $&String, .scalar: UnicodeScalar, .allocator: $&Virtual#(Allocator)
+    .self: $&String, .scalar: UnicodeScalar, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator

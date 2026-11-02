@@ -9,7 +9,7 @@ PriorityQueueInitArgs: Type = #(
     .t: Type, .order: Type: OrderPolicy#(order, t)
 ) (
     .order     : &order,
-    .allocator : $&Virtual#(Allocator),
+    .allocator : Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
@@ -51,7 +51,7 @@ implement#(.t: Type, .order: Type: OrderPolicy#(order, t)) CollectionLength#(
 
 _queue_push_priority_queue := #(
     .t: Type, .order: Type: OrderPolicy#(order, t)
-) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Virtual#(Allocator)) -> (
+) (.self: $&PriorityQueue#(.t: t, .order: order), .value: t, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
 ) {
 

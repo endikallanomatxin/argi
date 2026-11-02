@@ -1,5 +1,5 @@
 test model_face_normals_follow_orientation_without_changing_region := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= _partitioned_oblique_cylinder#(.Scalar: Float64)(.allocator = allocator)!
     inverse ::= reverse_orientation(&model)!
     i :: UIntNative = 0
@@ -35,7 +35,7 @@ test model_face_normals_follow_orientation_without_changing_region := (.system: 
 }
 
 test model_face_normal_at_sphere_pole_and_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= _brep_hemisphere#(.Scalar: Float32)(.allocator = allocator)!
     reversed ::= reverse_orientation(&model)!
     normal ::= face_normal(&model, .face = (.value = 0), .u = 13.0, .v = 1.5707963267948966)!

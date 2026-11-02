@@ -35,7 +35,7 @@ ArenaAllocator := (
 )
 
 ArenaAllocatorInitArgs: Type = (
-    .allocator  : $&Virtual#(Allocator),
+    .allocator  : Virtual#(Allocator),
     .block_size : UIntNative  = 4096
 )
 
@@ -53,7 +53,7 @@ implement Init#(ArenaAllocator, ArenaAllocatorInitArgs) (
 
         if actual_block_size == 0 { actual_block_size = 1 }
         constructed = (
-            ._backing_allocator    = _init_allocator&
+            ._backing_allocator    = _init_allocator
             .domain                = ArenaDomain()
             ._block_head           = 0
             .block_count           = 0

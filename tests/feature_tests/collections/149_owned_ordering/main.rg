@@ -26,7 +26,7 @@ main := () -> (.status_code: Int32 = 1) {
     storage ::= CAllocator(.ffi = ffi)
     allocator_concrete := $&storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     order ::= PairOrder()
     items ::= [DynamicArray#(.t: Pair)(.capacity = 3) | unwrap_or_abort(_)]
     push_assume_capacity(
@@ -106,7 +106,7 @@ main := () -> (.status_code: Int32 = 1) {
             match push(
                 .self      = $&bounded
                 .value     = Pair(.a = Tracked(.id = 5), .b = Tracked(.id = 50))
-                .allocator = $&refusal_virtual
+                .allocator = refusal_virtual
             ) {
                 ..ok _ { abort }
                 ..error error {

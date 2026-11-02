@@ -6,7 +6,7 @@ PathRemoval#(.PathValue: Type): Contract = (
 
 AllocatingPathRemoval#(.PathValue: Type): Contract = (
     .Result : Type
-    .remove : (.self: &FileSystem, .path: PathValue, .allocator: $&Virtual#(Allocator)) -> (.result: Result)
+    .remove : (.self: &FileSystem, .path: PathValue, .allocator: Virtual#(Allocator)) -> (.result: Result)
 )
 
 _path_remove_c := (.self: &FileSystem, .path: &CChar) -> (
@@ -34,7 +34,7 @@ _path_remove_string := (.self: &FileSystem, .path: &String) -> (
 }
 
 _path_remove_view := (
-    .self: &FileSystem, .path: StringView, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Bool, (..path_remove_failed, ..out_of_memory))) {
 
     assume ffi := self&._ffi

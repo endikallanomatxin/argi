@@ -53,7 +53,7 @@ the source view's length. Overflow or incompatible dimensions return
 Vectors expose `length`, checked `get`/`set`, `dot`, `+`, and `scale`. Matrices
 expose `shape`, checked `get`/`set`, `+`, `*`, and `transpose`. Dynamic
 shape incompatibilities return `dimension_mismatch`. Addition and multiplication
-receive an ordinary `$&Virtual#(Allocator)` input, explicitly or through lexical
+receive an ordinary `Virtual#(Allocator)` input, explicitly or through lexical
 `assume allocator`.
 Other operations returning owners
 take `.allocator`; scalar reads, writes, and dot products do not allocate.

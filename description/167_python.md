@@ -68,7 +68,7 @@ checks identity with `None`. Conversion failures return `python_error`.
 Extension-specific scalar types should be converted through their Python APIs
 first, such as NumPy's `tolist` or `item`.
 
-`to_string(.self: &Object, .allocator: $&Allocator)` requires Python `str` and
+`to_string(.self: &Object, .allocator: Virtual#(Allocator))` requires Python `str` and
 copies UTF-8 into an owning Argi `String`. `to_bytes` requires Python `bytes`
 and copies arbitrary bytes into a `DynamicArray#(UInt8)` without decoding.
 Both operations report `python_error` or `out_of_memory`. Embedded NUL bytes are
@@ -78,7 +78,7 @@ them. `string` decodes its input as strict UTF-8. No result borrows Python buffe
 ## Errors and environment
 
 A failed operation captures the Python exception class, message, and available
-traceback. `error_text(.self: &Python, .allocator: $&Allocator)` returns an owning
+traceback. `error_text(.self: &Python, .allocator: Virtual#(Allocator))` returns an owning
 copy of the most recent failure text, or empty text before any failure.
 Successful operations and object cleanup preserve that text; a later failure
 replaces it. Exception formatting falls back to a simple exception description
@@ -157,7 +157,7 @@ survives subsequent failures and interpreter finalization; it retains the
 ordinary FFI capability, with no borrowed Python objects or buffers.
 
 `exception_type`, `exception_message`, and `exception_traceback` accept
-`.self: &Exception` and `.allocator: $&Allocator` and return owning Strings in
+`.self: &Exception` and `.allocator: Virtual#(Allocator)` and return owning Strings in
 an `Errable#(String, out_of_memory)`. `clone(.self: &Exception)` acquires another
 snapshot reference, returned as `.result`. The unique clone entry selects an
 associated Result: Exception for snapshots, Errable containing Object for Python

@@ -45,7 +45,7 @@ declare_trimmed_face := #(.Scalar: Type: Float) (
     .boundaries      : ArrayView#(TrimUse#(Scalar)),
     .contour_lengths : ArrayView#(UIntNative),
     .reversed        : Bool                    = false,
-    .allocator       : $&Virtual#(Allocator)
+    .allocator       : Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(FaceId), BrepErrors)) {
     s ::= idx.resolve_index(.domain = &builder&._domain, .index = surface)!
     surface_id ::= s | convert#(.to: SurfaceId)(_)

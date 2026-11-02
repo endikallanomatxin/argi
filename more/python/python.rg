@@ -607,7 +607,7 @@ set_item := (.self: &Object, .key: &Object, .value: &Object) -> (
 }
 
 _copy_python_bytes := (
-    .self: &Object, .kind: Int32, .allocator: $&Virtual#(Allocator)
+    .self: &Object, .kind: Int32, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
 
     assume ffi := self&._python&._ffi
@@ -647,7 +647,7 @@ _copy_python_bytes := (
 }
 
 to_string := (
-    .self: &Object, .allocator: $&Virtual#(Allocator)
+    .self: &Object, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
 
     bytes ::= _copy_python_bytes(.self = self, .kind = 0, .allocator = allocator)!
@@ -656,14 +656,14 @@ to_string := (
 }
 
 to_bytes := (
-    .self: &Object, .allocator: $&Virtual#(Allocator)
+    .self: &Object, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) {
 
     result = _copy_python_bytes(.self = self, .kind = 1, .allocator = allocator)
 }
 
 error_text := (
-    .self: &Python, .allocator: $&Virtual#(Allocator)
+    .self: &Python, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) {
 
     assume ffi := self&._ffi

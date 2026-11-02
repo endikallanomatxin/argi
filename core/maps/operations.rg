@@ -34,7 +34,7 @@ MapLookupValue#(.Map: Type): Contract = (
 MapInsertion#(.Map: Type): Contract = (
     .Key   : Type
     .Value : Type
-    .put   : (.self: $&Map, .key: Key, .value: Value, .allocator: $&Virtual#(Allocator)) -> (
+    .put   : (.self: $&Map, .key: Key, .value: Value, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
 )
@@ -42,18 +42,18 @@ MapInsertion#(.Map: Type): Contract = (
 MapRemoval#(.Map: Type): Contract = (
     .Query : Type
     MapQuery#(.Map: Map, .Query: Query)
-    .remove : (.self: $&Map, .key: Query, .allocator: $&Virtual#(Allocator)) -> (.removed: Bool)
+    .remove : (.self: $&Map, .key: Query, .allocator: Virtual#(Allocator)) -> (.removed: Bool)
 )
 
 SetInsertion#(.Map: Type): Contract = (
     .Key    : Type
-    .insert : (.self: $&Map, .key: Key, .allocator: $&Virtual#(Allocator)) -> (
+    .insert : (.self: $&Map, .key: Key, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Bool, (..out_of_memory))
     )
 )
 
 MapReservation#(.Map: Type): Contract = (
-    .reserve : (.self: $&Map, .capacity: UIntNative, .allocator: $&Virtual#(Allocator)) -> (
+    .reserve : (.self: $&Map, .capacity: UIntNative, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
 )

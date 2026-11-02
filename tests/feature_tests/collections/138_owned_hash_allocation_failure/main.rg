@@ -43,18 +43,18 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     map ::= HashMap#(.key: Int32, .value: Tracked, .policy: StandardHashPolicy)(
-        .policy = StandardHashPolicy(), .allocator = $&allocator_virtual
+        .policy = StandardHashPolicy(), .allocator = allocator_virtual
     )!!!
     index :: Int32 = 0
     while index < 4 {
         put(
-            .self = $&map, .key = index, .value = Tracked(.id = index), .allocator = $&allocator_virtual
+            .self = $&map, .key = index, .value = Tracked(.id = index), .allocator = allocator_virtual
         )!!!
         index = index + 1
     }
     query :: Int32 = 0
     allocator.fail_at = allocator.attempts + 1
-    match put(.self = $&map, .key = 4, .value = Tracked(.id = 4), .allocator = $&allocator_virtual) {
+    match put(.self = $&map, .key = 4, .value = Tracked(.id = 4), .allocator = allocator_virtual) {
         ..ok _ { abort } ..error _ {}
     }
     if drops != 1 or length(.self = &map).count != 4 or capacity(.self = &map).count != 8 {
@@ -64,20 +64,20 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
         ..none { abort } ..some payload { if [payload.value&.id != 0] { abort } }
     }
     allocator.fail_at = allocator.attempts + 2
-    match put(.self = $&map, .key = 4, .value = Tracked(.id = 5), .allocator = $&allocator_virtual) {
+    match put(.self = $&map, .key = 4, .value = Tracked(.id = 5), .allocator = allocator_virtual) {
         ..ok _ { abort } ..error _ {}
     }
     if drops != 2 or length(.self = &map).count != 4 or capacity(.self = &map).count != 8 {
         abort
     }
     allocator.fail_at = 0
-    put(.self = $&map, .key = 4, .value = Tracked(.id = 6), .allocator = $&allocator_virtual)!!!
+    put(.self = $&map, .key = 4, .value = Tracked(.id = 6), .allocator = allocator_virtual)!!!
     if drops != 2 or length(.self = &map).count != 5 { abort }
     deinit(.self = $&map)
     if drops != 7 or allocator.allocations != allocator.deallocations { abort }
     allocator.fail_at = allocator.attempts + 2
     match HashMap#(.key: Int32, .value: Tracked, .policy: StandardHashPolicy)(
-        .policy = StandardHashPolicy(), .allocator = $&allocator_virtual
+        .policy = StandardHashPolicy(), .allocator = allocator_virtual
     ) { ..ok ~owner {
             deinit(.self = $&owner)
             abort
@@ -85,7 +85,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if allocator.allocations != allocator.deallocations { abort }
     allocator.fail_at = allocator.attempts + 1
     match HashMap#(.key: Int32, .value: Tracked, .policy: Policy)(
-        .policy = Policy(), .allocator = $&allocator_virtual
+        .policy = Policy(), .allocator = allocator_virtual
     ) { ..ok ~owner {
             deinit(.self = $&owner)
             abort
@@ -93,7 +93,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     if policy_drops != 1 { abort }
     allocator.fail_at = allocator.attempts + 2
     match HashMap#(.key: Int32, .value: Tracked, .policy: Policy)(
-        .policy = Policy(), .allocator = $&allocator_virtual
+        .policy = Policy(), .allocator = allocator_virtual
     ) { ..ok ~owner {
             deinit(.self = $&owner)
             abort

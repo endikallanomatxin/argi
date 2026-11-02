@@ -2,7 +2,7 @@
 -- Find endpoints in the current result instead of reusing obsolete halfedge IDs.
 -- The final checks show how correspondences preserve the internal bridge.
 test usage_bridge_split_merge_closed_face := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     source ::= _closed_pocket(.allocator = allocator)!
     operation ::= [
         t.bridge_planar_face(

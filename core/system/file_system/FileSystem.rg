@@ -20,7 +20,7 @@ implement Init#(FileSystem, FileSystemInitArgs) (
 )
 
 _read_c_file := (
-    .self: &FileSystem, .path: &CChar, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: &CChar, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
@@ -101,7 +101,7 @@ _read_c_file := (
 }
 
 _read_string_file := (
-    .self: &FileSystem, .path: &String, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: &String, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
@@ -124,7 +124,7 @@ _read_string_file := (
 }
 
 _read_view_file := (
-    .self: &FileSystem, .path: StringView, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: StringView, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,
@@ -152,7 +152,7 @@ _read_view_file := (
 }
 
 _read_path_file := (
-    .self: &FileSystem, .path: &Path, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .path: &Path, .allocator: Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         String,

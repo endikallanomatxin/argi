@@ -54,7 +54,7 @@ implement Init#(Path, PathInitArgs) (
 )
 
 path_with_view := (
-    .view: StringView, .allocator: $&Virtual#(Allocator)
+    .view: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
 
     assume allocator
@@ -73,7 +73,7 @@ implement Deinit#(Path) (
 
 implement FalliblyCopyable#(Path) (
     .reasons : Type = (..out_of_memory)
-    .copy    = (.self: &Path, .allocator: $&Virtual#(Allocator)) -> (
+    .copy    = (.self: &Path, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) {
 
@@ -204,7 +204,7 @@ extension := (.self: &Path) -> (.value: ?StringView) {
 }
 
 join_views := (
-    .left: &StringView, .right: &StringView, .allocator: $&Virtual#(Allocator)
+    .left: &StringView, .right: &StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
 
     assume allocator
@@ -276,7 +276,7 @@ join_views := (
 }
 
 join := (
-    .left: &Path, .right: &Path, .allocator: $&Virtual#(Allocator)
+    .left: &Path, .right: &Path, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Path, (..out_of_memory))) {
 
     assume allocator

@@ -59,7 +59,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
     .source    : &t,
     .specs     : ArrayView#(.t: CliSpec),
     .start     : UIntNative               = 0,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(CliMatches, CliReasons)) {
 
     assume allocator

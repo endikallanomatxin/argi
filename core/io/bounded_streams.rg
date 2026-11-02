@@ -69,7 +69,7 @@ read_all_limited := #(
     .self      : $&SelfType,
     .buffer    : MutableArrayView#(.t: UInt8),
     .limit     : UIntNative,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (
     .result : Errable#(
         DynamicArray#(UInt8),

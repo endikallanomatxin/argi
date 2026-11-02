@@ -18,7 +18,7 @@ main := (.system: System) -> (.status_code: Int32) {
     )
     allocator_concrete := $&counting_allocator
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
     virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer

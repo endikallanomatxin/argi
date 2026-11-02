@@ -13,35 +13,35 @@ decimal_digit_byte_i32 := (.digit: Int32) -> (.byte: UInt8) {
 }
 
 format_unsigned_decimal_into_u64 := (
-    .out: $&String, .value: UInt64, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: UInt64, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 format_unsigned_decimal_into_u32 := (
-    .out: $&String, .value: UInt32, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: UInt32, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 format_signed_decimal_into_i64 := (
-    .out: $&String, .value: Int64, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: Int64, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 format_signed_decimal_into_i32 := (
-    .out: $&String, .value: Int32, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: Int32, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
 _format_text_into := (
-    .out: $&String, .value: StringView, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -50,7 +50,7 @@ _format_text_into := (
 }
 
 _format_bool_into := (
-    .out: $&String, .value: Bool, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: Bool, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -62,7 +62,7 @@ _format_bool_into := (
     }
 }
 
-_format_text_owned := (.value: StringView, .allocator: $&Virtual#(Allocator)) -> (
+_format_text_owned := (.value: StringView, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(String, (..out_of_memory))
 ) {
 
@@ -74,7 +74,7 @@ _format_text_owned := (.value: StringView, .allocator: $&Virtual#(Allocator)) ->
     result = ..ok ~out
 }
 
-_format_bool_owned := (.value: Bool, .allocator: $&Virtual#(Allocator)) -> (
+_format_bool_owned := (.value: Bool, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(String, (..out_of_memory))
 ) {
 
@@ -87,7 +87,7 @@ _format_bool_owned := (.value: Bool, .allocator: $&Virtual#(Allocator)) -> (
 }
 
 _format_integer_into := #(.t: Type: Int) (
-    .out: $&String, .value: t, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     encoded ::= _decimal_encode#(.t: t)(.value = value)
@@ -96,7 +96,7 @@ _format_integer_into := #(.t: Type: Int) (
 }
 
 _format_integer_owned := #(.t: Type: Int) (
-    .value: t, .allocator: $&Virtual#(Allocator)
+    .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator
@@ -107,7 +107,7 @@ _format_integer_owned := #(.t: Type: Int) (
 }
 
 _format_float_into := #(.t: Type: Float) (
-    .out: $&String, .value: t, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     encoded ::= _float_encode(.value = value)
@@ -116,7 +116,7 @@ _format_float_into := #(.t: Type: Float) (
 }
 
 _format_float_owned := #(.t: Type: Float) (
-    .value: t, .allocator: $&Virtual#(Allocator)
+    .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory))) {
 
     assume allocator

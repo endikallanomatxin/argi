@@ -1,7 +1,7 @@
 test sketch_frame_preserves_arbitrary_placement_through_publication_and_extrusion := (
     .system : System
 ) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame: g.Frame#(Float64) = (
         .origin = (3.0, 4.0, 5.0)
         .x      = (0.8, 0.0, -0.6)
@@ -66,7 +66,7 @@ test sketch_frame_preserves_arbitrary_placement_through_publication_and_extrusio
 }
 
 test sketch_frame_rejects_scale_reflection_and_skew := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame ::= [
         g.frame#(Float32)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!
     ]

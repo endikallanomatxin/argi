@@ -304,7 +304,7 @@ test "argi init creates executable package" {
     try expectEqualStrings(
         "main := (.system: System) -> (.status_code: Int32 = 0) {\n" ++
             "    assume ffi ::= system.ffi\n" ++
-            "    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_\n" ++
+            "    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)\n" ++
             "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
@@ -2521,7 +2521,7 @@ test "argi repl retains prepared generic resource slots across submissions" {
         \\implement#(.T: Type) Deinit#(Box#(T)) (
         \\    .deinit = (.self: $&Box#(T)) -> () {}
         \\)
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Box#(Int32))(.self = allocator, .count = 1))
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Box#(Int32))(.self = $&allocator, .count = 1))
         \\raw ::= raw_pointer#(.t: Box#(Int32))(.address = memory.data.address).raw
         \\first ::= trusted_establish_allocation_slot#(.t: Box#(Int32))(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\trusted_opaque_move_in(.storage = $&memory, .destination = first, .source = Box#(Int32)(.value = 42))
@@ -2537,7 +2537,7 @@ test "argi repl retains acquired reference companions across submissions" {
     const commands =
         \\Pair := (.source: &Int32)
         \\value :: Int32 = 42
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Pair)(.self = allocator))
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Pair)(.self = $&allocator))
         \\raw ::= raw_pointer#(.t: Pair)(.address = memory.data.address).raw
         \\reference ::= trusted_establish_allocation_slot#(.t: Pair)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\trusted_opaque_move_in(.storage = $&memory, .destination = reference, .source = Pair(.source = &value))
@@ -2561,7 +2561,7 @@ test "argi repl retains acquired virtual witnesses across submissions" {
         \\)
         \\Holder := (.counter: Virtual#(Counting))
         \\counter :: Counter = (.value = 7)
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = allocator))
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = $&allocator))
         \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
         \\slot ::= trusted_establish_allocation_slot#(.t: Holder)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = to_virtual#(.contract: Counting)(.value = $&counter)))
@@ -2581,7 +2581,7 @@ test "argi repl retains acquired choice cleanup identities across submissions" {
         \\    .deinit = (.self: $&Resource) -> () { self&.counter&.drops = self&.counter&.drops + self&.id }
         \\)
         \\counter :: Counter = Counter()
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = allocator))
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: Choice)(.self = $&allocator))
         \\raw ::= raw_pointer#(.t: Choice)(.address = memory.data.address).raw
         \\slot ::= trusted_establish_allocation_slot#(.t: Choice)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\value :: Choice = ..pair(.left = (.counter = $&counter, .id = 11), .right = (.counter = $&counter, .id = 31))
@@ -2643,7 +2643,7 @@ test "argi repl preserves captured destinations and rejects historical retargete
 test "argi repl retains partial acquired array cleanup across submissions" {
     const commands =
         \\counter :: Counter = Counter()
-        \\memory ::= unwrap_or_abort(.value = allocate#(.t: [3]Resource)(.self = allocator))
+        \\memory ::= unwrap_or_abort(.value = allocate#(.t: [3]Resource)(.self = $&allocator))
         \\raw ::= raw_pointer#(.t: [3]Resource)(.address = memory.data.address).raw
         \\slot ::= trusted_establish_allocation_slot#(.t: [3]Resource)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
         \\index :: UIntNative = 0

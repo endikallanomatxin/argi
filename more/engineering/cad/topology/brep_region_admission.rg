@@ -8,7 +8,7 @@ _admit_trimmed_region := #(.Scalar: Type: Float) (
     .lengths   : ArrayView#(UIntNative),
     .reversed  : Bool,
     .tolerance : Scalar,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BrepErrors)) {
     loops ::= length(&lengths).count
     match support {

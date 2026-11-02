@@ -128,7 +128,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     if refusing.attempts != 0 { abort }
     allocator_concrete := $&refusing
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     match [&dynamic * &other] {
         ..error item { if item.reason != ..out_of_memory { abort } } ..ok _ { abort }
     }

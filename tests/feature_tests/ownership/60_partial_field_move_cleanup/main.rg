@@ -70,7 +70,7 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage :: CountingAllocator = CountingAllocator(.ffi = system.ffi)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     if 1 == 1 {
         pair_result ::= make_pair(.allocator = $&allocator_storage)

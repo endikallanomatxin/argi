@@ -1,7 +1,7 @@
 -- The same constructor accepts four vertices per face and Float32 coordinates.
 -- Six quads describe a cube; its bottom face has an outward normal along -Z.
 test usage_float32_cube_with_quad_faces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [8]g.Point#(Float32) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

@@ -1,7 +1,7 @@
 -- Transient inverse of next. Physical array order does not define adjacency.
 -- No persistent prev field or per-halfedge allocation is needed.
 _topology_predecessors := (
-    .topology: &Topology, .allocator: $&Virtual#(Allocator)
+    .topology: &Topology, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(UIntNative), BuildErrors)) {
     count ::= length(&topology&._halfedges).count
     previous ::= DynamicArray#(UIntNative)(.allocator = allocator, .capacity = count)!

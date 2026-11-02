@@ -8,7 +8,7 @@ implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () { record_drop() })
 
 implement FalliblyCopyable#(Owner) (
     .reasons : Type = (..copy_failed)
-    .copy    = (.self: &Owner, .allocator: $&Virtual#(Allocator)) -> (.result: Errable#(Owner, reasons)) {
+    .copy    = (.self: &Owner, .allocator: Virtual#(Allocator)) -> (.result: Errable#(Owner, reasons)) {
 
         if self&.value == 13 {
             result = ..error(.reason = ..copy_failed)
@@ -18,7 +18,7 @@ implement FalliblyCopyable#(Owner) (
     }
 )
 
-check_failure := (.allocator: $&Virtual#(Allocator)) -> () {
+check_failure := (.allocator: Virtual#(Allocator)) -> () {
 
     assume allocator
     source ::= unwrap_or_abort(DynamicArray#(Owner)(.capacity = 2))

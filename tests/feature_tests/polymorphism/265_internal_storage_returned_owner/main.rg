@@ -62,7 +62,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
     {
         implementation ::= make_slot(allocator_concrete, $&drops)

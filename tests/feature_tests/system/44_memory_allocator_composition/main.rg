@@ -13,10 +13,10 @@ main := (.system: System) -> (.status_code: Int32) {
         .deallocations = 0
     )
     tracker_virtual ::= to_virtual#(Allocator)($&tracker)
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = $&tracker_virtual)
+    allocator_storage ::= GeneralPurposeAllocator(.allocator = tracker_virtual)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     if tracker.allocations != 0 {
         status_code = 1
         return

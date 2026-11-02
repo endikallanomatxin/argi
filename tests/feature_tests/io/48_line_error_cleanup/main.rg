@@ -31,7 +31,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     failed_reader ::= Source(.text = "abc", .fail_after = 1)
-    match read_line(.allocator = $&allocator_virtual, .reader = $&failed_reader) {
+    match read_line(.allocator = allocator_virtual, .reader = $&failed_reader) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..stream_read_failed { abort } }
     }
@@ -39,7 +39,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 
     allocator.fail_after = 2
     growing_reader ::= Source(.text = "abcdefghijklmnopq\n")
-    match read_line(.allocator = $&allocator_virtual, .reader = $&growing_reader) {
+    match read_line(.allocator = allocator_virtual, .reader = $&growing_reader) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
@@ -47,7 +47,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 
     allocator.fail_after = 999
     eof_reader ::= Source(.text = "")
-    match read_line(.allocator = $&allocator_virtual, .reader = $&eof_reader)!!! {
+    match read_line(.allocator = allocator_virtual, .reader = $&eof_reader)!!! {
         ..end {}
         ..ok ~_ { abort }
     }

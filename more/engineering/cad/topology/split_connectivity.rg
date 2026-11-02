@@ -5,7 +5,7 @@ _split_pair_edges := #(.Scalar: Type: Float) (
     .first      : _SplitEndpoint#(Scalar),
     .second     : _SplitEndpoint#(Scalar),
     .edge_count : UIntNative,
-    .allocator  : $&Virtual#(Allocator)
+    .allocator  : Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(Edge), SplitErrors)) {
 
     count ::= length(halfedges).count

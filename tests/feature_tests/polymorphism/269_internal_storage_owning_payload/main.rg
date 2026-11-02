@@ -46,10 +46,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
-    implementation ::= Slot(unwrap_or_abort(allocate#(Allocation)(allocator)))
+    assume allocator := virtual_allocator
+    implementation ::= Slot(unwrap_or_abort(allocate#(Allocation)($&allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)
-    payload ::= unwrap_or_abort(allocate#(UInt8)(allocator))
+    payload ::= unwrap_or_abort(allocate#(UInt8)($&allocator))
     unsafe_allocation.trusted_allocation_byte_rw($&payload, 0).reference&= 42
 
     forward_put($&slot, ~payload)

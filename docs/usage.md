@@ -17,7 +17,7 @@ sets up allocator and I/O capabilities:
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume ffi ::= system.ffi
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,
         .buffer = view($&zeroed#(.t: [4096]UInt8)()),

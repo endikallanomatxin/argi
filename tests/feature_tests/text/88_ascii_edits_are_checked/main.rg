@@ -20,7 +20,7 @@ main := (.system: System) -> () {
     byte :: UIntNative = 128
     while byte < 256 {
         invalid ::= unwrap_or_abort(.value = byte | convert#(.to: UInt8)(_))
-        match push_ascii($&text, .byte = invalid, .allocator = $&refusing_virtual) {
+        match push_ascii($&text, .byte = invalid, .allocator = refusing_virtual) {
             ..ok _ { abort }
             ..error error { if error.reason != ..invalid_ascii { abort } }
         }

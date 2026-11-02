@@ -156,7 +156,7 @@ planar_regions_plane := #(.Scalar: Type: Float) (
     .contour_lengths     : ArrayView#(UIntNative),
     .region_lengths      : ArrayView#(UIntNative),
     .tolerance           : Scalar                      = 0.000001,
-    .allocator           : $&Virtual#(Allocator),
+    .allocator           : Virtual#(Allocator),
     .require_orientation : Bool                        = false
 ) -> (.result: Errable#(Plane#(Scalar), GeometryErrors)) {
 

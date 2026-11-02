@@ -2,7 +2,7 @@
 DirectoryEnumeration#(.State: Type): Contract = (
     .Item   : Type
     .Result : Type
-    .next   : (.self: $&State, .allocator: $&Virtual#(Allocator)) -> (.result: Result)
+    .next   : (.self: $&State, .allocator: Virtual#(Allocator)) -> (.result: Result)
 )
 
 implement DirectoryEnumeration#(Directory) (

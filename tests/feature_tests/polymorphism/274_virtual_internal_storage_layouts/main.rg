@@ -75,11 +75,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
 
     {
-        implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
+        implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)($&allocator)))
         slot ::= to_virtual#(SlotProtocol)($&implementation)
         forward_put($&slot, Tracked($&drops))
         extracted ::= forward_take($&slot)
@@ -90,7 +90,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     if drops != 1 { status_code = 2 }
 
     {
-        other ::= OtherSlot(13, unwrap_or_abort(allocate#(Tracked)(allocator)))
+        other ::= OtherSlot(13, unwrap_or_abort(allocate#(Tracked)($&allocator)))
         other_slot ::= to_virtual#(SlotProtocol)($&other)
         forward_put($&other_slot, Tracked($&drops))
         extracted ::= forward_take($&other_slot)

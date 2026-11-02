@@ -13,7 +13,7 @@ planar_profile := #(.Scalar: Type: Float) (
     .contour_lengths : ArrayView#(UIntNative),
     .region_lengths  : ArrayView#(UIntNative),
     .tolerance       : Scalar                        = 0.000001,
-    .allocator       : $&Virtual#(Allocator)
+    .allocator       : Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
 
     plane ::= g.planar_regions_plane#(.Scalar: Scalar)(
@@ -81,7 +81,7 @@ planar_profile := #(.Scalar: Type: Float) (
 }
 
 profile_from_contour := #(.Scalar: Type: Float) (
-    .points: ArrayView#(g.Point#(Scalar)), .tolerance: Scalar = 0.000001, .allocator: $&Virtual#(Allocator)
+    .points: ArrayView#(g.Point#(Scalar)), .tolerance: Scalar = 0.000001, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
     contours :: [1]UIntNative = (
         length(&points).count
@@ -106,7 +106,7 @@ profile_from_spans := #(.Scalar: Type: Float) (
     .contour_lengths : ArrayView#(UIntNative),
     .frame           : g.Frame#(Scalar),
     .tolerance       : Scalar                  = 0.000001,
-    .allocator       : $&Virtual#(Allocator)
+    .allocator       : Virtual#(Allocator)
 ) -> (.result: Errable#(PlanarProfile#(Scalar), t.BuildErrors)) {
     g.validate_frame(frame)!
     g.validate_contour_region(

@@ -42,7 +42,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 3))
     defer deinit(.self = $&source)
@@ -59,7 +59,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&erased
     failing ::= FailFourthAllocator(.ffi = system.ffi)
     failing_virtual ::= to_virtual#(Allocator)($&failing)
-    copied ::= copy(.self = &source, .allocator = $&failing_virtual)
+    copied ::= copy(.self = &source, .allocator = failing_virtual)
     if is(.value = copied, .variant = ..ok) {
         status_code = 1
         return

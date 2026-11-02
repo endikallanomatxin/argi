@@ -1,5 +1,5 @@
 replace := (
-    .array: $&DynamicArray#(.t: UIntNative), .allocator: $&Virtual#(Allocator)
+    .array: $&DynamicArray#(.t: UIntNative), .allocator: Virtual#(Allocator)
 ) -> () {
 
     replaced ::= replace#(.t: UIntNative)(

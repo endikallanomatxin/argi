@@ -16,7 +16,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
     unwrap_or_abort(push(.self = $&source, .value = 42, .allocator = allocator))

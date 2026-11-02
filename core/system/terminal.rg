@@ -35,7 +35,7 @@ implement Deinit#(Terminal) (
 
 read_line_into_buffer := #(
     .ReaderType: Type: Reader#(ReaderType)
-) (.buffer: $&String, .allocator: $&Virtual#(Allocator), .reader: $&ReaderType) -> (
+) (.buffer: $&String, .allocator: Virtual#(Allocator), .reader: $&ReaderType) -> (
     .result : Errable#(Void, (..stream_read_failed, ..invalid_utf8))
 ) {
 
@@ -104,7 +104,7 @@ read_line_into_buffer := #(
 
 read_line := #(
     .ReaderType: Type: Reader#(ReaderType)
-) (.allocator: $&Virtual#(Allocator), .reader: $&ReaderType) -> (
+) (.allocator: Virtual#(Allocator), .reader: $&ReaderType) -> (
     .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))
 ) {
 

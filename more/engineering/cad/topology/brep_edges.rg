@@ -1,6 +1,6 @@
 -- Vertices are declared identities: equal coordinates do not weld them.
 declare_vertex := #(.Scalar: Type: Float) (
-    .builder: $&BrepBuilder#(Scalar), .point: g.Point#(Scalar), .allocator: $&Virtual#(Allocator)
+    .builder: $&BrepBuilder#(Scalar), .point: g.Point#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(VertexId), BrepErrors)) {
 
     if g.finite_point(point).ok == false {
@@ -21,7 +21,7 @@ declare_edge := #(.Scalar: Type: Float) (
     .interval  : CurveInterval#(Scalar),
     .start     : idx.Index#(VertexId),
     .end       : idx.Index#(VertexId),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BrepErrors)) {
     a ::= idx.resolve_index(.domain = &builder&._domain, .index = start)!
     b ::= idx.resolve_index(.domain = &builder&._domain, .index = end)!

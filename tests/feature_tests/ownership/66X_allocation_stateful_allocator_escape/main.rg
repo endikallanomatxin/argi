@@ -10,7 +10,7 @@ make := (.ffi: $&ForeignFunctionInterface) -> (
     allocator_storage :: LocalAllocator = (.ffi = ffi, .deallocations = 0)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     result = allocate_bytes(.self = $&allocator_storage, .size = 1)
 }
 

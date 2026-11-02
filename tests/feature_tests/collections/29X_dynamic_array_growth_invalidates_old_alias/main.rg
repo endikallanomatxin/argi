@@ -3,7 +3,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 1))
     first_push ::= push(.self = $&array, .value = 10, .allocator = allocator)
     if is(.value = first_push, .variant = ..error) {

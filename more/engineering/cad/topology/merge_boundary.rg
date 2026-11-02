@@ -41,7 +41,7 @@ _MergeSelection := (
 )
 
 _merge_selection := (
-    .topology: &Topology, .first: FaceId, .second: FaceId, .allocator: $&Virtual#(Allocator)
+    .topology: &Topology, .first: FaceId, .second: FaceId, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(_MergeSelection, MergeErrors)) {
 
     count ::= _topology_entity_counts(topology).halfedges
@@ -112,7 +112,7 @@ _merge_selection := (
 }
 
 _merge_plane := #(.Scalar: Type: Float) (
-    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: $&Virtual#(Allocator)
+    .model: &Model#(Scalar), .first: FaceId, .second: FaceId, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(g.Plane#(Scalar), MergeErrors)) {
 
     first_plane ::= face_plane(model, .face = first)!
@@ -191,7 +191,7 @@ _merge_cycles := #(.Scalar: Type: Float) (
     .model     : &Model#(Scalar),
     .selection : &_MergeSelection,
     .plane     : g.Plane#(Scalar),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(_MergeLoop), MergeErrors)) {
 
     count ::= entity_counts(model).halfedges

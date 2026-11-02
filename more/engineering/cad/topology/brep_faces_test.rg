@@ -1,5 +1,5 @@
 _arc_annulus := #(.Scalar: Type: Float) (
-    .allocator   : $&Virtual#(Allocator),
+    .allocator   : Virtual#(Allocator),
     .hole_offset : Scalar      = 0.0,
     .hole_radius : Scalar      = 1.0,
     .phase       : Scalar      = 0.0,
@@ -164,7 +164,7 @@ _arc_annulus := #(.Scalar: Type: Float) (
 }
 
 test model_arc_annulus_float64 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= _arc_annulus#(.Scalar: Float64)(.allocator = allocator)!
     counts ::= entity_counts(&model)
     [
@@ -237,7 +237,7 @@ test model_arc_annulus_float64 := (.system: System) -> !() {
 }
 
 test model_arc_annulus_float32_inversion := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= _arc_annulus#(.Scalar: Float32)(.allocator = allocator)!
     reversed ::= reverse_orientation(&model)!
     constructed ::= _arc_annulus#(.Scalar: Float32)(.allocator = allocator, .inverted = true)!
@@ -275,7 +275,7 @@ test model_arc_annulus_float32_inversion := (.system: System) -> !() {
 }
 
 test model_arc_annulus_offset_and_rejected_nesting := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= [
         _arc_annulus#(.Scalar: Float64)(
             .allocator = allocator, .hole_offset = 1.0, .hole_radius = 0.5
@@ -321,7 +321,7 @@ test model_arc_annulus_offset_and_rejected_nesting := (.system: System) -> !() {
 }
 
 test model_arc_rejections_preserve_builder_and_rotated_loop := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     builder ::= BrepBuilder#(Float64)()!
     basis ::= [
         g.frame#(Float64)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!
@@ -474,7 +474,7 @@ test model_arc_rejections_preserve_builder_and_rotated_loop := (.system: System)
 }
 
 test model_arc_shared_edges_on_opposite_faces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     -- Paired incidence on coincident annuli tests topology, not solid validity.
     model ::= _arc_annulus#(.Scalar: Float64)(.allocator = allocator, .close = true)!
     counts ::= entity_counts(&model)
@@ -528,7 +528,7 @@ test model_arc_shared_edges_on_opposite_faces := (.system: System) -> !() {
 }
 
 test model_arc_unequal_intervals_cross_period := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= [
         _arc_annulus#(.Scalar: Float64)(
             .allocator = allocator, .phase = 0.875, .partition = 0.25

@@ -16,7 +16,7 @@ ExtrusionResult := #(.Scalar: Type: Float) (
 extrude_with_history := #(.Scalar: Type: Float) (
     .profile      : &PlanarProfile#(Scalar),
     .displacement : g.Displacement#(Scalar),
-    .allocator    : $&Virtual#(Allocator)
+    .allocator    : Virtual#(Allocator)
 ) -> (.result: Errable#(ExtrusionResult#(Scalar), t.BrepErrors)) {
     model ::= extrude(.profile = profile, .displacement = displacement, .allocator = allocator)!
     regions ::= length(&profile&._region_lengths).count

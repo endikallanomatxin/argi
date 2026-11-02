@@ -10,7 +10,7 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
     escaped ::= escape($&array)
 }

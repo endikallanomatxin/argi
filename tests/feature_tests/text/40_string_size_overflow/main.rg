@@ -11,26 +11,26 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     failing :: FailingAllocator = (.attempts = 0)
     failing_virtual ::= to_virtual#(Allocator)($&failing)
     if is(
-        .value = string_with_length(.allocator = $&failing_virtual, .length = maximum), .variant = ..ok
+        .value = string_with_length(.allocator = failing_virtual, .length = maximum), .variant = ..ok
     ) {
         abort
     }
     if is(
-        .value   = string_with_capacity(.allocator = $&failing_virtual, .capacity = maximum)
+        .value   = string_with_capacity(.allocator = failing_virtual, .capacity = maximum)
         .variant = ..ok
     ) { abort }
-    if is(.value = String(.allocator = $&failing_virtual, .length = maximum), .variant = ..ok) {
+    if is(.value = String(.allocator = failing_virtual, .length = maximum), .variant = ..ok) {
         abort
     }
     if is(
-        .value   = string_with_capacity(.allocator = $&failing_virtual, .capacity = maximum)
+        .value   = string_with_capacity(.allocator = failing_virtual, .capacity = maximum)
         .variant = ..ok
     ) { abort }
     if failing.attempts != 0 { abort }
     -- The largest representable capacity still reaches the allocator. The
     -- failing allocator prevents enormous allocation and initialization.
     if is(
-        .value   = string_with_length(.allocator = $&failing_virtual, .length = maximum - 1)
+        .value   = string_with_length(.allocator = failing_virtual, .length = maximum - 1)
         .variant = ..ok
     ) { abort }
     if failing.attempts != 1 { abort }
@@ -39,14 +39,14 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 98))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 99))
     if is(
-        .value   = ensure_capacity(.self = $&text, .capacity = maximum, .allocator = $&failing_virtual)
+        .value   = ensure_capacity(.self = $&text, .capacity = maximum, .allocator = failing_virtual)
         .variant = ..ok
     ) { abort }
     if failing.attempts != 1 { abort }
     if view(.self = &text).view != "abc" { abort }
     -- Ordinary growth failures preserve the original text too.
     if is(
-        .value   = push_ascii(.self = $&text, .byte = 100, .allocator = $&failing_virtual)
+        .value   = push_ascii(.self = $&text, .byte = 100, .allocator = failing_virtual)
         .variant = ..ok
     ) {
         abort

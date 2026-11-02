@@ -1,15 +1,15 @@
 -- The value type selects the string formatting algorithm.
 StringFormatting#(.Value: Type): Contract = (
-    .append : (.out: $&String, .value: Value, .allocator: $&Virtual#(Allocator)) -> (
+    .append : (.out: $&String, .value: Value, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
-    .render : (.value: Value, .allocator: $&Virtual#(Allocator)) -> (
+    .render : (.value: Value, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(String, (..out_of_memory))
     )
 )
 
 format_into := #(.Value: Type) (
-    .out: $&String, .value: Value, .allocator: $&Virtual#(Allocator)
+    .out: $&String, .value: Value, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     result = StringFormatting#(
@@ -17,7 +17,7 @@ format_into := #(.Value: Type) (
     ).append(.out = out, .value = ~value, .allocator = allocator)
 }
 
-format := #(.Value: Type) (.value: Value, .allocator: $&Virtual#(Allocator)) -> (
+format := #(.Value: Type) (.value: Value, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(String, (..out_of_memory))
 ) {
 

@@ -2,7 +2,7 @@ replace := (
     .self        : StringView,
     .pattern     : StringView,
     .replacement : StringView,
-    .allocator   : $&Virtual#(Allocator)
+    .allocator   : Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))) {
 
     if pattern._length == 0 {

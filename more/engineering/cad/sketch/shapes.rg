@@ -4,7 +4,7 @@ circle := #(.Scalar: Type: Float) (
     .builder   : $&SketchBuilder#(Scalar),
     .diameter  : Scalar,
     .center    : g.ContourPoint#(Scalar)   = (0.0, 0.0),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     if is_finite(diameter).ok == false or diameter <= 0.0 {
         result = ..error(.reason = ..invalid_surface)
@@ -23,7 +23,7 @@ rectangle := #(.Scalar: Type: Float) (
     .width     : Scalar,
     .height    : Scalar,
     .center    : g.ContourPoint#(Scalar)   = (0.0, 0.0),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     if [
         is_finite(width).ok == false
@@ -55,7 +55,7 @@ rounded_rectangle := #(.Scalar: Type: Float) (
     .height    : Scalar,
     .radius    : Scalar,
     .center    : g.ContourPoint#(Scalar)   = (0.0, 0.0),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(ContourRef, t.BuildErrors)) {
     if [
         is_finite(width).ok == false

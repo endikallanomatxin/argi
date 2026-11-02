@@ -40,7 +40,7 @@ _check_prism := #(.Scalar: Type: Float) (
 }
 
 test extrusion_triangle_winding_and_direction := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     profile: [3]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),
@@ -62,7 +62,7 @@ test extrusion_triangle_winding_and_direction := (.system: System) -> !() {
 }
 
 test extrusion_quad_float32_arbitrary_plane := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     profile: [4]g.Point#(Float32) = (
         (2.0, 0.0, 0.0),
         (2.0, 1.0, 0.0),
@@ -76,7 +76,7 @@ test extrusion_quad_float32_arbitrary_plane := (.system: System) -> !() {
 }
 
 test extrusion_polygon_owns_its_points := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     profile :: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (2.0, 0.0, 0.0),
@@ -96,7 +96,7 @@ _extrude_contour := #(.Scalar: Type: Float) (
     .profile      : ArrayView#(g.Point#(Scalar)),
     .displacement : g.Displacement#(Scalar),
     .tolerance    : Scalar                        = 0.000001,
-    .allocator    : $&Virtual#(Allocator)
+    .allocator    : Virtual#(Allocator)
 ) -> (.result: Errable#(t.Model#(Scalar), t.BrepErrors)) {
     validated ::= profile_from_contour(
         .points = profile, .tolerance = tolerance, .allocator = allocator
@@ -108,7 +108,7 @@ _extrude_contour := #(.Scalar: Type: Float) (
 }
 
 test extrusion_concave_profile_with_reflex_first_corner := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [6]g.Point#(Float64) = (
         (1.0, 1.0, 0.0),
         (1.0, 3.0, 0.0),
@@ -130,7 +130,7 @@ test extrusion_concave_profile_with_reflex_first_corner := (.system: System) -> 
 }
 
 test extrusion_rejects_tangent_displacement := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [3]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -148,7 +148,7 @@ test extrusion_rejects_tangent_displacement := (.system: System) -> !() {
 }
 
 test extrusion_rejects_translated_overflow := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [3]g.Point#(Float64) = (
         (1.0e308, 0.0, 0.0),
         (1.0e308, 1.0, 0.0),
@@ -164,7 +164,7 @@ test extrusion_rejects_translated_overflow := (.system: System) -> !() {
 }
 
 test extrusion_disconnected_regions_with_hole_and_island := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     -- An annulus, an island in its hole, and a separate square.
     points :: [16]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
@@ -226,7 +226,7 @@ test extrusion_disconnected_regions_with_hole_and_island := (.system: System) ->
 }
 
 test extrusion_profile_rejects_intersections_and_bad_nesting := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points :: [8]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (4.0, 0.0, 0.0),
@@ -288,7 +288,7 @@ test extrusion_profile_rejects_intersections_and_bad_nesting := (.system: System
 }
 
 test extrusion_region_with_two_holes := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [12]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (8.0, 0.0, 0.0),

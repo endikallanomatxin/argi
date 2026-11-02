@@ -63,7 +63,7 @@ from_equal_length_faces := #(
     .points         : ArrayView#(g.Point#(Scalar)),
     .faces          : ArrayView#(Array#(.n = vertices_per_face, .t: UIntNative)),
     .tolerance      : Scalar      = 0.000001,
-    .allocator      : $&Virtual#(Allocator),
+    .allocator      : Virtual#(Allocator),
     .require_closed : Bool        = true
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     if vertices_per_face < 3 {
@@ -107,7 +107,7 @@ from_any_length_faces := #(.Scalar: Type: Float) (
     .vertex_indices : ArrayView#(UIntNative),
     .face_lengths   : ArrayView#(UIntNative),
     .tolerance      : Scalar                  = 0.000001,
-    .allocator      : $&Virtual#(Allocator),
+    .allocator      : Virtual#(Allocator),
     .require_closed : Bool                    = true
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     face_loops: _EqualLengths = (
@@ -140,7 +140,7 @@ from_planar_faces := #(.Scalar: Type: Float) (
     .contour_lengths  : ArrayView#(UIntNative),
     .face_loop_counts : ArrayView#(UIntNative),
     .tolerance        : Scalar                  = 0.000001,
-    .allocator        : $&Virtual#(Allocator),
+    .allocator        : Virtual#(Allocator),
     .require_closed   : Bool                    = true
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     planes ::= _planar_face_planes(

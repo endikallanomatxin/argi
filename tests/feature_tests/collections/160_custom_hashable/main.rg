@@ -35,7 +35,7 @@ implement HashPolicy#(CollisionPolicy, Key) (
     }
 )
 
-check_custom := (.allocator: $&Virtual#(Allocator)) -> () {
+check_custom := (.allocator: Virtual#(Allocator)) -> () {
 
     assume allocator
     map ::= unwrap_or_abort(

@@ -1,5 +1,5 @@
 test extrusion_analytic_profile_preserves_arcs := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame: g.Frame#(Float64) = (
         .origin = (3.0, 4.0, 5.0)
         .x      = (1.0, 0.0, 0.0)
@@ -54,7 +54,7 @@ test extrusion_analytic_profile_preserves_arcs := (.system: System) -> !() {
 }
 
 test extrusion_polygonal_profile_publishes_disconnected_regions := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -78,7 +78,7 @@ test extrusion_polygonal_profile_publishes_disconnected_regions := (.system: Sys
 }
 
 test extrusion_curved_profile_is_rejected_without_consuming_it := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame ::= [
         g.frame#(Float64)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!
     ]

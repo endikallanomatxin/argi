@@ -83,7 +83,7 @@ _split_refine := #(.Scalar: Type: Float) (
     .first     : _SplitEndpoint#(Scalar),
     .second    : _SplitEndpoint#(Scalar),
     .parts     : [2]EdgeId,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(_SplitBoundary, SplitErrors)) {
 
     counts ::= entity_counts(model)
@@ -176,7 +176,7 @@ _split_candidate_region := #(.Scalar: Type: Float) (
     .plane      : g.Plane#(Scalar),
     .positive   : Bool,
     .tolerance  : Scalar,
-    .allocator  : $&Virtual#(Allocator)
+    .allocator  : Virtual#(Allocator)
 ) -> (.result: Errable#(_PlanarContours#(Scalar), SplitErrors)) {
 
     if count < 3 {

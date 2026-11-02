@@ -65,13 +65,13 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     drops :: Int32 = 0
     implementation ::= Slots()
     slots ::= to_virtual#(SlotProtocol)(&implementation)
 
     {
-        storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
+        storage ::= unwrap_or_abort(allocate#(Tracked)($&allocator))
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
         ).reference
@@ -84,7 +84,7 @@ main := (.system: System) -> () {
     if drops != 1 { abort }
 
     {
-        storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
+        storage ::= unwrap_or_abort(allocate#(Tracked)($&allocator))
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
         ).reference
@@ -97,7 +97,7 @@ main := (.system: System) -> () {
     if drops != 2 { abort }
 
     {
-        storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
+        storage ::= unwrap_or_abort(allocate#(Tracked)($&allocator))
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
         ).reference

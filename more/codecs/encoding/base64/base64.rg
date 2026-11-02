@@ -27,7 +27,7 @@ _value := (.byte: UInt8) -> (.value: UInt32 = 255) {
 
 -- RFC 4648 standard alphabet with required padding; no inserted whitespace.
 encode := (
-    .bytes: ArrayView#(.t: UInt8), .allocator: $&Virtual#(Allocator)
+    .bytes: ArrayView#(.t: UInt8), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) {
 
     assume allocator
@@ -122,7 +122,7 @@ encode := (
 -- Reject misplaced padding, whitespace and nonzero unused trailing bits.
 -- Validation precedes allocation, so malformed input publishes no prefix.
 decode := (
-    .text: StringView, .allocator: $&Virtual#(Allocator)
+    .text: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_base64, ..out_of_memory))) {
 
     assume allocator

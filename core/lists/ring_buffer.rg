@@ -18,7 +18,7 @@ RingBuffer := #(.t: Type) (
 
 RingBufferInitArgs: Type = #(.t: Type) (
     .capacity  : UIntNative,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.t: Type) Init#(
@@ -38,7 +38,7 @@ implement#(.t: Type) Init#(
             return
         }
 
-        allocation ::= allocate#(.t: t)(_init_allocator, .count = _init_capacity)!
+        allocation ::= allocate#(.t: t)($&_init_allocator, .count = _init_capacity)!
         constructed = (
             ._allocation = ~allocation
             ._capacity   = _init_capacity
@@ -98,7 +98,7 @@ _ring_buffer_occupied_pointer := #(.t: Type) (.self: &RingBuffer#(.t: t), .index
 }
 
 _queue_push_ring_buffer := #(.t: Type) (
-    .self: $&RingBuffer#(.t: t), .value: t, .allocator: $&Virtual#(Allocator)
+    .self: $&RingBuffer#(.t: t), .value: t, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..full))) {
 
     assume allocator

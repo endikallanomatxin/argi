@@ -210,7 +210,7 @@ Deque preserve element order without allocating or copying elements.
 - `Removable#(Collection)` requires mutable indexing and supplies `pop` and
   `remove` without an allocator.
 - `Resizable#(Collection)` requires `Removable` and adds `push` and `insert`
-  using a `$&Virtual#(Allocator)` capability. The allocator does not participate
+  using a `Virtual#(Allocator)` capability. The allocator does not participate
   in selecting collection behavior.
 
 These contracts associate the element type as `Item`; the participant is the

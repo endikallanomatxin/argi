@@ -25,7 +25,7 @@ ModelBuilder := #(.Scalar: Type: Float = Float32) (
 
 ModelBuilderInitArgs := #(.Scalar: Type: Float) (
     .tolerance : Scalar     = 0.000001,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.Scalar: Type: Float) Init#(
@@ -58,7 +58,7 @@ implement#(.Scalar: Type: Float) Init#(
 )
 
 add_vertex := #(.Scalar: Type: Float) (
-    .builder: $&ModelBuilder#(Scalar), .point: g.Point#(Scalar), .allocator: $&Virtual#(Allocator)
+    .builder: $&ModelBuilder#(Scalar), .point: g.Point#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(VertexId), BuildErrors)) {
 
     if g.finite_point(point).ok == false {
@@ -74,7 +74,7 @@ add_edge := #(.Scalar: Type: Float) (
     .builder   : $&ModelBuilder#(Scalar),
     .start     : idx.Index#(VertexId),
     .end       : idx.Index#(VertexId),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BuildErrors)) {
 
     a ::= idx.resolve_index(.domain = &builder&._domain, .index = start)!
@@ -95,7 +95,7 @@ add_edge := #(.Scalar: Type: Float) (
 }
 
 add_surface := #(.Scalar: Type: Float) (
-    .builder: $&ModelBuilder#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Virtual#(Allocator)
+    .builder: $&ModelBuilder#(Scalar), .surface: g.Surface#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(SurfaceId), BuildErrors)) {
     g.validate_surface(surface)!
     offset ::= length(&builder&._geometry.surfaces).count
@@ -109,7 +109,7 @@ add_face := #(.Scalar: Type: Float) (
     .builder   : $&ModelBuilder#(Scalar),
     .surface   : idx.Index#(SurfaceId),
     .boundary  : ArrayView#(EdgeUse),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(FaceId), BuildErrors)) {
     surface_index ::= idx.resolve_index(.domain = &builder&._domain, .index = surface)!
     surface_id ::= surface_index | convert#(.to: SurfaceId)(_)
@@ -161,7 +161,7 @@ add_face := #(.Scalar: Type: Float) (
 
 -- Validation uses transient flat arrays; published connectivity preserves all IDs.
 _validate_builder_geometry := #(.Scalar: Type: Float) (
-    .builder: &ModelBuilder#(Scalar), .allocator: $&Virtual#(Allocator)
+    .builder: &ModelBuilder#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Void, BuildErrors)) {
 
     vertices ::= DynamicArray#(UIntNative)(.allocator = allocator)!
@@ -238,7 +238,7 @@ _builder_topology := (
     .source_uses    : &DynamicArray#(_BuilderUse),
     .source_lengths : &DynamicArray#(UIntNative),
     .require_closed : Bool,
-    .allocator      : $&Virtual#(Allocator)
+    .allocator      : Virtual#(Allocator)
 ) -> (.result: Errable#(Topology, BuildErrors)) {
     edge_count ::= length(source_edges).count
     face_count ::= length(source_lengths).count
@@ -344,7 +344,7 @@ _builder_topology := (
 }
 
 finish_model := #(.Scalar: Type: Float) (
-    .builder: ModelBuilder#(Scalar), .require_closed: Bool = true, .allocator: $&Virtual#(Allocator)
+    .builder: ModelBuilder#(Scalar), .require_closed: Bool = true, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
     [builder | _validate_builder_geometry(&_, .allocator = allocator)]!
     topology ::= _builder_topology(

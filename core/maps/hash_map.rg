@@ -30,7 +30,7 @@ HashMap := #(
 )
 
 _hash_slots := (
-    .capacity: UIntNative, .allocator: $&Virtual#(Allocator)
+    .capacity: UIntNative, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(DynamicArray#(.t: _HashSlot), (..out_of_memory))) {
 
     slots ::= DynamicArray#(.t: _HashSlot)(.capacity = capacity, .allocator = allocator)!
@@ -48,7 +48,7 @@ _init_hash_map := #(
     .key      : Type,
     .value    : Type,
     .policy   : Type: HashPolicy#(policy, key)
-) (.policy: policy, .allocator: $&Virtual#(Allocator), .capacity: UIntNative) -> (
+) (.policy: policy, .allocator: Virtual#(Allocator), .capacity: UIntNative) -> (
     .result : Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))
 ) {
 
@@ -60,7 +60,7 @@ _init_hash_map := #(
     if count < 8 { count = 8 }
     slots ::= _hash_slots(.capacity = count, .allocator = allocator)!
     entries ::= allocate#(.t: HashMapEntry#(.key: key, .value: value))(
-        allocator, .count = count
+        $&allocator, .count = count
     )!
     constructed = (
         ._table  = (._entries = ~entries, ._slots = ~slots)
@@ -78,7 +78,7 @@ HashMapInitArgs: Type = #(
     .policy   : Type: HashPolicy#(policy, key)
 ) (
     .policy    : policy,
-    .allocator : $&Virtual#(Allocator),
+    .allocator : Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
@@ -106,7 +106,7 @@ implement#(
 StandardHashMapInitArgs: Type = #(
     .key: Type: _StandardHashKey#(key), .value: Type
 ) (
-    .allocator : $&Virtual#(Allocator),
+    .allocator : Virtual#(Allocator),
     .capacity  : UIntNative  = 8
 )
 
@@ -238,7 +238,7 @@ _map_reserve_hash_map := #(
 ) (
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
     .capacity  : UIntNative,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -253,7 +253,7 @@ _map_reserve_hash_map := #(
     -- after a mutating call because safety summaries conservatively join outcomes.
     slots ::= _hash_slots(.capacity = capacity, .allocator = allocator)!
     entries ::= allocate#(.t: HashMapEntry#(.key: key, .value: value))(
-        allocator, .count = capacity
+        $&allocator, .count = capacity
     )!
     index :: UIntNative = 0
 
@@ -300,7 +300,7 @@ _map_put_hash_map := #(
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
     .key       : key,
     .value     : value,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
 
     assume allocator
@@ -438,7 +438,7 @@ _map_remove_hash_map := #(
 ) (
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
     .key       : HashPolicy#(policy, key).Query,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.removed: Bool) {
     assume allocator
 

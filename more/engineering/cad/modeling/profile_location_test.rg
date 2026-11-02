@@ -1,5 +1,5 @@
 test profile_location_classifies_arcs_holes_and_plane_tolerance := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame: g.Frame#(Float64) = (
         .origin = (3.0, 4.0, 5.0)
         .x      = (0.8, 0.0, -0.6)
@@ -81,7 +81,7 @@ test profile_location_classifies_arcs_holes_and_plane_tolerance := (.system: Sys
 }
 
 test profile_location_distinguishes_disconnected_region_and_island := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [12]g.Point#(Float32) = (
         (-2.0, -2.0, 0.0),
         (2.0, -2.0, 0.0),

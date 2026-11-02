@@ -7,7 +7,7 @@ implement Deinit#(Borrowing) (
 )
 
 exercise := (
-    .counter: $&Int32, .allocator: $&Virtual#(Allocator)
+    .counter: $&Int32, .allocator: Virtual#(Allocator)
 ) -> () {
 
     assume allocator
@@ -18,7 +18,7 @@ exercise := (
 }
 
 forward := (
-    .counter: $&Int32, .allocator: $&Virtual#(Allocator)
+    .counter: $&Int32, .allocator: Virtual#(Allocator)
 ) -> () {
 
     exercise(.counter = counter, .allocator = allocator)

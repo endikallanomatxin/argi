@@ -1,4 +1,4 @@
-exercise := (.allocator: $&Virtual#(Allocator)) -> () {
+exercise := (.allocator: Virtual#(Allocator)) -> () {
     assume allocator
 
     strings ::= unwrap_or_abort(DynamicArray#(String)(.capacity = 1))
@@ -28,7 +28,7 @@ exercise := (.allocator: $&Virtual#(Allocator)) -> () {
     -- A virtual provider can back another allocator without changing callers.
     arena ::= unwrap_or_abort(ArenaAllocator(.allocator = allocator, .block_size = 64))
     arena_handle ::= to_virtual#(Allocator)($&arena)
-    nested ::= GeneralPurposeAllocator(.allocator = $&arena_handle)
+    nested ::= GeneralPurposeAllocator(.allocator = arena_handle)
     nested_handle ::= to_virtual#(Allocator)($&nested)
     allocation ::= unwrap_or_abort(allocate#(UInt32)($&nested_handle, .count = 8))
     if allocation.size != 32 { abort }
@@ -38,18 +38,18 @@ exercise := (.allocator: $&Virtual#(Allocator)) -> () {
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     -- Both pipe temporaries must survive every allocation made in this scope.
-    assume allocator := GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator := GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     exercise(allocator)
 
     storage ::= GeneralPurposeAllocator(system.page_allocator)
     handle ::= to_virtual#(Allocator)($&storage)
-    exercise($&handle)
+    exercise(handle)
     if has_live_allocations(&storage).has_live { abort }
 
     -- Growth can select a different provider; Allocation keeps its own cleanup.
     array ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
     unwrap_or_abort(push(.self = $&array, .value = 42))
-    unwrap_or_abort(ensure_capacity(.self = $&array, .capacity = 100, .allocator = $&handle))
+    unwrap_or_abort(ensure_capacity(.self = $&array, .capacity = 100, .allocator = handle))
     if unwrap_or_abort(get_reference(&array, .index = 0))&!= 42 { abort }
     deinit($&array)
     if has_live_allocations(&storage).has_live { abort }

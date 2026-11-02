@@ -2,7 +2,7 @@
 -- derivative and face normal define an oriented work frame at a boundary point.
 -- This is a geometric placement, not an attached feature or a boolean operation.
 test usage_work_frame_from_analytic_boundary := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     sketch ::= s.SketchBuilder#(.Scalar: Float64)()!
     outline ::= sketch | s.rectangle($&_, .width = 4.0, .height = 3.0)!
     opening ::= sketch | s.circle($&_, .diameter = 1.0)!

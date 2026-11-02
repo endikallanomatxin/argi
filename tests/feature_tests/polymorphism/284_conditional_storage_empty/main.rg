@@ -62,8 +62,8 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
-    implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
+    assume allocator := virtual_allocator
+    implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)($&allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)
 
     {

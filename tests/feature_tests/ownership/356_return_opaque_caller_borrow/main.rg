@@ -1,5 +1,5 @@
 make := (
-    .allocator: $&Virtual#(Allocator), .value: &Int32
+    .allocator: Virtual#(Allocator), .value: &Int32
 ) -> (.result: DynamicArray#(&Int32)) {
 
     assume allocator
@@ -15,7 +15,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     local :: Int32 = 7
     array ::= make(allocator, &local)
     reference ::= unwrap_or_abort(get_reference(&array, .index = 0))

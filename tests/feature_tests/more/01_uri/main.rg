@@ -1,7 +1,7 @@
 uri := import ("network/uri")
 
 roundtrip := (
-    .text: StringView, .allocator: $&Virtual#(Allocator)
+    .text: StringView, .allocator: Virtual#(Allocator)
 ) -> () {
 
     parsed ::= unwrap_or_abort(.value = uri.parse(.text = text)).result

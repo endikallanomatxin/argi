@@ -49,7 +49,7 @@ _build_faces := #(
     .planar_regions   : Bool,
     .supplied_planes  : &DynamicArray#(g.Plane#(Scalar)),
     .tolerance        : Scalar,
-    .allocator        : $&Virtual#(Allocator),
+    .allocator        : Virtual#(Allocator),
     .require_closed   : Bool        = false
 ) -> (.result: Errable#(Model#(Scalar), BuildErrors)) {
 

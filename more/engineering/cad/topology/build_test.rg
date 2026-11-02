@@ -11,7 +11,7 @@ _triangle := () -> (
 }
 
 test model_open_patch_and_closure := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _triangle()
     model ::= [
         from_any_length_faces(
@@ -43,7 +43,7 @@ test model_open_patch_and_closure := (.system: System) -> !() {
 }
 
 test model_rejects_bad_vertex_indices := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _triangle()
     input.indices[2] = 3
     [
@@ -74,7 +74,7 @@ test model_rejects_bad_vertex_indices := (.system: System) -> !() {
 }
 
 test model_rejects_inconsistent_orientation := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _triangle()
     indices: [6]UIntNative = (0, 1, 2, 0, 1, 2)
     face_lengths: [2]UIntNative = (3, 3)
@@ -93,7 +93,7 @@ test model_rejects_inconsistent_orientation := (.system: System) -> !() {
 }
 
 test model_rejects_nonmanifold_edge := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _triangle()
     indices: [9]UIntNative = (0, 1, 2, 0, 2, 1, 0, 1, 2)
     face_lengths: [3]UIntNative = (3, 3, 3)
@@ -112,7 +112,7 @@ test model_rejects_nonmanifold_edge := (.system: System) -> !() {
 }
 
 test model_rejects_pinched_vertex := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [5]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -137,7 +137,7 @@ test model_rejects_pinched_vertex := (.system: System) -> !() {
 }
 
 test model_rejects_unused_vertex := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -160,7 +160,7 @@ test model_rejects_unused_vertex := (.system: System) -> !() {
 }
 
 test model_owns_input_and_checks_query_bounds := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _triangle()
     model ::= [
         from_any_length_faces(
@@ -218,7 +218,7 @@ test model_owns_input_and_checks_query_bounds := (.system: System) -> !() {
 }
 
 test model_boundary_vertex_fans := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -244,7 +244,7 @@ test model_boundary_vertex_fans := (.system: System) -> !() {
 }
 
 test model_rejects_closed_pinched_vertex := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [7]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

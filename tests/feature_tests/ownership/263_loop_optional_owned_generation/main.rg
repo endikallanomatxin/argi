@@ -3,7 +3,7 @@ Holder := (
 )
 
 HolderInitArgs: Type = (
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement Init#(
@@ -30,7 +30,7 @@ implement Deinit#(Holder) (
 )
 
 append := (
-    .self: $&Holder, .allocator: $&Virtual#(Allocator)
+    .self: $&Holder, .allocator: Virtual#(Allocator)
 ) -> () {
 
     assume allocator
@@ -43,7 +43,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     holder ::= Holder(.allocator = allocator)
     i :: UIntNative = 0

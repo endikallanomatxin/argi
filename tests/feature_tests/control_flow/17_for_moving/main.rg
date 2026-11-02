@@ -8,14 +8,14 @@ implement Deinit#(Tracked) (
     }
 )
 
-return_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&Virtual#(Allocator)) -> () {
+return_early := (.array: DynamicArray#(.t: Tracked), .allocator: Virtual#(Allocator)) -> () {
     assume allocator
     for ~item in array { return }
 }
 
 ..iteration_failed
 
-fail_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&Virtual#(Allocator)) -> (
+fail_early := (.array: DynamicArray#(.t: Tracked), .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
 ) {
 
@@ -27,7 +27,7 @@ fail_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&Virtual#(Alloca
     }
 }
 
-make_array := (.allocator: $&Virtual#(Allocator)) -> !DynamicArray#(.t: Int32) {
+make_array := (.allocator: Virtual#(Allocator)) -> !DynamicArray#(.t: Int32) {
 
     assume allocator
     array ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 1)!
@@ -40,7 +40,7 @@ iteration_error := () -> (.result: Errable#(.t: Void, .reasons: (..iteration_fai
     result = ..error(.reason = ..iteration_failed)
 }
 
-propagate_early := (.array: DynamicArray#(.t: Tracked), .allocator: $&Virtual#(Allocator)) -> (
+propagate_early := (.array: DynamicArray#(.t: Tracked), .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
 ) {
 

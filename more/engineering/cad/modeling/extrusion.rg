@@ -12,7 +12,7 @@ _ExtrusionBuffers := #(.Scalar: Type: Float) (
 _extrusion_buffers := #(.Scalar: Type: Float) (
     .profile      : &PlanarProfile#(Scalar),
     .displacement : g.Displacement#(Scalar),
-    .allocator    : $&Virtual#(Allocator)
+    .allocator    : Virtual#(Allocator)
 ) -> (.result: Errable#(_ExtrusionBuffers#(Scalar), t.BrepErrors)) {
 
     tolerance ::= profile&._tolerance
@@ -143,7 +143,7 @@ _extrusion_buffers := #(.Scalar: Type: Float) (
 extrude := #(.Scalar: Type: Float) (
     .profile      : &PlanarProfile#(Scalar),
     .displacement : g.Displacement#(Scalar),
-    .allocator    : $&Virtual#(Allocator)
+    .allocator    : Virtual#(Allocator)
 ) -> (.result: Errable#(t.Model#(Scalar), t.BrepErrors)) {
     buffers ::= _extrusion_buffers(
         .profile = profile, .displacement = displacement, .allocator = allocator

@@ -6,7 +6,7 @@ PathRenaming#(.PathValue: Type): Contract = (
 
 AllocatingPathRenaming#(.PathValue: Type): Contract = (
     .Result : Type
-    .rename : (.self: &FileSystem, .from: PathValue, .to: PathValue, .allocator: $&Virtual#(Allocator)) -> (
+    .rename : (.self: &FileSystem, .from: PathValue, .to: PathValue, .allocator: Virtual#(Allocator)) -> (
         .result : Result
     )
 )
@@ -37,7 +37,7 @@ _path_rename_string := (.self: &FileSystem, .from: &String, .to: &String) -> (
 }
 
 _path_rename_view := (
-    .self: &FileSystem, .from: StringView, .to: StringView, .allocator: $&Virtual#(Allocator)
+    .self: &FileSystem, .from: StringView, .to: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Bool, (..path_rename_failed, ..out_of_memory))) {
 
     assume ffi := self&._ffi

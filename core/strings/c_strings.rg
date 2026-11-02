@@ -20,7 +20,7 @@ as_c_string := (.self: &String) -> (.text: &CChar) {
 }
 
 copy_c_string := (
-    .self: StringView, .allocator: $&Virtual#(Allocator)
+    .self: StringView, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(OwnedCString, (..out_of_memory))) {
 
     assume allocator
@@ -30,7 +30,7 @@ copy_c_string := (
         return
     }
     size :: UIntNative = self._length + 1
-    allocated ::= Allocator#().allocate(.self = allocator, .size = size, .alignment = 1)
+    allocated ::= Allocator#().allocate(.self = $&allocator, .size = size, .alignment = 1)
 
     match allocated {
         ..error _ {
@@ -79,7 +79,7 @@ _c_string_bytes := (.text: &CChar) -> (.bytes: ArrayView#(UInt8)) {
     ).array
 }
 
-string_from_c_string := (.text: &CChar, .allocator: $&Virtual#(Allocator)) -> (
+string_from_c_string := (.text: &CChar, .allocator: Virtual#(Allocator)) -> (
     .result : Errable#(String, (..invalid_utf8, ..out_of_memory))
 ) {
 

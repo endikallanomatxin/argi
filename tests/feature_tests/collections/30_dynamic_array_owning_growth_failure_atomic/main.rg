@@ -56,19 +56,19 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     backing ::= FailSecondAllocator(.ffi = system.ffi)
     backing_virtual ::= to_virtual#(Allocator)($&backing)
     array ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: Tracked)(.allocator = $&backing_virtual, .capacity = 1)
+        .value = DynamicArray#(.t: Tracked)(.allocator = backing_virtual, .capacity = 1)
     )
     first_result ::= make_tracked(.allocator = $&allocator_storage, .id = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~first_payload {
             first ::= ~first_payload
-            first_push ::= push(.allocator = $&backing_virtual, .self = $&array, .value = ~first)
+            first_push ::= push(.allocator = backing_virtual, .self = $&array, .value = ~first)
             if is(.value = first_push, .variant = ..error) {
                 status_code = 2
                 return
@@ -80,7 +80,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
                 ..ok ~second_payload {
                     second ::= ~second_payload
                     second_push ::= push(
-                        .allocator = $&backing_virtual, .self = $&array, .value = ~second
+                        .allocator = backing_virtual, .self = $&array, .value = ~second
                     )
                     if is(.value = second_push, .variant = ..ok) {
                         status_code = 4

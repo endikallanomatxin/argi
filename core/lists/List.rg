@@ -38,11 +38,11 @@ Removable#(.Collection: Type): Contract = (
 Resizable#(.Collection: Type): Contract = (
     .Item : Type
     Removable#(.Collection: Collection, .Item: Item)
-    .push : (.self: $&Collection, .value: Item, .allocator: $&Virtual#(Allocator)) -> (
+    .push : (.self: $&Collection, .value: Item, .allocator: Virtual#(Allocator)) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
     .insert : (
-        .self: $&Collection, .index: UIntNative, .value: Item, .allocator: $&Virtual#(Allocator)
+        .self: $&Collection, .index: UIntNative, .value: Item, .allocator: Virtual#(Allocator)
     ) -> (
         .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
     )

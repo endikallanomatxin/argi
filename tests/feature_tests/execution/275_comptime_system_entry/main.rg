@@ -6,7 +6,7 @@ answer ::= #run (.system: System) -> (.value: Int32) {
     assume ffi ::= system.ffi
     allocator_concrete := $&CAllocator(.ffi = ffi)
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     text ::= unwrap_or_abort(.value = String(.length = 5))
     page :: PageAllocator = PageAllocator(.memory = system.memory)
     if page.page_size == 0 { abort }

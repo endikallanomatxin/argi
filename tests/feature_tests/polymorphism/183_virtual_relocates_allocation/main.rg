@@ -31,7 +31,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     manager ::= Manager(0)
     mover ::= to_virtual#(Mover)(&manager)
 

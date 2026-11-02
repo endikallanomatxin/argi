@@ -5,7 +5,7 @@ main := (.system: System) -> (.status_code: Int32) {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_storage_virtual ::= to_virtual#(Allocator)($&allocator_storage)
     arena :: ArenaAllocator
-    initialized ::= ArenaAllocator(.allocator = $&allocator_storage_virtual, .block_size = 32)
+    initialized ::= ArenaAllocator(.allocator = allocator_storage_virtual, .block_size = 32)
     match initialized {
         ..ok ~constructed_value { arena = ~constructed_value }
         ..error _ {

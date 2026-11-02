@@ -1,5 +1,5 @@
 test model_orientation_preserves_spherical_region := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     original ::= _brep_hemisphere#(.Scalar: Float64)(.allocator = allocator)!
     inverted ::= reverse_orientation(&original)!
     restored ::= reverse_orientation(&inverted)!
@@ -52,7 +52,7 @@ test model_orientation_preserves_spherical_region := (.system: System) -> !() {
 }
 
 test model_orientation_preserves_vertex_incidence_and_ids := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -93,7 +93,7 @@ test model_orientation_preserves_vertex_incidence_and_ids := (.system: System) -
 }
 
 test model_orientation_float32_periodic_faces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     frame ::= [
         g.frame#(Float32)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!
     ]
@@ -111,7 +111,7 @@ test model_orientation_float32_periodic_faces := (.system: System) -> !() {
 }
 
 test model_orientation_open_boundary_fans := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _triangle()
     original ::= [
         from_any_length_faces(
@@ -128,7 +128,7 @@ test model_orientation_open_boundary_fans := (.system: System) -> !() {
 }
 
 test model_orientation_hole_walk_and_bridge := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     original ::= [
         from_planar_faces(

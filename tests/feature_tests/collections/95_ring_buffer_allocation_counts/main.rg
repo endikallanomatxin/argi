@@ -10,12 +10,12 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_virtual ::= to_virtual#(Allocator)($&allocator)
     ring ::= unwrap_or_abort(
-        .value = RingBuffer#(.t: Int32)(.capacity = 1, .allocator = $&allocator_virtual)
+        .value = RingBuffer#(.t: Int32)(.capacity = 1, .allocator = allocator_virtual)
     )
     index :: Int32 = 0
     while index < 20 {
-        unwrap_or_abort(.value = push(.self = $&ring, .value = index, .allocator = $&allocator_virtual))
-        match push(.self = $&ring, .value = 100, .allocator = $&allocator_virtual).result {
+        unwrap_or_abort(.value = push(.self = $&ring, .value = index, .allocator = allocator_virtual))
+        match push(.self = $&ring, .value = 100, .allocator = allocator_virtual).result {
             ..ok _ { abort }
             ..error ~err { if err.reason != ..full { abort } }
         }
@@ -30,15 +30,15 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     deinit(.self = $&ring)
     if allocator.deallocations != 1 { abort }
     strings ::= unwrap_or_abort(
-        .value = RingBuffer#(.t: String)(.capacity = 1, .allocator = $&allocator_virtual)
+        .value = RingBuffer#(.t: String)(.capacity = 1, .allocator = allocator_virtual)
     )
-    first ::= unwrap_or_abort(.value = String(.allocator = $&allocator_virtual, .length = 1))
-    rejected ::= unwrap_or_abort(.value = String(.allocator = $&allocator_virtual, .length = 1))
+    first ::= unwrap_or_abort(.value = String(.allocator = allocator_virtual, .length = 1))
+    rejected ::= unwrap_or_abort(.value = String(.allocator = allocator_virtual, .length = 1))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&first, .index = 0, .byte = 97))
-    unwrap_or_abort(.value = push(.self = $&strings, .value = ~first, .allocator = $&allocator_virtual))
+    unwrap_or_abort(.value = push(.self = $&strings, .value = ~first, .allocator = allocator_virtual))
     if [
         is(
-            .value   = push(.self = $&strings, .value = ~rejected, .allocator = $&allocator_virtual)
+            .value   = push(.self = $&strings, .value = ~rejected, .allocator = allocator_virtual)
             .variant = ..error
         )
         == false

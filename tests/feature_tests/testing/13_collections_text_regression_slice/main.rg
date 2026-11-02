@@ -15,7 +15,7 @@ test collections_text_format_slice := (.system: System, .error_tracer: $&Virtual
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
 
     text_result ::= format(.value = 7, .allocator = allocator)
     match text_result {

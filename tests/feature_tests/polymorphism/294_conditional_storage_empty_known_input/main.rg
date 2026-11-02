@@ -77,7 +77,7 @@ main := (.system: System) -> () {
 
     virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
 
-    assume allocator := $&virtual_allocator
+    assume allocator := virtual_allocator
     storage ::= make_storage(allocator_concrete)
     deinit($&storage)
 }

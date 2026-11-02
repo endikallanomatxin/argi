@@ -24,7 +24,7 @@ implement#(.Scalar: Type: Float) ImplicitlyCopyable#(TrimUse#(Scalar)) ()
 
 BrepBuilderInitArgs := #(.Scalar: Type: Float) (
     .tolerance : Scalar     = 0.000001,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 )
 
 implement#(.Scalar: Type: Float) Init#(
@@ -61,7 +61,7 @@ implement#(.Scalar: Type: Float) Init#(
 )
 
 declare_surface := #(.Scalar: Type: Float) (
-    .builder: $&BrepBuilder#(Scalar), .surface: g.Surface#(Scalar), .allocator: $&Virtual#(Allocator)
+    .builder: $&BrepBuilder#(Scalar), .surface: g.Surface#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(SurfaceId), BrepErrors)) {
     g.validate_surface(surface)!
     id ::= _pool_add_surface(
@@ -74,7 +74,7 @@ declare_surface := #(.Scalar: Type: Float) (
 }
 
 declare_curve := #(.Scalar: Type: Float) (
-    .builder: $&BrepBuilder#(Scalar), .curve: Curve#(Scalar), .allocator: $&Virtual#(Allocator)
+    .builder: $&BrepBuilder#(Scalar), .curve: Curve#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(CurveId), BrepErrors)) {
     curve_point(.curve = curve, .parameter = 0.0)!
     curve_point(.curve = curve, .parameter = 0.25)!
@@ -91,7 +91,7 @@ declare_closed_edge := #(.Scalar: Type: Float) (
     .builder   : $&BrepBuilder#(Scalar),
     .curve     : idx.Index#(CurveId),
     .interval  : CurveInterval#(Scalar)  = (.start = 0.0, .end = 1.0),
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BrepErrors)) {
     index ::= idx.resolve_index(.domain = &builder&._domain, .index = curve)!
     id ::= index | convert#(.to: CurveId)(_)
@@ -127,7 +127,7 @@ _append_brep_edge := #(.Scalar: Type: Float) (
     .curve     : CurveId,
     .interval  : CurveInterval#(Scalar),
     .vertices  : _BrepEdgeVertices,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(idx.Index#(EdgeId), BrepErrors)) {
 
     offset ::= length(&builder&._edges).count
@@ -155,7 +155,7 @@ _append_brep_edge := #(.Scalar: Type: Float) (
 }
 
 finish_brep := #(.Scalar: Type: Float) (
-    .builder: BrepBuilder#(Scalar), .require_closed: Bool = true, .allocator: $&Virtual#(Allocator)
+    .builder: BrepBuilder#(Scalar), .require_closed: Bool = true, .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(Model#(Scalar), BrepErrors)) {
     edge_count ::= length(&builder._edges).count
     if length(&builder._faces).count == 0 {

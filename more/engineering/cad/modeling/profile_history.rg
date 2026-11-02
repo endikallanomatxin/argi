@@ -12,7 +12,7 @@ ProfilePublication := #(.Scalar: Type: Float) (
 -- order are preserved by profile_brep; traversal follows connectivity, without
 -- assuming consecutive halfedge IDs or deriving edges from source offsets.
 profile_brep_with_history := #(.Scalar: Type: Float) (
-    .profile: &PlanarProfile#(Scalar), .allocator: $&Virtual#(Allocator)
+    .profile: &PlanarProfile#(Scalar), .allocator: Virtual#(Allocator)
 ) -> (.result: Errable#(ProfilePublication#(Scalar), t.BrepErrors)) {
     model ::= profile_brep(profile, .allocator = allocator)!
     region_count ::= length(&profile&._region_lengths).count

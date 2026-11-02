@@ -1,5 +1,5 @@
 test storage_index_domain_membership := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     first ::= IndexDomain()!
     second ::= IndexDomain()!
     id ::= bind_index#(UIntNative)(.domain = &first, .offset = 42).value
@@ -13,7 +13,7 @@ test storage_index_domain_membership := (.system: System) -> !() {
 }
 
 test storage_index_domain_transfer := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     original ::= IndexDomain()!
     id ::= bind_index#(UIntNative)(.domain = &original, .offset = 7).value
     transferred ::= ~original
@@ -23,7 +23,7 @@ test storage_index_domain_transfer := (.system: System) -> !() {
 }
 
 test storage_index_survives_unrelated_growth := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
 
     domain ::= IndexDomain()!
     id ::= bind_index#(UIntNative)(.domain = &domain, .offset = 0).value

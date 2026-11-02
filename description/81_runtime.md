@@ -97,7 +97,7 @@ default. The following `System` shape is hypothetical:
 
 ```rg
 System : Type = (
-    .allocator : $&Allocator
+    .allocator : Virtual#(Allocator)
     .terminal  : $&Terminal
     .file_system  : $&FileSystem
     .network   : $&Network
@@ -142,7 +142,7 @@ For example:
 
 ```rg
 main := (.system: System) -> !(.status_code: Int32 = 0) {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 
     runtime := FiberRuntime(
         .allocator = allocator,
@@ -213,7 +213,7 @@ enable it with lexical `assume`:
 
 ```rg
 main := (.system: System) -> !(.status_code: Int32 = 0) {
-    assume allocator ::= $&GeneralPurposeAllocator(.allocator = system.page_allocator)
+    assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
 
     runtime := FiberRuntime(
         .allocator = allocator,

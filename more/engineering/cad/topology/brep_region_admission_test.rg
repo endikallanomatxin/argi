@@ -4,7 +4,7 @@ _closed_planar_circle_use := #(.Scalar: Type: Float) (
     .center    : ParameterPoint#(Scalar),
     .radius    : Scalar,
     .reversed  : Bool,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> (.result: Errable#(TrimUse#(Scalar), BrepErrors)) {
     basis: g.Frame#(Scalar) = (
         .origin = (
@@ -30,7 +30,7 @@ _closed_planar_circle_use := #(.Scalar: Type: Float) (
 }
 
 _two_circular_holes := #(.Scalar: Type: Float) (
-    .allocator: $&Virtual#(Allocator), .second_offset: Scalar = 2.0
+    .allocator: Virtual#(Allocator), .second_offset: Scalar = 2.0
 ) -> (.result: Errable#(Model#(Scalar), BrepErrors)) {
     builder ::= BrepBuilder#(Scalar)(.allocator = allocator)!
     basis ::= g.frame#(Scalar)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!
@@ -76,7 +76,7 @@ _two_circular_holes := #(.Scalar: Type: Float) (
 }
 
 test model_curved_region_multiple_holes := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_) | $&_
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
     model ::= _two_circular_holes#(.Scalar: Float64)(.allocator = allocator)!
     counts ::= entity_counts(&model)
     [

@@ -1,7 +1,7 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocation ::= unwrap_or_abort(
-        .value = allocate_bytes(.self = system.page_allocator, .size = 32, .alignment = 8)
+        .value = allocate_bytes(.self = $&system.page_allocator, .size = 32, .alignment = 8)
     )
     original_size ::= allocation.size
     allocation.size = original_size + 8

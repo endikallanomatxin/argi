@@ -4,7 +4,7 @@ expect_count := (
     .self      : &HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .word      : StringView,
     .expected  : UIntNative,
-    .allocator : $&Virtual#(Allocator)
+    .allocator : Virtual#(Allocator)
 ) -> !Void = ..ok Void() {
 
     assume allocator

@@ -13,7 +13,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         .deallocations = 0
     )
     tracker_virtual ::= to_virtual#(Allocator)($&tracker)
-    allocator ::= GeneralPurposeAllocator(.allocator = $&tracker_virtual)
+    allocator ::= GeneralPurposeAllocator(.allocator = tracker_virtual)
     -- The receipt list uses a separate allocator so backing counts describe
     -- only the size class under test: one chunk holds 512 eight-byte slots.
     receipts ::= unwrap_or_abort(
