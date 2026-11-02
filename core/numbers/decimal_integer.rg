@@ -282,6 +282,42 @@ _float_integer_multiply := (.self: $&_FloatDecimalInteger, .factor: UInt32, .add
     }
 }
 
+-- The integer is normalized, so its highest used word is nonzero except for zero.
+_float_integer_bit_length := (.self: &_FloatDecimalInteger) -> (.bits: UIntNative) {
+    top ::= self&.words[self&.used - 1]
+    bits = [self&.used - 1] * 16
+    while top > 0 {
+        bits = bits + 1
+        top = top / 2
+    }
+}
+
+-- Shift in place from the high end so source words are not overwritten.
+_float_integer_shift_left := (.self: $&_FloatDecimalInteger, .bits: UIntNative) -> () {
+    if bits == 0 or [self&.used == 1 and self&.words[0] == 0] { return }
+    whole ::= bits / 16
+    partial ::= bits % 16
+    if self&.used + whole > 256 { abort }
+    index ::= self&.used
+    while index > 0 {
+        index = index - 1
+        self&.words[index + whole] = self&.words[index]
+    }
+    index = 0
+    while index < whole {
+        self&.words[index] = 0
+        index = index + 1
+    }
+    self&.used = self&.used + whole
+    factor :: UInt32 = 1
+    count ::= partial
+    while count > 0 {
+        factor = factor * 2
+        count = count - 1
+    }
+    if partial != 0 { _float_integer_multiply(self, .factor = factor) }
+}
+
 _float_integer_compare := (.left: &_FloatDecimalInteger, .right: &_FloatDecimalInteger) -> (
     .order : Int32
 ) {

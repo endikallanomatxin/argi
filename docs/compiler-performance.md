@@ -423,8 +423,9 @@ controls expose the tradeoff, not statistically established throughput results.
 Avoid a separate mutation analysis solely to remove these small reservations
 without evidence that it would simplify or materially improve real workloads.
 
-The full native float-parsing fixture now stops at the unchanged instruction
-quota rather than memory quota; it is not yet a passing VM acceptance case.
+At this measurement the full native float-parsing fixture stopped at the
+unchanged instruction quota rather than memory quota. See the exact decimal
+normalization follow-up below for its subsequent VM acceptance coverage.
 The bounded `execution/02_floating_point_vm` fixture parses all three IEEE widths
 and rejects malformed input in native execution, VM execution and its existing
 `#run` probe, without increasing either budget.
@@ -1525,3 +1526,23 @@ from one sample. The production change was discarded: it does not address the
 repeated sweeps. The existing binding test now also checks propagation after
 a completed binding changes type and restoration after transactional rollback.
 Raw experiment output: `.zig-cache/binding-identity-profile.log`.
+
+## Exact decimal normalization under VM quotas
+
+Individual finite Binary64 inputs `1e-300`, `1.7976931348623157e308` and
+`4.9406564584124654e-324` exhausted the default one-million-instruction VM
+budget. Exact rational normalization previously doubled a large integer one bit
+at a time. It now uses limb bit lengths and a direct multi-bit shift, followed
+by at most one correction. Decimal scaling multiplies four digits at a time;
+conservative decimal-order rejection runs only after full grammar validation.
+Nearest/even rounding still uses exact integers, without a wider floating-point
+intermediate or host parsing routine.
+
+All three extremes now pass together in the existing native, VM and compile-time
+`#run` probe with the default quotas unchanged. The complete float-parsing
+battery also runs in the VM, with explicit test-only limits of 64 million
+instructions and four million value cells. That cumulative battery includes
+hundreds of checks and multi-kilobyte cancellation and midpoint inputs; its
+budget is not a per-parse requirement. An isolated ReleaseSafe run completed in
+2.50 seconds with 245,944 KiB peak RSS. This is an acceptance measurement, not a
+controlled throughput comparison.

@@ -13,6 +13,10 @@ probe := () -> (.result: Int32) {
     if unwrap_or_abort(.value = parse_float16(.text = "1.5")).result != 1.5 { abort }
     if unwrap_or_abort(.value = parse_float32(.text = "-2.75")).result != -2.75 { abort }
     if unwrap_or_abort(.value = parse_float64(.text = "4.2e1")).result != 42.0 { abort }
+    -- Individual finite extremes must fit the ordinary execution budget.
+    if unwrap_or_abort(.value = parse_float64(.text = "1e-300")).result != 1e-300 { abort }
+    if unwrap_or_abort(.value = parse_float64(.text = "1.7976931348623157e308")).result != 1.7976931348623157e308 { abort }
+    if unwrap_or_abort(.value = parse_float64(.text = "4.9406564584124654e-324")).result != 4.9406564584124654e-324 { abort }
     match parse_float32(.text = "1.2.3").result {
         ..ok _ { abort }
         ..error failure { if failure.reason != ..invalid_input { abort } }

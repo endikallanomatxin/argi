@@ -1,7 +1,8 @@
 -- Decimal inputs are rounded from exact rational integers, without an
 -- intermediate floating-point format or a dependency on the host library.
 _float_parse := #(.t: Type: Float) (
-    .text: StringView, .precision: Int32, .maximum_exponent: Int32, .minimum_exponent: Int32
+    .text: StringView, .precision: Int32, .maximum_exponent: Int32, .minimum_exponent: Int32,
+    .maximum_decimal_order: UIntNative, .minimum_decimal_order: UIntNative
 ) -> (.result: Errable#(t, (..invalid_input, ..out_of_range))) {
 
     if text._length == 0 {
@@ -118,6 +119,27 @@ _float_parse := #(.t: Type: Float) (
         return
     }
 
+    -- Reject only orders that cannot round to a finite nonzero target. Grammar
+    -- validation above must finish first, even when the exponent saturates.
+    positive_order :: UIntNative = significant - 1
+    negative_order :: UIntNative = fractional
+    if exponent_negative {
+        negative_order = negative_order + exponent
+    } else {
+        positive_order = positive_order + exponent
+    }
+    if positive_order >= negative_order {
+        if positive_order - negative_order > maximum_decimal_order {
+            result = ..error(.reason = ..out_of_range)
+            return
+        }
+    } else {
+        if negative_order - positive_order > minimum_decimal_order {
+            result = ..error(.reason = ..out_of_range)
+            return
+        }
+    }
+
     positive_power :: UIntNative = significant - retained
     negative_power :: UIntNative = fractional
 
@@ -147,30 +169,39 @@ _float_parse := #(.t: Type: Float) (
     -- A retained significand has at most 800 digits. Powers outside these
     -- bounds cannot approach any supported finite nonzero float. Within the
     -- bounds, 256 limbs hold both the rational and its normalization shifts.
+    while power >= 4 {
+        _float_integer_multiply($&numerator, .factor = 10000)
+        power = power - 4
+    }
     while power > 0 {
         _float_integer_multiply($&numerator, .factor = 10)
         power = power - 1
     }
-
+    while power <= -4 {
+        _float_integer_multiply($&denominator, .factor = 10000)
+        power = power + 4
+    }
     while power < 0 {
         _float_integer_multiply($&denominator, .factor = 10)
         power = power + 1
     }
 
+    numerator_bits ::= _float_integer_bit_length(&numerator).bits
+    denominator_bits ::= _float_integer_bit_length(&denominator).bits
     binary_exponent :: Int32 = 0
-
-    while _float_integer_compare(.left = &numerator, .right = &denominator).order < 0 {
+    if numerator_bits >= denominator_bits {
+        difference ::= numerator_bits - denominator_bits
+        _float_integer_shift_left($&denominator, .bits = difference)
+        binary_exponent = unwrap_or_abort(.value = difference | convert#(.to: Int32)(_)).result
+    } else {
+        difference ::= denominator_bits - numerator_bits
+        _float_integer_shift_left($&numerator, .bits = difference)
+        binary_exponent = 0 - unwrap_or_abort(.value = difference | convert#(.to: Int32)(_)).result
+    }
+    if _float_integer_compare(.left = &numerator, .right = &denominator).order < 0 {
         _float_integer_multiply($&numerator, .factor = 2)
         binary_exponent = binary_exponent - 1
     }
-
-    while _float_integer_compare(.left = &numerator, .right = &denominator).order >= 0 {
-        _float_integer_multiply($&denominator, .factor = 2)
-        binary_exponent = binary_exponent + 1
-    }
-
-    _float_integer_halve($&denominator)
-    binary_exponent = binary_exponent - 1
 
     if binary_exponent > maximum_exponent or binary_exponent < minimum_exponent - 1 {
         result = ..error(.reason = ..out_of_range)
@@ -246,7 +277,8 @@ parse_float16 := (.text: StringView) -> (
 ) {
 
     result = _float_parse#(.t: Float16)(
-        .text = text, .precision = 11, .maximum_exponent = 15, .minimum_exponent = -24
+        .text = text, .precision = 11, .maximum_exponent = 15, .minimum_exponent = -24,
+        .maximum_decimal_order = 4, .minimum_decimal_order = 8
     ).result
 }
 
@@ -255,7 +287,8 @@ parse_float32 := (.text: StringView) -> (
 ) {
 
     result = _float_parse#(.t: Float32)(
-        .text = text, .precision = 24, .maximum_exponent = 127, .minimum_exponent = -149
+        .text = text, .precision = 24, .maximum_exponent = 127, .minimum_exponent = -149,
+        .maximum_decimal_order = 38, .minimum_decimal_order = 46
     ).result
 }
 
@@ -264,6 +297,7 @@ parse_float64 := (.text: StringView) -> (
 ) {
 
     result = _float_parse#(.t: Float64)(
-        .text = text, .precision = 53, .maximum_exponent = 1023, .minimum_exponent = -1074
+        .text = text, .precision = 53, .maximum_exponent = 1023, .minimum_exponent = -1074,
+        .maximum_decimal_order = 308, .minimum_decimal_order = 324
     ).result
 }
