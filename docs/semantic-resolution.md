@@ -85,6 +85,33 @@ requires preserving this nested routing, not simply returning the outermost
 materialization's error. Persistent failures and these scoped sinks have distinct
 lifetimes and must not acquire the same rollback or cloning policy.
 
+## Virtual capture generations
+
+Summary captures carry an input path and one finite phase: entry storage, proven
+final post-call storage, or an unavailable intermediate generation. Ordered
+proofs use the original capture/call node and executed writes, including selected
+replacement cleanup. They do not infer capture timing from a binding's final
+value. Definite whole-receiver initialization can establish a post capture;
+later receiver writes retire that proof. Substitution preserves phases through
+ordinary and generic wrappers, nested fields and variants. Ambiguous control
+flow and unsupported aliases do not establish a post-capture proof.
+
+Input post-values still materialize against entry snapshots before simultaneous
+effects apply. A proven post capture receives a planned identity with its actual
+destination frozen at entry. Once every write and generation refresh completes,
+the checker expands that identity into the new generation and all reachable
+storage dependencies. It patches only fact envelopes, preserving authoritative
+child initialization. Only the matching post-capture input observation renews;
+historical aliases and entry captures retain their original generations.
+
+Other call destinations can alias a receiver or its reachable borrowed storage.
+Temporal proofs therefore export caller-relative observation conflicts for later
+writes, including sources used by the receiver initializer. The checker traverses
+their reachable places at the concrete caller. These obligations survive
+forwarding even when the wrapper uses a captured handle internally rather than
+returning it. Symbolic referents retain their separate identities and generations;
+they never acquire a fabricated lexical place or a disjointness guarantee.
+
 A discarded candidate releases its new compile-time requests. A genuinely
 suspended selection can explicitly retain request recipes while rolling back
 provisional graph entities; an outer rejected transaction can still discard
@@ -94,3 +121,14 @@ performed compile-time probing. Request recipes must not retain provisional IDs.
 For measured costs and rejected optimization approaches, see
 [compiler performance](compiler-performance.md). Remaining implementation work
 belongs in [compiler follow-ups](../plan/compiler.md).
+
+Acceptance coverage includes same-call first initialization, reference-bearing
+receivers, generic forwarding, owning receivers across repeated calls, returned
+handles, nested output records and partial output fields. Negative fixtures
+reject capture before initialization, later receiver replacement, stale aliases,
+ended referents, conditional initialization and reachable aliases used only
+inside a wrapper. The complete Debug internal suite passes 1,431 tests (one
+skipped); ReleaseSafe passes those internal tests, 2,219 program tests (11
+skipped), HTTP tests and its example build. The owning repeated-call fixture
+also passes focused native/VM validation. Logs and inspected LLVM IR are under
+`.zig-cache/virtual-capture-generations-20261102/`.

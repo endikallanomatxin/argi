@@ -753,7 +753,6 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     const dependencies = [_][]const facts.InputPath{
         actual.input_places,
         actual.input_generation_dependencies,
-        actual.input_captured_storages,
         actual.input_receiver_values,
         actual.input_place_values,
         actual.input_owned_roots,
@@ -763,6 +762,9 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
         for (paths) |path| {
             if (!covers(allowed.dependencies, path)) return .{ .kind = .undeclared_dependency, .input = path };
         }
+    }
+    for (actual.input_captured_storages) |capture| {
+        if (!covers(allowed.dependencies, capture.path)) return .{ .kind = .undeclared_dependency, .input = capture.path };
     }
     for (actual.opaque_storage_dependencies) |path| {
         if (!covers(allowed.storage_sources, path) and !covers(allowed.dependencies, path)) return .{ .kind = .undeclared_dependency, .input = path };
@@ -847,9 +849,10 @@ fn retainedPathAllowed(contract: Contract, storage: facts.InputPath, path: facts
 fn retainedValueAllowed(contract: Contract, storage: facts.InputPath, value: facts.ValueEffect) bool {
     if (value.fresh_cleanup_obligation or value.fresh_dependencies.len != 0 or value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or value.unavailable_fresh_storage.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0) return false;
     for (value.input_dependencies) |dependency| if (!retainedPathAllowed(contract, storage, dependency.path)) return false;
-    for ([_][]const facts.InputPath{ value.input_places, value.input_generation_dependencies, value.input_captured_storages, value.input_receiver_values, value.input_place_values, value.input_owned_roots, value.input_storage_capabilities, value.opaque_generation_dependencies, value.opaque_storage_dependencies }) |paths| {
+    for ([_][]const facts.InputPath{ value.input_places, value.input_generation_dependencies, value.input_receiver_values, value.input_place_values, value.input_owned_roots, value.input_storage_capabilities, value.opaque_generation_dependencies, value.opaque_storage_dependencies }) |paths| {
         for (paths) |path| if (!retainedPathAllowed(contract, storage, path)) return false;
     }
+    for (value.input_captured_storages) |capture| if (!retainedPathAllowed(contract, storage, capture.path)) return false;
     for (value.fields) |field| if (!retainedValueAllowed(contract, storage, field.value.*)) return false;
     for (value.variants) |variant| if (!retainedValueAllowed(contract, storage, variant.value.*)) return false;
     return true;

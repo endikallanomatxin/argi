@@ -21,9 +21,10 @@ correctness or cost issues in the follow-ups below.
 - Extend hidden retention/replacement and grouped opaque mappings through output
   fields when a consumer needs them.
 - Represent hidden storage and cleanup identities before virtualizing Resizable.
-- Model virtual captures of caller storage first initialized by the same call.
-  Represent its post-state generation identities before instantiating summary
-  snapshots; retain the conservative rejection until those identities exist.
+- Extend post-call virtual capture proofs to conditional/loop initialization,
+  mutable receiver aliases, nested virtual receivers and active structural
+  fallback cleanup. Straight-line definite initialization uses explicit capture
+  phases and planned post-state identities; unproved ordering stays rejected.
 
 ## Performance validation
 

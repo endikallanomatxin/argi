@@ -52,6 +52,15 @@ pub const SafetyChecker = struct {
     };
 
     const state_mod = @import("state.zig");
+    const PostCapture = struct {
+        placeholder: facts.ValidityRootId,
+        storage: ?facts.Place,
+        symbolic: ?facts.SymbolicPointeeId,
+        entry_generation: ?facts.ValidityRootId,
+        input_index: u32,
+        dependencies: []const facts.ValidityDependency = &.{},
+    };
+    const CaptureWrite = struct { path: facts.InputPath, storage: facts.Place };
     const FunctionState = state_mod.State;
     const StorageCapabilityState = state_mod.StorageCapabilityState;
     const StorageGeneration = state_mod.StorageGeneration;
@@ -161,6 +170,10 @@ pub const SafetyChecker = struct {
     // Nested calls install their own map so repeated acquisitions stay distinct.
     next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
+    active_post_captures: ?*std.array_list.Managed(PostCapture) = null,
+    active_entry_generations: []const state_mod.StorageGeneration = &.{},
+    active_entry_symbolic: []const state_mod.SymbolicPointeeState = &.{},
+    active_capture_writes: []const CaptureWrite = &.{},
     active_summary_inference: ?*summary_infer.Infer = null,
     continuation: ?struct { function: graph_mod.GlobalFunctionId, state: *ContinuationState } = null,
     collect_stats: bool = false,
@@ -1448,6 +1461,20 @@ pub const SafetyChecker = struct {
         const previous_capabilities = self.active_fresh_capabilities;
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
+        const saved_generations = self.active_entry_generations;
+        const saved_symbolic = self.active_entry_symbolic;
+        const saved_capture_writes = self.active_capture_writes;
+        defer self.active_capture_writes = saved_capture_writes;
+        self.active_capture_writes = &.{};
+        defer self.active_entry_generations = saved_generations;
+        defer self.active_entry_symbolic = saved_symbolic;
+        self.active_entry_generations = &.{};
+        self.active_entry_symbolic = &.{};
+        if (summaryHasPostCaptures(summary)) {
+            self.active_capture_writes = try self.captureWrites(summary, argument_nodes, values, state);
+            self.active_entry_generations = try self.allocator.dupe(state_mod.StorageGeneration, state.storage_generations.items);
+            self.active_entry_symbolic = try self.allocator.dupe(state_mod.SymbolicPointeeState, state.symbolic_pointees.items);
+        }
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
         if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
@@ -1463,6 +1490,89 @@ pub const SafetyChecker = struct {
         };
         const result = try self.applyOutcomeSummary(source, effects, argument_nodes, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);
+    }
+
+    fn valueHasPostCaptures(value: facts.ValueEffect) bool {
+        for (value.input_captured_storages) |capture| if (capture.phase == .post) return true;
+        for (value.fields) |field| if (valueHasPostCaptures(field.value.*)) return true;
+        for (value.variants) |variant| if (valueHasPostCaptures(variant.value.*)) return true;
+        return false;
+    }
+
+    fn summaryHasPostCaptures(summary: facts.SafetySummary) bool {
+        for (summary.outputs) |output| if (valueHasPostCaptures(output)) return true;
+        for (summary.input_post_states) |post| if (valueHasPostCaptures(post.value)) return true;
+        for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |post| {
+            if (valueHasPostCaptures(post.value)) return true;
+        };
+        return false;
+    }
+
+    fn captureWrites(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const CaptureWrite {
+        var writes = std.array_list.Managed(CaptureWrite).init(self.allocator);
+        for (summary.input_post_states) |post| {
+            if (post.initialization == .preserved and !post.ends_previous_roots and !post.refreshes_storage_generation) continue;
+            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |storage|
+                try writes.append(.{ .path = post.target, .storage = storage });
+        }
+        return writes.toOwnedSlice();
+    }
+
+    fn validatePostCaptureWrites(self: *SafetyChecker, source: primitives.SourceRef, input: u32, visited: []const facts.Place) !void {
+        for (self.active_capture_writes) |write| {
+            if (write.path.input_index == input) continue;
+            for (visited) |storage| if (storage.isPrefixOf(write.storage) or write.storage.isPrefixOf(storage)) {
+                try self.report(source, "post-call virtual capture overlaps another initialized destination", .{});
+                break;
+            };
+        }
+    }
+
+    fn renewPostCaptureInput(self: *SafetyChecker, input: facts.ValueFacts, path: facts.InputPath, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var post = false;
+        for (effect.input_captured_storages) |capture| if (sameInputPath(capture.path, path)) {
+            if (capture.phase != .post) return input;
+            post = true;
+        };
+        if (!post) return input;
+        const storage = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
+        var old: ?facts.ValidityRootId = null;
+        var new: ?facts.ValidityRootId = null;
+        if (storage) |place| {
+            for (self.active_entry_generations) |entry| if (entry.storage.eql(place)) {
+                old = entry.generation;
+                break;
+            };
+            if (self.active_post_captures) |planned| {
+                for (planned.items) |capture| if (capture.storage) |captured| {
+                    if (!captured.eql(place)) continue;
+                    old = capture.entry_generation;
+                    new = capture.placeholder;
+                    break;
+                };
+            }
+            if (new == null) new = try state.storageGeneration(place);
+        } else if (input.symbolic_pointees.len == 1) {
+            const identity = input.symbolic_pointees[0];
+            for (self.active_entry_symbolic) |entry| if (entry.identity == identity) {
+                old = entry.generation;
+                break;
+            };
+            if (self.active_post_captures) |planned| {
+                for (planned.items) |capture| if (capture.symbolic == identity) {
+                    old = capture.entry_generation;
+                    new = capture.placeholder;
+                    break;
+                };
+            }
+            if (new == null) for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
+                new = entry.generation;
+                break;
+            };
+        }
+        if (old != null and new != null and old.? != new.?)
+            return facts.replaceValueRoots(self.allocator, input, &.{old.?}, new.?);
+        return input;
     }
 
     /// Input conditions are evaluated before applying any call effect. Reading
@@ -1906,6 +2016,16 @@ pub const SafetyChecker = struct {
             var observed_buffer: [1]facts.Place = undefined;
             const consumed_places = try self.observationStorage(conflict.consumed, ids, arguments, state, &consumed_buffer);
             const observed_places = try self.observationStorage(conflict.observed, ids, arguments, state, &observed_buffer);
+            if (conflict.captures_reachable) {
+                var reachable = std.array_list.Managed(facts.Place).init(self.allocator);
+                defer reachable.deinit();
+                for (observed_places) |observed| if (self.domainStorageType(observed)) |ty|
+                    try self.captureReachablePlaces(state, observed, ty, &reachable);
+                for (consumed_places) |consumed| for (reachable.items) |observed| if (consumed.mayOverlap(observed)) {
+                    try self.report(source, "virtual capture may observe storage changed through an aliased destination", .{});
+                    return false;
+                };
+            }
             for (consumed_places) |consumed| for (observed_places) |observed| if (consumed.mayOverlap(observed)) {
                 try self.report(source, "function observes storage after an aliased participant has consumed its value", .{});
                 return false;
@@ -1978,6 +2098,33 @@ pub const SafetyChecker = struct {
         }
         buffer[0] = try self.resolveSummaryInputPath(path, ids, arguments, state) orelse return &.{};
         return buffer;
+    }
+
+    // Capture alias obligations inspect storage identity, not value readiness.
+    // A receiver can be vacant at entry; its initializer's borrowed sources
+    // carry the additional reachable paths in the same caller-relative proof.
+    fn captureReachablePlaces(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId, visited: *std.array_list.Managed(facts.Place)) anyerror!void {
+        for (visited.items) |previous| if (previous.eql(storage)) return;
+        try visited.append(storage);
+        const original = self.valueAtPlace(state, storage) orelse return;
+        const value = try self.reconstructPlaceValue(state, storage, original);
+        if (self.graph.semanticType(ty) == .pointer) {
+            if (value.referenced_place) |target|
+                try self.captureReachablePlaces(state, target, self.graph.semanticType(ty).pointer.child, visited);
+            return;
+        }
+        if (self.graph.semanticType(ty) == .virtual) return;
+        const element = types.arrayElement(self.graph, ty);
+        for (value.fields) |field| {
+            const child_type = element orelse self.fieldTypeAt(ty, field.index) orelse continue;
+            const projection: facts.Projection = if (element != null) .{ .static_index = field.index } else .{ .field = field.index };
+            try self.captureReachablePlaces(state, try self.project(storage, projection), child_type, visited);
+        }
+        for (value.variants) |variant| {
+            if (value.known_choice_variant) |known| if (known != variant.index) continue;
+            const child_type = self.variantPayloadTypeAt(ty, variant.index) orelse continue;
+            try self.captureReachablePlaces(state, try self.project(storage, .{ .variant = variant.index }), child_type, visited);
+        }
     }
 
     fn callCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initializing: bool) ![]const graph_mod.GlobalNodeId {
@@ -3233,6 +3380,11 @@ pub const SafetyChecker = struct {
         const post_targets = try self.allocator.alloc(?facts.Place, summary.input_post_states.len);
         for (summary.input_post_states, post_targets) |post_state, *target|
             target.* = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
+        var captures = std.array_list.Managed(PostCapture).init(self.allocator);
+        defer captures.deinit();
+        const previous_captures = self.active_post_captures;
+        self.active_post_captures = &captures;
+        defer self.active_post_captures = previous_captures;
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             if (post_state.initializedness != .initialized or post_state.opaque_ownership != .none) continue;
@@ -3250,6 +3402,12 @@ pub const SafetyChecker = struct {
                 self.active_fresh_capabilities orelse &fresh_capabilities,
             );
         }
+        self.active_post_captures = previous_captures;
+
+        // A capture cannot use a final snapshot if a distinct output aliases
+        // the captured storage. Its write may follow capture construction.
+        for (captures.items) |capture| if (capture.storage) |storage|
+            try self.validatePostCaptureWrites(source, capture.input_index, &.{storage});
 
         const reference_generations = try self.allocator.alloc(?facts.ValidityRootId, summary.input_post_states.len);
         @memset(reference_generations, null);
@@ -3415,6 +3573,92 @@ pub const SafetyChecker = struct {
             const refreshed = try facts.replaceValueRoots(self.allocator, pointer, &.{previous}, current);
             try state.setPlace(slot, .initialized, refreshed);
         }
+        try self.completePostCaptures(source, state, captures.items);
+    }
+
+    fn completePostCaptures(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        captures: []PostCapture,
+    ) !void {
+        if (captures.len == 0) return;
+        // All writes have established their actual generations. Resolve the
+        // planned identities without changing any entry snapshot or old alias.
+        for (captures) |*capture| {
+            var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+            defer dependencies.deinit();
+            if (capture.storage) |storage| {
+                if (self.domainStorageType(storage)) |ty| {
+                    var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                    defer visited.deinit();
+                    try self.captureContractStorage(@enumFromInt(0), source, state, storage, ty, &dependencies, &visited);
+                    try self.validatePostCaptureWrites(source, capture.input_index, visited.items);
+                }
+            } else if (capture.symbolic) |identity| {
+                try self.captureSymbolicStorage(source, state, identity, &dependencies);
+            }
+            capture.dependencies = try dependencies.toOwnedSlice();
+        }
+        // Rewrite fact envelopes in place. Setting a parent Place again would
+        // erase authoritative child initialization and sibling write facts.
+        for (state.places.items) |*place|
+            place.value = try self.resolvePostCaptureValue(place.value, captures);
+        for (state.symbolic_values.items) |*stored|
+            stored.value = try self.resolvePostCaptureValue(stored.value, captures);
+        for (captures) |capture| state.tracker.end(capture.placeholder);
+    }
+
+    fn captureSymbolicStorage(self: *SafetyChecker, source: primitives.SourceRef, state: *FunctionState, identity: facts.SymbolicPointeeId, dependencies: *std.array_list.Managed(facts.ValidityDependency)) !void {
+        if (self.symbolicStorageReadiness(state, identity) != .complete) {
+            try self.report(source, "virtual capture requires initialized storage after the call", .{});
+            return;
+        }
+        for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
+            if (entry.generation) |generation| try appendDependencyFact(dependencies, .{ .root = generation });
+            break;
+        };
+        if (try self.symbolicValueAt(state, identity)) |stored| {
+            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer roots.deinit();
+            try collectDependencyRoots(try self.reconstructSymbolicValue(state, identity, stored.value), &roots);
+            try collectOwnedRoots(stored.value, &roots);
+            for (roots.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
+        }
+    }
+
+    fn expandPostCaptureDependency(self: *SafetyChecker, root: facts.ValidityRootId, captures: []const PostCapture, visited: *std.array_list.Managed(facts.ValidityRootId), result: *std.array_list.Managed(facts.ValidityDependency)) anyerror!void {
+        for (captures) |capture| if (capture.placeholder == root) {
+            if (std.mem.indexOfScalar(facts.ValidityRootId, visited.items, root) != null) return;
+            try visited.append(root);
+            for (capture.dependencies) |dependency| try self.expandPostCaptureDependency(dependency.root, captures, visited, result);
+            return;
+        };
+        try appendDependencyFact(result, .{ .root = root });
+    }
+
+    fn resolvePostCaptureValue(self: *SafetyChecker, value: facts.ValueFacts, captures: []const PostCapture) anyerror!facts.ValueFacts {
+        var result = value;
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        var visited = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer visited.deinit();
+        for (value.dependencies) |dependency| try self.expandPostCaptureDependency(dependency.root, captures, &visited, &dependencies);
+        result.dependencies = try dependencies.toOwnedSlice();
+        const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+        for (fields) |*field| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.resolvePostCaptureValue(field.value.*, captures);
+            field.value = child;
+        }
+        result.fields = fields;
+        const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+        for (variants) |*variant| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.resolvePostCaptureValue(variant.value.*, captures);
+            variant.value = child;
+        }
+        result.variants = variants;
+        return result;
     }
 
     fn summaryInputReferenceSlot(
@@ -3795,16 +4039,42 @@ pub const SafetyChecker = struct {
             referenced_place = target;
             has_referent = true;
         }
-        // TODO: Captures of storage first initialized by this same call need
-        // post-state generation identities before snapshot instantiation.
-        for (effect.input_captured_storages) |path| {
+        for (effect.input_captured_storages) |capture| {
+            const path = capture.path;
             if (path.input_index >= arguments.len) continue;
-            const storage = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
-            if (self.domainStorageType(storage)) |ty| {
+            const storage = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
+            const access = try self.load_summary_input_value(path, arguments, state);
+            const source = if (storage) |place| self.graph.binding(place.root).source else primitives.SourceRef{ .file_index = 0, .offset = 0 };
+            if (capture.phase == .stale) {
+                try self.report(source, "virtual capture has no proven final post-call generation", .{});
+                continue;
+            }
+            if (capture.phase == .post) if (self.active_post_captures) |planned| {
+                var symbolic: ?facts.SymbolicPointeeId = null;
+                var entry_generation: ?facts.ValidityRootId = null;
+                if (storage) |place| {
+                    entry_generation = try state.storageGeneration(place);
+                } else if (access.symbolic_pointees.len == 1) {
+                    symbolic = access.symbolic_pointees[0];
+                    for (state.symbolic_pointees.items) |entry| if (entry.identity == symbolic.?) {
+                        entry_generation = entry.generation;
+                        break;
+                    };
+                } else {
+                    try self.report(source, "post-call virtual capture has no single storage identity", .{});
+                    continue;
+                }
+                const placeholder = try state.tracker.establish(.fresh);
+                try planned.append(.{ .placeholder = placeholder, .storage = storage, .symbolic = symbolic, .entry_generation = entry_generation, .input_index = path.input_index });
+                try appendDependencyFact(&dependencies, .{ .root = placeholder });
+                continue;
+            };
+            if (storage) |place| if (self.domainStorageType(place)) |ty| {
                 var visited = std.array_list.Managed(facts.Place).init(self.allocator);
                 defer visited.deinit();
-                try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
-            }
+                try self.captureContractStorage(@enumFromInt(0), source, state, place, ty, &dependencies, &visited);
+                if (capture.phase == .post) try self.validatePostCaptureWrites(source, path.input_index, visited.items);
+            } else {} else for (access.symbolic_pointees) |identity| try self.captureSymbolicStorage(source, state, identity, &dependencies);
         }
         for (effect.input_generation_dependencies) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
@@ -3851,6 +4121,7 @@ pub const SafetyChecker = struct {
                 try self.load_summary_input_value(dependency.path, arguments, state)
             else
                 try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            input = try self.renewPostCaptureInput(input, dependency.path, effect, arguments, state);
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activate_conditional_resources(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
@@ -5128,6 +5399,20 @@ pub const SafetyChecker = struct {
         const previous_capabilities = self.active_fresh_capabilities;
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
+        const saved_generations = self.active_entry_generations;
+        const saved_symbolic = self.active_entry_symbolic;
+        const saved_capture_writes = self.active_capture_writes;
+        defer self.active_capture_writes = saved_capture_writes;
+        self.active_capture_writes = &.{};
+        defer self.active_entry_generations = saved_generations;
+        defer self.active_entry_symbolic = saved_symbolic;
+        self.active_entry_generations = &.{};
+        self.active_entry_symbolic = &.{};
+        if (summaryHasPostCaptures(summary)) {
+            self.active_capture_writes = try self.captureWrites(summary, argument_nodes, values, state);
+            self.active_entry_generations = try self.allocator.dupe(state_mod.StorageGeneration, state.storage_generations.items);
+            self.active_entry_symbolic = try self.allocator.dupe(state_mod.SymbolicPointeeState, state.symbolic_pointees.items);
+        }
         const prepared = try self.prepareGeneralValueGuards(summary, values, state);
         const result = try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);

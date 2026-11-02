@@ -65,6 +65,9 @@ pub const Infer = struct {
     post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
     observation_sink: ?*std.array_list.Managed(facts.InputPath) = null,
     observation_conflict_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
+    extra_capture_observations: std.array_list.Managed(facts.InputPath),
+    extra_capture_conflicts: std.array_list.Managed(facts.StorageObservationConflict),
+    collecting_capture_sources: bool = false,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
     replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, write: graph_mod.GlobalNodeId, targets: []const facts.InputPath, reference_slots: []const facts.InputPath } = null,
@@ -94,6 +97,8 @@ pub const Infer = struct {
             .addressed_outputs = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
             .domain_invalidations = std.array_list.Managed(facts.InputDomain).init(allocator),
+            .extra_capture_observations = std.array_list.Managed(facts.InputPath).init(allocator),
+            .extra_capture_conflicts = std.array_list.Managed(facts.StorageObservationConflict).init(allocator),
         };
     }
 
@@ -109,6 +114,8 @@ pub const Infer = struct {
         self.addressed_outputs.deinit();
         self.virtual_summaries.deinit();
         self.domain_invalidations.deinit();
+        self.extra_capture_observations.deinit();
+        self.extra_capture_conflicts.deinit();
     }
 
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
@@ -710,6 +717,8 @@ pub const Infer = struct {
         self.addressed_outputs.clearRetainingCapacity();
         self.domain_invalidations.clearRetainingCapacity();
         self.unbound_opaque_dependencies = .{};
+        self.extra_capture_observations.clearRetainingCapacity();
+        self.extra_capture_conflicts.clearRetainingCapacity();
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
         profile.accumulate(self.profile_io, start, &self.output_ns);
@@ -935,6 +944,7 @@ pub const Infer = struct {
         defer profile.accumulate(self.profile_io, start, &self.guards_ns);
         summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
         if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
+        try self.mergeCaptureObligations(&summary);
         return summary;
     }
 
@@ -2348,7 +2358,7 @@ pub const Infer = struct {
     fn recordStorageObservationConflict(self: *Infer, conflict: facts.StorageObservationConflict) !void {
         const sink = self.observation_conflict_sink orelse return;
         for (sink.items) |previous| {
-            if (self.inputPathEqual(previous.consumed, conflict.consumed) and self.inputPathEqual(previous.observed, conflict.observed)) return;
+            if (previous.captures_reachable == conflict.captures_reachable and self.inputPathEqual(previous.consumed, conflict.consumed) and self.inputPathEqual(previous.observed, conflict.observed)) return;
         }
         try sink.append(conflict);
     }
@@ -2516,7 +2526,7 @@ pub const Infer = struct {
                 self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else forwarded else forwarded;
                 const previous_leaf = self.forwarded_leaf_selected;
                 self.forwarded_leaf_selected = false;
-                try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
+                try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states, node_id);
                 if (self.selected_forward) |origin| if (origin.call == node_id and self.forwarded_leaf_selected) {
                     self.selected_forward_applied = true;
                 };
@@ -2533,7 +2543,7 @@ pub const Infer = struct {
                 const previous_leaf = self.forwarded_leaf_selected;
                 self.forwarded_leaf_selected = false;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
-                    try self.applyInputPostStatesFromSummary(function_id, summary, call.input, states, null);
+                    try self.applyInputPostStatesFromSummary(function_id, summary, call.input, states, null, null);
                 if (self.selected_forward) |origin| if (origin.call == node_id and self.forwarded_leaf_selected) {
                     self.selected_forward_applied = true;
                 };
@@ -2627,11 +2637,11 @@ pub const Infer = struct {
         defer self.forwarded_leaf_selected = previous_leaf;
         self.forwarded_outcome = if (variant) |tag| .{ .output_index = 0, .variant_index = tag } else null;
         switch (self.graph.node(node).content) {
-            .function_call => |call| try self.applyInputPostStatesFromFunctionCall(function, call.callee, call.input, states),
+            .function_call => |call| try self.applyInputPostStatesFromFunctionCall(function, call.callee, call.input, states, node),
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 if (try self.virtualSummary(call.safety_methods)) |summary|
-                    try self.applyInputPostStatesFromSummary(function, summary, call.input, states, null);
+                    try self.applyInputPostStatesFromSummary(function, summary, call.input, states, null, null);
             },
             else => unreachable,
         }
@@ -2686,6 +2696,7 @@ pub const Infer = struct {
         callee: graph_mod.GlobalFunctionId,
         input: graph_mod.GlobalNodeId,
         states: *std.array_list.Managed(facts.PlacePostState),
+        capture_call: graph_mod.GlobalNodeId,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         const callee_function = self.graph.function(callee);
@@ -2728,7 +2739,7 @@ pub const Infer = struct {
             return;
         }
         const summary = self.engine.summaryFor(callee) orelse return;
-        try self.applyInputPostStatesFromSummary(function_id, summary, input, states, null);
+        try self.applyInputPostStatesFromSummary(function_id, summary, input, states, null, capture_call);
     }
 
     fn selectForwardedEffects(self: *Infer, summary: facts.SafetySummary, selected: facts.OutcomePostStates) !facts.SafetySummary {
@@ -2777,6 +2788,7 @@ pub const Infer = struct {
         input: graph_mod.GlobalNodeId,
         states: *std.array_list.Managed(facts.PlacePostState),
         override: ?SymbolicInputOverride,
+        capture_call: ?graph_mod.GlobalNodeId,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         var selected = summary;
@@ -2791,7 +2803,7 @@ pub const Infer = struct {
                 }
             }
         }
-        try self.applyInputPostStatesFromArguments(function_id, selected, arguments, states, override);
+        try self.applyInputPostStatesFromArguments(function_id, selected, arguments, states, override, capture_call);
     }
 
     fn applyInputPostStatesFromArguments(
@@ -2801,6 +2813,7 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         states: *std.array_list.Managed(facts.PlacePostState),
         override: ?SymbolicInputOverride,
+        capture_call: ?graph_mod.GlobalNodeId,
     ) !void {
         if (self.observation_sink != null) {
             for (summary.storage_observations) |path| {
@@ -2813,7 +2826,7 @@ pub const Infer = struct {
             for (summary.storage_observation_conflicts) |conflict| {
                 const consumed = try self.substituteRequiredInputPath(function_id, conflict.consumed, arguments, override);
                 const observed = try self.substituteRequiredInputPath(function_id, conflict.observed, arguments, override);
-                for (consumed) |left| for (observed) |right| try self.recordStorageObservationConflict(.{ .consumed = left, .observed = right });
+                for (consumed) |left| for (observed) |right| try self.recordStorageObservationConflict(.{ .consumed = left, .observed = right, .captures_reachable = conflict.captures_reachable });
             }
         }
         for (summary.invalidated_domains) |domain| {
@@ -2868,12 +2881,13 @@ pub const Infer = struct {
                 );
                 continue;
             }
-            const value = try self.substituteOutputWithOverride(
+            const substituted = try self.substituteOutputWithOverride(
                 function_id,
                 post_state.value,
                 arguments,
                 override,
             );
+            const value = try self.captureCallPhases(function_id, capture_call, substituted, self.captureArgumentsMayPromote(arguments));
             try self.recordInputPostState(
                 states,
                 targets,
@@ -2928,6 +2942,7 @@ pub const Infer = struct {
                     input,
                     selected,
                     if (receiver) |effect| .{ .input_index = self_index, .effect = effect } else null,
+                    null,
                 );
         };
         if (receiver) |effect|
@@ -4676,7 +4691,7 @@ pub const Infer = struct {
                 selected = guarded.conditions;
             }
         }
-        return self.substitute_summary_outputs(function_id, outputs, arguments, call_node);
+        return self.captureCallPhases(function_id, call_node, try self.substitute_summary_outputs(function_id, outputs, arguments, call_node), self.captureArgumentsMayPromote(arguments));
     }
 
     fn substitute_summary_outputs(self: *Infer, function: graph_mod.GlobalFunctionId, outputs: []const facts.ValueEffect, arguments: []const graph_mod.ValueField, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {
@@ -4792,6 +4807,452 @@ pub const Infer = struct {
         return result;
     }
 
+    fn mergeCaptureObligations(self: *Infer, summary: *facts.SafetySummary) anyerror!void {
+        if (self.extra_capture_observations.items.len == 0 and self.extra_capture_conflicts.items.len == 0) return;
+        var observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        try observations.appendSlice(summary.storage_observations);
+        for (self.extra_capture_observations.items) |path| try appendInputPath(&observations, path);
+        summary.storage_observations = try observations.toOwnedSlice();
+        var conflicts = std.array_list.Managed(facts.StorageObservationConflict).init(self.allocator);
+        try conflicts.appendSlice(summary.storage_observation_conflicts);
+        for (self.extra_capture_conflicts.items) |conflict| {
+            var found = false;
+            for (conflicts.items) |existing| if (existing.captures_reachable == conflict.captures_reachable and self.inputPathEqual(existing.consumed, conflict.consumed) and self.inputPathEqual(existing.observed, conflict.observed)) {
+                found = true;
+                break;
+            };
+            if (!found) try conflicts.append(conflict);
+        }
+        summary.storage_observation_conflicts = try conflicts.toOwnedSlice();
+        if (summary.guarded_effects.len != 0) {
+            const guards = try self.allocator.dupe(facts.GuardedSafetyEffects, summary.guarded_effects);
+            for (guards) |*guard| {
+                const effects = try self.allocator.create(facts.SafetySummary);
+                effects.* = guard.effects.*;
+                try self.mergeCaptureObligations(effects);
+                guard.effects = effects;
+            }
+            summary.guarded_effects = guards;
+        }
+    }
+
+    fn recordCaptureWriteConflict(self: *Infer, observed: facts.InputPath, written: facts.InputPath) !void {
+        const conflict: facts.StorageObservationConflict = .{ .consumed = written, .observed = observed, .captures_reachable = true };
+        for (self.extra_capture_conflicts.items) |existing| if (existing.captures_reachable and self.inputPathEqual(existing.consumed, written) and self.inputPathEqual(existing.observed, observed)) return;
+        try self.extra_capture_conflicts.append(conflict);
+    }
+
+    fn recordCaptureLaterWrites(self: *Infer, function: graph_mod.GlobalFunctionId, observed: facts.InputPath, events: []const graph_mod.GlobalNodeId) anyerror!void {
+        try appendInputPath(&self.extra_capture_observations, observed);
+        for (events) |node| switch (self.graph.node(node).content) {
+            inline .pointer_assignment, .struct_field_store => |write| {
+                const pointer = if (@hasField(@TypeOf(write), "pointer")) write.pointer else write.struct_ptr;
+                var destination = (try self.captureStablePlace(function, pointer, 0)) orelse continue;
+                if (@hasField(@TypeOf(write), "field_index")) destination.projections = try self.appendProjection(destination.projections, .{ .field = write.field_index });
+                try self.recordCaptureWriteConflict(observed, destination);
+            },
+            .function_call => |call| {
+                const summary = self.engine.summaryFor(call.callee) orelse continue;
+                const arguments = self.structArguments(call.input) orelse continue;
+                for (summary.input_post_states) |post| {
+                    if (post.target.input_index >= arguments.len) continue;
+                    const input = self.captureStableInput(function, arguments[post.target.input_index].value, 0) orelse continue;
+                    try self.recordCaptureWriteConflict(observed, .{ .input_index = input, .projections = post.target.projections, .storage_domain = post.target.storage_domain });
+                }
+            },
+            .auto_deinit_binding => |id| {
+                if (self.cleanup) |active| if (!active.roots.contains(id)) continue;
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                if (cleanup.targetNode()) |target_node| {
+                    const target = self.captureCleanupTarget(function, target_node, 0);
+                    if (target == .input) try self.recordCaptureWriteConflict(observed, .{ .input_index = target.input });
+                }
+                if (cleanup.deinit_fn) |callee| if (cleanup.input) |input_node| {
+                    const summary = self.engine.summaryFor(callee) orelse continue;
+                    const arguments = self.structArguments(input_node) orelse continue;
+                    for (summary.input_post_states) |post| {
+                        if (post.target.input_index == cleanup.self_field_index or post.target.input_index >= arguments.len) continue;
+                        const input = self.captureStableInput(function, arguments[post.target.input_index].value, 0) orelse continue;
+                        try self.recordCaptureWriteConflict(observed, .{ .input_index = input, .projections = post.target.projections, .storage_domain = post.target.storage_domain });
+                    }
+                };
+            },
+            else => {},
+        };
+    }
+
+    fn captureEffectSources(self: *Infer, effect: facts.ValueEffect, sources: *std.array_list.Managed(facts.InputPath), depth: usize) anyerror!bool {
+        if (depth > 32) return false;
+        for (effect.input_dependencies) |dependency| try appendInputPath(sources, dependency.path);
+        inline for (.{ "input_places", "input_place_values", "input_generation_dependencies", "input_receiver_values", "input_owned_roots", "opaque_generation_dependencies", "opaque_storage_dependencies" }) |field| {
+            for (@field(effect, field)) |path| try appendInputPath(sources, path);
+        }
+        for (effect.input_captured_storages) |capture| try appendInputPath(sources, capture.path);
+        for (effect.input_domains) |domain| try appendInputPath(sources, domain.path);
+        for (effect.fields) |field| if (!try self.captureEffectSources(field.value.*, sources, depth + 1)) return false;
+        for (effect.variants) |variant| if (!try self.captureEffectSources(variant.value.*, sources, depth + 1)) return false;
+        for (effect.domain_values) |domain| if (!try self.captureEffectSources(domain.value.*, sources, depth + 1)) return false;
+        return true;
+    }
+
+    const CaptureOrigin = union(enum) { call: graph_mod.GlobalNodeId, virtualize: graph_mod.GlobalVirtualizeId };
+
+    // This bounded proof uses original execution events, never the final value
+    // assigned to a binding. Unsupported control flow keeps entry captures and
+    // makes inherited post captures stale rather than guessing a generation.
+    fn captureArgumentsMayPromote(self: *Infer, arguments: []const graph_mod.ValueField) bool {
+        for (arguments) |argument| {
+            const ty = self.graph.node(argument.value).ty orelse return false;
+            const semantic = self.graph.semanticType(ty);
+            if (self.captureTypeContainsVirtual(if (semantic == .pointer) semantic.pointer.child else ty, 0)) return false;
+        }
+        return true;
+    }
+
+    fn captureCallPhases(self: *Infer, function: graph_mod.GlobalFunctionId, call: ?graph_mod.GlobalNodeId, effect: facts.ValueEffect, may_promote_entry: bool) anyerror!facts.ValueEffect {
+        var result = effect;
+        if (effect.input_captured_storages.len != 0) {
+            const captures = try self.allocator.dupe(facts.CapturedStorage, effect.input_captured_storages);
+            for (captures) |*capture| {
+                if (capture.phase == .entry and !may_promote_entry) continue;
+                if (call) |origin| {
+                    capture.phase = try self.captureEventPhase(function, .{ .call = origin }, capture.*);
+                } else if (capture.phase == .post) {
+                    capture.phase = .stale;
+                }
+            }
+            result.input_captured_storages = captures;
+        }
+        if (effect.fields.len != 0) {
+            const fields = try self.allocator.dupe(facts.OutputFieldEffect, effect.fields);
+            for (fields) |*field| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.captureCallPhases(function, call, field.value.*, may_promote_entry);
+                field.value = value;
+            }
+            result.fields = fields;
+        }
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.dupe(facts.OutputVariantEffect, effect.variants);
+            for (variants) |*variant| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.captureCallPhases(function, call, variant.value.*, may_promote_entry);
+                variant.value = value;
+            }
+            result.variants = variants;
+        }
+        if (effect.domain_values.len != 0) {
+            const domains = try self.allocator.dupe(facts.OutputDomainEffect, effect.domain_values);
+            for (domains) |*domain| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.captureCallPhases(function, call, domain.value.*, may_promote_entry);
+                domain.value = value;
+            }
+            result.domain_values = domains;
+        }
+        return result;
+    }
+
+    fn captureTypeContainsVirtual(self: *Infer, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        if (depth > 32) return true;
+        return switch (self.graph.resolvedSemanticType(ty) orelse return true) {
+            .virtual => true,
+            .pointer => |pointer| self.captureTypeContainsVirtual(pointer.child, depth + 1),
+            .array => |array| self.captureTypeContainsVirtual(array.element, depth + 1),
+            .nullable => |child| self.captureTypeContainsVirtual(child, depth + 1),
+            .inferred_errable => |value| self.captureTypeContainsVirtual(value.child, depth + 1),
+            .structural, .nominal, .generic => blk: {
+                const fields = types.fields(self.graph, ty) orelse break :blk true;
+                for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (self.captureTypeContainsVirtual(field.ty, depth + 1)) break :blk true;
+                break :blk false;
+            },
+            .structural_choice, .inferred_choice => blk: {
+                const variants = types.variants(self.graph, ty) orelse break :blk true;
+                for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| if (variant.payload_type) |payload| if (self.captureTypeContainsVirtual(payload, depth + 1)) break :blk true;
+                break :blk false;
+            },
+            .builtin, .definition => false,
+        };
+    }
+
+    fn captureStablePlace(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, depth: usize) anyerror!?facts.InputPath {
+        if (depth > 32) return null;
+        return switch (self.graph.node(node).content) {
+            .binding_use => |binding| if (self.inputIndex(function, binding)) |input| .{ .input_index = input } else blk: {
+                const record = self.graph.binding(binding);
+                if (record.mutability != .constant or record.deferred_initialization) break :blk null;
+                break :blk try self.captureStablePlace(function, record.initialization orelse break :blk null, depth + 1);
+            },
+            .address_of => |target| try self.captureAddressedPlace(function, target, depth + 1),
+            .move_value, .denied_implicit_copy => |value| try self.captureStablePlace(function, value, depth + 1),
+            .explicit_cast => |cast| try self.captureStablePlace(function, cast.value, depth + 1),
+            .value_sequence, .replacement => |block| try self.captureStablePlace(function, self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return null, depth + 1),
+            else => null,
+        };
+    }
+
+    fn captureAddressedPlace(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, depth: usize) anyerror!?facts.InputPath {
+        if (depth > 32) return null;
+        return switch (self.graph.node(node).content) {
+            .dereference => |read| try self.captureStablePlace(function, read.pointer, depth + 1),
+            .struct_field_access => |field| blk: {
+                var parent = (try self.captureAddressedPlace(function, field.value, depth + 1)) orelse break :blk null;
+                parent.projections = try self.appendProjection(parent.projections, .{ .field = field.field_index });
+                break :blk parent;
+            },
+            // Addressing a binding selects its local slot, not the caller
+            // referent represented by a reference stored in that slot.
+            else => null,
+        };
+    }
+
+    fn captureStableInput(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, depth: usize) ?u32 {
+        if (depth > 32) return null;
+        return switch (self.graph.node(node).content) {
+            .binding_use => |binding| if (self.inputIndex(function, binding)) |index| index else blk: {
+                const record = self.graph.binding(binding);
+                if (record.mutability != .constant) break :blk null;
+                break :blk self.captureStableInput(function, record.initialization orelse break :blk null, depth + 1);
+            },
+            .move_value, .denied_implicit_copy => |value| self.captureStableInput(function, value, depth + 1),
+            .explicit_cast => |cast| self.captureStableInput(function, cast.value, depth + 1),
+            .value_sequence, .replacement => |block| self.captureStableInput(function, self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return null, depth + 1),
+            else => null,
+        };
+    }
+
+    fn captureEventsBlock(self: *Infer, block_id: graph_mod.GlobalBlockId, events: *std.array_list.Managed(graph_mod.GlobalNodeId)) anyerror!bool {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+        for (nodes) |node| if (!try self.captureEventsNode(node, events)) return false;
+        if (block.ret_val) |value| if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null) {
+            if (!try self.captureEventsNode(value, events)) return false;
+        };
+        return true;
+    }
+
+    fn captureEventsNode(self: *Infer, node: graph_mod.GlobalNodeId, events: *std.array_list.Managed(graph_mod.GlobalNodeId)) anyerror!bool {
+        switch (self.graph.node(node).content) {
+            .binding_declaration => |binding| {
+                const record = self.graph.binding(binding);
+                if (!record.deferred_initialization) if (record.initialization) |value| if (!try self.captureEventsNode(value, events)) return false;
+            },
+            .assignment => |write| if (!try self.captureEventsNode(write.value, events)) return false,
+            .pointer_assignment => |write| {
+                if (!try self.captureEventsNode(write.pointer, events) or !try self.captureEventsNode(write.value, events)) return false;
+            },
+            .struct_field_store => |write| {
+                if (!try self.captureEventsNode(write.struct_ptr, events) or !try self.captureEventsNode(write.value, events)) return false;
+            },
+            .function_call => |call| {
+                if (call.callee_value != null) return false;
+                if (!try self.captureEventsNode(call.input, events)) return false;
+            },
+            .auto_deinit_binding => |id| {
+                if (self.cleanup) |active| if (!active.roots.contains(id)) return true;
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                if (cleanup.input) |input| if (!try self.captureEventsNode(input, events)) return false;
+            },
+            .virtualize => |id| if (!try self.captureEventsNode(self.graph.virtualizes.items[@intFromEnum(id)].value, events)) return false,
+            .struct_value_literal => |literal| {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| if (!try self.captureEventsNode(field.value, events)) return false;
+            },
+            .choice_literal => |literal| {
+                if (literal.payload) |value| if (!try self.captureEventsNode(value, events)) return false;
+            },
+            inline .list_literal, .array_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value| if (!try self.captureEventsNode(value, events)) return false;
+            },
+            .move_value, .denied_implicit_copy, .address_of => |value| if (!try self.captureEventsNode(value, events)) return false,
+            .dereference => |read| if (!try self.captureEventsNode(read.pointer, events)) return false,
+            .struct_field_access => |field| if (!try self.captureEventsNode(field.value, events)) return false,
+            .choice_payload_access => |field| if (!try self.captureEventsNode(field.value, events)) return false,
+            .explicit_cast => |cast| if (!try self.captureEventsNode(cast.value, events)) return false,
+            inline .binary_operation, .comparison => |operation| {
+                if (!try self.captureEventsNode(operation.left, events) or !try self.captureEventsNode(operation.right, events)) return false;
+            },
+            .code_block, .value_sequence, .replacement => |block| if (!try self.captureEventsBlock(block, events)) return false,
+            .binding_use, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .type_literal, .definition_literal, .function_address, .declaration => {},
+            // Branches, loops, short circuit evaluation and indirect writes
+            // need a flow proof beyond this straight line subset.
+            else => return false,
+        }
+        try events.append(node);
+        return true;
+    }
+
+    const CaptureCleanupTarget = union(enum) { input: u32, local, unknown };
+
+    fn captureCleanupTarget(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, depth: usize) CaptureCleanupTarget {
+        if (depth > 32) return .unknown;
+        return switch (self.graph.node(node).content) {
+            .binding_use => |binding| if (self.inputIndex(function, binding)) |index| .{ .input = index } else .local,
+            .struct_field_access => |field| self.captureCleanupTarget(function, field.value, depth + 1),
+            .choice_payload_access => |field| self.captureCleanupTarget(function, field.value, depth + 1),
+            .dereference => |read| blk: {
+                if (self.captureStableInput(function, read.pointer, 0)) |input| break :blk .{ .input = input };
+                if (self.graph.node(read.pointer).content == .address_of) break :blk self.captureCleanupTarget(function, self.graph.node(read.pointer).content.address_of, depth + 1);
+                break :blk .unknown;
+            },
+            else => .unknown,
+        };
+    }
+
+    // Return whether selected cleanup can retire the captured input. Local
+    // whole-self consumption does not retire its borrowed fields; destructor
+    // effects through those fields or auxiliaries still need their own proof.
+    fn captureCleanupChanges(self: *Infer, function: graph_mod.GlobalFunctionId, id: graph_mod.GlobalAutoDeinitId, input: u32) anyerror!?bool {
+        if (self.cleanup) |active| if (!active.roots.contains(id)) return false;
+        const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+        const target: CaptureCleanupTarget = if (cleanup.targetNode()) |node| self.captureCleanupTarget(function, node, 0) else .local;
+        if (target == .unknown) return null;
+        var changes = target == .input and target.input == input;
+        // Structural fallback cleanup has distinct projected receiver facts.
+        // Keep it outside this whole-receiver proof until modeled explicitly.
+        for (0..cleanup.fields.len) |index| {
+            const field_id: graph_mod.GlobalAutoDeinitFieldId = @enumFromInt(cleanup.fields.start + @as(u32, @intCast(index)));
+            if (self.cleanup) |active| if (!active.fields.contains(field_id)) continue;
+            return null;
+        }
+        if (cleanup.deinit_fn) |callee| {
+            const summary = self.engine.summaryFor(callee) orelse return null;
+            if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0) return null;
+            const arguments = self.structArguments(cleanup.input orelse return null) orelse return null;
+            for (summary.input_post_states) |post| {
+                if (post.target.input_index == cleanup.self_field_index) {
+                    if (post.target.projections.len == 0) continue;
+                    if (target == .local) return null;
+                    if (target.input == input) changes = true;
+                } else {
+                    if (post.target.input_index >= arguments.len) return null;
+                    const auxiliary = self.captureStableInput(function, arguments[post.target.input_index].value, 0) orelse return null;
+                    if (auxiliary == input) changes = true;
+                }
+            }
+        }
+        return changes;
+    }
+
+    fn captureEventPhase(self: *Infer, function: graph_mod.GlobalFunctionId, origin: CaptureOrigin, capture: facts.CapturedStorage) anyerror!@FieldType(facts.CapturedStorage, "phase") {
+        if (capture.phase == .stale) return .stale;
+        const fallback: @FieldType(facts.CapturedStorage, "phase") = if (capture.phase == .post) .stale else .entry;
+        if (capture.path.projections.len != 0 or capture.path.storage_domain != null) return fallback;
+        if (self.collecting_capture_sources) return fallback;
+        const receiver_type = self.inputPathType(function, capture.path) orelse return fallback;
+        if (self.captureTypeContainsVirtual(receiver_type, 0)) return fallback;
+        // Other input roots remain caller-side alias obligations. The checker
+        // must compare every reachable post-capture place with the call's
+        // other post-state destinations before publishing this proof.
+        var events = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+        defer events.deinit();
+        if (!try self.captureEventsBlock(self.graph.function(function).body orelse return fallback, &events)) return fallback;
+        var origin_index: ?usize = null;
+        for (events.items, 0..) |node, index| {
+            const matches = switch (origin) {
+                .call => |call| node == call,
+                .virtualize => |id| self.graph.node(node).content == .virtualize and self.graph.node(node).content.virtualize == id,
+            };
+            if (matches) {
+                if (origin_index != null) return fallback;
+                origin_index = index;
+            }
+        }
+        const at = origin_index orelse return fallback;
+        var initialized = false;
+        var initialization_value: ?graph_mod.GlobalNodeId = null;
+        var modified_after = false;
+        for (events.items, 0..) |node, index| {
+            const content = self.graph.node(node).content;
+            switch (content) {
+                .assignment => |write| {
+                    if (self.inputIndex(function, write.binding) == capture.path.input_index) return fallback;
+                },
+                inline .pointer_assignment, .struct_field_store => |write| {
+                    const pointer = if (@hasField(@TypeOf(write), "pointer")) write.pointer else write.struct_ptr;
+                    const destination = (try self.captureStablePlace(function, pointer, 0)) orelse return fallback;
+                    if (destination.input_index != capture.path.input_index) continue;
+                    if (index > at) modified_after = true else if (index < at and content == .pointer_assignment and destination.projections.len == 0) {
+                        initialized = true;
+                        initialization_value = write.value;
+                    }
+                },
+                .auto_deinit_binding => |id| {
+                    const changes = (try self.captureCleanupChanges(function, id, capture.path.input_index)) orelse return fallback;
+                    if (changes) {
+                        if (index > at) modified_after = true else if (index < at) initialized = false;
+                    }
+                },
+                .function_call => |call| {
+                    const callee = self.graph.function(call.callee);
+                    if (callee.body == null or callee.safety_primitive != .none) return fallback;
+                    const summary = self.engine.summaryFor(call.callee) orelse return fallback;
+                    const arguments = self.structArguments(call.input) orelse return fallback;
+                    if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0) return fallback;
+                    var changes = false;
+                    for (summary.input_post_states) |post| {
+                        if (post.target.input_index >= arguments.len) return fallback;
+                        const input = self.captureStableInput(function, arguments[post.target.input_index].value, 0) orelse return fallback;
+                        if (input != capture.path.input_index) continue;
+                        // Any post-state is a possible relevant write or
+                        // lifetime transition, including preserved occupancy.
+                        changes = true;
+                    }
+                    if (changes) {
+                        if (index > at) modified_after = true;
+                        if (index == at and capture.phase == .entry) return fallback;
+                        if (index < at) initialized = false;
+                    }
+                },
+                else => {},
+            }
+        }
+        if (modified_after) return if (capture.phase == .post or initialized) .stale else .entry;
+        if (capture.phase == .post or initialized) {
+            var sources = std.array_list.Managed(facts.InputPath).init(self.allocator);
+            defer sources.deinit();
+            try appendInputPath(&sources, capture.path);
+            if (initialized) if (initialization_value) |value| {
+                var initializer_events = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+                defer initializer_events.deinit();
+                if (!try self.captureEventsNode(value, &initializer_events)) return fallback;
+                // Final binding effects are valid provenance only for immutable
+                // aliases. Mutable pointer-bearing RHS values need flow facts.
+                for (initializer_events.items) |event| if (self.graph.node(event).content == .binding_use) {
+                    const binding = self.graph.node(event).content.binding_use;
+                    const record = self.graph.binding(binding);
+                    if (self.inputIndex(function, binding) == null and record.mutability != .constant and self.typeContainsPointer(record.ty)) return fallback;
+                };
+                self.collecting_capture_sources = true;
+                const effect = self.inferExpression(function, value) catch |err| {
+                    self.collecting_capture_sources = false;
+                    return err;
+                };
+                self.collecting_capture_sources = false;
+                if (!try self.captureEffectSources(effect, &sources, 0)) return fallback;
+            };
+            if (capture.phase == .post and origin == .call) {
+                const call = self.graph.node(origin.call).content.function_call;
+                const summary = self.engine.summaryFor(call.callee) orelse return fallback;
+                const arguments = self.structArguments(call.input) orelse return fallback;
+                for (summary.input_post_states) |post| {
+                    if (post.target.projections.len != 0 or post.target.input_index >= arguments.len) continue;
+                    const receiver = self.captureStableInput(function, arguments[post.target.input_index].value, 0) orelse continue;
+                    if (receiver != capture.path.input_index) continue;
+                    self.collecting_capture_sources = true;
+                    const effect = self.substituteOutput(function, post.value, arguments) catch |err| {
+                        self.collecting_capture_sources = false;
+                        return err;
+                    };
+                    self.collecting_capture_sources = false;
+                    if (!try self.captureEffectSources(effect, &sources, 0)) return fallback;
+                }
+            }
+            for (sources.items) |source| try self.recordCaptureLaterWrites(function, source, events.items[at + 1 ..]);
+            return .post;
+        }
+        return .entry;
+    }
+
     fn inferVirtualize(self: *Infer, function_id: graph_mod.GlobalFunctionId, id: graph_mod.GlobalVirtualizeId) !facts.ValueEffect {
         const virtualize = self.graph.virtualizes.items[@intFromEnum(id)];
         var result = try self.inferExpression(function_id, virtualize.value);
@@ -4815,7 +5276,12 @@ pub const Infer = struct {
         // A receiver without named domains captures its reachable storage.
         // Callers resolve these paths to actual generations; concrete method
         // summaries never determine the shape or liveness of the handle.
-        result.input_captured_storages = receiver_paths;
+        const captures = try self.allocator.alloc(facts.CapturedStorage, receiver_paths.len);
+        for (receiver_paths, captures) |path, *capture| capture.* = .{
+            .path = path,
+            .phase = try self.captureEventPhase(function_id, .{ .virtualize = id }, .{ .path = path }),
+        };
+        result.input_captured_storages = captures;
         return result;
     }
 
@@ -5314,10 +5780,10 @@ pub const Infer = struct {
             for (mapped) |candidate| try appendInputPath(&input_generations, candidate);
         }
         result.input_generation_dependencies = try input_generations.toOwnedSlice();
-        var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_captured_storages) |path| {
-            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
-            for (mapped) |candidate| try appendInputPath(&captured_storages, candidate);
+        var captured_storages = std.array_list.Managed(facts.CapturedStorage).init(self.allocator);
+        for (effect.input_captured_storages) |capture| {
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, capture.path, arguments, override, context);
+            for (mapped) |candidate| try appendCapturedStorage(&captured_storages, .{ .path = candidate, .phase = capture.phase });
         }
         result.input_captured_storages = try captured_storages.toOwnedSlice();
 
@@ -5552,9 +6018,9 @@ pub const Infer = struct {
         var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_receiver_values) |value| try appendInputPath(&receiver_values, value);
         for (right.input_receiver_values) |value| try appendInputPath(&receiver_values, value);
-        var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_captured_storages) |value| try appendInputPath(&captured_storages, value);
-        for (right.input_captured_storages) |value| try appendInputPath(&captured_storages, value);
+        var captured_storages = std.array_list.Managed(facts.CapturedStorage).init(self.allocator);
+        for (left.input_captured_storages) |value| try appendCapturedStorage(&captured_storages, value);
+        for (right.input_captured_storages) |value| try appendCapturedStorage(&captured_storages, value);
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_place_values) |value| try appendInputPath(&input_place_values, value);
         for (right.input_place_values) |value| try appendInputPath(&input_place_values, value);
@@ -6045,6 +6511,22 @@ fn pointerUseOperand(content: graph_mod.Node.Content) ?graph_mod.GlobalNodeId {
         .struct_field_store => |value| value.struct_ptr,
         else => null,
     };
+}
+
+fn appendCapturedStorage(list: *std.array_list.Managed(facts.CapturedStorage), capture: facts.CapturedStorage) !void {
+    for (list.items) |existing| {
+        if (existing.phase != capture.phase) continue;
+        const left = existing.path;
+        const right = capture.path;
+        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) continue;
+        var equal = true;
+        for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) {
+            equal = false;
+            break;
+        };
+        if (equal) return;
+    }
+    try list.append(capture);
 }
 
 fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.InputPath) !void {

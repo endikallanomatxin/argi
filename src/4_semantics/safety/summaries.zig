@@ -154,7 +154,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.storage_observations.len != b.storage_observations.len or a.storage_observation_conflicts.len != b.storage_observation_conflicts.len) return false;
     for (a.storage_observations, b.storage_observations) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.storage_observation_conflicts, b.storage_observation_conflicts) |left, right|
-        if (!inputPathEql(left.consumed, right.consumed) or !inputPathEql(left.observed, right.observed)) return false;
+        if (left.captures_reachable != right.captures_reachable or !inputPathEql(left.consumed, right.consumed) or !inputPathEql(left.observed, right.observed)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -220,7 +220,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     }
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_receiver_values, b.input_receiver_values) |left, right| if (!inputPathEql(left, right)) return false;
-    for (a.input_captured_storages, b.input_captured_storages) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_captured_storages, b.input_captured_storages) |left, right| if (left.phase != right.phase or !inputPathEql(left.path, right.path)) return false;
     for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_place_values, b.input_place_values) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_owned_roots, b.input_owned_roots) |left, right| if (!inputPathEql(left, right)) return false;

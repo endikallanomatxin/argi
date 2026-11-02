@@ -425,6 +425,14 @@ feature first.
   Call reinitialization renews the selected argument reference slot, including
   explicit dereference paths through copied or borrowed records; sibling fields
   and earlier record copies retain their old generations.
+  Virtual capture summaries distinguish entry, proven final post-call and stale
+  generations. Freeze destinations before input post-value instantiation; resolve
+  planned post-capture identities only after all writes and generation refreshes.
+  Renew only matching post-capture observations, preserving old aliases and child
+  initialization facts. Forward caller-relative alias obligations for every later
+  write against captured reachable storage and receiver-initializer sources,
+  including captures used only inside wrappers. Unsupported temporal order stays
+  rejected; final binding values never establish capture timing.
 
 - Structural automatic cleanup follows record fields and active choice payloads.
   Vacant local records retain selected field cleanup beneath nominal Deinit as

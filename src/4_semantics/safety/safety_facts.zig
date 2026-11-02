@@ -40,6 +40,13 @@ pub const InputPath = struct {
     storage_domain: ?u32 = null,
 };
 
+pub const CapturedStorage = struct {
+    path: InputPath,
+    /// A final generation needs an ordered proof; stale also represents an
+    /// intermediate capture whose final generation cannot be established.
+    phase: enum { entry, post, stale } = .entry,
+};
+
 pub const InputDependency = struct {
     path: InputPath,
     transfers_ownership: bool = false,
@@ -73,7 +80,7 @@ pub const ValueEffect = struct {
     input_generation_dependencies: []const InputPath = &.{},
     /// Borrow all reachable generations before receiver layout is erased. This
     /// resolves caller storage identities and never retains local storage.
-    input_captured_storages: []const InputPath = &.{},
+    input_captured_storages: []const CapturedStorage = &.{},
     /// A virtual Self dependency names the erased receiver's value, not the
     /// lexical storage holding its handle. It carries validity only.
     input_receiver_values: []const InputPath = &.{},
@@ -147,11 +154,14 @@ pub const StorageCapabilityConflict = struct {
     second: InputPath,
 };
 
-/// A later observation must not alias storage whose value was already ended.
+/// Ordered observations and captures must not alias an incompatible mutation.
 /// Coordinates are caller-relative; distinct inputs do not prove disjointness.
 pub const StorageObservationConflict = struct {
     consumed: InputPath,
     observed: InputPath,
+    /// Compare captured reachable storage, including initializer sources,
+    /// rather than only the receiver's lexical envelope.
+    captures_reachable: bool = false,
 };
 
 pub const FreshStorageCapabilityState = struct {

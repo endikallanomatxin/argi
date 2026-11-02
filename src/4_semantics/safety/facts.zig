@@ -19,6 +19,7 @@ pub const ValidityRoot = base.ValidityRoot;
 pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
+pub const CapturedStorage = base.CapturedStorage;
 pub const InputDependency = base.InputDependency;
 pub const InputDomain = base.InputDomain;
 pub const OutputFieldEffect = base.OutputFieldEffect;
