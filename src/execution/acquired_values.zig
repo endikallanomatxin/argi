@@ -62,7 +62,7 @@ fn readWithEvidence(storage: *Storage, handle: Handle, offset: usize, layout: *c
     // contain views into it, so allocation failure cannot leave partial trees.
     const backing = try storage.allocate(cells);
     errdefer {
-        storage.allocator.free(backing);
+        storage.freeValues(backing);
         storage.cells -= cells;
     }
     var remaining = backing;

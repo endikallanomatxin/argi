@@ -1290,7 +1290,7 @@ a collector or a second ownership model:
 | Captured write destinations | Active frame; freed on return or trap |
 | Partial initialization cells and tables | Mutable storage bookkeeping; cells are freed when a complete slot replaces them, call tables on return, session tables on reset |
 | Frame/region identity pools and lookup indexes | Context owner's allocator; old resized backing and teardown allocations can be reclaimed |
-| Public results, immutable aggregates, projections and virtual descriptors | Value arena; continue to survive until context reset |
+| Public results, immutable aggregates, projections and virtual descriptors | At this stage, value arena until reset; the payload-reclamation follow-up below separates unreachable payloads from published results |
 
 IDs and their meanings do not change when pool backing moves. Dead frame IDs
 remain dead; reusing buffers does not reuse identities or transfer cleanup flags.
@@ -1605,3 +1605,56 @@ red/green logs: `.zig-cache/propagation-prefix-20261102/`.
 Validation: 1,422 internal tests pass in both Debug and ReleaseSafe (one
 optional test skipped). The complete ReleaseSafe suite also passes 2,205
 program tests (11 skipped), HTTP library tests and the HTTP example build.
+
+## Reclaiming unreachable VM payloads
+
+Immutable aggregate buffers, reference projection paths and virtual descriptors
+now use a nonmoving typed heap independently of the context metadata arena.
+After a successful invocation, collection marks every live frame's complete and
+partial values, including acquired reference evidence. Public results and host
+observations pin their owning allocations until reset. Marking whole allocations
+handles interior slices in packed snapshots; each allocation is traversed once
+through an allocation-free work queue. Code, layouts, literal bytes, acquisition
+metadata and frame identities keep their existing owners and lifetimes.
+
+Collection neither runs language cleanup nor grants reference validity. Dead
+frame IDs remain dead, and a reference's target lifetime is checked as before.
+Traps poison the context; reset releases all payloads and metadata. Fresh-run
+argument copying keeps both old owners alive until copying finishes. Collection
+happens between invocations, so allocation loops within one invocation still
+consume their normal quota. Public snapshot retention remains deliberate and
+can still grow with the number of observed results.
+
+Single isolated Linux x86-64 ReleaseSafe before/after controls:
+
+| 1,000-command workload | Before runtime arena bytes | After metadata arena bytes | After payload bytes | Before/after execution ms | Before/after total ms |
+|---|---:|---:|---:|---:|---:|
+| Prelude float parsing | 67,358,386 | 549,776 | 335,504 | 1,260.041 / 1,596.293 | 9,593.839 / 10,126.661 |
+| Minimal aggregates | 1,768,084 | 3,336 | 5,584 | 5.170 / 10.473 | 289.953 / 290.226 |
+| Minimal scalar calls | 1,780 | 1,780 | 144 | 2.680 / 3.714 | 257.252 / 250.014 |
+
+Float parsing retains about 0.89 MB of metadata plus payload backing instead of
+67.36 MB in the arena. This reduces retained payload memory substantially, with
+an observed 26.7% execution-time cost and 5.6% total-time cost in this sample.
+Aggregate execution also pays for allocation tracking and root scanning. These
+are single controls, not established throughput estimates. Frame identities and
+other metadata still grow; this is not a constant-memory session guarantee.
+The benchmark retains `runtime_arena_bytes` for the metadata arena and appends
+`runtime_payload_bytes`, including payload registry capacity, so the new
+allocation domain cannot disappear from reported runtime backing.
+
+The focused regression previously exhausted a 256-cell quota while repeatedly
+passing and discarding a 64-element array. One hundred invocations now fit, with
+only stable identities and reusable frame backing retained. Other tests cover
+packed interior roots, public snapshots across replacement, partial storage,
+acquired virtual receiver paths, reset, traps and allocation-failure cleanup.
+Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
+1000 prelude float_parsing 1024`, or `1000 minimal aggregates` / `1000 minimal
+calls` for controls. Raw controls and binary hashes:
+`.zig-cache/vm-payload-reclamation-20261102/`.
+
+The complete ReleaseSafe suite passes 1,431 internal tests (one skipped),
+2,205 program tests (11 skipped), HTTP tests and the example build. Debug
+validation includes a complete 1,430-test internal run and 37 focused tests after
+the final acquired-storage adjustment. A 100-command prelude resource control
+also completes with persistent owners and checked exit cleanup.

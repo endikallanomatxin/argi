@@ -34,7 +34,8 @@ pub const Limits = struct {
     cancellation: ?*const Cancellation = null,
     // Retained value cells, including every frame identity and record snapshot.
     // Reused call backing is charged once. Frame scratch is released on return;
-    // immutable snapshots remain charged until reset, bounding allocation loops.
+    // Published snapshots remain charged until reset; unreachable payloads are
+    // reclaimed between successful invocations, never inside an allocation loop.
     value_cells: usize = 1_000_000,
 };
 
@@ -77,6 +78,7 @@ pub const Context = struct {
         if (self.state == .fresh) {
             self.storage = try Storage.init(self.arena.allocator(), self.limit);
             self.storage.bookkeeping_allocator = self.allocator;
+            self.storage.payloads = .init(self.allocator);
             self.state = .ready;
         }
         self.storage.allocation_profile = self.allocation_profile;
@@ -116,12 +118,25 @@ pub const Context = struct {
         self.arena.deinit();
         self.* = undefined;
     }
-    /// Detach all arena-backed indexes together. Fresh execution keeps the old
-    /// arena alive while copying supplied arguments; reset releases it at once.
-    fn detachStorage(self: *Context) std.heap.ArenaAllocator {
+    // Detached metadata and payload backing survive until fresh arguments have
+    // been copied. References still require the new context's own identity.
+    const DetachedStorage = struct {
+        arena: std.heap.ArenaAllocator,
+        payloads: ?@import("storage.zig").PayloadHeap,
+
+        fn deinit(self: *DetachedStorage) void {
+            if (self.payloads) |*heap| heap.deinit();
+            self.arena.deinit();
+        }
+    };
+
+    /// Detach every storage owner together; reset releases both immediately.
+    fn detachStorage(self: *Context) DetachedStorage {
         std.debug.assert(!self.running);
+        const payloads = if (self.state != .fresh) self.storage.payloads else null;
+        if (self.state != .fresh) self.storage.payloads = null;
         if (self.state != .fresh) self.storage.deinitBookkeeping();
-        const previous = self.arena;
+        const previous: DetachedStorage = .{ .arena = self.arena, .payloads = payloads };
         self.arena = .init(self.allocator);
         self.state = .fresh;
         self.namespace = null;
@@ -131,6 +146,11 @@ pub const Context = struct {
         self.literal_bytes = .empty;
         self.trace_locations = .empty;
         return previous;
+    }
+
+    pub fn retainedRuntimeBytes(self: *const Context) usize {
+        if (self.state == .fresh) return 0;
+        return self.arena.queryCapacity() + if (self.storage.payloads) |*heap| heap.retainedBytes() else @as(usize, 0);
     }
 
     pub fn reset(self: *Context) void {
@@ -319,6 +339,8 @@ pub const Vm = struct {
         self.context().running = true;
         defer self.context().running = false;
         try self.context().ensureStorage();
+        self.context().storage.executing = true;
+        defer self.context().storage.executing = false;
         if (self.program.session) |session| {
             self.context().namespace = session.namespace;
             self.context().semantic_graph = self.program.graph;
@@ -328,7 +350,11 @@ pub const Vm = struct {
         const inputs = try self.context().storage.cloneValues(args);
         for (self.dependencies) |dependency| try self.initializeGlobals(dependency);
         try self.initializeGlobals(&self.program);
-        return self.execute(owner, function, inputs);
+        const result = try self.execute(owner, function, inputs);
+        self.context().storage.publishResults(result);
+        self.context().storage.executing = false;
+        self.context().storage.collectPayloads();
+        return result;
     }
     fn initializeGlobals(self: *Vm, unit: *const b.Program) !void {
         for (unit.globals) |global| {

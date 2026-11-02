@@ -3822,8 +3822,8 @@ fn transientCallAllocationFailures(a: std.mem.Allocator) !void {
     const second = try executor.invoke(@enumFromInt(1), &.{.{ .integer = 7 }});
     try std.testing.expectEqual(@as(u64, 7), second[0].integer);
     try std.testing.expectEqual(@as(u64, 42), first[0].integer);
-    // Only the new input snapshot, fresh frame ID and public result survive.
-    try std.testing.expectEqual(initial_cells + 3, executor.context().storage.cells);
+    // The input copy is reclaimed; the fresh frame ID and public result survive.
+    try std.testing.expectEqual(initial_cells + 2, executor.context().storage.cells);
     try std.testing.expect(executor.context().storage.cells < 160);
 }
 
@@ -3833,4 +3833,28 @@ test "VM transient call transport preserves public results within retained memor
 
 test "VM transient transport and frame captures release every failed allocation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, transientCallAllocationFailures, .{});
+}
+
+test "VM reclaims discarded aggregate inputs across retained invocations" {
+    const a = std.testing.allocator;
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .length = 64, .element = @enumFromInt(0) } },
+    });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 1, .len = 0 } });
+    const code = [_]b.Instruction{.{ .source = source, .op = .{ .ret = &.{} } }};
+    const functions = [_]b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{}, .code = &code }};
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functionEntries(&functions) }, .{ .value_cells = 256 });
+    defer executor.deinit();
+    const elements = [_]b.Value{.{ .integer = 42 }} ** 64;
+    for (0..100) |_| {
+        try std.testing.expectEqual(@as(usize, 0), (try executor.invoke(@enumFromInt(0), &.{.{ .array = &elements }})).len);
+    }
+    // Only stable frame identities and the reusable call buffer remain live.
+    try std.testing.expect(executor.context().storage.cells <= 110);
 }

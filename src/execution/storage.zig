@@ -6,6 +6,7 @@ const acquired = @import("acquisitions.zig");
 const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
 const partial = @import("partial_storage.zig");
 const cleanup_layout = @import("../5_codegen/cleanup_layout.zig");
+pub const PayloadHeap = @import("payload_heap.zig").Heap;
 
 /// Optional attribution of successful payload requests and transfer traffic.
 /// Counts are cumulative, including backing subsequently reclaimed. Attached
@@ -44,9 +45,9 @@ pub const Slots = struct {
     pub fn get(self: Slots, index: b.Slot) !b.Value {
         const values = try self.cells();
         if (index >= values.len) return error.ExecutionInvalidReference;
-        if (values[index]) |value| return value;
+        if (values[index]) |value| return self.storage.expose(value);
         if (self.storage.frames.items[@intFromEnum(self.frame)].partial_storage.getPtr(index)) |record| {
-            return self.storage.readPartial(record, &.{});
+            return self.storage.expose(try self.storage.readPartial(record, &.{}));
         }
         return error.ExecutionUninitializedStorage;
     }
@@ -89,13 +90,18 @@ pub const AcquiredReservation = struct { context: v.ContextId, frame: v.FrameId 
 
 const CleanupSelection = struct { offset: usize, layout: *const cleanup_layout.Layout };
 
-// Context-local storage. Its allocator is an execution arena; references can neither
-// name another execution nor expose a native address. Dead frame IDs stay dead.
+// Context-local storage. Metadata uses an execution arena; immutable payloads
+// can use a separate nonmoving heap. References cannot name another execution
+// or expose a native address. Dead frame IDs stay dead.
 pub const Storage = struct {
     context: v.ContextId,
     allocator: std.mem.Allocator,
+    // Immutable payloads have independent backing in retained VM contexts.
+    // Direct storage fixtures may continue to use their caller-owned arena.
+    payloads: ?PayloadHeap = null,
+    executing: bool = false,
     // Resizable identity/index pools and unexposed call scratch have ordinary
-    // allocation lifetimes. Complete values/snapshots still belong to allocator.
+    // allocation lifetimes. Immutable snapshots use payloads when enabled.
     bookkeeping_allocator: ?std.mem.Allocator = null,
     limit: usize,
     allocation_profile: ?*AllocationProfile = null,
@@ -399,7 +405,7 @@ pub const Storage = struct {
     pub fn acquiredStoredValue(self: *Storage, reference: v.Reference) !b.Value {
         _ = try self.acquiredView(reference);
         const logical = try self.acquiredValues(reference) orelse return error.ExecutionMissingCleanup;
-        return logical.storedValue(reference.path);
+        return self.expose(try logical.storedValue(reference.path));
     }
 
     pub fn init(allocator: std.mem.Allocator, limit: usize) !Storage {
@@ -459,9 +465,53 @@ pub const Storage = struct {
     pub fn allocate(self: *Storage, count: usize) ![]b.Value {
         try self.charge(count);
         errdefer self.cells -= count;
-        const result = try self.allocator.alloc(b.Value, count);
+        const result = if (self.payloads) |*heap| try heap.values(count, !self.executing) else try self.allocator.alloc(b.Value, count);
         if (self.allocation_profile) |counts| counts.aggregate_cells +|= count;
         return result;
+    }
+
+    pub fn freeValues(self: *Storage, values: []b.Value) void {
+        if (self.payloads) |*heap| heap.freeValues(values) else self.allocator.free(values);
+    }
+
+    fn allocatePaths(self: *Storage, count: usize) ![]v.Projection {
+        return if (self.payloads) |*heap| heap.paths(count, !self.executing) else self.allocator.alloc(v.Projection, count);
+    }
+
+    fn freePaths(self: *Storage, paths: []v.Projection) void {
+        if (self.payloads) |*heap| heap.freePaths(paths) else self.allocator.free(paths);
+    }
+
+    // Host observations retain their immutable snapshots until context reset.
+    // Reads inside an invocation remain temporary unless published as results.
+    fn expose(self: *Storage, value: b.Value) b.Value {
+        if (!self.executing) if (self.payloads) |*heap| heap.publish(value);
+        return value;
+    }
+
+    pub fn publishResults(self: *Storage, values: []const b.Value) void {
+        if (self.payloads) |*heap| heap.publish(.{ .record = values });
+    }
+
+    /// Only idle invocations are safe points. Frame identities, occupancy and
+    /// language cleanup obligations are untouched by payload reclamation.
+    pub fn collectPayloads(self: *Storage) void {
+        std.debug.assert(!self.executing);
+        const heap = if (self.payloads) |*heap| heap else return;
+        heap.beginCollection();
+        for (self.frames.items, 0..) |*frame, index| {
+            if (!frame.alive) continue;
+            // Acquired frame identities remain tombstones after release. Their
+            // stale occupancy cannot be read and must not retain payloads.
+            if (self.acquired_views.get(@enumFromInt(index))) |view|
+                if (!self.acquisitions.entries.items[@intFromEnum(view.handle.region)].live) continue;
+            for (frame.values) |maybe| if (maybe) |value| heap.mark(value);
+            var records = frame.partial_storage.valueIterator();
+            while (records.next()) |record| for (record.values) |maybe| {
+                if (maybe) |value| heap.mark(value);
+            };
+        }
+        self.cells -= heap.sweep();
     }
     pub fn virtualize(self: *Storage, receiver: v.Reference, program: *const b.Program, table: *const b.VirtualTable) !b.Value {
         _ = try self.read(receiver);
@@ -469,10 +519,12 @@ pub const Storage = struct {
         const charge_count = std.math.add(usize, descriptor_cells, receiver.path.len) catch return error.ExecutionMemoryLimit;
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
-        const descriptor = try self.allocator.create(v.Virtual);
-        errdefer self.allocator.destroy(descriptor);
+        const descriptor = if (self.payloads) |*heap| try heap.virtual(!self.executing) else try self.allocator.create(v.Virtual);
+        errdefer if (self.payloads) |*heap| heap.freeVirtual(descriptor) else self.allocator.destroy(descriptor);
         var retained = receiver;
-        retained.path = try self.allocator.dupe(v.Projection, receiver.path);
+        const path = try self.allocatePaths(receiver.path.len);
+        @memcpy(path, receiver.path);
+        retained.path = path;
         descriptor.* = .{ .receiver = retained, .program = program.*, .table = table };
         if (self.allocation_profile) |counts| {
             counts.virtual_bytes +|= @sizeOf(v.Virtual);
@@ -480,7 +532,7 @@ pub const Storage = struct {
         }
         return .{ .virtual_ = descriptor };
     }
-    /// Copy complete value data into this context's arena. Copying data never
+    /// Copy complete value data into this context's payload storage. Copying data never
     /// copies cleanup obligations or grants permission to duplicate an owner.
     /// Callers supply the frontend's checked copy/move and publication plans.
     pub fn cloneValues(self: *Storage, values: []const b.Value) ![]const b.Value {
@@ -489,10 +541,10 @@ pub const Storage = struct {
         const charge_count = std.math.add(usize, count.values, count.projections) catch return error.ExecutionMemoryLimit;
         try self.charge(charge_count);
         errdefer self.cells -= charge_count;
-        const backing = try self.allocator.alloc(b.Value, count.values);
-        errdefer self.allocator.free(backing);
-        const paths = try self.allocator.alloc(v.Projection, count.projections);
-        errdefer self.allocator.free(paths);
+        const backing = if (self.payloads) |*heap| try heap.values(count.values, !self.executing) else try self.allocator.alloc(b.Value, count.values);
+        errdefer self.freeValues(backing);
+        const paths = try self.allocatePaths(count.projections);
+        errdefer self.freePaths(paths);
         var remaining_values = backing;
         var remaining_paths = paths;
         const result = fillClone(values, &remaining_values, &remaining_paths);
@@ -692,7 +744,8 @@ pub const Storage = struct {
     fn retainPath(self: *Storage, path: []const v.Projection) ![]const v.Projection {
         try self.charge(path.len);
         errdefer self.cells -= path.len;
-        const result = try self.allocator.dupe(v.Projection, path);
+        const result = try self.allocatePaths(path.len);
+        @memcpy(result, path);
         if (self.allocation_profile) |counts| counts.projection_cells +|= path.len;
         return result;
     }
@@ -700,9 +753,9 @@ pub const Storage = struct {
     pub fn offsetReference(self: *Storage, reference: v.Reference, elements: i128) !v.Reference {
         var path: [64]v.Projection = undefined;
         var result = try self.offsetInto(reference, elements, &path);
-        if (elements == 0 or result.byte_view != null or result.path.len == 0) return result;
-        result.path = try self.retainPath(result.path);
-        return result;
+        if (elements != 0 and result.byte_view == null and result.path.len != 0)
+            result.path = try self.retainPath(result.path);
+        return self.expose(.{ .reference = result }).reference;
     }
 
     /// Host inspection uses bounded stack projections, without allocating
@@ -794,6 +847,8 @@ pub const Storage = struct {
     /// Release ordinary bookkeeping before discarding the value arena. This
     /// neither runs language cleanup nor releases receipts through user code.
     pub fn deinitBookkeeping(self: *Storage) void {
+        if (self.payloads) |*heap| heap.deinit();
+        self.payloads = null;
         const a = self.bookkeeping_allocator orelse return;
         for (self.frames.items, 0..) |_, index| self.clearPartialStorage(@enumFromInt(index));
         self.frames.deinit(a);
@@ -860,6 +915,10 @@ pub const Storage = struct {
     }
 
     pub fn read(self: *Storage, reference: v.Reference) !b.Value {
+        return self.expose(try self.readValue(reference));
+    }
+
+    fn readValue(self: *Storage, reference: v.Reference) anyerror!b.Value {
         try self.validateContext(reference);
         if (reference.byte_view) |view| {
             var base = reference;
@@ -889,10 +948,13 @@ pub const Storage = struct {
     }
     fn readPartial(self: *Storage, record: *partial.Storage, path: []const v.Projection) !b.Value {
         const cells = try record.materializationCells(path);
-        try self.charge(cells);
-        errdefer self.cells -= cells;
-        const result = try record.read(self.allocator, path);
-        if (self.allocation_profile) |counts| counts.aggregate_cells +|= cells;
+        const backing = try self.allocate(cells);
+        errdefer {
+            self.freeValues(backing);
+            self.cells -= cells;
+        }
+        var buffer = std.heap.FixedBufferAllocator.init(std.mem.sliceAsBytes(backing));
+        const result = try record.read(buffer.allocator(), path);
         if (self.allocation_profile) |counts| counts.partial_snapshot_cells +|= cells;
         return result;
     }
@@ -1201,10 +1263,13 @@ pub const Storage = struct {
             var base = reference;
             base.byte_view = null;
             const cells = try numeric.byteWriteCells(view.layout, view.offset);
-            try self.charge(cells);
-            errdefer self.cells -= cells;
-            const updated = try numeric.writeByte(self.allocator, view.layout, try self.read(base), view.offset, @intCast(value.integer), view.endian);
-            if (self.allocation_profile) |counts| counts.aggregate_cells +|= cells;
+            const backing = try self.allocate(cells);
+            errdefer {
+                self.freeValues(backing);
+                self.cells -= cells;
+            }
+            var buffer = std.heap.FixedBufferAllocator.init(std.mem.sliceAsBytes(backing));
+            const updated = try numeric.writeByte(buffer.allocator(), view.layout, try self.read(base), view.offset, @intCast(value.integer), view.endian);
             return self.store(base, updated);
         }
         if (try self.acquiredView(reference)) |view| {

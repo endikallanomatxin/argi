@@ -189,7 +189,7 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
         session.compiler.summary_evaluations, session.compiler.summary_reuses,   session.compiler.summary_cache.entries.count(),
         mib(summary_arenas),                  stats.reused_functions,
     });
-    std.debug.print(",{d},{d},{d},{d:.3}\n", .{ session.compiler.bodies_checked, session.compiler.bodies_reused, session.compiler.body_cache.entries.count(), mib(body_arenas) });
+    std.debug.print(",{d},{d},{d},{d:.3},{d}\n", .{ session.compiler.bodies_checked, session.compiler.bodies_reused, session.compiler.body_cache.entries.count(), mib(body_arenas), session.runtime.context.retainedRuntimeBytes() - runtime });
     if (session.runtime.context.allocation_profile) |counts| {
         std.debug.print("# transfers,{d},{d},{d},{d}\n", .{ commands, counts.call_input_cells, counts.nested_output_cells, counts.write_destination_cells });
         std.debug.print("# backing,{d},{d},{d},{d},{d}\n", .{ commands, counts.aggregate_cells, counts.partial_cells, counts.projection_cells, counts.virtual_bytes });
@@ -601,7 +601,7 @@ pub fn main(init: std.process.Init) !void {
     const memory_mib = if (args.len >= 5) try std.fmt.parseInt(usize, args[4], 10) else 2048;
     const limit = try std.math.mul(usize, memory_mib, 1024 * 1024);
     std.debug.print("# [commands=1000] [minimal|core|prelude] [update|bindings|calls|aggregates|float_parsing|branches|specializations|specialization_reuse|resources|definitions|rejections|resets] [memory-limit-MiB=2048] [--graph-pools] [--resolution-profile]\n", .{});
-    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB\n", .{});
+    std.debug.print("scenario,modules,commands,total_ms,frontend_publication_ms,lowering_ms,verification_ms,execution_ms,live_MiB,peak_MiB,semantic_graph_payload_MiB,code_arenas_MiB,proof_arenas_MiB,source_arenas_MiB,diagnostic_arenas_MiB,runtime_arena_bytes,dead_frames,compiled_functions,compiled_instructions,dead_frame_slot_bytes,live_frame_slot_bytes,frame_identity_bytes,live_acquisitions,live_acquired_bytes,retained_acquired_bytes,dead_cleanup_flag_bytes,live_cleanup_flag_bytes,summary_evaluations,summary_reuses,summary_entries,summary_arenas_MiB,reused_functions,bodies_checked,bodies_reused,body_proof_entries,body_proof_arenas_MiB,runtime_payload_bytes\n", .{});
     std.debug.print("# latency,commands,window_commands,p50_ms,p95_ms,max_ms\n", .{});
     if (resolution_profile) std.debug.print("# resolution,commands,pass,calls,pool_entries,changed_passes,inclusive_ms,fixed_point_rounds\n", .{});
     if (scenario == .specializations or scenario == .specialization_reuse) std.debug.print("# specializations,commands,instances,body_top_level_statements,graph_nodes,graph_bindings,graph_types\n", .{});

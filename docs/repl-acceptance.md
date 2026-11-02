@@ -113,6 +113,13 @@ Current executable boundaries, checked against `bytecode/lower.zig` and
 
 Additional structural limits are explicit: storage projections have at most 64
 components, and acquired numeric storage must have a representable layout.
+Unreachable immutable payloads are reclaimed after successful invocations. Live
+session/acquired values and public VM snapshots remain roots; published results
+retain their validity until reset, destruction or a fresh run. Collection never
+runs language cleanup or reuses dead frame identities. The quota still bounds
+each invocation's allocation loops and retained metadata; this does not make
+arbitrarily long sessions use constant memory.
+
 Lowering also checks its own invariants (typed expressions, completed record
 arguments and checked helper evidence). Those failures must not be advertised as
 intentional restrictions on otherwise supported source programs.

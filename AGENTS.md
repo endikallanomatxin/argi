@@ -133,6 +133,16 @@ feature first.
   rollback restores the certificate. Unresolved binding inference still scans
   older initializers, which can become inferable when new array types appear.
 
+- VM immutable payloads use a nonmoving heap collected between successful
+  invocations. Root live frame and partial-storage values, including acquired
+  reference evidence; released acquisitions are tombstones, never roots.
+  Publish public results and host-observed snapshots until reset. Packed
+  snapshots can contain interior slices, so trace their complete allocations.
+  Route every aggregate snapshot, projection path and virtual descriptor through
+  the payload heap, including partial materialization and numeric byte writes.
+  Collection neither runs language cleanup nor reuses frame identities. Preserve
+  both detached metadata and payload owners while copying fresh-run arguments.
+
 - `zig build` installs core under `zig-out/lib/argi/core` and the official
   more library under `zig-out/lib/argi/more`. Rebuild after editing either
   library before manually invoking `zig-out/bin/argi`, so validation uses the

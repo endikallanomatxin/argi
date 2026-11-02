@@ -36,11 +36,12 @@ correctness or cost issues in the follow-ups below.
 
 - Track external compile-time reads in build dependencies/cache identity.
 - Separate host execution from target semantics for cross-compilation.
-- Reclaim immutable aggregate payloads using every live root: results, cross-frame
-  writes, session/acquired storage, virtual descriptors and public `Vm.invoke`
-  results. Preserve their current validity until reset/destruction or a fresh run.
-  Use `aggregates` and `float_parsing` as controls; local aggregate writes already
-  reuse mutable cells. Baselines and reproduction commands belong in the
+- Reduce remaining execution metadata retention and collection traversal cost
+  when long sessions justify it. Immutable payloads are reclaimed between
+  successful invocations; public snapshots, frame identities, literal backing
+  and acquisition metadata retain their existing lifetimes. Use `aggregates`
+  and `float_parsing` as controls; report payload backing separately from the
+  metadata arena. Baselines and reproduction commands belong in the
   [performance notes](../docs/compiler-performance.md).
 
 Validate with growing sessions, allocation failures, rollback and native/VM

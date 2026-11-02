@@ -124,6 +124,7 @@ comptime {
     _ = @import("execution/partial_storage.zig");
     _ = @import("5_codegen/global_initialization.zig");
     _ = @import("execution/tests.zig");
+    _ = @import("execution/payload_reclamation_test.zig");
     _ = @import("execution/compilation_session.zig");
     _ = @import("execution/session.zig");
     _ = @import("execution/submissions.zig");
