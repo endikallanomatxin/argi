@@ -24,14 +24,6 @@ correctness or cost issues in the follow-ups below.
   Represent its post-state generation identities before instantiating summary
   snapshots; retain the conservative rejection until those identities exist.
 
-## Codegen
-
-- Investigate LLVM memory growth in CAD's `usage_model_builder` construction
-  example before widening the native CAD suite. Both the preceding library and
-  the virtual-allocator library exhaust a 4 GiB address-space limit at about
-  3.5 GiB resident memory. Keep diagnosis serial and bounded, recording the first
-  failing case and peak memory.
-
 ## Performance validation
 
 - Extend compilation and allocation-runtime benchmarks to larger consumers.

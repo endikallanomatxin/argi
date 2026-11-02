@@ -1,5 +1,35 @@
 # Measuring compiler frontend performance
 
+## Native CAD cleanup flag generation
+
+The `usage_model_builder` construction example exhausted a 4 GiB address-space
+limit while LLVM generated ancestor cleanup flags. Clearing each projected field
+recomputed completeness by loading all sibling flags, repeating those scans at
+each enclosing aggregate. A cleared descendant now marks its ancestors incomplete
+directly. Initialization still checks siblings before restoring complete-owner
+cleanup, and choice discriminant flags remain independent.
+
+With a ReleaseSafe compiler on Linux x86-64, the original command aborted after
+46.41 s at 3,559,316 KiB peak RSS. After the correction it compiled and executed
+successfully in 53.85 s at 1,867,228 KiB peak RSS under the same address-space
+limit. The failed baseline is not a completed compilation timing comparison.
+These are single observations, not statistical benchmarks.
+
+```sh
+zig build -Doptimize=ReleaseSafe -j1
+/usr/bin/time -v timeout 240s zsh -c \
+  'ulimit -v 4194304; exec ./zig-out/bin/argi test more/engineering/cad/_examples/construction --filter usage_model_builder'
+```
+
+The LLVM unit regression clears every child of a 64-field record and bounds the
+generated instruction count linearly in its width. It failed before the fix and
+passes afterward, alongside the existing cleanup tests.
+
+All four construction examples also pass together with `--filter usage_` under
+the same limit: 208.59 s elapsed and 2,050,828 KiB peak RSS. The filter restricts
+the run to construction examples because unfiltered CLI discovery also collects
+tests from imported modules.
+
 ## Reclaimable CLI frontend storage
 
 The CLI previously supplied its command-wide arena to `FrontendPipeline`.

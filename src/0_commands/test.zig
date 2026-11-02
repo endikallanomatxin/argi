@@ -65,6 +65,8 @@ fn discoverTests(
     }
 
     var discovered = std.array_list.Managed(DiscoverTest).init(allocator);
+    // TODO: Restrict discovery to the requested module. Imported test names
+    // cannot select an entrypoint in this module and fail native linking.
     for (pipeline.syntax_files.items) |*syntax_file| for (syntax_file.roots) |node| {
         const declaration = syntax_file.testDeclaration(node) orelse continue;
         const name = syntax_file.tokenText(&diagnostics.source_db, declaration.function.name_token);

@@ -217,24 +217,33 @@ pub const View = struct {
             _ = c.LLVMBuildCall2(builder, RefreshFunctions.functionType(), owner.refresh, &arguments, arguments.len, "");
             _ = c.LLVMBuildBr(builder, done);
             c.LLVMPositionBuilderAtEnd(builder, done);
-        } else if (self.offset != 0) self.refreshAncestors(builder, self.owner_type.?, 0);
+        } else if (self.offset != 0) {
+            const clearing = c.LLVMIsAConstantInt(enabled) != null and c.LLVMConstIntGetZExtValue(enabled) == 0;
+            self.refreshAncestors(builder, self.owner_type.?, 0, clearing);
+        }
     }
 
-    fn refreshAncestors(self: View, builder: c.LLVMBuilderRef, ty: g.GlobalTypeId, base: usize) void {
+    fn refreshAncestors(self: View, builder: c.LLVMBuilderRef, ty: g.GlobalTypeId, base: usize, clearing: bool) void {
         if (base == self.offset) return;
         const description = self.layouts.description(ty);
         if (description.repetition) |array| {
             const index = (self.offset - base - 1) / array.element.count;
-            if (index < array.length) self.refreshAncestors(builder, array.ty, base + 1 + index * array.element.count);
+            if (index < array.length) self.refreshAncestors(builder, array.ty, base + 1 + index * array.element.count, clearing);
         }
         for (description.children) |maybe_child| if (maybe_child) |child| {
             const start = base + child.offset;
             if (self.offset >= start and self.offset < start + self.layouts.description(child.ty).count) {
-                self.refreshAncestors(builder, child.ty, start);
+                self.refreshAncestors(builder, child.ty, start, clearing);
                 break;
             }
         };
-        promoteAggregate(builder, self.owner_flags, description, base);
+        if (clearing) {
+            // One vacant descendant disproves completeness without inspecting
+            // siblings. Choices retain their separate discriminant flag.
+            var offset = [_]c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt64Type(), base, 0)};
+            const flag = c.LLVMBuildInBoundsGEP2(builder, c.LLVMInt1Type(), self.owner_flags, &offset, 1, "cleanup.incomplete.owner");
+            _ = c.LLVMBuildStore(builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), flag);
+        } else promoteAggregate(builder, self.owner_flags, description, base);
     }
 };
 
@@ -422,4 +431,42 @@ test "native repeated cleanup refresh emits bounded loops and distinct element f
     const invalid = c.LLVMVerifyModule(module, c.LLVMReturnStatusAction, &message);
     if (invalid != 0) std.debug.print("{s}\n", .{message});
     try std.testing.expectEqual(@as(c_int, 0), invalid);
+}
+
+test "clearing record children emits linear flag updates without sibling rescans" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const width = 64;
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = width } } },
+    });
+    for (0..width) |_| try graph.fields.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(0),
+    });
+    var counts: layout.Counts = .{};
+    defer counts.deinit(a);
+    const module = c.LLVMModuleCreateWithName("linear_cleanup_clear");
+    defer c.LLVMDisposeModule(module);
+    const builder = c.LLVMCreateBuilder();
+    defer c.LLVMDisposeBuilder(builder);
+    const function = c.LLVMAddFunction(module, "clear_children", c.LLVMFunctionType(c.LLVMVoidType(), null, 0, 0));
+    c.LLVMPositionBuilderAtEnd(builder, c.LLVMAppendBasicBlock(function, "entry"));
+    const owner = try View.allocate(a, &graph, &counts, @enumFromInt(1), builder);
+    owner.set(builder, true);
+    for (0..width) |index| owner.project(builder, index).?.set(builder, false);
+    _ = c.LLVMBuildRetVoid(builder);
+    var instructions: usize = 0;
+    var block = c.LLVMGetFirstBasicBlock(function);
+    while (block != null) : (block = c.LLVMGetNextBasicBlock(block)) {
+        var instruction = c.LLVMGetFirstInstruction(block);
+        while (instruction != null) : (instruction = c.LLVMGetNextInstruction(instruction)) instructions += 1;
+    }
+    try std.testing.expect(instructions < width * 8);
+    var message: [*c]u8 = null;
+    defer if (message != null) c.LLVMDisposeMessage(message);
+    try std.testing.expectEqual(@as(c_int, 0), c.LLVMVerifyModule(module, c.LLVMReturnStatusAction, &message));
 }
