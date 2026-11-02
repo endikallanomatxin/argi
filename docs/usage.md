@@ -589,7 +589,8 @@ modules = [
 ```
 
 Paths are relative to the manifest. Each entry selects one folder-level module;
-subdirectories are not searched recursively. Modules run in the configured order.
+subdirectories are not searched recursively, and imported modules do not add
+tests to the selected module. Modules run in the configured order.
 `argi test path/to/module` overrides the configured suite, and `argi test .`
 explicitly tests the current module. Without a configured suite or an explicit
 path, the command reports how to select modules instead of scanning the project.

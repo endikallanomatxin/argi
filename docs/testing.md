@@ -2,7 +2,10 @@
 
 Behavior tests for a `more/` library live in that module as `*_test.rg` files,
 using native Argi `test` declarations. Run them with `argi test <module-directory>`.
-They are excluded from installed library bundles. HTTP tests run with
+Discovery includes test declarations in every `.rg` file of that directory,
+including selected `#if` branches. Tests in imported modules run only when those
+modules are explicitly selected as test targets.
+Library test files are excluded from installed library bundles. HTTP tests run with
 `zig build test-http -j16 -Dtest-jobs=16`; the unfiltered `zig build test` also
 includes them. Pass `-- --filter <name>` to `test-http` to select native tests.
 

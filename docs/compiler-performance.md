@@ -27,8 +27,9 @@ passes afterward, alongside the existing cleanup tests.
 
 All four construction examples also pass together with `--filter usage_` under
 the same limit: 208.59 s elapsed and 2,050,828 KiB peak RSS. The filter restricts
-the run to construction examples because unfiltered CLI discovery also collects
-tests from imported modules.
+the run to construction examples. At measurement time, unfiltered CLI discovery
+also collected tests from imported modules; discovery now restricts tests to the
+requested module.
 
 ## Reclaimable CLI frontend storage
 
