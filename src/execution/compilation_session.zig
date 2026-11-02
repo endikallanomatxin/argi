@@ -153,12 +153,22 @@ pub const CompilationSession = struct {
             self.* = undefined;
         }
 
+        /// Finalize only newly loaded modules; accepted descriptors stay in the
+        /// semantic session and never need a source-owned staging prefix.
+        pub fn finishUnit(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
+            return self.owner.finishPreparation(self, modules, diagnostics, null, null, false);
+        }
+
         pub fn finishContinuation(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
             return self.owner.finishPreparation(self, modules, diagnostics, function, null, false);
         }
 
         pub fn finishDefinitions(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
             return self.owner.finishPreparation(self, modules, diagnostics, null, null, true);
+        }
+
+        pub fn finishExit(self: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId, bindings: []const @import("../4_semantics/global/graph.zig").GlobalBindingId) !Candidate {
+            return self.owner.finishPreparation(self, modules, diagnostics, function, bindings, false);
         }
     };
 
@@ -226,7 +236,9 @@ pub const CompilationSession = struct {
     fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId, definitions: bool) !Candidate {
         var draft = try self.beginPreparation(diagnostics);
         defer draft.deinit();
-        return self.finishPreparation(&draft, modules, diagnostics, continuation, exit_bindings, definitions);
+        const previous_modules = self.semantic.modules.len;
+        if (modules.len < previous_modules) return error.InvalidSemanticModuleViews;
+        return self.finishPreparation(&draft, modules[previous_modules..], diagnostics, continuation, exit_bindings, definitions);
     }
 
     fn finishPreparation(self: *const CompilationSession, draft: *Draft, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId, definitions: bool) !Candidate {
@@ -234,24 +246,24 @@ pub const CompilationSession = struct {
         if (draft.owner != self or draft.revision != self.revision) return error.StaleCompilationCandidate;
         const candidate = draft.semantic orelse return error.StaleCompilationCandidate;
         const previous_modules = candidate.modules.len;
-        if (modules.len < previous_modules) return error.InvalidSemanticModuleViews;
+        const total_modules = std.math.add(usize, previous_modules, modules.len) catch return error.InvalidSemanticModuleViews;
         // A source batch ends with its submission module. Earlier new modules
         // are ordinary dependencies, not interactive namespace participants.
-        if ((definitions or continuation != null) and modules.len > previous_modules) {
+        if ((definitions or continuation != null) and modules.len != 0) {
             const namespace = try candidate.resolvers.core.sessionNamespace();
-            try namespace.modules.append(self.allocator, @enumFromInt(modules.len - 1));
+            try namespace.modules.append(self.allocator, @enumFromInt(total_modules - 1));
         }
-        try candidate.appendModules(modules);
-        if (definitions and modules.len > previous_modules) {
+        try candidate.appendNewModules(modules);
+        if (definitions and modules.len != 0) {
             const graph = &candidate.relocation.graph;
             const exported = &(try candidate.resolvers.core.sessionNamespace()).declarations;
-            for (graph.modules.items[modules.len - 1 ..], modules.len - 1..) |module, module_index| {
+            for (graph.modules.items[total_modules - 1 ..], total_modules - 1..) |module, module_index| {
                 declarations: for (module.declarations.start..module.declarations.start + module.declarations.len) |raw| {
                     const declaration = graph.declarations.items[raw];
                     if (declaration.kind != .function and declaration.kind != .type and declaration.kind != .contract_type and declaration.kind != .import_alias) continue;
                     // Inline implementation bodies have private identities, not
                     // source-level names to export or compare across submissions.
-                    for (modules[module_index].semantic.parameterized_storage.contract_operations.items) |operation| {
+                    for (candidate.modules[module_index].semantic.parameterized_storage.contract_operations.items) |operation| {
                         if (operation.function == .module and @intFromEnum(operation.function.module) == raw - module.declarations.start)
                             continue :declarations;
                     }
@@ -800,7 +812,7 @@ test "unit selection retains dormant bodies and checks them when selected later"
     var draft = try session.beginPreparation(&diagnostics);
     defer draft.deinit();
     try draft.semantic.?.includeExecutionRoot(dormant.?);
-    try std.testing.expectError(error.Reported, draft.finishDefinitions(&.{module}, &diagnostics));
+    try std.testing.expectError(error.Reported, draft.finishDefinitions(&.{}, &diagnostics));
     try std.testing.expect(diagnostics.hasErrors());
     try std.testing.expect(session.semantic.relocation.graph.function(dormant.?).body != null);
 }
@@ -849,7 +861,7 @@ test "unit selection preserves pending binding types for later materialization" 
     defer rejected_draft.deinit();
     try std.testing.expect(rejected_draft.semantic.? == stable_semantic);
     try rejected_draft.semantic.?.includeExecutionRoot(helper);
-    var rejected = try rejected_draft.finishDefinitions(&.{module}, &diagnostics);
+    var rejected = try rejected_draft.finishDefinitions(&.{}, &diagnostics);
     try std.testing.expect(!session.semantic.relocation.graph.isBindingTypeUnresolved(pending.?));
     rejected.deinit();
     try std.testing.expect(session.semantic == stable_semantic);
@@ -858,7 +870,7 @@ test "unit selection preserves pending binding types for later materialization" 
     var draft = try session.beginPreparation(&diagnostics);
     defer draft.deinit();
     try draft.semantic.?.includeExecutionRoot(helper);
-    var selected = try draft.finishDefinitions(&.{module}, &diagnostics);
+    var selected = try draft.finishDefinitions(&.{}, &diagnostics);
     defer selected.deinit();
     try std.testing.expect(selected.checked.?.unit.?.contains(helper));
     try std.testing.expect(!selected.checked.?.graph.isBindingTypeUnresolved(pending.?));

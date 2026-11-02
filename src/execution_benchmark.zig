@@ -250,6 +250,20 @@ fn report(session: *interactive.Interactive, memory: *Memory, scenario: Scenario
 // Diagnostic-only attribution: count retained pool payload and reserved backing
 // independently. Nested slices and lookup/safety arenas are not part of these
 // columns and remain covered by the existing total allocation counters.
+fn reservedPoolBytes(value: anytype) usize {
+    var bytes: usize = 0;
+    inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |field| {
+        if (comptime switch (@typeInfo(field.type)) {
+            .@"struct" => @hasField(field.type, "items") and @hasField(field.type, "capacity"),
+            else => false,
+        }) {
+            const pool = @field(value, field.name);
+            bytes += pool.capacity * @sizeOf(std.meta.Elem(@TypeOf(pool.items)));
+        }
+    }
+    return bytes;
+}
+
 fn reportGraphPools(session: *const interactive.Interactive, commands: usize) void {
     const Graph = @import("4_semantics/global/graph.zig").GlobalSemanticGraph;
     inline for (@typeInfo(Graph).@"struct".fields) |field| {
@@ -264,6 +278,32 @@ fn reportGraphPools(session: *const interactive.Interactive, commands: usize) vo
             if (reserved != 0) std.debug.print("# graph_pool,{d},{s},{d},{d}\n", .{ commands, field.name, payload, reserved });
         }
     }
+    const Module = @import("4_semantics/module/graph.zig").ModuleSemanticGraph;
+    var source_payload: usize = 0;
+    var source_pools: usize = 0;
+    for (session.sources.modules.items) |module| {
+        source_payload += module.storageBytes();
+        source_pools += module.module_dir.len + reservedPoolBytes(module.*) +
+            reservedPoolBytes(module.semantic) + reservedPoolBytes(module.semantic.parameterized_storage) +
+            reservedPoolBytes(module.semantic.parameterized_storage.ir);
+    }
+    const graph = &session.compiler.semantic.relocation.graph;
+    var safety_arenas: usize = 0;
+    for (graph.safety_batches.items) |arena| safety_arenas += arena.queryCapacity();
+    // Descriptors borrow the same underlying ModuleSG pools: count those pools
+    // once through their source owners, and descriptor allocations separately.
+    // This is partial attribution, not a complete additive heap census.
+    std.debug.print("# ownership,{d},module_descriptor_width,{d}\n", .{ commands, @sizeOf(Module) });
+    std.debug.print("# ownership,{d},source_module_count,{d}\n", .{ commands, session.sources.modules.items.len });
+    std.debug.print("# ownership,{d},source_module_payload_bytes,{d}\n", .{ commands, source_payload });
+    std.debug.print("# ownership,{d},source_module_pool_reserved_bytes,{d}\n", .{ commands, source_pools });
+    std.debug.print("# ownership,{d},source_module_objects_bytes,{d}\n", .{ commands, session.sources.modules.items.len * @sizeOf(Module) });
+    std.debug.print("# ownership,{d},source_module_pointer_reserved_bytes,{d}\n", .{ commands, session.sources.modules.capacity * @sizeOf(*Module) });
+    // Keep the retired staging counter so before/after ownership logs compare.
+    std.debug.print("# ownership,{d},source_module_views_reserved_bytes,0\n", .{commands});
+    std.debug.print("# ownership,{d},semantic_module_views_reserved_bytes,{d}\n", .{ commands, session.compiler.semantic.module_views.capacity * @sizeOf(Module) });
+    std.debug.print("# ownership,{d},global_pool_reserved_bytes,{d}\n", .{ commands, reservedPoolBytes(graph.*) + reservedPoolBytes(graph.construction) });
+    std.debug.print("# ownership,{d},global_safety_arena_bytes,{d}\n", .{ commands, safety_arenas });
 }
 
 // A reusable function with local slots and conditional writes exercises real

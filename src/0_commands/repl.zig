@@ -631,12 +631,16 @@ test "REPL resource-bearing prelude survives failed reset and releases poisoned 
         const saved_sources = try session.sources.beginBatch(&session.diagnostics);
         defer session.sources.rollbackBatch(&session.diagnostics, saved_sources);
         const pending = try session.sources.loadCommand(&session.diagnostics, "trial ::= unwrap_or_abort(.value = String(.length = 3))");
-        const modules = try session.sources.appendModuleViews(session.compiler.semantic.modules, pending.module);
         const function: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(session.compiler.semantic.relocation.graph.functions.items.len + @intFromEnum(pending.function));
         failing.fail_index = failing.alloc_index + offset;
         {
             defer failing.fail_index = std.math.maxInt(usize);
-            if (session.compiler.prepareContinuation(modules, &session.diagnostics, function)) |prepared_candidate| {
+            const preparation_result: anyerror!@TypeOf(session.compiler).Candidate = prepare: {
+                var draft = session.compiler.beginPreparation(&session.diagnostics) catch |err| break :prepare err;
+                defer draft.deinit();
+                break :prepare draft.finishContinuation(&.{pending.module.*}, &session.diagnostics, function);
+            };
+            if (preparation_result) |prepared_candidate| {
                 var candidate = prepared_candidate;
                 candidate.deinit();
             } else |err| {

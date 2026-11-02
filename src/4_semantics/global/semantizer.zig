@@ -739,35 +739,48 @@ pub const Session = struct {
         return if (self.reachable) |*set| set else null;
     }
 
-    /// Add a borrowed immutable module suffix to an unpublished session.
+    /// Add the new suffix from a complete borrowed module view.
     /// This construction API poisons the session on a preparation failure.
     /// Interactive publication must add a transaction around this operation.
     pub fn appendModules(self: *Session, modules: []const module_sg.ModuleSemanticGraph) !void {
-        return self.appendModuleSuffix(modules, null);
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (modules.len < self.modules.len) return error.InvalidSemanticModuleViews;
+        return self.appendNewModules(modules[self.modules.len..]);
+    }
+
+    /// Add only new borrowed module descriptors; the session retains the prefix.
+    pub fn appendNewModules(self: *Session, suffix: []const module_sg.ModuleSemanticGraph) !void {
+        return self.appendModuleSuffix(suffix, null);
     }
 
     /// Extend one logical module without moving existing declaration/file
     /// ranges. The caller retains the immutable fragment with borrowed ModuleSGs.
     pub fn appendModuleFragment(self: *Session, modules: []const module_sg.ModuleSemanticGraph, owner: global_sg.GlobalModuleId) !void {
-        return self.appendModuleSuffix(modules, owner);
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (modules.len < self.modules.len) return error.InvalidSemanticModuleViews;
+        return self.appendModuleSuffix(modules[self.modules.len..], owner);
     }
 
-    fn appendModuleSuffix(self: *Session, modules: []const module_sg.ModuleSemanticGraph, fragment_owner: ?global_sg.GlobalModuleId) !void {
+    /// Extend an existing namespace with one new borrowed fragment.
+    pub fn appendNewModuleFragment(self: *Session, fragment: module_sg.ModuleSemanticGraph, owner: global_sg.GlobalModuleId) !void {
+        return self.appendModuleSuffix(&.{fragment}, owner);
+    }
+
+    fn appendModuleSuffix(self: *Session, suffix: []const module_sg.ModuleSemanticGraph, fragment_owner: ?global_sg.GlobalModuleId) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         const previous = self.modules.len;
-        if (modules.len < previous) return error.InvalidSemanticModuleViews;
         const namespace = if (fragment_owner) |owner| blk: {
-            if (@intFromEnum(owner) >= previous or modules.len != previous + 1) return error.InvalidModuleFragment;
+            if (@intFromEnum(owner) >= previous or suffix.len != 1) return error.InvalidModuleFragment;
             const original = self.relocation.graph.modules.items[@intFromEnum(owner)];
-            const fragment = &modules[previous];
+            const fragment = &suffix[0];
             if (!std.mem.eql(u8, self.relocation.graph.text(original.dir), fragment.module_dir) or original.is_bundled_core != fragment.is_bundled_core)
                 return error.InvalidModuleFragment;
             break :blk self.relocation.graph.moduleNamespace(owner);
         } else null;
-        if (modules.len == previous) return;
+        if (suffix.len == 0) return;
         errdefer self.phase = .failed;
         const allocator = self.allocator;
-        try self.module_views.appendSlice(allocator, modules[previous..]);
+        try self.module_views.appendSlice(allocator, suffix);
         self.modules = self.module_views.items;
         try self.relocation.append(allocator, self.modules[previous..], .allow_holes);
         if (namespace) |owner| {
@@ -775,8 +788,8 @@ pub const Session = struct {
             try self.validateFragmentFunctions(@enumFromInt(previous));
         }
         try self.resolvers.extendModuleViews(self.modules, self.relocation.offsets.items);
-        try module_linker.append(allocator, &self.relocation.graph, modules, self.relocation.offsets.items, previous);
-        try markUnresolvedTypeSlots(allocator, &self.relocation.graph, modules[previous..], self.relocation.offsets.items[previous..]);
+        try module_linker.append(allocator, &self.relocation.graph, self.modules, self.relocation.offsets.items, previous);
+        try markUnresolvedTypeSlots(allocator, &self.relocation.graph, self.modules[previous..], self.relocation.offsets.items[previous..]);
         try c_abi.prepareForeignCapabilities(allocator, &self.relocation.graph);
         const core = &self.resolvers.core;
         const generics = &self.resolvers.generics;
@@ -789,9 +802,9 @@ pub const Session = struct {
         try contracts.resolveAssociatedTypes();
         _ = try generics.materializeKnownTypes(null);
         _ = try self.resolvers.control.materializeSugarTypes();
-        try self.resolution.appendModules(allocator, modules, self.relocation.offsets.items);
+        try self.resolution.appendModules(allocator, self.modules, self.relocation.offsets.items);
         if (self.options.profile_io != null) {
-            for (modules[previous..]) |module| for (module.semantic.pending_operations.items) |operation| {
+            for (self.modules[previous..]) |module| for (module.semantic.pending_operations.items) |operation| {
                 self.resolution.pending_stats.initial(operation);
             };
         }
@@ -4134,6 +4147,50 @@ test "semantic session appends modules and resumes with stable type identities" 
     try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[@intFromEnum(first_id)].builtin);
     try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[@intFromEnum(second_id)].builtin);
+}
+
+test "semantic session rolls back a new module suffix" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .UInt8 } });
+    var session: Session = undefined;
+    try session.init(a, &.{first}, .{});
+    defer session.deinit();
+    try session.advance();
+    const checkpoint = session.relocation.graph.checkpoint();
+    const first_id = globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0));
+    var transaction = try session.beginTransaction();
+    defer transaction.deinit();
+    try session.appendNewModules(&.{second});
+    try session.advance();
+    transaction.rollback();
+    try std.testing.expectEqualDeep(checkpoint, session.relocation.graph.checkpoint());
+    try std.testing.expectEqual(@as(usize, 1), session.resolvers.core.modules.len);
+    try std.testing.expectEqual(first_id, globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0)));
+    try session.appendNewModules(&.{second});
+    try session.advance();
+    try std.testing.expectEqual(@as(usize, 2), session.resolvers.core.modules.len);
+}
+
+test "semantic session appends a fragment to its owner's namespace" {
+    const a = std.testing.allocator;
+    var original: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "module") };
+    defer original.deinit(a);
+    var fragment: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "module") };
+    defer fragment.deinit(a);
+    var wrong: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "other") };
+    defer wrong.deinit(a);
+    var session: Session = undefined;
+    try session.init(a, &.{original}, .{});
+    defer session.deinit();
+    try session.advance();
+    try std.testing.expectError(error.InvalidModuleFragment, session.appendNewModuleFragment(wrong, @enumFromInt(0)));
+    try session.appendNewModuleFragment(fragment, @enumFromInt(0));
+    try std.testing.expectEqual(session.relocation.graph.moduleNamespace(@enumFromInt(0)), session.relocation.graph.moduleNamespace(@enumFromInt(1)));
 }
 
 fn cloneResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {

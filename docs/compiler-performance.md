@@ -483,6 +483,130 @@ time is frontend/publication (34,131.414 ms); payload reclamation alone would
 not address that cost. The first interrupted long run had no completion status
 and is excluded; the repeated long run completed with exit status zero.
 
+### Current retention attribution
+
+A serial Linux x86-64 ReleaseSafe investigation at `0e8bc4fac` separates accepted
+command history from aggregate retention. Each process had a 512 MiB requested
+backing limit, a 2 GiB address-space limit, and a 90 or 120 second timeout.
+No other benchmark, build, or test suite ran concurrently. These are individual
+diagnostic samples; the memory totals count requested session backing, not RSS.
+
+| Minimal workload | Retained MiB at 1,000 commands | Retained MiB at 10,000 commands | Total time at 10,000 (ms) |
+|---|---:|---:|---:|
+| Replace one scalar | 14.039 | 147.787 | 22,004.369 |
+| Reuse one scalar function | 15.368 | 159.966 | 28,869.549 |
+| Replace one 16-element array | 16.997 | 173.344 | 30,143.873 |
+| Reject an invalid command | 0.036 | 0.037 | 1,235.383 |
+
+The array/call difference is 13.378 MiB. Their VM arena capacities differ by
+13.405 MiB (14,057,702 versus 1,780 bytes). After successful checked close, both
+retain about 157.85 MiB outside the cleared VM context. Thus the dominant growth
+also exists without aggregate snapshots; this does not establish which snapshots
+could safely be reclaimed while execution remains active.
+
+`--graph-pools` now also emits `# ownership` records. At 10,000 scalar calls:
+
+| Independently owned backing | MiB |
+|---|---:|
+| Source-owned ModuleSG objects | 18.391 |
+| Source staging descriptor array | 25.830 |
+| Semantic session descriptor array | 25.830 |
+| Source ModuleSG pool capacities and directory strings | 25.103 |
+| Published bytecode arenas | 27.352 |
+| Submitted-source arenas | 13.644 |
+| GlobalSG direct/construction pool capacities | 9.949 |
+
+Each ModuleSG descriptor is 1,928 bytes. The three descriptor owners total
+70.050 MiB and borrow the same underlying module pools, which are counted once
+through their source owners. This is partial attribution: logical payload
+columns overlap the corresponding reserved pool columns and must not be added.
+Lookup tables, nested allocations, descriptor-list metadata, arena headers and
+other caches are not a complete additive census. The separate frame identity
+metric is logical payload, not its vector's reserved capacity: 2,080,208 bytes
+at 10,000 calls. Temporal proof arenas remain about 0.001 MiB, with one summary
+and one body-proof cache entry in this control. Global safety arena capacity is
+zero in the minimal workload.
+
+The regular submission path passes the semantic session's descriptor prefix to
+`Sources.appendModuleViews`. Because that prefix belongs to a different array,
+the staging helper copies the entire prefix before appending the new descriptor;
+the semantic session subsequently appends only the new suffix into its own
+array. For the two initial modules and 10,000 measured calls, the staging copies
+alone imply 50,015,000 descriptor copies, or 96.429 decimal GB of cumulative
+traffic. This is a calculation from the code, not retained memory or a measured
+share of elapsed time. Reusing or replacing the staging interface must preserve
+rollback, imports, staged selections and stable module identities.
+
+A separate resolution-profile run reports 6,027,011 visits each for binding,
+expression and reference type propagation at 1,000 commands, and 600,270,011
+each at 10,000, with zero changed passes. This corroborates quadratic work beyond
+descriptor copies. The unprofiled scalar-call workload spends 28,213.988 of
+28,869.549 ms in frontend/publication. Profile phase times are inclusive and
+overlap; they are not additive attribution.
+
+The result is also visible with the real REPL prelude: 1,000 scalar calls grow
+requested backing from 124.461 to 140.029 MiB while VM arena capacity stays at
+1,858,662 bytes. A 1,000-cycle minimal reset control returns to exactly 8,336
+requested bytes after every cycle. Every reported process completed checked
+close and destruction with zero tracked backing remaining.
+
+The first optimization target is accepted-command publication and duplicated
+module descriptors, followed by redundant frontend scans. VM reclamation remains
+a separate task with external-result and reference-lifetime obligations. None of
+these measurements justifies freeing storage based only on the live-frame scan.
+
+Reproduce the ownership records with:
+
+```sh
+zig build build-execution-benchmark -Doptimize=ReleaseSafe -j1
+./zig-out/bin/execution-benchmark 10000 minimal calls 512 --graph-pools
+./zig-out/bin/execution-benchmark 10000 minimal aggregates 512 --graph-pools
+./zig-out/bin/execution-benchmark 10000 minimal calls 512 --graph-pools --resolution-profile
+```
+
+Raw controls, ownership samples, profiles and process accounting:
+`.zig-cache/repl-growth-20261102/`. Adding the read-only ownership counters left
+the requested-byte totals unchanged in repeated 1,000/10,000-command controls.
+
+### Suffix-only command publication
+
+Command preparation now sends only new modules to the retained semantic session.
+Definitions, ordinary commands, imports, selected fragments and checked exit use
+the same suffix path. The source coordinator no longer stores a full descriptor
+staging array; immutable ModuleSG contents stay source-owned, and the semantic
+session keeps its own descriptor index. Existing full-prefix construction APIs
+normalize their input to a suffix without changing accepted identities.
+
+Two serial alternating ReleaseSafe samples on the same host compare the retained
+pre-change benchmark binary with the suffix implementation. Each sample executes
+10,000 minimal scalar calls under the preceding investigation's limits:
+
+| Measurement | Full-prefix staging | Suffix publication |
+|---|---:|---:|
+| Total elapsed samples (ms) | 28,965.377 / 30,002.725 | 21,846.506 / 21,775.995 |
+| Mean elapsed (ms) | 29,484.051 | 21,811.251 |
+| Retained session backing (MiB) | 159.966 | 134.137 |
+| Source staging descriptor backing (bytes) | 27,084,544 | 0 |
+
+These paired observations show about 26% less elapsed time and 16% less retained
+backing. They are a small local comparison, not a cross-platform throughput
+guarantee. The 25.830 MiB memory reduction is the removed staging allocation;
+the source-owned objects and the semantic index still have separate roles.
+No VM payload reclamation or semantic history compaction is involved.
+
+The allocator regression publishes 65 commands with source allocations capped at
+64 KiB per request. It fails in the old staging vector's capacity growth and
+passes after removing that vector. Additional tests cover suffix rollback,
+fragment namespaces, source-owner stability, and a selected conditional import
+that stages a dependency before rejection and then succeeds on retry. The
+1,000-command scalar/array/update/rejection controls and 1,000 healthy reset
+cycles also complete, with reset returning to the same 8,336-byte baseline.
+With the real prelude, the 1,000-call endpoint drops from 140.029 to 137.892 MiB;
+VM arena capacity remains 1,858,662 bytes. This small single-run prelude timing
+difference is not evidence of a general short-session speedup.
+
+Raw A/B samples and process accounting: `.zig-cache/repl-suffix-20261102/`.
+
 ## Repeated healthy reset cycles
 
 The `resets` scenario measures complete work/reset cycles rather than a growing

@@ -118,11 +118,10 @@ pub const Interactive = struct {
             try self.sources.selectModules(&self.diagnostics, semantic, first_module, loader.io, self.options.target);
         }
         const command = try self.sources.loadCommandOrigin(&self.diagnostics, source, origin);
-        const modules = try self.sources.appendModuleViews(semantic.modules, command.module);
         const base = semantic.relocation.graph.functions.items.len;
         const raw = try std.math.add(usize, base, @intFromEnum(command.function));
         const function: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(std.math.cast(u32, raw) orelse return error.SubmissionIdentityLimit);
-        return .{ .candidate = try draft.finishContinuation(modules, &self.diagnostics, function), .function = function };
+        return .{ .candidate = try draft.finishContinuation(&.{command.module.*}, &self.diagnostics, function), .function = function };
     }
 
     pub fn submitStatements(self: *Interactive, statements: []const u8) !void {
@@ -211,8 +210,7 @@ pub const Interactive = struct {
             try self.diagnostics.add(.{ .file = self.diagnostics.source_db.fileId(self.diagnostics.source_files.len - 1), .offset = 0 }, .semantic, "interactive imports require a configured source loader", .{});
             return error.Reported;
         }
-        const prefix = try self.sources.appendModuleViews(semantic.modules, module);
-        var candidate = try draft.finishDefinitions(prefix, &self.diagnostics);
+        var candidate = try draft.finishDefinitions(&.{module.*}, &self.diagnostics);
         defer candidate.deinit();
         try self.compiler.acceptDefinitions(&candidate);
     }
@@ -252,11 +250,12 @@ pub const Interactive = struct {
         try self.beginSubmission();
         defer self.endSubmission();
         const command = try self.sources.loadCommand(&self.diagnostics, "");
-        const prefix = try self.sources.appendModuleViews(self.compiler.semantic.modules, command.module);
+        var draft = try self.compiler.beginPreparation(&self.diagnostics);
+        defer draft.deinit();
         const base = self.compiler.semantic.relocation.graph.functions.items.len;
         const raw = try std.math.add(usize, base, @intFromEnum(command.function));
         const entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(std.math.cast(u32, raw) orelse return error.SubmissionIdentityLimit);
-        var candidate = try self.compiler.prepareExit(prefix, &self.diagnostics, entry, self.compiler.semantic.resolvers.expressions.session_bindings.items);
+        var candidate = try draft.finishExit(&.{command.module.*}, &self.diagnostics, entry, self.compiler.semantic.resolvers.expressions.session_bindings.items);
         defer candidate.deinit();
         try self.runtime.executeCommand(&candidate);
     }
@@ -368,8 +367,9 @@ test "interactive definitions remain visible to subsequent definitions and state
     {
         // Loading an ordinary module must not grant the interactive namespace.
         const isolated = try session.sources.loadModule(&session.diagnostics, "outside := () -> (.result: Int32) { result = answer() }\n");
-        const prefix = try session.sources.appendModuleViews(session.compiler.semantic.modules, isolated);
-        var ordinary = try session.compiler.prepare(prefix, &session.diagnostics);
+        var draft = try session.compiler.beginPreparation(&session.diagnostics);
+        defer draft.deinit();
+        var ordinary = try draft.finishUnit(&.{isolated.*}, &session.diagnostics);
         defer ordinary.deinit();
         const core = &ordinary.semantic.?.resolvers.core;
         try std.testing.expect(!core.sameDeclarationNamespace(0, core.modules.len - 1));
@@ -708,9 +708,9 @@ test "interactive definition batches keep dependency modules outside the session
     defer session.deinit();
     const dependency = try session.sources.loadModule(&session.diagnostics, "helper := () -> (.result: Int32) { result = 7 }");
     const submitted = try session.sources.loadModule(&session.diagnostics, "answer := () -> (.result: Int32) { result = 42 }");
-    const dependencies = try session.sources.appendModuleViews(session.compiler.semantic.modules, dependency);
-    const prefix = try session.sources.appendModuleViews(dependencies, submitted);
-    var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
+    var draft = try session.compiler.beginPreparation(&session.diagnostics);
+    defer draft.deinit();
+    var candidate = try draft.finishDefinitions(&.{ dependency.*, submitted.* }, &session.diagnostics);
     defer candidate.deinit();
     const resolver = &candidate.semantic.?.resolvers.core;
     const namespace = resolver.session_namespace.?;
@@ -731,9 +731,9 @@ test "interactive imported aliases survive subsequent submissions without export
     const import_source = try std.fmt.allocPrint(std.testing.allocator, "library := import(\"{s}\")", .{dependency.module_dir});
     defer std.testing.allocator.free(import_source);
     const submitted = try session.sources.loadModule(&session.diagnostics, import_source);
-    const dependencies = try session.sources.appendModuleViews(session.compiler.semantic.modules, dependency);
-    const prefix = try session.sources.appendModuleViews(dependencies, submitted);
-    var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
+    var draft = try session.compiler.beginPreparation(&session.diagnostics);
+    defer draft.deinit();
+    var candidate = try draft.finishDefinitions(&.{ dependency.*, submitted.* }, &session.diagnostics);
     defer candidate.deinit();
     try session.compiler.acceptDefinitions(&candidate);
     try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.helper()")).?.value.runtime.integer);
@@ -1353,8 +1353,9 @@ test "interactive computed imports share staged selection without replaying acce
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    for ([_][]const u8{ "library", "dependency", "broken", "cycle" }) |dir| try tmp.dir.createDirPath(io, dir);
+    for ([_][]const u8{ "library", "dependency", "retry_dependency", "broken", "cycle" }) |dir| try tmp.dir.createDirPath(io, dir);
     try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "enabled := () -> (.ok: Bool) { ok = true }\nanswer := () -> (.value: Int32) { value = 42 }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "retry_dependency/main.rg", .data = "answer := () -> (.value: Int32) { value = 11 }" });
     try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { dep := import(\"../dependency\")\n#if dep.enabled() { answer := () -> (.value: Int32) { value = dep.answer() } } } #else { missing := import(\"../missing\") }" });
     try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "choose := () -> (.value: Int32) { value = 1 }\n#if choose() { answer := () -> (.value: Int32) { value = 11 } }" });
     try tmp.dir.writeFile(io, .{ .sub_path = "cycle/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { self := import(\"./\") }" });
@@ -1391,7 +1392,15 @@ test "interactive computed imports share staged selection without replaying acce
     try std.testing.expectError(error.Reported, session.submit("cycle := import(\"./cycle\")"));
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);
-    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { answer := () -> (.value: Int32) { value = 11 } }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "choose := () -> (.ok: Bool) { ok = true }\n#if choose() { retry_dep := import(\"../retry_dependency\")\nanswer := () -> (.value: Int32) { value = retry_dep.answer() } }" });
+    // Selection has staged the new module and its chosen fragment before the
+    // duplicate session declaration rejects the submission.
+    try std.testing.expectError(error.DuplicateSessionDeclaration, session.submit("library := import(\"./broken\")"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectEqual(module_count, session.compiler.semantic.modules.len);
+    try std.testing.expectError(error.UnknownModuleReference, session.compiler.semantic.resolvers.core.findModuleForQualifier(0, "retry_dep"));
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.runtime.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("retained")).?.value.runtime.integer);
     try session.submit("fixed := import(\"./broken\")");
     try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("fixed.answer()")).?.value.runtime.integer);
     try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "broken := () -> () {" });

@@ -15,9 +15,6 @@ pub const Sources = struct {
     retained_arenas: std.ArrayList(std.heap.ArenaAllocator) = .empty,
     modules: std.ArrayList(*module_sg.ModuleSemanticGraph) = .empty,
     sequence: u64 = 0,
-    // A staging table only. Semantic sessions own their descriptor prefixes;
-    // no published code or retained session borrows this resizable array.
-    module_views: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     selections: std.AutoHashMapUnmanaged(FileId, selection_mod.Prepared) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Sources {
@@ -29,7 +26,6 @@ pub const Sources = struct {
             self.allocator.destroy(module);
         }
         self.modules.deinit(self.allocator);
-        self.module_views.deinit(self.allocator);
         var selections = self.selections.valueIterator();
         while (selections.next()) |selection| selection.deinit(self.allocator);
         self.selections.deinit(self.allocator);
@@ -69,7 +65,6 @@ pub const Sources = struct {
             var removed = self.selections.fetchRemove(key).?.value;
             removed.deinit(self.allocator);
         }
-        self.module_views.clearRetainingCapacity();
         diagnostics.truncateSources(saved.files, saved.maps);
         _ = self.arena.reset(.free_all);
     }
@@ -127,12 +122,13 @@ pub const Sources = struct {
 
     pub fn prepareCommandOrigin(self: *Sources, compiler: *const @import("compilation_session.zig").CompilationSession, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8, origin: ?SourceOrigin) !PreparedCommand {
         const command = try self.loadCommandOrigin(diagnostics, statements, origin);
-        const modules = try self.appendModuleViews(compiler.semantic.modules, command.module);
         // Relocation appends module functions before creating any specialization.
         const base = compiler.semantic.relocation.graph.functions.items.len;
         const raw = std.math.add(usize, base, @intFromEnum(command.function)) catch return error.SubmissionIdentityLimit;
         const function: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(std.math.cast(u32, raw) orelse return error.SubmissionIdentityLimit);
-        return .{ .candidate = try compiler.prepareContinuation(modules, diagnostics, function), .function = function };
+        var draft = try compiler.beginPreparation(diagnostics);
+        defer draft.deinit();
+        return .{ .candidate = try draft.finishContinuation(&.{command.module.*}, diagnostics, function), .function = function };
     }
 
     const Parsed = struct {
@@ -308,7 +304,7 @@ pub const Sources = struct {
             defer a.free(inputs);
             for (inputs, parsed) |*input, *file| input.* = .{ .diagnostics = diagnostics, .path = file.path, .tree = &file.tree, .source = file.code };
             const module = try self.finishModule(diagnostics, dir, inputs, target);
-            try session.appendModules(try self.appendModuleViews(session.modules, module));
+            try session.appendNewModules(&.{module.*});
             start = end;
         }
     }
@@ -344,7 +340,7 @@ pub const Sources = struct {
             defer tree.deinit(sources.allocator);
             const input = module_sg.FileInput{ .diagnostics = self.diagnostics, .path = path, .tree = &tree, .source = self.diagnostics.source_files[@intFromEnum(file)].code, .is_bundled_core = module.is_bundled_core };
             const fragment = try sources.finishModule(self.diagnostics, module.module_dir, &.{input}, self.target);
-            try session.appendModuleFragment(try sources.appendModuleViews(session.modules, fragment), @enumFromInt(module_index));
+            try session.appendNewModuleFragment(fragment.*, @enumFromInt(module_index));
         }
     };
 
@@ -359,23 +355,6 @@ pub const Sources = struct {
             alias.path = try writer.addString(resolved);
         }
     }
-
-    /// Build an input view valid until the next call. The session copies only
-    /// the newly appended descriptor suffix; module contents stay source-owned.
-    pub fn appendModuleViews(self: *Sources, prefix: []const module_sg.ModuleSemanticGraph, module: *const module_sg.ModuleSemanticGraph) ![]const module_sg.ModuleSemanticGraph {
-        const count = std.math.add(usize, prefix.len, 1) catch return error.SubmissionIdentityLimit;
-        const appended = module.*;
-        const reusing = prefix.ptr == self.module_views.items.ptr;
-        try self.module_views.ensureTotalCapacity(self.allocator, count);
-        if (reusing) {
-            self.module_views.shrinkRetainingCapacity(prefix.len);
-        } else {
-            self.module_views.items.len = prefix.len;
-            @memcpy(self.module_views.items, prefix);
-        }
-        self.module_views.appendAssumeCapacity(appended);
-        return self.module_views.items;
-    }
 };
 
 test "submission sources retain immutable modules and rejected source diagnostics" {
@@ -388,19 +367,16 @@ test "submission sources retain immutable modules and rejected source diagnostic
     var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
     defer diagnostics.deinit();
     const first = try sources.loadModule(&diagnostics, "first := () -> () {}\n");
-    const prefix = try sources.appendModuleViews(&.{}, first);
     try std.testing.expect(first.semantic.local_semantics_complete);
-    const original_dir = prefix[0].module_dir;
+    const original_dir = first.module_dir;
     _ = sources.loadModule(&diagnostics, "broken := () -> () {\n") catch {};
     try std.testing.expect(diagnostics.hasErrors());
     try std.testing.expectEqual(@as(usize, 1), sources.modules.items.len);
     try std.testing.expectEqual(@as(usize, 2), diagnostics.source_files.len);
     diagnostics.list.clearRetainingCapacity();
     const second = try sources.loadModule(&diagnostics, "second := () -> () {}\n");
-    const extended = try sources.appendModuleViews(prefix, second);
-    try std.testing.expectEqual(@as(usize, 1), prefix.len);
-    try std.testing.expectEqualStrings(original_dir, extended[0].module_dir);
-    try std.testing.expect(!std.mem.eql(u8, extended[0].module_dir, extended[1].module_dir));
+    try std.testing.expectEqualStrings(original_dir, first.module_dir);
+    try std.testing.expect(!std.mem.eql(u8, first.module_dir, second.module_dir));
     try std.testing.expectEqual(@as(usize, 3), diagnostics.source_files.len);
     try std.testing.expectEqual(@as(usize, 0), diagnostics.source_maps.len);
 }
@@ -436,30 +412,88 @@ test "source submissions compile and execute incrementally without history repla
     try std.testing.expectEqual(@as(u64, 2), compiler.revision);
 }
 
-test "submission staging growth cannot change a retained session module prefix" {
+const RequestLimitAllocator = struct {
+    child: std.mem.Allocator,
+    limit: usize,
+
+    fn allocator(self: *RequestLimitAllocator) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+        const self: *RequestLimitAllocator = @ptrCast(@alignCast(ctx));
+        if (len > self.limit) return null;
+        return self.child.rawAlloc(len, alignment, ret);
+    }
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) bool {
+        const self: *RequestLimitAllocator = @ptrCast(@alignCast(ctx));
+        if (len > self.limit) return false;
+        return self.child.rawResize(memory, alignment, len, ret);
+    }
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) ?[*]u8 {
+        const self: *RequestLimitAllocator = @ptrCast(@alignCast(ctx));
+        if (len > self.limit) return null;
+        return self.child.rawRemap(memory, alignment, len, ret);
+    }
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret: usize) void {
+        const self: *RequestLimitAllocator = @ptrCast(@alignCast(ctx));
+        self.child.rawFree(memory, alignment, ret);
+    }
+};
+
+test "many incremental submissions publish within bounded source allocation requests" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var bounded = RequestLimitAllocator{ .child = std.testing.allocator, .limit = 64 * 1024 };
+    var sources = Sources.init(bounded.allocator());
+    defer sources.deinit();
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&a, &.{});
+    defer diagnostics.deinit();
+    var compiler = try @import("compilation_session.zig").CompilationSession.init(a, &.{}, .{ .exhaustive_function_bodies = false });
+    defer compiler.deinit();
+    var runtime = @import("session.zig").Session.init(a, &compiler, .{});
+    defer runtime.deinit();
+    _ = try sources.beginBatch(&diagnostics);
+    var first = try sources.prepareCommand(&compiler, &diagnostics, "retained :: Int32 = 42");
+    defer first.deinit();
+    const binding = first.candidate.semantic.?.resolvers.expressions.session_bindings.items[0];
+    try runtime.executeCommand(&first.candidate);
+    for (0..64) |_| {
+        _ = try sources.beginBatch(&diagnostics);
+        var next = try sources.prepareCommand(&compiler, &diagnostics, "retained = 7");
+        defer next.deinit();
+        try runtime.executeCommand(&next.candidate);
+    }
+    const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
+    try std.testing.expectEqual(@as(u64, 65), compiler.revision);
+    try std.testing.expectEqual(@as(usize, 65), compiler.semantic.modules.len);
+}
+
+test "source modules remain stable across semantic appends" {
     const a = std.testing.allocator;
     var sources = Sources.init(a);
     defer sources.deinit();
-    const first: module_sg.ModuleSemanticGraph = .{ .module_dir = "first" };
-    const second: module_sg.ModuleSemanticGraph = .{ .module_dir = "second" };
-    const alternate: module_sg.ModuleSemanticGraph = .{ .module_dir = "alternate" };
-    const prefix = try sources.appendModuleViews(&.{}, &first);
+    var diagnostic_arena = std.heap.ArenaAllocator.init(a);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    var diagnostics = try diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &.{});
+    defer diagnostics.deinit();
+    const first = try sources.loadModule(&diagnostics, "first := () -> () {}\n");
+    const second = try sources.loadModule(&diagnostics, "second := () -> () {}\n");
     var retained: sema.Session = undefined;
-    try retained.init(a, prefix, .{ .exhaustive_function_bodies = false });
+    try retained.init(a, &.{first.*}, .{ .exhaustive_function_bodies = false });
     defer retained.deinit();
     try retained.advance();
     var transaction = try retained.beginTransaction();
     defer transaction.deinit();
-    try retained.appendModules(try sources.appendModuleViews(retained.modules, &second));
+    try retained.appendNewModules(&.{second.*});
     try retained.advance();
     transaction.commit();
-    const table = retained.modules.ptr;
     const saved = retained.relocation.graph.checkpoint();
-    var branch = try sources.appendModuleViews(retained.modules[0..1], &alternate);
-    for (0..32) |_| branch = try sources.appendModuleViews(branch, &first);
-    try std.testing.expect(retained.modules.ptr == table);
+    for (0..32) |_| _ = try sources.loadModule(&diagnostics, "other := () -> () {}\n");
     try std.testing.expectEqual(@as(usize, 2), retained.modules.len);
-    try std.testing.expectEqualStrings("second", retained.modules[1].module_dir);
-    try std.testing.expectEqualStrings("alternate", branch[1].module_dir);
+    try std.testing.expectEqualStrings(first.module_dir, retained.modules[0].module_dir);
+    try std.testing.expectEqualStrings(second.module_dir, retained.modules[1].module_dir);
     try std.testing.expectEqualDeep(saved, retained.relocation.graph.checkpoint());
 }
