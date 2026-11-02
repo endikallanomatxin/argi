@@ -569,7 +569,7 @@ pub const Session = struct {
         };
         var transaction: Transaction = .{
             .owner = self,
-            .graph = self.relocation.graph.beginTransaction(self.allocator),
+            .graph = self.relocation.graph.beginPropagationTransaction(self.allocator),
             .resolution = saved_resolution,
             .resolvers = self.resolvers.checkpointState(),
             .modules = self.modules.len,
@@ -997,6 +997,21 @@ pub const Session = struct {
         self.profile_postloop = profileTimestamp(self.options.profile_io);
         self.fixed_point_ns += self.profile_postloop - start;
         self.phase = .quiescent;
+        self.relocation.graph.certifyPropagation();
+    }
+
+    /// Re-establish the propagation boundary after completion and compile-time
+    /// execution, before safety consumes the checked graph.
+    pub fn stabilizePropagation(self: *Session) !void {
+        if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        errdefer self.phase = .failed;
+        while (true) {
+            try self.options.cancellation.check();
+            var changed = try self.resolvers.core.materializeBindingTypes();
+            if (try self.resolvers.core.materializeReferenceTypes()) changed = true;
+            if (!changed) break;
+        }
+        self.relocation.graph.certifyPropagation();
     }
 
     /// Complete and validate this unit without consuming the shared graph or
@@ -4147,6 +4162,31 @@ test "semantic session appends modules and resumes with stable type identities" 
     try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[@intFromEnum(first_id)].builtin);
     try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[@intFromEnum(second_id)].builtin);
+}
+
+test "semantic session invalidates propagation certificate after quiescent mutation" {
+    const a = std.testing.allocator;
+    var session: Session = undefined;
+    try session.init(a, &.{}, .{});
+    defer session.deinit();
+    const graph = &session.relocation.graph;
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const first: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .UInt8 } });
+    const second: global_sg.GlobalTypeId = @enumFromInt(@intFromEnum(first) + 1);
+    const literal: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(graph.nodes.items.len)));
+    const moved: global_sg.GlobalNodeId = @enumFromInt(@intFromEnum(literal) + 1);
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = first, .content = .{ .int_literal = 1 } },
+        .{ .source = source, .ty = first, .content = .{ .move_value = literal } },
+    });
+    try session.advance();
+    try graph.setNodeType(a, literal, second);
+    var transaction = try session.beginTransaction();
+    defer transaction.deinit();
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+    try std.testing.expect(try session.resolvers.core.materializeBindingTypes());
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, second), graph.node(moved).ty);
 }
 
 test "semantic session rolls back a new module suffix" {

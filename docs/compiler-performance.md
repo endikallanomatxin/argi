@@ -1546,3 +1546,62 @@ hundreds of checks and multi-kilobyte cancellation and midpoint inputs; its
 budget is not a per-parse requirement. An isolated ReleaseSafe run completed in
 2.50 seconds with 245,944 KiB peak RSS. This is an acceptance measurement, not a
 controlled throughput comparison.
+
+## Retained expression and reference propagation
+
+Retained sessions now certify the node/type/binding prefix after propagation
+reaches its fixed point. Subsequent coordinated semantic transactions scan the
+node suffix unless an older dependency changes. Existing undo journals provide
+conservative invalidation for node types and contents, binding types and pending
+initializers, block results, type completion, variants and type definitions.
+Nested scopes inherit the outer boundary, and rollback restores both the
+certificate and its invalidation hints. Ordinary graph transactions retain full
+scans; a quiescent session flag alone does not establish a valid prefix.
+
+Relevant setters also invalidate the certificate outside transactions. Completion
+and compile-time execution can change a previously quiescent graph, so checking
+stabilizes propagation before safety analysis. Nodes appended by safety remain
+outside that certificate and participate in the next suffix. Contextualizing an
+old arithmetic operand reports progress even when the expression's result type
+already matches, ensuring another round revisits its consumers. Both propagation
+passes continue to include operands outside execution reachability.
+
+Alternating Linux x86-64 ReleaseSafe samples, with resolution profiling enabled:
+
+| Workload | Before elapsed ms | After elapsed ms | Before/after retained MiB |
+|---|---:|---:|---:|
+| 10,000 minimal scalar calls, sample 1 | 22,731.830 | 20,614.279 | 134.137 / 134.137 |
+| 10,000 minimal scalar calls, sample 2 | 23,601.091 | 20,490.391 | 134.137 / 134.137 |
+| 1,000 prelude scalar calls | 5,633.936 | 5,154.582 | 170.807 / 170.699 |
+| 100 prelude resource commands | 867.069 | 815.304 | 169.536 / 169.428 |
+
+The minimal-call mean decreases from 23,166.461 to 20,552.335 ms, about 11.3%.
+Each expression/reference sweep's cumulative visits fall from 600,270,011 to
+160,032. Expression propagation takes 1,210.670 versus 3.227 ms in the first
+pair; reference propagation takes 1,235.627 versus 1.756 ms. There are still
+30,001 resolution rounds. The extra pre-safety stabilization raises propagation
+calls from 30,001 to 40,001, but they visit only the required suffix. Compiled
+functions/instructions remain 10,001/70,004, with 9,999 reused bodies. Requested
+retained memory is unchanged in the minimal control; these figures are not RSS.
+
+Unresolved-binding inference deliberately retains its complete state scan:
+older initializers can become inferable when new array types appear. In the
+prelude control this visits 9,075,024 states before and 12,099,024 after, taking
+26.542/33.833 ms; expression/reference visits fall from 82,131,376 to 133,468
+each. Avoid adding a retained dependency index for this smaller residual cost
+without evidence from larger consumers. Safety and other resolution passes
+still dominate the remaining time. Two main samples and single controls provide
+directional evidence, not a general compiler-throughput guarantee.
+
+Regressions cover bounded visit counts, old operand contextualization, same-ID
+type completion, variants/definitions, quiescent mutations, nested commit and
+rollback, and reused tail IDs. Disabling the suffix starts makes the visit-count
+regression fail (expected one visit, observed three); restoring them passes.
+Reproduce with `zig build benchmark-execution -Doptimize=ReleaseSafe -j16 --
+10000 minimal calls 1024 --resolution-profile`, and use `1000 prelude calls` or
+`100 prelude resources` for controls. Raw samples, binary hashes and focused
+red/green logs: `.zig-cache/propagation-prefix-20261102/`.
+
+Validation: 1,422 internal tests pass in both Debug and ReleaseSafe (one
+optional test skipped). The complete ReleaseSafe suite also passes 2,205
+program tests (11 skipped), HTTP library tests and the HTTP example build.

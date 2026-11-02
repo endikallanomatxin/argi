@@ -123,6 +123,16 @@ feature first.
   before widening the run; avoid parallel full-suite runs during diagnosis.
   Use `-Dtest-progress=true` to identify an active case when a run stalls.
 
+- Retained expression/reference propagation skips only a prefix certified at a
+  fixed point. Relevant writes to older graph slots must preserve certificate
+  invalidation and transactional undo, including same-ID type completion,
+  variants, definitions and block results. Quiescence alone is insufficient:
+  completion and compile-time execution can mutate the graph. Stabilize before
+  Safety; its appended nodes remain an uncertified suffix. Ordinary graph
+  transactions use full sweeps, nested scopes inherit the outer boundary, and
+  rollback restores the certificate. Unresolved binding inference still scans
+  older initializers, which can become inferable when new array types appear.
+
 - `zig build` installs core under `zig-out/lib/argi/core` and the official
   more library under `zig-out/lib/argi/more`. Rebuild after editing either
   library before manually invoking `zig-out/bin/argi`, so validation uses the

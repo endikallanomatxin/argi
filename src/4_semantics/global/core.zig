@@ -117,13 +117,14 @@ pub const Resolver = struct {
         }
     }
 
-    // Both reference forms derive their type from an operand. Revisit old nodes
-    // as well as new ones: contextual types can change in a later round.
+    // Both reference forms derive their type from an operand. Revisit retained
+    // nodes whenever their input facts change, including contextual types.
     pub fn materializeReferenceTypes(self: *Resolver) !bool {
         var changed = false;
         const measurement = if (self.scan_profile) |profile| profile.begin(.reference_types) else null;
         defer if (measurement) |m| m.finish(changed);
-        for (self.graph.nodes.items, 0..) |node, raw| {
+        const start = self.graph.propagationNodeStart();
+        for (self.graph.nodes.items[start..], start..) |node, raw| {
             if (measurement) |m| m.visit(1);
             switch (node.content) {
                 .dereference => |dereference| {
@@ -209,7 +210,8 @@ pub const Resolver = struct {
         const measurement = if (self.scan_profile) |profile| profile.begin(.expression_types) else null;
         var changed = false;
         defer if (measurement) |m| m.finish(changed);
-        for (self.graph.nodes.items, 0..) |node, raw| {
+        const start = self.graph.propagationNodeStart();
+        for (self.graph.nodes.items[start..], start..) |node, raw| {
             if (measurement) |m| m.visit(1);
             if (parent) |m| m.visit(1);
             switch (node.content) {
@@ -239,11 +241,14 @@ pub const Resolver = struct {
                 .binary_operation => |operation| {
                     var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
                     var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
+                    const previous_left_ty = left_ty;
+                    const previous_right_ty = right_ty;
                     // Matching resolved IDs already make coercion a no-op and
                     // the result current. Recheck on every sweep: operands can
                     // receive a different contextual type in a later round.
                     if (node.ty == left_ty and left_ty == right_ty and !self.graph.isTypeUnresolved(left_ty)) continue;
                     try self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
+                    if (previous_left_ty != left_ty or previous_right_ty != right_ty) changed = true;
                     if (!self.isScalarArithmeticRepresentation(left_ty, right_ty)) continue;
                     if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
                     try self.graph.setNodeType(self.allocator, @enumFromInt(raw), left_ty);
@@ -2587,6 +2592,68 @@ test "contextual literal normalization rolls back every changed node on allocati
             try std.testing.expectEqualDeep(saved, graph.checkpoint());
         }
     }.run, .{});
+}
+
+test "session propagation revisits old expressions after retained operands change" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const int: global_sg.GlobalTypeId = @enumFromInt(0);
+    const byte: global_sg.GlobalTypeId = @enumFromInt(1);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .UInt8 } });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = int, .content = .{ .int_literal = 1 } },
+        .{ .source = source, .ty = int, .content = .{ .move_value = @enumFromInt(0) } },
+    });
+    var core: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer core.deinit();
+    var profile: @import("resolution_profile.zig").Profile = .{ .io = std.testing.io };
+    core.scan_profile = &profile;
+    const passes = @import("resolution_profile.zig").Pass;
+    graph.certifyPropagation();
+    var transaction = graph.beginPropagationTransaction(a);
+    defer transaction.deinit();
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .move_value = @enumFromInt(1) } });
+    try std.testing.expect(try core.materializeBindingTypes());
+    try std.testing.expect(!try core.materializeReferenceTypes());
+    try std.testing.expectEqual(@as(u64, 1), profile.entries[@intFromEnum(passes.expression_types)].visits);
+    try std.testing.expectEqual(@as(u64, 1), profile.entries[@intFromEnum(passes.reference_types)].visits);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, int), graph.node(@enumFromInt(2)).ty);
+    try graph.setNodeType(a, @enumFromInt(0), byte);
+    try std.testing.expect(try core.materializeBindingTypes());
+    try std.testing.expect(!try core.materializeReferenceTypes());
+    try std.testing.expectEqual(@as(u64, 4), profile.entries[@intFromEnum(passes.expression_types)].visits);
+    try std.testing.expectEqual(@as(u64, 4), profile.entries[@intFromEnum(passes.reference_types)].visits);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), graph.node(@enumFromInt(1)).ty);
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), graph.node(@enumFromInt(2)).ty);
+}
+
+test "new arithmetic propagates contextualization of an old operand" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const int: global_sg.GlobalTypeId = @enumFromInt(0);
+    const byte: global_sg.GlobalTypeId = @enumFromInt(1);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .UInt8 } });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = int, .content = .{ .int_literal = 1 } },
+        .{ .source = source, .ty = int, .content = .{ .move_value = @enumFromInt(0) } },
+    });
+    var resolver: Resolver = .{ .allocator = a, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    defer resolver.deinit();
+    graph.certifyPropagation();
+    var transaction = graph.beginPropagationTransaction(a);
+    defer transaction.deinit();
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = byte, .content = .{ .int_literal = 2 } },
+        .{ .source = source, .ty = byte, .content = .{ .binary_operation = .{ .operator = .addition, .left = @enumFromInt(0), .right = @enumFromInt(2) } } },
+    });
+    try std.testing.expect(try resolver.materializeBindingTypes());
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), graph.node(@enumFromInt(0)).ty);
+    try std.testing.expect(try resolver.materializeBindingTypes());
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, byte), graph.node(@enumFromInt(1)).ty);
 }
 
 test "arithmetic type propagation rechecks contextualized operands and preserves node order" {

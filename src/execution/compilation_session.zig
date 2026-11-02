@@ -386,6 +386,7 @@ fn checkUnit(semantic: *sema.Session, allocator: std.mem.Allocator, diagnostics:
     // Each evaluation proves its closed dependency unit. Freeze requests before
     // caching summaries so published bodies already have their final meaning.
     try @import("comptime.zig").resolve(allocator, graph, diagnostics);
+    try semantic.stabilizePropagation();
     // Compile-time invocations own separate once-acquisition scopes. Count
     // only the frozen runtime continuation against the persistent session.
     if (continuation) |function| try once_verify.verifyContinuation(proof_allocator, graph, diagnostics, function, &proof.?.once);

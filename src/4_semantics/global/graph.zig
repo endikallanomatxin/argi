@@ -190,6 +190,7 @@ pub const CapturedExpression = struct {
 
 pub const GlobalSemanticGraph = struct {
     pub const Checkpoint = struct {
+        propagation_certificate: ?PropagationCertificate,
         pool_lengths: [@typeInfo(GlobalSemanticGraph).@"struct".fields.len]usize,
         indexed_functions: usize,
         indexed_declarations: usize,
@@ -224,6 +225,22 @@ pub const GlobalSemanticGraph = struct {
         variants: usize,
         functions: usize,
         depth: usize,
+        propagation: ?PropagationFrontier = null,
+    };
+
+    const PropagationFrontier = struct {
+        nodes: usize,
+        types: usize,
+        bindings: usize,
+        blocks: usize,
+        variants: usize,
+        definitions: usize,
+        node_rewrites: usize,
+        type_rewrites: usize,
+        binding_rewrites: usize,
+        block_rewrites: usize,
+        variant_rewrites: usize,
+        definition_rewrites: usize,
     };
 
     /// Coordinates pool tails and journals for older semantic slots. Resolver
@@ -272,6 +289,7 @@ pub const GlobalSemanticGraph = struct {
             .variants = self.variants.items.len,
             .functions = self.functions.items.len,
             .depth = if (parent) |value| value.depth + 1 else 1,
+            .propagation = if (parent) |value| value.propagation else null,
         };
         const saved = self.checkpoint();
         self.mutation_frontier = frontier;
@@ -279,6 +297,60 @@ pub const GlobalSemanticGraph = struct {
         // to an older arena that its rollback would be unable to reclaim.
         self.safety_arena = null;
         return .{ .graph = self, .allocator = allocator, .saved = saved, .parent = parent, .frontier = frontier };
+    }
+
+    /// Reuse the certified prefix, or scan the whole graph if it was invalidated.
+    pub fn beginPropagationTransaction(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) Transaction {
+        std.debug.assert(self.mutation_frontier == null);
+        const certificate = self.propagation_certificate orelse return self.beginTransaction(allocator);
+        var transaction = self.beginTransaction(allocator);
+        transaction.frontier.propagation = .{
+            .nodes = certificate.nodes,
+            .types = certificate.types,
+            .bindings = certificate.bindings,
+            .blocks = certificate.blocks,
+            .variants = certificate.variants,
+            .definitions = certificate.definitions,
+            .node_rewrites = self.construction.node_rewrites.items.len,
+            .type_rewrites = self.construction.type_rewrites.items.len,
+            .binding_rewrites = self.construction.binding_rewrites.items.len,
+            .block_rewrites = self.construction.block_rewrites.items.len,
+            .variant_rewrites = self.construction.variant_rewrites.items.len,
+            .definition_rewrites = self.construction.definition_rewrites.items.len,
+        };
+        self.mutation_frontier = transaction.frontier;
+        return transaction;
+    }
+
+    /// Undo entries are conservative invalidation hints, not a second journal.
+    /// Nested rollback removes its hints with the semantic rewrites themselves.
+    pub fn propagationNodeStart(self: *const GlobalSemanticGraph) usize {
+        const frontier = (self.mutation_frontier orelse return 0).propagation orelse return 0;
+        for (self.construction.type_rewrites.items[frontier.type_rewrites..]) |rewrite|
+            if (@intFromEnum(rewrite.type_id) < frontier.types) return 0;
+        for (self.construction.variant_rewrites.items[frontier.variant_rewrites..]) |rewrite|
+            if (@intFromEnum(rewrite.id) < frontier.variants) return 0;
+        for (self.construction.definition_rewrites.items[frontier.definition_rewrites..]) |rewrite|
+            if (@intFromEnum(rewrite.id) < frontier.definitions) return 0;
+        for (self.construction.node_rewrites.items[frontier.node_rewrites..]) |rewrite| {
+            const raw = @intFromEnum(rewrite.id);
+            if (raw >= frontier.nodes) continue;
+            const current = self.nodes.items[raw];
+            if (rewrite.previous.ty != current.ty or !std.meta.eql(rewrite.previous.content, current.content)) return 0;
+        }
+        for (self.construction.block_rewrites.items[frontier.block_rewrites..]) |rewrite| {
+            const raw = @intFromEnum(rewrite.id);
+            if (raw < frontier.blocks and rewrite.previous.ret_val != self.blocks.items[raw].ret_val) return 0;
+        }
+        for (self.construction.binding_rewrites.items[frontier.binding_rewrites..]) |rewrite| {
+            const raw = @intFromEnum(rewrite.binding_id);
+            if (raw >= frontier.bindings) continue;
+            const current = self.bindings.items[raw];
+            const unresolved = self.isBindingTypeUnresolved(rewrite.binding_id);
+            if (rewrite.previous.ty != current.ty or (rewrite.resolution == .unresolved) != unresolved or
+                ((unresolved or rewrite.resolution == .unresolved) and rewrite.previous.initialization != current.initialization)) return 0;
+        }
+        return frontier.nodes;
     }
 
     pub const BindingInitialization = struct {
@@ -423,6 +495,28 @@ pub const GlobalSemanticGraph = struct {
     // must resolve every binding it uses; dormant bodies may retain holes.
     construction: ConstructionState = .{},
     mutation_frontier: ?MutationFrontier = null,
+    propagation_certificate: ?PropagationCertificate = null,
+
+    pub const PropagationCertificate = struct {
+        nodes: usize,
+        bindings: usize,
+        types: usize,
+        blocks: usize,
+        variants: usize,
+        definitions: usize,
+    };
+
+    /// Call only after propagation has reached a fixed point over this graph.
+    pub fn certifyPropagation(self: *GlobalSemanticGraph) void {
+        self.propagation_certificate = .{
+            .nodes = self.nodes.items.len,
+            .bindings = self.bindings.items.len,
+            .types = self.types.items.len,
+            .blocks = self.blocks.items.len,
+            .variants = self.variants.items.len,
+            .definitions = self.type_definitions.items.len,
+        };
+    }
 
     pub fn safetyAllocator(self: *GlobalSemanticGraph, allocator: std.mem.Allocator) !std.mem.Allocator {
         if (self.safety_arena == null) {
@@ -459,7 +553,7 @@ pub const GlobalSemanticGraph = struct {
     /// name indexes are rebuilt lazily in the copy. Ordinary compilation does
     /// not call this; retained-session publication can isolate speculative edits.
     pub fn clone(self: *const GlobalSemanticGraph, allocator: std.mem.Allocator) !GlobalSemanticGraph {
-        var result: GlobalSemanticGraph = .{ .target = self.target };
+        var result: GlobalSemanticGraph = .{ .target = self.target, .propagation_certificate = self.propagation_certificate };
         errdefer result.deinit(allocator);
         inline for (@typeInfo(GlobalSemanticGraph).@"struct".fields) |field| {
             if (comptime std.mem.eql(u8, field.name, "safety_batches")) continue;
@@ -510,6 +604,7 @@ pub const GlobalSemanticGraph = struct {
     pub fn checkpoint(self: *const GlobalSemanticGraph) Checkpoint {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         var result: Checkpoint = .{
+            .propagation_certificate = self.propagation_certificate,
             .pool_lengths = @splat(0),
             .indexed_functions = self.lookup.indexed_functions,
             .indexed_declarations = self.lookup.indexed_declarations,
@@ -545,6 +640,7 @@ pub const GlobalSemanticGraph = struct {
     /// are restored before their referenced pools shrink.
     /// Resolver-owned worklists and caches remain outside this graph checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, saved: Checkpoint) void {
+        self.propagation_certificate = saved.propagation_certificate;
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         const instance_count = saved.pool_lengths[std.meta.fieldIndex(GlobalSemanticGraph, "generic_instances").?];
         for (self.generic_instances.items[instance_count..]) |instance| {
@@ -890,6 +986,9 @@ pub const GlobalSemanticGraph = struct {
         if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
         try self.recordTypeRewrite(allocator, id, false);
         try self.ensureTypeResolutionCovers(allocator, self.types.items.len);
+        if (self.propagation_certificate) |certificate| if (raw < certificate.types) {
+            self.propagation_certificate = null;
+        };
         self.construction.type_resolution.items[raw] = .unresolved;
         self.types.items[raw] = .{ .nominal = unresolved_type_poison_definition };
     }
@@ -901,6 +1000,9 @@ pub const GlobalSemanticGraph = struct {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.types.items.len) return error.InvalidGlobalTypeId;
         try self.recordTypeRewrite(allocator, id, false);
+        if (self.propagation_certificate) |certificate| if (raw < certificate.types) {
+            self.propagation_certificate = null;
+        };
         self.types.items[raw] = value;
         if (raw < self.construction.type_resolution.items.len)
             self.construction.type_resolution.items[raw] = .resolved;
@@ -914,6 +1016,9 @@ pub const GlobalSemanticGraph = struct {
         const previous = self.types.items[raw].generic.arguments;
         if (previous.start == arguments.start and previous.len == arguments.len) return;
         try self.recordTypeRewrite(allocator, id, true);
+        if (self.propagation_certificate) |certificate| if (raw < certificate.types) {
+            self.propagation_certificate = null;
+        };
         self.types.items[raw].generic.arguments = arguments;
     }
 
@@ -1008,6 +1113,11 @@ pub const GlobalSemanticGraph = struct {
                 .previous = slot.*,
                 .resolution = if (self.isBindingTypeUnresolved(entry.binding)) .unresolved else .resolved,
             });
+            if (slot.initialization != entry.value and self.isBindingTypeUnresolved(entry.binding)) {
+                if (self.propagation_certificate) |certificate| if (@intFromEnum(entry.binding) < certificate.bindings) {
+                    self.propagation_certificate = null;
+                };
+            }
             slot.initialization = entry.value;
         }
         self.construction.function_rewrites.appendAssumeCapacity(.{ .id = id, .previous = self.functions.items[raw] });
@@ -1067,6 +1177,9 @@ pub const GlobalSemanticGraph = struct {
         std.debug.assert(self.type_definitions.items[raw].struct_fields == null and self.type_definitions.items[raw].choice_variants == null);
         if (self.mutation_frontier == null or raw < self.mutation_frontier.?.type_definitions)
             try self.construction.definition_rewrites.append(allocator, .{ .id = id, .previous = self.type_definitions.items[raw] });
+        if (!std.meta.eql(self.type_definitions.items[raw], value)) if (self.propagation_certificate) |certificate| if (raw < certificate.definitions) {
+            self.propagation_certificate = null;
+        };
         self.type_definitions.items[raw] = value;
     }
 
@@ -1074,6 +1187,9 @@ pub const GlobalSemanticGraph = struct {
         const raw = @intFromEnum(id);
         if (self.mutation_frontier == null or raw < self.mutation_frontier.?.variants)
             try self.construction.variant_rewrites.append(allocator, .{ .id = id, .previous = self.variants.items[raw] });
+        if (!std.meta.eql(self.variants.items[raw], value)) if (self.propagation_certificate) |certificate| if (raw < certificate.variants) {
+            self.propagation_certificate = null;
+        };
         self.variants.items[raw] = value;
     }
 
@@ -1095,6 +1211,9 @@ pub const GlobalSemanticGraph = struct {
         if (self.mutation_frontier) |frontier| if (raw < frontier.blocks) {
             try self.construction.block_rewrites.append(allocator, .{ .id = id, .previous = self.blocks.items[raw] });
         };
+        if (self.blocks.items[raw].ret_val != value.ret_val) if (self.propagation_certificate) |certificate| if (raw < certificate.blocks) {
+            self.propagation_certificate = null;
+        };
         self.blocks.items[raw] = value;
     }
 
@@ -1102,6 +1221,10 @@ pub const GlobalSemanticGraph = struct {
     /// Explicit type resolution remains responsible for its readiness marker.
     pub fn setBinding(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalBindingId, value: Binding) !void {
         try self.recordBindingRewrite(allocator, id);
+        const previous = self.bindings.items[@intFromEnum(id)];
+        if (previous.ty != value.ty or (self.isBindingTypeUnresolved(id) and previous.initialization != value.initialization)) if (self.propagation_certificate) |certificate| if (@intFromEnum(id) < certificate.bindings) {
+            self.propagation_certificate = null;
+        };
         self.bindings.items[@intFromEnum(id)] = value;
     }
 
@@ -1111,6 +1234,10 @@ pub const GlobalSemanticGraph = struct {
         const raw = @intFromEnum(id);
         if (self.mutation_frontier) |frontier| if (raw < frontier.nodes) {
             try self.construction.node_rewrites.append(allocator, .{ .id = id, .previous = self.nodes.items[raw] });
+        };
+        const previous = self.nodes.items[raw];
+        if (previous.ty != value.ty or !std.meta.eql(previous.content, value.content)) if (self.propagation_certificate) |certificate| if (raw < certificate.nodes) {
+            self.propagation_certificate = null;
         };
         self.nodes.items[raw] = value;
     }
@@ -1162,6 +1289,9 @@ pub const GlobalSemanticGraph = struct {
         if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
         try self.recordBindingRewrite(allocator, id);
         try self.ensureBindingTypeResolutionCovers(allocator, self.bindings.items.len);
+        if (self.propagation_certificate) |certificate| if (raw < certificate.bindings) {
+            self.propagation_certificate = null;
+        };
         self.construction.binding_type_resolution.items[raw] = .unresolved;
         self.bindings.items[raw].ty = unresolved_binding_type_poison;
     }
@@ -1173,6 +1303,9 @@ pub const GlobalSemanticGraph = struct {
         const raw: usize = @intFromEnum(id);
         if (raw >= self.bindings.items.len) return error.InvalidGlobalBindingId;
         try self.recordBindingRewrite(allocator, id);
+        if (self.isBindingTypeUnresolved(id) or self.bindings.items[raw].ty != ty) if (self.propagation_certificate) |certificate| if (raw < certificate.bindings) {
+            self.propagation_certificate = null;
+        };
         self.bindings.items[raw].ty = ty;
         if (raw < self.construction.binding_type_resolution.items.len)
             self.construction.binding_type_resolution.items[raw] = .resolved;
@@ -1366,6 +1499,95 @@ test "name indexes discard speculative functions before IDs are reused" {
     });
     try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "discarded")).len);
     try std.testing.expectEqual(@as(usize, 1), (try graph.functionsNamed(allocator, "replacement")).len);
+}
+
+test "propagation frontier follows old rewrites and nested rollback" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 1 } });
+    graph.certifyPropagation();
+    var outer = graph.beginPropagationTransaction(a);
+    defer outer.deinit();
+    try std.testing.expectEqual(@as(usize, 1), graph.propagationNodeStart());
+    var inner = graph.beginTransaction(a);
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .int_literal = 2 } });
+    try graph.setNodeType(a, @enumFromInt(0), null);
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+    inner.rollback();
+    try std.testing.expectEqual(@as(usize, 1), graph.propagationNodeStart());
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .int_literal = 3 } });
+    try std.testing.expectEqual(@as(usize, 1), graph.propagationNodeStart());
+    inner = graph.beginTransaction(a);
+    try graph.setNodeType(a, @enumFromInt(0), null);
+    inner.commit();
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+    outer.rollback();
+    var plain = graph.beginTransaction(a);
+    defer plain.deinit();
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+}
+
+test "propagation certificate retains appended nodes and rejects old changes" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .int_literal = 1 } });
+    graph.certifyPropagation();
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .int_literal = 2 } });
+    var transaction = graph.beginPropagationTransaction(a);
+    try std.testing.expectEqual(@as(usize, 1), graph.propagationNodeStart());
+    transaction.rollback();
+    try graph.setNodeType(a, @enumFromInt(0), @enumFromInt(0));
+    var uncertified = graph.beginPropagationTransaction(a);
+    defer uncertified.deinit();
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+}
+
+test "propagation frontier detects type completion and ignores unrelated binding metadata" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "value");
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(a, @enumFromInt(0));
+    try graph.bindings.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .constant });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    graph.certifyPropagation();
+    var transaction = graph.beginPropagationTransaction(a);
+    defer transaction.deinit();
+    try graph.setBinding(a, @enumFromInt(0), graph.binding(@enumFromInt(0)));
+    try std.testing.expectEqual(@as(usize, 1), graph.propagationNodeStart());
+    try graph.resolveType(a, @enumFromInt(0), .{ .builtin = .Int32 });
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+}
+
+test "propagation frontier observes retained variant and definition completions" {
+    const a = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .int_literal = 1 } });
+    try graph.variants.append(a, std.mem.zeroes(ChoiceVariant));
+    try graph.type_definitions.append(a, .{ .source = source });
+    graph.certifyPropagation();
+    var transaction = graph.beginPropagationTransaction(a);
+    defer transaction.deinit();
+    var child = graph.beginTransaction(a);
+    var variant = graph.variants.items[0];
+    variant.option_decl = @enumFromInt(0);
+    try graph.setVariant(a, @enumFromInt(0), variant);
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
+    child.rollback();
+    try std.testing.expectEqual(@as(usize, 1), graph.propagationNodeStart());
+    var definition = graph.typeDefinition(@enumFromInt(0));
+    definition.struct_fields = .{ .start = 0, .len = 0 };
+    try graph.completeTypeDefinition(a, @enumFromInt(0), definition);
+    try std.testing.expectEqual(@as(usize, 0), graph.propagationNodeStart());
 }
 
 test "semantic graph checkpoint restores append-only pools and name indexes" {

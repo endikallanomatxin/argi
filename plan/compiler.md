@@ -9,9 +9,10 @@ correctness or cost issues in the follow-ups below.
 - Replace temporary resolver communication state with explicit results. Preserve
   useful diagnostics across speculative rollback, including readonly generic
   virtual conversions.
-- Reduce measured redundant binding/type sweeps, propagation and Safety work in
-  specialization workloads. Revisit older entities completed by new facts;
-  ownership also needs operands outside execution reachability.
+- Reduce remaining unresolved-binding inference and Safety sweeps in
+  specialization workloads. Retained expression/reference propagation now skips
+  certified prefixes and revisits older entities when their facts change;
+  ownership still needs operands outside execution reachability.
 
 ## Safety
 
