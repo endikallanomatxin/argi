@@ -499,6 +499,85 @@ pub const Resolver = struct {
         return self.makeConcreteFunctionCall(function, input, lexical_context, source);
     }
 
+    /// Reflection fixes the producer before consulting its signature. Runtime
+    /// inputs and desired results never select a function specialization here.
+    fn concreteDefinition(self: *Resolver, definition: global_sg.DefinitionValue, source: primitives.SourceRef) !global_sg.GlobalFunctionId {
+        const family = self.graph.familyDefinition(definition.origin);
+        if (family.kind != .function) {
+            self.generics.comptime_failure = .{ .source = source, .reason = "expected a function definition" };
+            return error.InvalidGenericCallArguments;
+        }
+        const declaration = self.graph.familyDeclaration(definition.origin);
+        if (family.template_index == null) {
+            if (definition.captures.len != 0) return error.TooManyGenericArguments;
+            return self.graph.declaration(declaration).function_id orelse error.DeferredGenericFunction;
+        }
+        const located = self.findParameterized(declaration) orelse return error.DeferredGenericFunction;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const remaining = try self.generics.bindDefinitionCaptures(located.module_index, located.parameterized.parameters, definition, &bindings);
+        try self.generics.applyParameterDefaults(located.module_index, remaining, &bindings);
+        if (!self.parametersBound(located.module_index, located.parameterized.parameters, &bindings)) {
+            self.generics.comptime_failure = .{ .source = source, .reason = "function signature requires a fully specialized function definition" };
+            return error.InvalidGenericCallArguments;
+        }
+        const arguments = try self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings);
+        return self.instantiate(declaration, arguments);
+    }
+
+    pub fn resolveFunctionSignature(context: *anyopaque, definition: global_sg.DefinitionValue, kind: ir.FunctionSignatureKind, source: primitives.SourceRef) anyerror!global_sg.GlobalTypeId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        const function = try self.concreteDefinition(definition, source);
+        if (self.core.functionSignaturePending(function)) return error.ComptimeExecutionPending;
+        const signature = self.graph.function(function);
+        return switch (kind) {
+            .inputs => self.core.structType(signature.input),
+            .outputs => self.core.structType(signature.output),
+            .result => self.core.functionOutputType(function),
+        };
+    }
+
+    fn makePackedInvocation(self: *Resolver, arguments: primitives.Range(global_sg.GlobalGenericArgId), input: global_sg.GlobalNodeId, context: CallContext, source: primitives.SourceRef, prepare: bool) !global_sg.Node {
+        if (arguments.len != 1) return self.invalidPackedInvocation(source);
+        const argument = self.graph.generic_arguments.items[arguments.start];
+        if (argument.value != .definition) return self.invalidPackedInvocation(source);
+        if (argument.name.len != 0 and !std.mem.eql(u8, self.graph.text(argument.name), "F")) return self.invalidPackedInvocation(source);
+        const literal = self.graph.node(input).content;
+        if (literal != .struct_value_literal or literal.struct_value_literal.fields.len != 1) return self.invalidPackedInvocation(source);
+        const field = self.graph.value_fields.items[literal.struct_value_literal.fields.start];
+        if (!std.mem.eql(u8, self.graph.text(field.name), "args")) return self.invalidPackedInvocation(source);
+        const prepared_input = self.graph.node(field.value);
+        if (prepared_input.content == .list_literal and prepared_input.content.list_literal.elements.len == 0)
+            try self.graph.setNodeContent(self.allocator, field.value, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        if (self.graph.node(field.value).content != .struct_value_literal) {
+            const ty = self.graph.node(field.value).ty orelse return error.DeferredGenericFunction;
+            if (self.graph.isTypeUnresolved(ty)) return error.DeferredGenericFunction;
+        }
+        const function = try self.concreteDefinition(argument.value.definition, source);
+        if (self.core.functionSignaturePending(function)) return error.DeferredGenericFunction;
+        const packed_type = try self.core.structType(self.graph.function(function).input);
+        if (self.graph.node(field.value).content == .struct_value_literal) {
+            const assumed = literal.struct_value_literal.assumed_fields;
+            if (prepare and assumed.len != 0) {
+                var inner = self.graph.node(field.value);
+                inner.content.struct_value_literal.assumed_fields = assumed;
+                try self.graph.setNode(self.allocator, field.value, inner);
+            }
+            if (!try self.core.completeRecordValue(packed_type, field.value, context.withAssumedFields(assumed))) return self.invalidPackedInvocation(source);
+        }
+        if (prepare) {
+            const ty = self.graph.node(field.value).ty orelse return error.DeferredGenericFunction;
+            if (!global_types.equal(self.graph, packed_type, ty)) return self.invalidPackedInvocation(source);
+            return self.graph.node(field.value);
+        }
+        return try @import("function_invocation.zig").make(self.allocator, self.graph, self.core, function, field.value, context, source) orelse self.invalidPackedInvocation(source);
+    }
+
+    fn invalidPackedInvocation(self: *Resolver, source: primitives.SourceRef) error{InvalidGenericCallArguments} {
+        self.generics.comptime_failure = .{ .source = source, .reason = "invoke requires one function definition and a complete matching .args record" };
+        return error.InvalidGenericCallArguments;
+    }
+
     pub fn resolveDefinitionCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype, definition: global_sg.DefinitionValue) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
         const arguments = try self.generics.resolveCallArguments(module_index, reference) orelse primitives.Range(global_sg.GlobalGenericArgId){ .start = 0, .len = 0 };
@@ -521,6 +600,14 @@ pub const Resolver = struct {
         const arguments = try self.generics.resolveCallArguments(module_index, reference);
         const name = module.text(reference.name);
         const input = globalizer.globalNode(o, value.input);
+        if (reference.module_path == null and arguments != null and (std.mem.eql(u8, name, "invoke") or std.mem.eql(u8, name, "prepare_args"))) {
+            const node = self.makePackedInvocation(arguments orelse .{ .start = 0, .len = 0 }, input, CallContext.fromModule(o, value.owner_function), self.sourceFor(module_index, reference.source), std.mem.eql(u8, name, "prepare_args")) catch |err| switch (err) {
+                error.DeferredGenericFunction => return .deferred,
+                else => return err,
+            };
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
+            return .resolved;
+        }
         if (reference.module_path == null and arguments == null and primitives.integerRange(primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) orelse .Void, self.graph.target.stdTarget()) != null) {
             const literal = self.graph.node(input).content;
             if (literal == .struct_value_literal and literal.struct_value_literal.fields.len == 1) {
@@ -721,6 +808,7 @@ pub const Resolver = struct {
                     error.TooManyGenericArguments => "too many compile-time arguments",
                     error.GenericArgumentKindMismatch => "compile-time argument kind does not match its parameter",
                     error.DefinitionParameterSignatureMismatch => "type-family argument does not match its parameter signature",
+                    error.FunctionParameterKindMismatch => "compile-time argument must be a function definition",
                     else => return failure,
                 };
                 if (!report_argument_failure) return error.InvalidGenericCallArguments;
@@ -1259,12 +1347,11 @@ pub const Resolver = struct {
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *generic_mod.Resolver.Bindings,
     ) !ConstraintCheck {
-        self.generics.applyParameterDefaults(module_index, parameters, bindings) catch |err| switch (err) {
-            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return .{ .rejected = null },
-            else => return err,
-        };
         var failure: ?ConstraintCheck.Failure = null;
-        const contracts = self.nested_call_context orelse return .satisfied;
+        const contracts = self.nested_call_context orelse {
+            while (try self.generics.applyReadyParameterDefaults(module_index, parameters, bindings)) {}
+            return .satisfied;
+        };
         const storage = &self.modules[module_index].semantic.parameterized_storage;
 
         var made_progress = true;
@@ -1309,7 +1396,10 @@ pub const Resolver = struct {
                 };
             }
             made_progress = after > before;
-            if (!made_progress and failed) return .{ .rejected = failure };
+            if (!made_progress) {
+                made_progress = try self.generics.applyReadyParameterDefaults(module_index, parameters, bindings);
+                if (!made_progress and failed) return .{ .rejected = failure };
+            }
         }
 
         // Every bound constraint was checked in the last no-progress round.
@@ -3902,6 +3992,8 @@ pub const Resolver = struct {
         ) anyerror!global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
+            if (module_path == null and arguments.len != 0 and (std.mem.eql(u8, name, "invoke") or std.mem.eql(u8, name, "prepare_args")))
+                return self.resolver.makePackedInvocation(arguments, input, try self.operatorContext(null), self.resolver.sourceFor(self.module_index, source), std.mem.eql(u8, name, "prepare_args"));
             if (module_path == null) if (standard_contracts.scalarComparisonPrimitive(name)) |operator| {
                 const declaration = self.resolver.graph.declaration(globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration));
                 const path = self.resolver.graph.text(self.resolver.graph.files.items[declaration.source.file_index].path);

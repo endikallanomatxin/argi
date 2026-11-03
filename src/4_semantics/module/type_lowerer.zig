@@ -230,10 +230,25 @@ pub const Context = struct {
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const base = self.tree.typeReference(generic.base) orelse return error.InvalidGenericBase;
         const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
-        if (base == .projection or @import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union")) {
+        if (base == .projection or @import("type_arguments.zig").requiresResolution(self.tree, generic.arguments) or std.mem.eql(u8, base_name, "choice_union") or std.mem.eql(u8, base_name, "inputs_of") or std.mem.eql(u8, base_name, "outputs_of") or std.mem.eql(u8, base_name, "result_of")) {
             return self.lowerComputedType(owner);
         }
         const arguments_literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericArguments;
+        // A positional or named type-shaped argument may denote a function
+        // definition or a definition-valued alias. Retain the expression until
+        // global resolution can classify its compile-time value.
+        for (arguments_literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse continue;
+            const argument = field.type_node orelse continue;
+            const reference = self.tree.typeReference(argument) orelse continue;
+            if (reference != .name) continue;
+            if (reference.name.qualifier_token != null) return self.lowerComputedType(owner);
+            const name = self.tree.tokenTextFromSource(self.source, reference.name.name_token);
+            for (self.graph.declarationsNamed(name)) |declaration| {
+                const kind = self.graph.declarations.items[@intFromEnum(declaration)].kind;
+                if (kind == .function or kind == .binding) return self.lowerComputedType(owner);
+            }
+        }
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Array"))
         {

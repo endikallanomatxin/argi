@@ -308,6 +308,36 @@ test "frontend module cache persists canonical graphs across sessions" {
     }
 }
 
+test "frontend module cache persists function identities and signature queries" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source =
+        \\answer := (.value: Int32 = 42) -> (.result: Int32) { result = value }
+        \\apply := #(.F: Function = answer) (.args: inputs_of#(F)) -> (.result: result_of#(F)) {
+        \\    result = invoke#(F)(.args = ~args)
+        \\}
+        \\main := () -> (.status_code: Int32) {
+        \\    args ::= prepare_args#(answer)(.args = ())
+        \\    status_code = apply#(answer)(.args = ~args)
+        \\}
+    ;
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
+    for (0..2) |iteration| {
+        var session = ModuleCache.init(std.testing.allocator, .{});
+        defer session.deinit();
+        try session.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &session);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqualStrings("", result.diagnostics);
+        try std.testing.expectEqual(@as(usize, iteration), session.disk_hits);
+        try std.testing.expectEqual(@as(usize, 0), session.disk_write_failures);
+        try std.testing.expectEqual(@as(usize, 0), session.disk_rejections);
+    }
+}
+
 test "frontend module cache rebuilds truncated corrupt and incompatible snapshots" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

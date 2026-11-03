@@ -984,7 +984,8 @@ pub const Resolver = struct {
                     break;
                 }
             }
-            if (!matches or !try self.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
+            if (!matches) continue;
+            if (!try self.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
             try candidates.append(self.allocator, .{ .module = module_index, .template = template, .bindings = bindings });
             keep = true;
         }
@@ -1291,6 +1292,7 @@ pub const Resolver = struct {
             error.MissingGenericArgument => "missing argument",
             error.GenericArgumentKindMismatch => "argument kind does not match its parameter",
             error.DefinitionParameterSignatureMismatch => "associated type-family argument does not match its parameter signature",
+            error.FunctionParameterKindMismatch => "associated argument must be a function definition",
             else => null,
         };
     }
@@ -2702,6 +2704,8 @@ pub const Resolver = struct {
                             if (!try self.inferConstraintTypePattern(module_index, wanted.value.type, given.value.type, bindings)) return false;
                         } else if (wanted.value == .comptime_int and given.value == .comptime_int) {
                             if (!try self.inferConstraintIntPattern(module_index, wanted.value.comptime_int, given.value.comptime_int, bindings)) return false;
+                        } else if (wanted.value == .definition and given.value == .definition) {
+                            if (!try self.generics.inferDefinitionValue(module_index, wanted.value.definition, given.value.definition, bindings)) return false;
                         } else return false;
                     }
                     if (omitted) return self.generics.completedPatternMatches(module_index, pattern, bindings, actual);
@@ -2995,12 +2999,13 @@ pub const Resolver = struct {
                 };
             }
 
+            var failed = false;
             for (parameters.start..parameters.start + parameters.len) |raw| {
                 const parameter = storage.comptime_parameters.items[raw];
                 const constraint_id = parameter.constraint orelse continue;
                 if (parameter.kind != .type) return false;
                 const bound = bindings.types[raw] orelse continue;
-                if (!try self.inferConstraintBindings(module_index, constraint_id, bound, bindings)) return false;
+                if (!try self.inferConstraintBindings(module_index, constraint_id, bound, bindings)) failed = true;
             }
 
             var after: usize = 0;
@@ -3013,10 +3018,20 @@ pub const Resolver = struct {
                 };
             }
             made_progress = after > before;
+            if (!made_progress) {
+                made_progress = try self.generics.applyReadyParameterDefaults(module_index, parameters, bindings);
+                if (!made_progress and failed) return false;
+            }
         }
 
         for (parameters.start..parameters.start + parameters.len) |raw| {
             const parameter = storage.comptime_parameters.items[raw];
+            const is_bound = switch (parameter.kind) {
+                .type => bindings.types[raw] != null,
+                .comptime_int => bindings.ints[raw] != null,
+                .definition => bindings.definitions[raw] != null,
+            };
+            if (!is_bound) return false;
             const constraint_id = parameter.constraint orelse continue;
             if (parameter.kind != .type) return false;
             const bound = bindings.types[raw] orelse return false;

@@ -59,6 +59,8 @@ pub const Resolver = struct {
     rollback_execution: ?*const fn (*anyopaque, usize) void = null,
     execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
     execute_boolean: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!bool = null,
+    function_signature_context: ?*anyopaque = null,
+    function_signature_resolver: ?*const fn (*anyopaque, global_sg.DefinitionValue, ir.FunctionSignatureKind, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     value_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GenericArgument.Value = null,
@@ -256,6 +258,7 @@ pub const Resolver = struct {
                         error.MissingGenericArgument => "missing compile-time argument in definition specialization",
                         error.GenericArgumentKindMismatch => "compile-time argument kind does not match the definition parameter",
                         error.DefinitionParameterSignatureMismatch => "definition argument does not match its parameter signature",
+                        error.FunctionParameterKindMismatch => "compile-time argument must be a function definition",
                         else => return err,
                     };
                     self.comptime_failure = .{ .source = source, .reason = reason };
@@ -542,8 +545,12 @@ pub const Resolver = struct {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[raw];
             if (parameter.kind == .definition and bindings.definitions[raw] == null) {
                 if (parameter.default_definition) |expression| {
-                    const definition = try self.instantiateDefinitionValue(module_index, expression, bindings);
-                    if (!try self.definitionParameterShapeMatches(module_index, parameter, definition, bindings)) return error.DefinitionParameterSignatureMismatch;
+                    const argument = try self.instantiateArgumentValue(module_index, expression, bindings);
+                    if (argument != .definition)
+                        return if (parameter.definition_constraint == .function) error.FunctionParameterKindMismatch else error.DefinitionParameterSignatureMismatch;
+                    const definition = argument.definition;
+                    if (!try self.definitionParameterShapeMatches(module_index, parameter, definition, bindings))
+                        return if (parameter.definition_constraint == .function) error.FunctionParameterKindMismatch else error.DefinitionParameterSignatureMismatch;
                     bindings.definitions[raw] = definition;
                 }
             }
@@ -556,6 +563,33 @@ pub const Resolver = struct {
                     bindings.ints[raw] = try self.evalInt(module_index, expression, bindings);
             }
         }
+    }
+
+    /// Apply defaults whose dependencies are currently available. Call after
+    /// inference has stopped making progress, then rerun inference if a default
+    /// supplied a new binding.
+    pub fn applyReadyParameterDefaults(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *Bindings) !bool {
+        var changed = false;
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            const bound = switch (parameter.kind) {
+                .type => bindings.types[raw] != null,
+                .comptime_int => bindings.ints[raw] != null,
+                .definition => bindings.definitions[raw] != null,
+            };
+            if (bound) continue;
+            self.applyParameterDefaults(module_index, .{ .start = @intCast(raw), .len = 1 }, bindings) catch |err| switch (err) {
+                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter, error.UnboundDefinitionParameter => continue,
+                else => return err,
+            };
+            changed = changed or switch (parameter.kind) {
+                .type => bindings.types[raw] != null,
+                .comptime_int => bindings.ints[raw] != null,
+                .definition => bindings.definitions[raw] != null,
+            };
+        }
+        return changed;
     }
 
     pub fn bindGlobalArgumentsPartial(
@@ -594,7 +628,8 @@ pub const Resolver = struct {
             switch (parameter.kind) {
                 .definition => switch (argument.value) {
                     .definition => |value| {
-                        if (!try self.definitionParameterShapeMatches(module_index, parameter, value, bindings)) return error.DefinitionParameterSignatureMismatch;
+                        if (!try self.definitionParameterShapeMatches(module_index, parameter, value, bindings))
+                            return if (parameter.definition_constraint == .function) error.FunctionParameterKindMismatch else error.DefinitionParameterSignatureMismatch;
                         bindings.definitions[param_raw] = value;
                     },
                     else => return error.GenericArgumentKindMismatch,
@@ -703,6 +738,21 @@ pub const Resolver = struct {
                 } });
             },
             .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings),
+            .function_signature => |value| blk: {
+                const operand = value.function orelse {
+                    self.recordComptimeFailure(module_index, value.source, "function signature query requires exactly one function argument, optionally named F");
+                    return error.InvalidFunctionSignatureArguments;
+                };
+                const argument = try self.instantiateArgumentValue(module_index, operand, bindings);
+                if (argument != .definition or self.graph.familyDefinition(argument.definition.origin).kind != .function) {
+                    self.recordComptimeFailure(module_index, value.source, "function signature requires a function definition");
+                    return error.InvalidFunctionSignatureArgument;
+                }
+                const definition = argument.definition;
+                const resolver = self.function_signature_resolver orelse return error.ComptimeExecutionPending;
+                const context = self.function_signature_context orelse return error.ComptimeExecutionPending;
+                break :blk try resolver(context, definition, value.kind, self.globalSource(module_index, value.source));
+            },
             .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings),
         };
     }
@@ -997,6 +1047,8 @@ pub const Resolver = struct {
     }
 
     fn definitionParameterShapeMatches(self: *Resolver, module_index: usize, parameter: parameterized_storage.ComptimeParameter, actual: global_sg.DefinitionValue, expected_bindings: *Bindings) anyerror!bool {
+        if (parameter.definition_constraint == .function)
+            return self.graph.familyDefinition(actual.origin).kind == .function;
         const expected = parameter.family_parameters orelse return false;
         const located = self.findTypeParameterized(actual.origin) orelse return false;
         const parameters = located.parameterized.parameters;
@@ -1036,6 +1088,8 @@ pub const Resolver = struct {
                 if (!global_types.equal(self.graph, expected_type, actual_type)) return false;
             }
             if (left.kind == .definition) {
+                if (left.definition_constraint != right.definition_constraint) return false;
+                if (left.definition_constraint == .function) continue;
                 if (!try self.parameterShapesMatch(expected_module, left.family_parameters orelse return false, expected_bindings, actual_module, right.family_parameters orelse return false, actual_bindings, depth + 1, &scope)) return false;
             }
         }
@@ -1095,13 +1149,54 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn instantiateArgumentValue(self: *Resolver, module_index: usize, value: ir.GenericArgument.Value, bindings: *Bindings) !global_sg.GenericArgument.Value {
+    pub fn instantiateArgumentValue(self: *Resolver, module_index: usize, value: ir.GenericArgument.Value, bindings: *Bindings) anyerror!global_sg.GenericArgument.Value {
         return switch (value) {
-            .type => |ty| .{ .type = try self.instantiateParameterizedType(module_index, ty, bindings) },
+            .type => |ty| blk: {
+                const recipe = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(ty)];
+                if (recipe == .external) {
+                    const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(recipe.external)];
+                    if (try self.functionArgumentReference(module_index, reference)) |definition| break :blk .{ .definition = definition };
+                }
+                if (recipe == .resolved and recipe.resolved == .generic) {
+                    const source = self.graph.familyDefinition((try self.resolveParameterizedDefinitionValue(module_index, recipe.resolved.generic.base, bindings)).origin).source;
+                    const entity = try self.instantiateEntityValue(module_index, ty, bindings, source);
+                    break :blk switch (entity) {
+                        .type => |result| .{ .type = result },
+                        .definition => |result| .{ .definition = result },
+                    };
+                }
+                break :blk .{ .type = try self.instantiateParameterizedType(module_index, ty, bindings) };
+            },
             .definition => |definition| .{ .definition = try self.instantiateDefinitionValue(module_index, definition, bindings) },
-            .comptime_int => |integer| .{ .comptime_int = try self.evalInt(module_index, integer, bindings) },
+            .comptime_int => |integer| blk: {
+                const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+                const expression = storage.int_expressions.items[@intFromEnum(integer)];
+                if (expression == .execution) {
+                    const node = storage.nodes.items[@intFromEnum(expression.execution)];
+                    if (node == .pending) {
+                        const pending = storage.pending.items[@intFromEnum(node.pending)];
+                        if (pending == .resolve_expression and pending.resolve_expression.kind == .unknown_identifier) {
+                            const item = pending.resolve_expression;
+                            if (item.name) |name| {
+                                const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name, .source = item.source };
+                                if (try self.functionArgumentReference(module_index, reference)) |definition| break :blk .{ .definition = definition };
+                            }
+                        }
+                    }
+                }
+                break :blk .{ .comptime_int = try self.evalInt(module_index, integer, bindings) };
+            },
             .projection => |projection| self.instantiateArgumentProjection(module_index, projection, bindings),
         };
+    }
+
+    fn functionArgumentReference(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?global_sg.DefinitionValue {
+        if (try self.core.resolveDefinitionAlias(module_index, reference)) |definition| {
+            if (self.graph.familyDefinition(definition.origin).kind == .function) return definition;
+            return null;
+        }
+        const family = try self.core.resolveDefinitionReference(module_index, reference, &.{.function}) orelse return null;
+        return .{ .origin = family };
     }
 
     fn signatureIntegersMatch(self: *Resolver, scope: *const FamilySignatureScope, expected: ir.ParameterizedIntExprId, actual: ir.ParameterizedIntExprId, depth: usize) anyerror!bool {

@@ -99,8 +99,11 @@ pub const Type = union(enum) {
         source: ?primitives.SourceRef = null,
     },
     choice_union: struct { left: ParameterizedTypeId, right: ParameterizedTypeId },
+    function_signature: struct { function: ?GenericArgument.Value, kind: FunctionSignatureKind, source: primitives.SourceRef },
     resolved: primitives.SemanticType(Ids),
 };
+
+pub const FunctionSignatureKind = enum { inputs, outputs, result };
 
 pub const DefinitionRef = union(enum) {
     projection: AssociatedProjection,

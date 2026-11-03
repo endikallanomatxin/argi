@@ -1587,7 +1587,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn structType(self: *Resolver, fields: global_sg.FieldRange) !global_sg.GlobalTypeId {
+    pub fn structType(self: *Resolver, fields: global_sg.FieldRange) !global_sg.GlobalTypeId {
         for (self.graph.types.items, 0..) |ty, raw| switch (ty) {
             .structural => |shape| if (shape.fields.start == fields.start and shape.fields.len == fields.len)
                 return @enumFromInt(@as(u32, @intCast(raw))),

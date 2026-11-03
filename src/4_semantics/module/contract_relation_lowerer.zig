@@ -116,14 +116,18 @@ const Context = struct {
                         continue;
                     }
                     const kind = self.tree.syntaxType(annotation) orelse return error.InvalidContractArgument;
-                    if (kind != .name) try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
+                    if (kind != .name) try self.conformanceError(member_node, "associated implementation elements require Type, Int, or Function annotations");
                     const kind_name = self.tree.tokenTextFromSource(self.source, kind.name.name_token);
-                    const argument: ir.GenericArgument.Value = if (std.mem.eql(u8, kind_name, "Type"))
+                    const argument: ir.GenericArgument.Value = if (std.mem.eql(u8, kind_name, "Function")) function: {
+                        var lowerer = self.parameterizedContext();
+                        defer lowerer.bindings.deinit();
+                        break :function try lowerer.lowerFunctionValue(value);
+                    } else if (std.mem.eql(u8, kind_name, "Type"))
                         .{ .type = try self.lowerConformanceType(value) }
                     else if (std.mem.eql(u8, kind_name, "Int"))
                         .{ .comptime_int = try self.lowerConformanceInt(value) }
                     else {
-                        try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
+                        try self.conformanceError(member_node, "associated implementation elements require Type, Int, or Function annotations");
                         unreachable;
                     };
                     try arguments.append(self.allocator, .{ .name = try self.writer.addString(member_name), .value = argument });
@@ -160,7 +164,7 @@ const Context = struct {
                         for (self.tree.structTypeLiteral(relation.implementation_members).?.fields) |field_node| {
                             const field = self.tree.structTypeField(field_node).?;
                             const annotation = field.type_node orelse continue;
-                            const kind: parameterized_storage.ComptimeParameterKind = if (self.tree.parameterizedDefinition(annotation) != null)
+                            const kind: parameterized_storage.ComptimeParameterKind = if (self.tree.parameterizedDefinition(annotation) != null or parameterized_lowerer.isFunctionBuiltin(self.tree, self.source, annotation))
                                 .definition
                             else if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field))
                                 .type
@@ -180,7 +184,9 @@ const Context = struct {
                         for (self.tree.structTypeLiteral(relation.implementation_members).?.fields) |field_node| {
                             const field = self.tree.structTypeField(field_node).?;
                             const annotation = field.type_node orelse continue;
-                            if (self.tree.parameterizedDefinition(annotation) != null) {
+                            if (parameterized_lowerer.isFunctionBuiltin(self.tree, self.source, annotation)) {
+                                storage.comptime_parameters.items[start + offset].definition_constraint = .function;
+                            } else if (self.tree.parameterizedDefinition(annotation) != null) {
                                 const signature = try metadata.lowerDefinitionParameterSignature(annotation);
                                 storage.comptime_parameters.items[start + offset].family_parameters = signature;
                             }
@@ -346,7 +352,7 @@ const Context = struct {
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 _ = field.type_node orelse return error.InvalidGenericParameter;
                 const kind: parameterized_storage.ComptimeParameterKind =
-                    if (self.tree.parameterizedDefinition(field.type_node.?) != null) .definition else if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                    if (self.tree.parameterizedDefinition(field.type_node.?) != null or parameterized_lowerer.isFunctionBuiltin(self.tree, self.source, field.type_node.?)) .definition else if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
@@ -365,8 +371,16 @@ const Context = struct {
                 defer lowerer.bindings.deinit();
                 switch (parameter_record.kind) {
                     .definition => {
-                        const signature = try lowerer.lowerDefinitionParameterSignature(value_type_node);
-                        self.graph.semantic.parameterized_storage.comptime_parameters.items[start + @as(u32, @intCast(offset))].family_parameters = signature;
+                        if (parameterized_lowerer.isFunctionBuiltin(self.tree, self.source, value_type_node)) {
+                            self.graph.semantic.parameterized_storage.comptime_parameters.items[start + @as(u32, @intCast(offset))].definition_constraint = .function;
+                            if (field.default_value) |value| {
+                                const lowered = try lowerer.lowerFunctionValue(value);
+                                self.graph.semantic.parameterized_storage.comptime_parameters.items[start + @as(u32, @intCast(offset))].default_definition = lowered;
+                            }
+                        } else {
+                            const signature = try lowerer.lowerDefinitionParameterSignature(value_type_node);
+                            self.graph.semantic.parameterized_storage.comptime_parameters.items[start + @as(u32, @intCast(offset))].family_parameters = signature;
+                        }
                     },
                     .comptime_int => parameter_record.value_type = try lowerer.lowerType(value_type_node, false),
                     .type => {

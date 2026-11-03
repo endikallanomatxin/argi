@@ -768,12 +768,15 @@ pub const Context = struct {
             const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
             const parameter_index = start + @as(u32, @intCast(offset));
             if (self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].kind == .definition) {
-                const signature = try self.lowerDefinitionParameterSignature(value_type_node);
-                self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].family_parameters = signature;
+                if (isFunctionBuiltin(self.tree, self.source, value_type_node)) {
+                    self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].definition_constraint = .function;
+                } else {
+                    const signature = try self.lowerDefinitionParameterSignature(value_type_node);
+                    self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].family_parameters = signature;
+                }
                 if (offset >= captured) if (field.default_value) |value| {
-                    const lowered = try self.lowerGenericValue(value, false);
-                    if (lowered != .definition) return error.InvalidGenericArgumentKind;
-                    self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].default_definition = lowered.definition;
+                    const lowered = if (isFunctionBuiltin(self.tree, self.source, value_type_node)) try self.lowerFunctionValue(value) else try self.lowerGenericValue(value, false);
+                    self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].default_definition = lowered;
                 };
                 continue;
             }
@@ -830,7 +833,7 @@ pub const Context = struct {
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 _ = field.type_node orelse return error.InvalidGenericParameter;
                 const kind: parameterized_storage.ComptimeParameterKind =
-                    if (self.tree.parameterizedDefinition(field.type_node.?) != null) .definition else if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                    if (self.tree.parameterizedDefinition(field.type_node.?) != null or isFunctionBuiltin(self.tree, self.source, field.type_node.?)) .definition else if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
@@ -990,6 +993,18 @@ pub const Context = struct {
         if (base != .name) return error.InvalidGenericParameterizedBase;
         const name = base.name;
         const base_text = self.tree.tokenTextFromSource(self.source, name.name_token);
+        if (name.qualifier_token == null and (std.mem.eql(u8, base_text, "inputs_of") or std.mem.eql(u8, base_text, "outputs_of") or std.mem.eql(u8, base_text, "result_of"))) {
+            const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidFunctionSignatureArguments;
+            const kind: ir.FunctionSignatureKind = if (std.mem.eql(u8, base_text, "inputs_of")) .inputs else if (std.mem.eql(u8, base_text, "outputs_of")) .outputs else .result;
+            var arg: ?ir.GenericArgument.Value = null;
+            if (literal.fields.len == 1) {
+                const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidFunctionSignatureArguments;
+                const argument_name = type_arguments.name(self.tree, self.source, field, "");
+                if (argument_name.len == 0 or std.mem.eql(u8, argument_name, "F"))
+                    arg = try self.lowerGenericValue(field.type_node orelse field.default_value orelse return error.InvalidFunctionSignatureArguments, false);
+            }
+            return self.addType(.{ .function_signature = .{ .function = arg, .kind = kind, .source = self.sourceRef(generic.base) } });
+        }
         if (name.qualifier_token == null and std.mem.eql(u8, base_text, "choice_union")) {
             const literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidChoiceUnionArguments;
             if (literal.fields.len != 2) return error.InvalidChoiceUnionArguments;
@@ -1157,6 +1172,25 @@ pub const Context = struct {
         return .{ .definition = .{ .literal = .{ .origin = reference, .captures = .{ .start = start, .len = @intCast(captures.items.len) } } } };
     }
 
+    pub fn lowerFunctionValue(self: *Context, node: syn.NodeIndex) anyerror!ir.GenericArgument.Value {
+        if (self.tree.typeReference(node)) |reference| if (reference == .name) {
+            const name = self.tree.tokenTextFromSource(self.source, reference.name.name_token);
+            if (reference.name.qualifier_token != null or (self.parameter(name) == null and self.localFunction(name) == null)) {
+                const external = try self.writer.addExternalRef(.{
+                    .kind = .function,
+                    .module_path = if (reference.name.qualifier_token) |token| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token, reference.name.name_token) else null,
+                    .name = try self.writer.addString(name),
+                    .source = self.sourceRef(node),
+                });
+                const declarations = &self.graph.semantic.parameterized_storage.ir.declarations;
+                const id: ir.ParameterizedDeclId = @enumFromInt(declarations.items.len);
+                try declarations.append(self.allocator, .{ .target = .{ .external = external } });
+                return .{ .definition = .{ .literal = .{ .origin = id } } };
+            }
+        };
+        return self.lowerGenericValue(node, false);
+    }
+
     /// An associated family annotation supplies the expected entity kind even
     /// when its name belongs to an imported or earlier interactive module.
     pub fn lowerFamilyValue(self: *Context, node: syn.NodeIndex) anyerror!ir.GenericArgument.Value {
@@ -1210,6 +1244,10 @@ pub const Context = struct {
                     .type => .{ .type = try self.addType(.{ .parameter = binding.id }) },
                     .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = binding.id }) },
                 };
+            } else if (self.localFunction(name)) |declaration_id| {
+                const reference: ir.ParameterizedDeclId = @enumFromInt(self.graph.semantic.parameterized_storage.ir.declarations.items.len);
+                try self.graph.semantic.parameterized_storage.ir.declarations.append(self.allocator, .{ .target = .{ .module = declaration_id } });
+                return .{ .definition = .{ .literal = .{ .origin = reference } } };
             } else if (self.localType(name)) |declaration_id| {
                 const declaration = self.graph.declarations.items[@intFromEnum(declaration_id)];
                 if (declaration.family_definition != null and declaration.kind == .type) {
@@ -1221,6 +1259,10 @@ pub const Context = struct {
             } else if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget()) != null) {
                 return .{ .type = try self.lowerNamedType(node, token, null, allow_self) };
             }
+        }
+        if (self.tree.tag(node) == .struct_field_access) {
+            const reference = self.tree.typeReference(node) orelse return error.InvalidParameterizedComptimeInteger;
+            if (reference == .name) return .{ .type = try self.lowerNamedType(node, reference.name.name_token, reference.name.qualifier_token, allow_self) };
         }
         if (self.tree.syntaxType(node) != null) return .{ .type = try self.lowerType(node, allow_self) };
         return .{ .comptime_int = try self.lowerIntExpression(node) };
@@ -1699,7 +1741,7 @@ pub const Context = struct {
                 for (literal.fields) |field_node| {
                     const field = self.tree.structTypeField(field_node) orelse return error.InvalidParameterizedCallArgument;
                     const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
-                        .{ .type = try self.lowerType(type_node, false) }
+                        try self.lowerTypeArgument(type_node, false)
                     else if (field.default_value) |value_node|
                         try self.lowerGenericValue(value_node, false)
                     else
@@ -1714,8 +1756,12 @@ pub const Context = struct {
             try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
             const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
             const callee_value: ?ir.ParameterizedNodeId = if (call.module_qualifier == null and call.contract_type == null) blk: {
-                const binding = self.parameterizedBinding(name) orelse break :blk null;
-                break :blk try self.addResolvedNode(node, self.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding });
+                if (self.parameterizedBinding(name)) |binding|
+                    break :blk try self.addResolvedNode(node, self.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding });
+                if (self.parameter(name)) |parameter_binding| if (parameter_binding.kind == .definition) {
+                    break :blk try self.addPending(node, .comptime_parameter, &.{}, null, null, .{ .comptime_parameter = parameter_binding.id });
+                };
+                break :blk null;
             } else null;
             const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(name), null, if (callee_value) |callee| .{ .callee_value = callee } else .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
@@ -2362,6 +2408,14 @@ pub const Context = struct {
         return null;
     }
 
+    fn localFunction(self: *Context, name: []const u8) ?entities.ModuleDeclId {
+        for (self.graph.declarationsNamed(name)) |id| {
+            const declaration = self.graph.declarations.items[@intFromEnum(id)];
+            if (declaration.kind == .function and declaration.family_definition != null) return id;
+        }
+        return null;
+    }
+
     fn localType(self: *Context, name: []const u8) ?entities.ModuleDeclId {
         for (self.graph.declarationsNamed(name)) |id| switch (self.graph.declarations.items[@intFromEnum(id)].kind) {
             .type, .contract_type => return id,
@@ -2383,6 +2437,11 @@ pub const Context = struct {
 
 fn hasGenericParameters(params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) bool {
     return params.len != 0 or params_struct != null;
+}
+
+pub fn isFunctionBuiltin(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) bool {
+    const ty = tree.syntaxType(node) orelse return false;
+    return ty == .name and ty.name.qualifier_token == null and std.mem.eql(u8, tree.tokenTextFromSource(source, ty.name.name_token), "Function");
 }
 
 fn isTypeBuiltin(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) bool {

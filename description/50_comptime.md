@@ -24,6 +24,52 @@ Explicit compile-time execution uses `#run`. Conditional compilation uses
 branch is compiled. This differs from running an ordinary `if` inside
 `#run`; the latter executes the conditional during compile-time evaluation.
 
+## Function identities and signatures
+
+`#(.F: Function)` accepts a compile-time function identity. It uses the same
+definition values as ordinary function aliases and explicit specialization;
+functions with identical signatures retain distinct identities. `Function` is a
+compile-time constraint, not a runtime callback or closure type.
+
+```rg
+double := (.x: Int32) -> (.result: Int32) { result = x * 2 }
+
+Task := #(.F: Function) (.args: inputs_of#(F))
+
+run_task := #(.F: Function) (.task: Task#(F)) -> (.result: result_of#(F)) {
+    result = invoke#(F)(.args = ~task.args)
+}
+```
+
+- `inputs_of#(F)` is the complete input record type, including field defaults.
+- `outputs_of#(F)` is the declared output record type, even for zero or one field.
+- `result_of#(F)` is the type produced by an ordinary call: `Void` for no
+  outputs, the field type for one output, and the output record for several.
+
+These queries require a concrete signature. Specialize generic functions first,
+either inline (`inputs_of#(identity#(Int32))`) or through a named alias. No runtime
+input or expected result selects a specialization for a signature query.
+
+`prepare_args#(F)(.args = (...))` completes an argument record without calling
+`F`. Explicit fields, lexical `assume` values and defaults follow ordinary call
+resolution. Defaults execute when preparing the record, in the caller's lexical
+context. The resulting record owns moved values and retains borrowed dependencies
+under the ordinary storage rules.
+
+```rg
+args ::= prepare_args#(double)(.args = (.x = 21))
+task ::= Task#(double)(.args = ~args)
+answer ::= run_task#(double)(.task = ~task)
+```
+
+`invoke#(F)(.args = record)` evaluates the packed record once and lowers to an
+ordinary checked call. Its fields are moved from lexical temporary storage into
+the selected function's inputs. Preparation does not execute again for an already
+complete record. Ownership, reference dependencies, capabilities and `once`
+restrictions remain those of the selected function. References returned by the
+call cannot outlive their backing storage. Neither argument preparation nor
+packed invocation authorizes cross-thread transfer.
+
 ## Compile-time entry points
 
 `#run` declares and immediately executes an anonymous function. Its signature
