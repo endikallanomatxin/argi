@@ -96,7 +96,10 @@ pub const Scheduler = struct {
             request.value = previous.value;
             request.types_published = previous.types_published;
             // An unpublished recipe has no retained transient type IDs.
-            if (!previous.types_published) @memset(request.bindings.types, null);
+            if (!previous.types_published) {
+                @memset(request.bindings.types, null);
+                @memset(request.bindings.definitions, null);
+            }
         }
         for (self.requests.items[saved.requests..]) |*request| request.bindings.deinit(self.allocator);
         self.requests.shrinkRetainingCapacity(saved.requests);
@@ -152,13 +155,28 @@ pub const Scheduler = struct {
             if (!std.mem.eql(?i64, request.bindings.ints, bindings.ints)) continue;
             if (request.type_recipe) |id| {
                 if (!try self.type_recipes.items[id].matches(self.allocator, self.functions.graph, bindings.types)) continue;
-            } else if (!std.mem.eql(?g.GlobalTypeId, request.bindings.types, bindings.types)) continue;
+                if (!try self.type_recipes.items[id].matchesDefinitions(self.allocator, self.functions.graph, bindings.definitions)) continue;
+            } else {
+                if (!std.mem.eql(?g.GlobalTypeId, request.bindings.types, bindings.types)) continue;
+                if (request.bindings.definitions.len != bindings.definitions.len) continue;
+                var same = true;
+                for (request.bindings.definitions, bindings.definitions) |left, right| {
+                    if (left == null or right == null) {
+                        if ((left == null) != (right == null)) same = false;
+                    } else if (left.?.origin != right.?.origin or !@import("types.zig").genericArgumentsEqual(self.functions.graph, left.?.captures, right.?.captures)) same = false;
+                    if (!same) break;
+                }
+                if (!same) continue;
+            }
             return request.value orelse error.ComptimeExecutionPending;
         }
-        const temporary = for (bindings.types) |ty| {
+        const temporary_type = for (bindings.types) |ty| {
             if (ty) |id| if (@intFromEnum(id) >= self.stable_type_count) break true;
         } else false;
-        var types: ?TypeRecipe = if (temporary) TypeRecipe.capture(self.allocator, self.functions.graph, .{ .types = self.stable_type_count, .declarations = self.stable_declaration_count, .type_definitions = self.stable_type_definition_count, .family_definitions = self.stable_family_definition_count, .nodes = self.stable_node_count }, bindings.types) catch |err| switch (err) {
+        const has_definitions = for (bindings.definitions) |value| {
+            if (value != null) break true;
+        } else false;
+        var types: ?TypeRecipe = if (temporary_type or has_definitions) TypeRecipe.captureBindings(self.allocator, self.functions.graph, .{ .types = self.stable_type_count, .declarations = self.stable_declaration_count, .type_definitions = self.stable_type_definition_count, .family_definitions = self.stable_family_definition_count, .nodes = self.stable_node_count }, bindings.types, bindings.definitions) catch |err| switch (err) {
             error.ComptimeTypeRecipePending => return error.ComptimeExecutionPending,
             else => return err,
         } else null;
@@ -176,6 +194,7 @@ pub const Scheduler = struct {
         if (types) |owned| {
             self.type_recipes.appendAssumeCapacity(owned);
             @memset(request.bindings.types, null);
+            @memset(request.bindings.definitions, null);
         }
         types = null; // The retained sparse pool owns the suspended description.
         return error.ComptimeExecutionPending;
@@ -186,7 +205,9 @@ pub const Scheduler = struct {
         errdefer self.allocator.free(types);
         const ints = try self.allocator.dupe(?i64, bindings.ints);
         errdefer self.allocator.free(ints);
-        try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .kind = kind, .bindings = .{ .types = types, .ints = ints } });
+        const definitions = try self.allocator.dupe(?g.DefinitionValue, bindings.definitions);
+        errdefer self.allocator.free(definitions);
+        try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .kind = kind, .bindings = .{ .types = types, .ints = ints, .definitions = definitions } });
     }
 
     pub fn materialize(self: *Scheduler) !bool {
@@ -201,6 +222,8 @@ pub const Scheduler = struct {
                 const request = self.requests.items[index];
                 const published = try self.allocator.alloc(?g.GlobalTypeId, request.bindings.types.len);
                 defer self.allocator.free(published);
+                const definitions = try self.allocator.alloc(?g.DefinitionValue, request.bindings.definitions.len);
+                defer self.allocator.free(definitions);
                 // Materializing a generic choice default can suspend on another
                 // compile-time dependency and grow either coordinator pool.
                 // Borrow the owned recipe buffers through a copied descriptor.
@@ -213,9 +236,18 @@ pub const Scheduler = struct {
                     error.ComptimeTypeRecipePending => continue,
                     else => return err,
                 };
+                recipe.publishDefinitions(self.allocator, self.functions.generics, definitions) catch |err| switch (err) {
+                    error.ComptimeExecutionPending => {
+                        publication.retainPendingExecution();
+                        continue;
+                    },
+                    error.ComptimeTypeRecipePending => continue,
+                    else => return err,
+                };
                 try self.recordRequest(index);
                 publication.commit();
                 @memcpy(self.requests.items[index].bindings.types, published);
+                @memcpy(self.requests.items[index].bindings.definitions, definitions);
                 self.requests.items[index].types_published = true;
                 changed = true;
             }
@@ -228,6 +260,7 @@ pub const Scheduler = struct {
             };
             defer bindings.deinit(self.allocator);
             bindings.ints = try self.allocator.dupe(?i64, request.bindings.ints);
+            bindings.definitions = try self.allocator.dupe(?g.DefinitionValue, request.bindings.definitions);
             const node = self.functions.instantiateComptimeExpression(request.module, request.expression, &bindings) catch |err| switch (err) {
                 error.ComptimeExecutionPending => {
                     speculation.retainPendingExecution();

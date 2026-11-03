@@ -691,8 +691,8 @@ pub const Syntaxer = struct {
     fn parameterizedDefinitionWithCaptures(self: *Syntaxer, parameters: syn.NodeRange, parameters_struct: ?syn.NodeIndex, value: syn.NodeIndex, captured_parameter_count: u32) SyntaxerError!syn.NodeIndex {
         if (parameters.start == parameters.end and parameters_struct == null) return value;
         if (self.file.functionDefinition(self.file.definitionBody(value))) |function| {
-            if (function.c_abi != 0) {
-                try self.diags.add(self.tokenLocation(), .syntax, "CFunction requires a concrete non-generic definition", .{});
+            if (function.c_abi != 0 and (function.c_options.unwrap() != null or function.body.unwrap() == null or captured_parameter_count != 0)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "generic CFunction definitions require a body without symbol options or lexical captures", .{});
                 return SyntaxerError.ExpectedStructField;
             }
         }
@@ -2084,14 +2084,16 @@ pub const Syntaxer = struct {
                         return SyntaxerError.ExpectedStructField;
                     }
                     self.skipNewLinesAndComments();
-                    if (self.tokenIs(.open_parenthesis) or self.tokenIs(.colon)) {
-                        try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer declares a type, without symbol options or a body", .{});
+                    const options = if (self.tokenIs(.open_parenthesis)) syn.OptionalNodeIndex.init(try self.parseCollectionLiteral(true)) else syn.OptionalNodeIndex.none;
+                    if (self.tokenIs(.colon)) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer declares a type, without a body", .{});
                         return SyntaxerError.ExpectedStructField;
                     }
                     return self.functionBinding(.c_function_pointer_declaration, name.token, generic_params, generic_params_struct, .{
                         .input = input,
                         .output = output,
                         .body = .none,
+                        .c_options = options,
                         .c_abi = 1,
                     });
                 }

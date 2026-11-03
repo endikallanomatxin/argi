@@ -501,7 +501,7 @@ pub const Resolver = struct {
 
     /// Reflection fixes the producer before consulting its signature. Runtime
     /// inputs and desired results never select a function specialization here.
-    fn concreteDefinition(self: *Resolver, definition: global_sg.DefinitionValue, source: primitives.SourceRef) !global_sg.GlobalFunctionId {
+    pub fn concreteDefinition(self: *Resolver, definition: global_sg.DefinitionValue, source: primitives.SourceRef) !global_sg.GlobalFunctionId {
         const family = self.graph.familyDefinition(definition.origin);
         if (family.kind != .function) {
             self.generics.comptime_failure = .{ .source = source, .reason = "expected a function definition" };
@@ -620,6 +620,15 @@ pub const Resolver = struct {
         }
         if (reference.module_path == null and std.mem.eql(u8, name, "_zeroed")) {
             const node = (try self.core.makeZeroed(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
+            self.stats.calls += 1;
+            return .resolved;
+        }
+        if (reference.module_path == null and std.mem.eql(u8, name, "is_plain_data")) {
+            const node = (self.makeIsPlainData(input, self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+                error.ComptimeExecutionPending => return .deferred,
+                else => return err,
+            }) orelse return .deferred;
             try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             self.stats.calls += 1;
             return .resolved;
@@ -2271,6 +2280,55 @@ pub const Resolver = struct {
         return .{ .source = source, .ty = original, .content = .{ .int_literal = bound } };
     }
 
+    fn makeIsPlainData(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) anyerror!?global_sg.Node {
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        if (literal.fields.len != 1) return null;
+        const field = self.graph.value_fields.items[literal.fields.start];
+        if (!std.mem.eql(u8, self.graph.text(field.name), "type")) return null;
+        const ty = global_types.typeValue(self.graph, field.value) orelse return null;
+        const contracts = self.nested_call_context orelse return null;
+        const plain = try self.isPlainDataType(contracts, ty, 0);
+        return .{ .source = source, .ty = try self.generics.internType(.{ .builtin = .Bool }), .content = .{ .bool_literal = plain } };
+    }
+
+    fn isPlainDataType(self: *Resolver, contracts: *contract_mod.Resolver, ty: global_sg.GlobalTypeId, depth: usize) anyerror!bool {
+        if (depth > 128) return false;
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return error.ComptimeExecutionPending;
+        if (semantic == .generic and global_types.genericInstance(self.graph, ty) == null) {
+            _ = try self.generics.ensureGenericInstance(ty);
+            if (global_types.genericInstance(self.graph, ty) == null) return error.ComptimeExecutionPending;
+        }
+        if (@import("c_abi.zig").isRawPointer(self.graph, ty) or @import("c_abi.zig").isFunctionPointer(self.graph, ty)) return false;
+        if (semantic == .pointer or semantic == .virtual or semantic == .definition) return false;
+        if (semantic == .nullable or semantic == .inferred_errable) return error.ComptimeExecutionPending;
+        if (standard_contracts.standardDefinition(self.graph, "Deinit")) |contract| {
+            if (try contracts.implements(ty, contract)) return false;
+        }
+        if (global_types.representationType(self.graph, ty)) |representation| {
+            if (representation != ty) return self.isPlainDataType(contracts, representation, depth + 1);
+        } else return error.ComptimeExecutionPending;
+        if (semantic == .builtin) return semantic.builtin != .Type and semantic.builtin != .Any;
+        if (global_types.arrayElement(self.graph, ty)) |element| return self.isPlainDataType(contracts, element, depth + 1);
+        if (global_types.fields(self.graph, ty)) |fields| {
+            for (0..fields.len) |index| {
+                const child = self.graph.fields.items[fields.start + index].ty;
+                if (!try self.isPlainDataType(contracts, child, depth + 1)) return false;
+            }
+            return true;
+        }
+        if (global_types.variants(self.graph, ty)) |variants| {
+            for (0..variants.len) |index| {
+                const child = self.graph.variants.items[variants.start + index].payload_type orelse continue;
+                if (!try self.isPlainDataType(contracts, child, depth + 1)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     fn makeSizeOf(
         self: *Resolver,
         input: global_sg.GlobalNodeId,
@@ -2580,6 +2638,7 @@ pub const Resolver = struct {
             .flags = .{
                 .has_declared_body = located.parameterized.body != null,
                 .is_once = located.parameterized.is_once,
+                .is_c_abi = located.parameterized.is_c_abi,
                 .is_generic_instantiation = true,
                 .is_comptime_entry = located.parameterized.is_comptime_entry,
                 .is_comptime_host_entry = located.parameterized.is_comptime_host_entry,
@@ -4046,6 +4105,8 @@ pub const Resolver = struct {
             }
             if (module_path == null and std.mem.eql(u8, name, "_zeroed"))
                 return (try self.resolver.core.makeZeroed(input, self.resolver.sourceFor(self.module_index, source))) orelse error.DeferredGenericFunction;
+            if (module_path == null and std.mem.eql(u8, name, "is_plain_data"))
+                return (try self.resolver.makeIsPlainData(input, self.resolver.sourceFor(self.module_index, source))) orelse error.DeferredGenericFunction;
             if (module_path == null and std.mem.eql(u8, name, "size_of"))
                 return (try self.resolver.makeSizeOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.SizeOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "alignment_of"))
@@ -4268,6 +4329,19 @@ pub const Resolver = struct {
                 }
                 return error.UnknownParameterizedField;
             };
+            if (std.mem.startsWith(u8, name, "_") and hit.field.source.file_index < self.resolver.graph.files.items.len) {
+                const owner = self.resolver.graph.files.items[hit.field.source.file_index].module;
+                const caller: global_sg.GlobalModuleId = @enumFromInt(self.module_index);
+                if (!self.resolver.graph.sameModuleNamespace(owner, caller) and
+                    !(self.resolver.graph.modules.items[self.module_index].is_bundled_core and self.resolver.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
+                {
+                    self.resolver.generics.comptime_failure = .{
+                        .source = self.resolver.sourceFor(self.module_index, source),
+                        .reason = try std.fmt.allocPrint(self.resolver.allocator, "field '{s}' is private to its module", .{name}),
+                    };
+                    return error.InvalidGenericCallArguments;
+                }
+            }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = hit.field.ty,

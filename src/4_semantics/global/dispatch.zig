@@ -92,6 +92,8 @@ pub const Resolver = struct {
         if (operation == .resolve_call) {
             const call = operation.resolve_call;
             const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+            if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "is_plain_data"))
+                return self.generic_functions.tryResolve(module_index, module, o, operation);
             if (reference.module_path == null and (reference.generic_arguments != null or reference.computed_arguments != null) and (std.mem.eql(u8, module.text(reference.name), "invoke") or std.mem.eql(u8, module.text(reference.name), "prepare_args")))
                 return self.generic_functions.tryResolve(module_index, module, o, operation);
             {

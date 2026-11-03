@@ -366,10 +366,19 @@ pub const Resolver = struct {
         const result_ty = unwrapSingleField(self.graph, ok_payload) orelse ok_payload;
 
         const target = globalizer.globalNode(o, value.node);
-        const propagated_ty = if (value.owner_function) |local_owner|
-            (try self.functionErrableType(globalizer.globalFunction(o, local_owner))) orelse return false
+        const propagated_ty = (if (value.owner_function) |local_owner|
+            self.functionErrableType(globalizer.globalFunction(o, local_owner))
         else
-            (try self.enclosingErrableType(target)) orelse return false;
+            self.enclosingErrableType(target)) catch |failure| {
+            if (failure == error.ErrorPropagationRequiresErrableReturn) {
+                if (self.diagnostics) |diagnostics| {
+                    const location: primitives.SourceRef = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset };
+                    try diagnostics.add(@import("source_location.zig").location(self.graph, diagnostics, location), .semantic, "error propagation requires an Errable function result; handle the error explicitly or return an Errable result", .{});
+                    return error.Reported;
+                }
+            }
+            return failure;
+        } orelse return false;
         const propagated_error = global_types.findVariant(self.graph, propagated_ty, "error") orelse err;
         const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
         const source: primitives.SourceRef = .{

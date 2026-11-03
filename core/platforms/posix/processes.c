@@ -149,3 +149,5 @@ int32_t _argi_process_stream_write(uintptr_t handle, uint8_t byte) {
 #include "../shared/filesystem.c"
 
 #include "../shared/atomic.c"
+#include "../shared/thread.c"
+#include "../shared/task.c"

@@ -310,7 +310,11 @@ feature first.
   in callee_value. Every call traversal must visit that value before its arguments,
   including checker and summary domains. Codegen shares direct C call lowering,
   applies ABI attributes at the call site, and guards null addresses; prototypes
-  must not create LLVM symbols. Generic callback invocation remains pending.
+  must not create LLVM symbols. Generic CFunction bodies can be fully specialized
+  before callback construction, including inside generic factories. Preserve
+  their C ABI flags and concrete identity; reject generic foreign imports,
+  symbol options, runtime captures and once bodies. Specialization grants no
+  foreign lifetime or cross-thread transfer permission.
 
 - Optional CPython embedding lives entirely in `more/python`; ordinary builds
   must not require Python headers or libraries. Consumers explicitly compile

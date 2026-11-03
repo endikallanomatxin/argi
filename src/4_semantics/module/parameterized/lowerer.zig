@@ -268,6 +268,7 @@ pub const Context = struct {
                     try self.writer.addParameterizedFunction(.{
                         .captured_parameter_count = function.captured_parameter_count,
                         .is_once = function.is_once,
+                        .is_c_abi = function.c_abi,
                         .declaration = decl_id,
                         .concrete_function = if (params.len == 0 and (staged_body or deferred_signature)) declaration.function_id else null,
                         .parameters = params,

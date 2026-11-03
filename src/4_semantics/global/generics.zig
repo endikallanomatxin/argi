@@ -1005,7 +1005,7 @@ pub const Resolver = struct {
                 const base = try self.instantiateParameterizedType(module_index, projection.base, environment);
                 break :value try self.definition_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(projection.member), self.globalSource(module_index, projection.source));
             },
-            .parameter => |parameter| if (bindings) |environment| environment.definitions[@intFromEnum(parameter)] orelse error.UnboundDefinitionParameter else error.UnboundDefinitionParameter,
+            .parameter => |parameter| if (bindings) |environment| if (@intFromEnum(parameter) < environment.definitions.len) environment.definitions[@intFromEnum(parameter)] orelse error.UnboundDefinitionParameter else error.UnboundDefinitionParameter else error.UnboundDefinitionParameter,
             .module => |local| .{ .origin = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[module_index], local)) orelse return error.ExpectedParameterizedDefinition },
             .external => |external| value: {
                 const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
@@ -1256,7 +1256,7 @@ pub const Resolver = struct {
 
     pub fn instantiateDefinitionValue(self: *Resolver, module_index: usize, value: @FieldType(ir.GenericArgument.Value, "definition"), bindings: *Bindings) anyerror!global_sg.DefinitionValue {
         return switch (value) {
-            .parameter => |id| bindings.definitions[@intFromEnum(id)] orelse error.UnboundDefinitionParameter,
+            .parameter => |id| if (@intFromEnum(id) < bindings.definitions.len) bindings.definitions[@intFromEnum(id)] orelse error.UnboundDefinitionParameter else error.UnboundDefinitionParameter,
             .literal => |literal| value: {
                 const definition = try self.resolveParameterizedDefinitionValue(module_index, literal.origin, bindings);
                 const captures = try self.instantiateParameterizedArguments(module_index, literal.captures, bindings);

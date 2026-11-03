@@ -84,7 +84,7 @@ const Context = struct {
         defer self.budget = previous_budget;
         const result = switch (node.content) {
             .function_call => try self.callConstant(id, 0),
-            .binding_use, .binary_operation, .comparison, .struct_field_access, .array_index => try self.expressionConstant(id, 0),
+            .binding_use, .binary_operation, .comparison, .logical_operation, .struct_field_access, .array_index => try self.expressionConstant(id, 0),
             else => return error.UnsupportedCompileTimeExpression,
         };
         try self.graph.setNode(self.allocator, id, self.graph.node(result));
@@ -157,7 +157,7 @@ const Context = struct {
             },
             .bool_literal => |value| .{ .boolean = value },
             .function_call => try self.constant(try self.callConstant(id, depth + 1), depth + 1),
-            .binary_operation, .comparison, .struct_field_access, .array_index => try self.constant(try self.expressionConstant(id, depth + 1), depth + 1),
+            .binary_operation, .comparison, .logical_operation, .struct_field_access, .array_index => try self.constant(try self.expressionConstant(id, depth + 1), depth + 1),
             .binding_use => |id_binding| blk: {
                 const binding = self.graph.binding(id_binding);
                 if (binding.mutability != .constant) return error.NonConstantCompileTimeArgument;
@@ -203,6 +203,21 @@ const Context = struct {
             const initialization = binding.initialization orelse return error.NonConstantCompileTimeArgument;
             const value = try self.constant(initialization, depth + 1);
             return @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, &.{id}, &.{value}, &self.budget, &self.failure_trace);
+        }
+        if (node.content == .logical_operation) {
+            const operation = node.content.logical_operation;
+            const left = try self.constant(operation.left, depth + 1);
+            if (left != .boolean) return error.NonConstantCompileTimeArgument;
+            if ((operation.operator == .and_ and !left.boolean) or (operation.operator == .or_ and left.boolean)) {
+                const result: g.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                try self.graph.nodes.append(self.allocator, .{ .source = node.source, .ty = node.ty, .content = .{ .bool_literal = left.boolean } });
+                return result;
+            }
+            const right = try self.constant(operation.right, depth + 1);
+            if (right != .boolean) return error.NonConstantCompileTimeArgument;
+            const result: g.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+            try self.graph.nodes.append(self.allocator, .{ .source = node.source, .ty = node.ty, .content = .{ .bool_literal = right.boolean } });
+            return result;
         }
         var operands: [2]g.GlobalNodeId = undefined;
         const count: usize = switch (node.content) {

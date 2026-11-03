@@ -70,6 +70,12 @@ restrictions remain those of the selected function. References returned by the
 call cannot outlive their backing storage. Neither argument preparation nor
 packed invocation authorizes cross-thread transfer.
 
+`is_plain_data(.type = T)` checks a concrete type recursively. Scalars, arrays,
+records and choices qualify only when every reachable value has no references,
+raw pointers, virtual handles, callbacks or selected destructor. This is a type
+query, not a copy or transfer capability; unknown types remain unresolved until
+their representation and conformance evidence are available.
+
 ## Compile-time entry points
 
 `#run` declares and immediately executes an anonymous function. Its signature

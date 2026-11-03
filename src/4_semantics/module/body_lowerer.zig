@@ -177,7 +177,8 @@ const Context = struct {
                 try self.lowerBlockWithDefaults(body_node, .{ .syntax = declaration.output, .bindings = outputs.items, .fields = interface.output })
             else
                 null;
-            const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
+            const isolated = if (declaration.c_function_pointer) if (declaration.c_options) |options| try self.lowerCallbackOptions(options) else false else false;
+            const foreign = if (!declaration.c_function_pointer and declaration.c_options != null) try self.lowerForeignOptions(declaration.c_options.?) else ForeignOptions{};
             if (foreign.exported and declaration.body == null)
                 return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
             const previous = self.graph.functions.items[@intFromEnum(function_id)];
@@ -198,6 +199,7 @@ const Context = struct {
                     .has_declared_body = declaration.body != null,
                     .is_c_abi = declaration.c_abi,
                     .is_c_function_pointer = declaration.c_function_pointer,
+                    .is_isolated_callback = isolated,
                     .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },
@@ -211,6 +213,22 @@ const Context = struct {
 
     // Options become owned module-local metadata. Cached canonical graphs and
     // global relocation must not recover foreign names from borrowed syntax.
+    fn lowerCallbackOptions(self: *Context, options: syn.NodeIndex) !bool {
+        const fields = self.tree.structValueLiteral(options).?.fields;
+        var isolated: ?bool = null;
+        for (fields) |field| {
+            if (self.tree.tag(field) != .struct_value_field or !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, self.tree.mainToken(field)), "isolated"))
+                return self.foreignOptionError(field, "CFunctionPointer supports only the '.isolated' option");
+            if (isolated != null) return self.foreignOptionError(field, "duplicate CFunctionPointer '.isolated' option");
+            const value = self.tree.data(field).node;
+            const literal = self.tree.literal(value) orelse return self.foreignOptionError(value, "CFunctionPointer '.isolated' requires a boolean literal");
+            const content = self.tree.tokenContent(literal.token);
+            if (content != .literal or content.literal != .bool_literal) return self.foreignOptionError(value, "CFunctionPointer '.isolated' requires a boolean literal");
+            isolated = content.literal.bool_literal;
+        }
+        return isolated orelse false;
+    }
+
     const ForeignOptions = struct { symbol: ?primitives.StringRange = null, exported: bool = false };
 
     fn lowerForeignOptions(self: *Context, options: syn.NodeIndex) !ForeignOptions {

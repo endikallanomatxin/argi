@@ -60,6 +60,7 @@ pub const Recipe = struct {
     arguments: std.ArrayList(p.GenericArgument(Ids)) = .empty,
     strings: std.ArrayList(u8) = .empty,
     roots: []?Ids.TypeId = &.{},
+    definition_roots: []?p.DefinitionValue(Ids) = &.{},
 
     pub fn deinit(self: *Recipe, a: std.mem.Allocator) void {
         self.nodes.deinit(a);
@@ -72,6 +73,7 @@ pub const Recipe = struct {
         self.arguments.deinit(a);
         self.strings.deinit(a);
         a.free(self.roots);
+        a.free(self.definition_roots);
         self.* = .{};
     }
 
@@ -81,6 +83,7 @@ pub const Recipe = struct {
         inline for (.{ "nodes", "defaults", "default_bindings", "default_fields", "default_elements", "fields", "variants", "arguments", "strings" }) |name|
             try @field(result, name).appendSlice(a, @field(self, name).items);
         result.roots = try a.dupe(?Ids.TypeId, self.roots);
+        result.definition_roots = try a.dupe(?p.DefinitionValue(Ids), self.definition_roots);
         return result;
     }
 
@@ -93,6 +96,42 @@ pub const Recipe = struct {
         result.roots = try a.alloc(?Ids.TypeId, roots.len);
         for (roots, result.roots) |root, *out| out.* = if (root) |ty| try context.typeId(ty, 0) else null;
         return result;
+    }
+
+    pub fn captureBindings(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, boundary: Boundary, roots: []const ?g.GlobalTypeId, definitions: []const ?g.DefinitionValue) !Recipe {
+        var result = try capture(a, graph, boundary, roots);
+        errdefer result.deinit(a);
+        var context = Capture{ .a = a, .graph = graph, .boundary = boundary, .recipe = &result };
+        defer context.seen.deinit(a);
+        defer context.seen_defaults.deinit(a);
+        result.definition_roots = try a.alloc(?p.DefinitionValue(Ids), definitions.len);
+        for (definitions, result.definition_roots) |value, *out| {
+            out.* = if (value) |definition| .{ .origin = try context.familyDefinition(definition.origin), .captures = try context.captureArguments(definition.captures, 0) } else null;
+        }
+        return result;
+    }
+
+    pub fn publishDefinitions(self: *const Recipe, a: std.mem.Allocator, generics: *Generics, roots: []?g.DefinitionValue) !void {
+        std.debug.assert(roots.len == self.definition_roots.len);
+        var context = Publish{ .a = a, .generics = generics, .recipe = self, .mapped = try a.alloc(?g.GlobalTypeId, self.nodes.items.len) };
+        defer a.free(context.mapped);
+        context.defaults = try a.alloc(?g.GlobalNodeId, self.defaults.items.len);
+        defer a.free(context.defaults);
+        @memset(context.defaults, null);
+        @memset(context.mapped, null);
+        for (self.definition_roots, roots) |value, *out| out.* = if (value) |definition| .{ .origin = definition.origin, .captures = try context.publishArguments(definition.captures) } else null;
+    }
+
+    pub fn matchesDefinitions(self: *const Recipe, a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, roots: []const ?g.DefinitionValue) !bool {
+        if (roots.len != self.definition_roots.len) return false;
+        var context = Match{ .a = a, .graph = graph, .recipe = self };
+        defer context.seen.deinit(a);
+        for (self.definition_roots, roots) |saved, current| {
+            if (saved == null or current == null) {
+                if ((saved == null) != (current == null)) return false;
+            } else if (saved.?.origin != current.?.origin or !try context.argumentsEqual(saved.?.captures, current.?.captures)) return false;
+        }
+        return true;
     }
 
     /// Rebuild into the coordinator's construction graph, never a losing probe.

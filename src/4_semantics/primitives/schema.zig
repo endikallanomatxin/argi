@@ -185,7 +185,8 @@ pub const FunctionFlags = packed struct(u32) {
     is_c_function_pointer: bool = false,
     is_comptime_entry: bool = false,
     is_comptime_host_entry: bool = false,
-    reserved: u17 = 0,
+    is_isolated_callback: bool = false,
+    reserved: u16 = 0,
     // Trusted metadata identities retain ordinary function-body safety.
     is_source_location_id: bool = false,
     is_source_location_resolver: bool = false,

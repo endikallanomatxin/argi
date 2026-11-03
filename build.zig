@@ -186,14 +186,20 @@ pub fn build(b: *std.Build) void {
     internal_test_step.dependOn(&run_internal_tests.step);
 
     const http_tests = b.addRunArtifact(exe);
-    http_tests.addArgs(&.{ "test", "more/network/http", "--sysroot", b.getInstallPath(.prefix, "") });
+    // Shared CLI fixtures can remove the repository's .argi-cache. Give HTTP
+    // validation its own working directory so linking cannot race that cleanup.
+    const http_workspace = b.addWriteFiles();
+    _ = http_workspace.add(".keep", "");
+    http_tests.setCwd(http_workspace.getDirectory());
+    http_tests.addArgs(&.{ "test", b.pathFromRoot("more/network/http"), "--sysroot", b.getInstallPath(.prefix, "") });
     if (b.args) |args| http_tests.addArgs(args);
     http_tests.step.dependOn(b.getInstallStep());
     http_tests.has_side_effects = true;
     const http_test_step = b.step("test-http", "Run the HTTP library's native Argi tests");
     http_test_step.dependOn(&http_tests.step);
     const http_example = b.addRunArtifact(exe);
-    http_example.addArgs(&.{ "build", "more/network/http/examples/server", "--sysroot", b.getInstallPath(.prefix, ""), "--frontend-jobs", "1", "--output", ".zig-cache/http-server-example" });
+    http_example.setCwd(http_workspace.getDirectory());
+    http_example.addArgs(&.{ "build", b.pathFromRoot("more/network/http/examples/server"), "--sysroot", b.getInstallPath(.prefix, ""), "--frontend-jobs", "1", "--output", b.pathFromRoot(".zig-cache/http-server-example") });
     http_example.step.dependOn(&http_tests.step);
     http_example.has_side_effects = true;
     http_test_step.dependOn(&http_example.step);

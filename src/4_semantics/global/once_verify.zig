@@ -90,6 +90,8 @@ const State = struct {
     current_function: ?graph_mod.GlobalFunctionId = null,
     visited_nodes: ?*std.AutoHashMapUnmanaged(graph_mod.GlobalNodeId, void) = null,
     had_error: bool = false,
+    callback_source: ?graph_mod.GlobalNodeId = null,
+    isolation_source: ?graph_mod.GlobalNodeId = null,
 
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
         if (self.active_functions.contains(function_id)) return;
@@ -114,6 +116,7 @@ const State = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id|
             try self.walkNode(node_id);
+        if (block.ret_val) |value| try self.walkNode(value);
     }
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
@@ -124,14 +127,38 @@ const State = struct {
         if (visited.found_existing) return;
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
-            .function_address => {},
+            .function_address => |callee| {
+                if (self.isolation_source) |origin| {
+                    try self.isolationError(origin, "indirect or unresolved calls");
+                    return;
+                }
+                // A foreign holder can invoke the address arbitrarily often.
+                // Check the complete reachable body without consuming the
+                // enclosing entrypoint's once-use state.
+                if (self.callback_source == null) {
+                    const outer = self.seen_once;
+                    const outer_active = self.active_functions;
+                    self.seen_once = Uses.init(self.allocator);
+                    self.active_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(self.allocator);
+                    defer {
+                        self.seen_once.deinit();
+                        self.seen_once = outer;
+                        self.active_functions.deinit();
+                        self.active_functions = outer_active;
+                    }
+                    self.callback_source = node_id;
+                    defer self.callback_source = null;
+                    if (self.isIsolatedCallback(node.ty)) self.isolation_source = node_id;
+                    defer self.isolation_source = null;
+                    try self.walkCall(node_id, callee);
+                } else try self.walkCall(node_id, callee);
+            },
+            .binding_use => |binding| try self.checkGlobalBinding(binding),
             .declaration,
-            .binding_use,
 
             .int_literal,
             .float_literal,
             .char_literal,
-            .captured_expression,
             .string_literal,
             .bool_literal,
             .break_statement,
@@ -140,12 +167,16 @@ const State = struct {
             .type_literal,
             .definition_literal,
             => {},
+            .captured_expression => if (self.isolation_source) |origin| try self.isolationError(origin, "indirect or unresolved calls"),
             .binding_declaration => |binding_id| {
                 const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
                 if (binding.initialization) |value| try self.walkNode(value);
             },
             .move_value, .denied_implicit_copy => |value| try self.walkNode(value),
-            .assignment => |assignment| try self.walkNode(assignment.value),
+            .assignment => |assignment| {
+                try self.checkGlobalBinding(assignment.binding);
+                try self.walkNode(assignment.value);
+            },
             .auto_deinit_binding => |auto_id| {
                 const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
                 if (auto.targetNode()) |target| try self.walkNode(target);
@@ -155,7 +186,10 @@ const State = struct {
             // Cleanup targets describe already-evaluated argument identities.
             // Only the ordinary callee/input nodes execute at this boundary.
             .function_call => |call| {
-                if (call.callee_value) |value| try self.walkNode(value);
+                if (call.callee_value) |value| {
+                    if (self.isolation_source) |origin| try self.isolationError(origin, "indirect calls");
+                    try self.walkNode(value);
+                }
                 try self.walkNode(call.input);
                 try self.walkCall(node_id, call.callee);
             },
@@ -164,6 +198,7 @@ const State = struct {
                 try self.walkNode(virtualize.value);
             },
             .virtual_call => |id| {
+                if (self.isolation_source) |origin| try self.isolationError(origin, "indirect or unresolved calls");
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
@@ -269,8 +304,59 @@ const State = struct {
         }
     }
 
+    fn isIsolatedCallback(self: *const State, ty: ?graph_mod.GlobalTypeId) bool {
+        const semantic = self.graph.resolvedSemanticType(ty orelse return false) orelse return false;
+        if (semantic != .nominal) return false;
+        const definition = self.graph.typeDefinition(semantic.nominal);
+        if (definition.struct_layout != .c_function_pointer) return false;
+        return self.graph.function(definition.function_id orelse return false).flags.is_isolated_callback;
+    }
+
+    fn checkGlobalBinding(self: *State, binding: graph_mod.GlobalBindingId) !void {
+        const origin = self.isolation_source orelse return;
+        if (!self.graph.isModuleBinding(binding) or @import("types.zig").isStaticBinding(self.graph, binding)) return;
+        if (!self.plainGlobalType(self.graph.binding(binding).ty, 0)) try self.isolationError(origin, "nonplain global storage");
+    }
+
+    fn plainGlobalType(self: *const State, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        if (depth > 128) return false;
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
+        return switch (semantic) {
+            .builtin => |builtin| builtin != .Type and builtin != .Any,
+            .array => |array| self.plainGlobalType(array.element, depth + 1),
+            .structural => |record| blk: {
+                for (self.graph.fields.items[record.fields.start..][0..record.fields.len]) |field|
+                    if (!self.plainGlobalType(field.ty, depth + 1)) break :blk false;
+                break :blk true;
+            },
+            .structural_choice => |choice| blk: {
+                for (self.graph.variants.items[choice.variants.start..][0..choice.variants.len]) |variant|
+                    if (variant.payload_type) |child| {
+                        if (!self.plainGlobalType(child, depth + 1)) break :blk false;
+                    };
+                break :blk true;
+            },
+            else => false,
+        };
+    }
+
+    fn isolationError(self: *State, address: graph_mod.GlobalNodeId, reason: []const u8) !void {
+        try self.diagnostics.add(self.location(self.graph.node(address).source), .semantic, "isolated callback cannot access {s}", .{reason});
+        self.had_error = true;
+    }
+
     fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
+        if (function.body == null) if (self.isolation_source) |origin| {
+            try self.isolationError(origin, "foreign or unresolved functions");
+            return;
+        };
+        if (function.flags.is_once and self.callback_source != null) {
+            const source = self.graph.node(self.callback_source.?).source;
+            try self.diagnostics.add(self.location(source), .semantic, "callback may be invoked repeatedly and cannot consume a once function", .{});
+            self.had_error = true;
+            return;
+        }
         if (function.flags.is_comptime_host_entry) {
             // Every explicit host entry owns its acquisition scope, including
             // nested entries executed within the same VM invocation.

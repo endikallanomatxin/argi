@@ -77,6 +77,50 @@ pub const Resolver = struct {
             break :blk self.core.declarationTypeValue(declaration_id) orelse return null;
         };
 
+        if (c_abi.isFunctionPointer(self.graph, ty)) {
+            const semantic = self.graph.resolvedSemanticType(ty) orelse return null;
+            if (semantic != .nominal) return null;
+            const literal = switch (self.graph.node(input).content) {
+                .struct_value_literal => |item| item,
+                else => return null,
+            };
+            if (literal.fields.len != 1) {
+                _ = try self.callbackError(source, "CFunctionPointer construction requires '.function = name'");
+                unreachable;
+            }
+            const field = self.graph.value_fields.items[literal.fields.start];
+            if (!std.mem.eql(u8, self.graph.text(field.name), "function")) {
+                _ = try self.callbackError(source, "CFunctionPointer construction requires '.function = name'");
+                unreachable;
+            }
+            const definition = types.definitionValue(self.graph, field.value) orelse return null;
+            const functions = self.generic_functions orelse return null;
+            const function = try functions.concreteDefinition(definition, source);
+            const candidate = self.graph.function(function);
+            const signature = self.graph.function(self.graph.typeDefinition(semantic.nominal).function_id orelse return null);
+            if (!candidate.flags.is_c_abi or !candidate.flags.has_declared_body or candidate.flags.is_once or candidate.flags.is_c_function_pointer) {
+                _ = try self.callbackError(source, "no visible concrete CFunction body matches the callback signature");
+                unreachable;
+            }
+            if (c_abi.physicalInputCount(candidate) != c_abi.physicalInputCount(signature) or candidate.output.len != signature.output.len) {
+                _ = try self.callbackError(source, "no visible concrete CFunction body matches the callback signature");
+                unreachable;
+            }
+            for (0..c_abi.physicalInputCount(signature)) |i| {
+                if (!types.equal(self.graph, self.graph.fields.items[signature.input.start + i].ty, self.graph.fields.items[candidate.input.start + i].ty)) {
+                    _ = try self.callbackError(source, "no visible concrete CFunction body matches the callback signature");
+                    unreachable;
+                }
+            }
+            for (0..signature.output.len) |i| {
+                if (!types.equal(self.graph, self.graph.fields.items[signature.output.start + i].ty, self.graph.fields.items[candidate.output.start + i].ty)) {
+                    _ = try self.callbackError(source, "no visible concrete CFunction body matches the callback signature");
+                    unreachable;
+                }
+            }
+            return .{ .source = source, .ty = ty, .content = .{ .function_address = function } };
+        }
+
         if (try self.contractInitializer(module_index, ty, input, lexical_context, source)) |call| return call;
 
         const fields = types.fields(self.graph, ty) orelse return null;
@@ -143,17 +187,35 @@ pub const Resolver = struct {
                 else => break,
             }
         }
-        const name_ref = reference orelse return self.callbackError(source, "callback '.function' must name a concrete CFunction body");
-        const filter = if (name_ref.module_path) |path|
+        const definition = types.definitionValue(self.graph, selector);
+        if (reference == null and definition == null) {
+            const raw = @intFromEnum(selector);
+            if (raw >= o.node_base and raw - o.node_base < module.semantic.nodes.items.len) {
+                const local = module.semantic.nodes.items[raw - o.node_base];
+                if (local == .pending and module.semantic.pending_operations.items[@intFromEnum(local.pending)] == .resolve_entity_value)
+                    return .deferred;
+            }
+            return self.callbackError(source, "callback '.function' must name a concrete CFunction body");
+        }
+        const filter = if (reference) |name_ref| if (name_ref.module_path) |path|
             try module_linker.resolveImportPath(self.core.allocator, self.graph, self.modules, module_index, module.text(path))
         else
-            null;
+            null else null;
         const signature = self.graph.function(declaration.function_id orelse return .deferred);
         var selected: ?global_sg.GlobalFunctionId = null;
-        for (try self.graph.functionsNamed(self.core.allocator, module.text(name_ref.name))) |id| {
+        var specialized: [1]global_sg.GlobalFunctionId = undefined;
+        const candidates = if (definition) |definition_value| candidates: {
+            const functions = self.generic_functions orelse return .deferred;
+            specialized[0] = functions.concreteDefinition(definition_value, source) catch |err| switch (err) {
+                error.DeferredGenericFunction, error.ComptimeExecutionPending => return .deferred,
+                else => return err,
+            };
+            break :candidates specialized[0..];
+        } else try self.graph.functionsNamed(self.core.allocator, module.text(reference.?.name));
+        for (candidates) |id| {
             const candidate = self.graph.function(id);
             if (!candidate.flags.is_c_abi or !candidate.flags.has_declared_body or candidate.flags.is_once or candidate.flags.is_c_function_pointer) continue;
-            if (!self.core.declarationVisible(module_index, candidate.declaration, filter)) continue;
+            if (definition == null and !self.core.declarationVisible(module_index, candidate.declaration, filter)) continue;
             if (c_abi.physicalInputCount(candidate) != c_abi.physicalInputCount(signature) or candidate.output.len != signature.output.len) continue;
             var matches = true;
             for (0..c_abi.physicalInputCount(signature)) |i| {
