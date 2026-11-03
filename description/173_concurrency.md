@@ -1,5 +1,10 @@
 # Concurrency
 
+The current interface is an initial restricted implementation. Access authority,
+execution effects and general resource transfer are under design in
+[the concurrency proposal](../plan/concurrency.md); they are not guarantees of
+the implementation described here.
+
 Argi's concurrency model builds on ordinary function identities and explicit
 capabilities. Function metaprogramming generates a task specialization from a
 function and a prepared input record. An executor schedules erased tasks through

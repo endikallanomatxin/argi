@@ -1,60 +1,326 @@
-# Concurrency
+# Concurrency: access authority and execution obligations
 
-## Model
+## Status and purpose
 
-Use ordinary function identities, `inputs_of`, `result_of`, `prepare_args` and
-`invoke` to generate task specializations and Runnable evidence. The executor's
-vtable stays monomorphic: it schedules an erased task handle, not a generic
-function. Network, FileSystem and other System capabilities remain independent.
+This is an open design proposal, not a specification of guarantees already
+provided by Argi. The aim is to extend temporal safety to isolation and safe
+coordination of resources while preserving mutable aliasing. The difficult work
+is establishing general safety rules; adding more executor features cannot
+substitute for those rules. Development order belongs in [the release plan](0.5.md).
 
-Prepare arguments in the caller before scheduling. Defaults and assumed inputs
-must not be evaluated again on a worker. Keep task arguments, completion state
-and the eventual result in stable storage independently of a movable Future.
+Function identities, signature introspection, argument preparation and packed
+invocation already support generated task specializations. The initial native
+Future and ThreadedExecutor use stable buffers, single result extraction and
+join-before-cleanup, restricted to plain inputs and results. They demonstrate
+monomorphic scheduling, not a general transfer protocol. `is_plain_data` is not
+proof of concurrent safety: isolated callbacks currently permit mutable numeric
+globals, whose accesses still require caller coordination. See
+[the implemented interface](../description/173_concurrency.md).
 
-Prioritize a threaded executor; retain an interface that can later coordinate
-event-based waits without making all capabilities methods of Executor. A pending
-Future's cleanup must wait for task completion or transfer its storage to a
-checked owner. Dropping it cannot free storage still used by a worker.
+The direction below should guide further investigation. Region representation,
+effect syntax, proof transport and the trusted boundary remain unresolved.
 
-## Remaining design and implementation
+## Principles to preserve
 
-The private platform runtime supplies joinable native threads. A handle has one
-owner; join and destroy are serialized. Join publishes worker writes, and only a
-successful join permits destruction. A failed join retains the handle and its
-context obligation. Native scalar callback probes exercise compiler-generated
-trampolines and join before the caller reads a result. This is not a public
-Executor or a permission to transfer arbitrary language storage.
+- Multiple mutable aliases remain valid within one execution domain. Do not
+  introduce general exclusivity for `$&T` or require explicit access tokens at
+  every sequential read and write.
+- Exclusivity is a temporary property of authority between potentially concurrent
+  executions, rather than a permanent property of a mutable reference.
+- Aim for freedom from ordinary-memory data races in safe code under verified
+  trusted primitives. Do not promise this until the whole boundary is covered:
+  globals, FFI, callbacks, virtual calls, destructors and synchronization.
+- Separate safety from scheduling. Executor, Mutex and Channel should be library
+  compositions of general mechanisms, not names recognized by the checker.
+- Keep explicit capability injection. Network and FileSystem remain independent
+  of Executor; no implicit global runtime is required.
 
-- Define checked cross-thread transfer for values and references. Existing atomic
-  cells and cancellation tokens do not authorize transferring arbitrary Argi
-  owners or loans. Do not claim general data-race freedom or mutable exclusivity.
-- Specify task storage domains and generated Runnable effects for owning inputs,
-  borrowed inputs and owned results. Test `retains`, `from_storage` and `empties`
-  against real storage receipts. A preservation-only Runnable fixture with scalar
-  arguments does not establish that erased owning tasks can be consumed safely.
-- Model the checked handoff into a worker callback. Its raw context address must
-  carry an authenticated task-storage identity, initialized argument occupancy,
-  cleanup ownership and completion outcome through the native boundary. Merely
-  rebuilding a reference from that address inside bundled core would invent
-  validity; a general C callback's raw arguments provide no such evidence. Join
-  must return the resulting state to the same task storage before extraction.
-- Expose native thread ownership through checked task storage and transfer
-  evidence, including failure to start, completion publication, joining and
-  cleanup. Use the shared platform runtime adapters. Add synchronization for a
-  reusable worker pool only after ownership at the native boundary is modeled.
-- Extend the initial plain-value Future and ThreadedExecutor to owning inputs
-  and results only after that transfer protocol is checked. Preserve single
-  extraction, join-before-drop and failure cleanup. Opaque receipts currently
-  use the native task backend; keep alternate completion strategies behind that
-  boundary rather than adding backend types to Future or generic vtable slots.
-- Add structured task groups, cancellation, deadlines and interruptible waits
-  after basic execution and lifetime rules have executable tests.
-- Add System.executor after the VM can retain a virtual capability whose native
-  methods are outside its execution subset without eagerly lowering those
-  methods. Merely adding the field currently makes unrelated System-based
-  compile-time entries and REPL submissions fail on callback-valued signatures.
+## Three independent dimensions of safety
 
-Use Zig's generated trampolines and typed argument packaging as implementation
-references. Preserve Argi's ordinary conformance selection and safety summaries;
-do not add async-only function identities, generic vtable slots or manual job
-wrappers as a prerequisite for users.
+| Dimension | Question | Relevant information |
+| --- | --- | --- |
+| Validity | Does the storage still exist, and is this observation valid? | Places, storage generations, validity roots, initialization, ownership and provenance |
+| Access authority | Which executions may read, write or destroy this storage? | Access regions, shared reading, exclusive access and outstanding loans |
+| Execution requirements | Where and under which protocol may an operation run? | Affinity, external capabilities, transfer restrictions and synchronization |
+
+Reuse existing safety summaries, opaque storage domains and dependency tracking
+where possible. Access authority must nevertheless remain independent of validity:
+a live resource can be unavailable to the current execution while another holds
+its authority.
+
+An execution domain is logical, not a physical thread ID. A task can migrate
+between workers while retaining authority, provided its resources permit that
+migration. Local or thread-affine tasks need separate execution restrictions.
+Single-threaded suspension also permits reentrancy and interference with program
+invariants; memory safety and data-race freedom do not imply logical atomicity.
+
+## Regions, aliases and resource dependencies
+
+An access region identifies storage whose ordinary accesses must be coordinated.
+It is not automatically a validity root, an ownership tree or the full transitive
+closure of lifetime dependencies.
+
+For example, a String owns an allocation and retains a virtual deallocator that
+may depend on a GeneralPurposeAllocator. Its payload can be isolated even though
+other allocations use the same allocator. Do not merge all those payloads merely
+because they depend on one provider. Instead, account separately for accesses to
+the payload and operations on the provider, including latent deallocation effects.
+
+Region analysis must follow aliases through references, aggregate fields, returned
+values, opaque storage and virtual captures. A reference hidden in a Box still
+reaches the same referent. When independence cannot be proved, assume possible
+overlap. Precision may improve later; safety cannot depend on optimistic aliasing.
+
+A small candidate permission rule uses `R(e, r)` for ordinary reading and
+`W(e, r)` for ordinary reading and writing. For distinct, potentially concurrent
+domains with overlapping storage:
+
+```text
+W(e1, r) implies neither R(e2, r) nor W(e2, r)
+```
+
+Multiple readers may coexist; mutable aliases within one domain share its
+authority. Destruction, replacement and generation termination must also respect
+outstanding access. Synchronized or atomic operations need their own verified
+protocol, rather than being ordinary writes exempted by assertion.
+
+The exact identity and granularity of regions, treatment of unknown referents,
+and joins across branches and loops need a formal definition. A single global
+flag toggled on an object by async would not preserve obligations across calls,
+aliases and hidden storage.
+
+## Moving ownership, lending access and transferring execution
+
+These are distinct operations:
+
+- Moving with `~` transfers ownership and cleanup responsibility.
+- Lending grants another execution temporary read or exclusive authority while
+  preserving obligations to the original storage.
+- Transferring across executions additionally checks that retained resources and
+  all permitted operations are usable in the destination.
+
+Conceptually:
+
+```text
+transferable(value, destination)
+    = isolated(value, destination)
+      and resources_usable(value, destination)
+```
+
+This cannot necessarily be a type-only Transferable conformance. Two Strings
+have the same type but may retain different virtual deallocators with different
+requirements. Contracts can provide reusable guarantees; contextual analysis must
+check the concrete value and its retained evidence.
+
+A pending concurrent loan is stronger than an ordinary sequential reference.
+Sequential safety can permit destroying an owner and reject subsequent alias use.
+A worker may already be using its alias, so a pending loan must prevent ending its
+root or replacing its generation until certified completion. Retaining a valid
+reference at submission time is insufficient.
+
+## Transitive and latent execution effects
+
+Infer ordinary function access effects transitively, including globals, callees,
+callbacks and selected cleanup. A destructor is a latent operation carried by an
+owner: moving only a String's bytes does not account for its eventual call into
+a shared allocator.
+
+Candidate effect concepts include `reads`, `writes`, `requires_exclusive` and
+`synchronized_access`. These are descriptive names, not proposed public syntax.
+Implementations must satisfy checked contracts; a user-written annotation cannot
+certify unknown native behavior.
+
+Virtual interfaces must preserve a conservative bound on permitted access effects
+through type erasure, including captured provider identities. Their implementations
+must be checked against that bound. Erasing a concrete type must not erase the
+information required to authorize its operations or destruction.
+
+Deallocator exposes an important unresolved choice:
+
+- One contract with access effects that survive virtualization is general, but
+  requires evidence transport through Virtual and Allocation.
+- Separate concurrent interfaces make an erased guarantee easier to name, but
+  risk duplication and do not fully describe an unsynchronized provider used
+  exclusively on different threads at different times.
+
+First define the general effect guarantee; introduce specialized capabilities
+only where necessary. With no verified concurrent guarantee, conservatively
+require exclusive access to a virtual deallocator's provider. Do not synchronize
+all allocators: confinement and exclusive transfer remain useful strategies.
+
+## Conserved obligations and certified transitions
+
+The conceptual operations needed are:
+
+| Operation | Obligation |
+| --- | --- |
+| Lend access | Suspend incompatible access while another execution holds a loan |
+| Transfer access | Move authority to a different execution domain |
+| Retain obligations | Preserve authority, dependencies and cleanup in an owner or opaque domain |
+| Synchronize completion | Prove execution has ended and its effects have been published |
+| Restore access | Return exactly the authority justified by completed obligations |
+
+These need not become five builtins or special language types. Investigate
+extensions to `retains`, `from_storage`, `empties` and checked postconditions before
+adding a parallel system of AccessLease or CompletionProof objects.
+
+Exclusive authority cannot be duplicated, silently lost while work continues or
+returned early. Evidence must identify the actual storage, relevant generation,
+receiving execution domain and outstanding execution. An old receipt cannot
+restore authority for a newer generation or complete a different task. Restoring
+access must never revive invalid references or consumed ownership.
+
+Summaries, wrappers, virtual dispatch and opaque storage must preserve these
+relationships. Obligations need a responsible owner on every success and failure
+path, not just a linear token disconnected from the resource it protects.
+
+## Task ownership and lifecycle
+
+A provisional TaskEnvelope would retain:
+
+- A statically generated callable exposed through a monomorphic entry.
+- Stable input and output storage with initialization and cleanup state.
+- Argument ownership and result extraction responsibility.
+- Lifetime dependencies, access obligations, external capabilities and affinity.
+
+Prepare arguments in the caller: defaults and assumed inputs must not be evaluated
+again by a worker. Moving a Future must not move storage referenced by execution.
+Copying a representation is not a transfer of ownership or safety evidence.
+
+An accepted task carries authorization to execute exactly once. The current
+callback-and-buffer TaskRequest is not yet this general owning abstraction.
+Candidate lifecycle:
+
+```text
+Prepared -- submission rejected --> recover or destroy prepared inputs
+    |
+    +-- accepted --> Pending --> Running --> Completed
+                                              |
+                                              +--> take result
+                                              +--> discard result with cleanup
+```
+
+Specify failure and cancellation paths too. No path may execute consuming work
+twice, free running storage, publish uninitialized output or return an owning
+result without its dependencies. Completion must authenticate the same task
+storage and publish its final state before extraction or reclamation.
+
+InlineExecutor, ThreadedExecutor and a future EventedExecutor should discharge the
+same obligations with different policies. A small trusted native boundary must
+certify start, completion and synchronization. Arbitrary C thread creation plus
+a declared `where` clause cannot establish that proof. Executors built on certified
+primitives should remain ordinary checked library code.
+
+Separate responsibility for execution completion from observation of its result.
+The current Future combines them and joins on destruction; that is a prototype
+policy, not a universal requirement. Blocking a sole scheduler worker during
+cleanup could deadlock. A different owner may retain execution until completion,
+but dropping an observer must never abandon live storage obligations.
+
+Structured task groups are the preferred direction for borrowed tasks: all work
+must finish before the enclosing scope releases borrowed resources. Detached work
+requires independently surviving resources and a stable completion owner.
+
+## Synchronization and ownership transfer
+
+Mutex should encapsulate protected storage and expose it only through a Guard.
+Construction must not hide external aliases that can bypass protection. Multiple
+mutable aliases derived within one guard remain valid; all must become unusable
+when its authority ends. Existing lifetime tracking may support this relation,
+but the construction and escape rules still need checking.
+
+Lock and unlock must establish real memory publication through audited atomics or
+OS synchronization. Static authority alone does not create happens-before.
+A semaphore's multiple permits do not automatically authorize writes to one
+shared region; its resource protocol must specify what each permit grants.
+
+Channels naturally move ownership from producer to queue to consumer. They must
+retain access and execution obligations as well as payload bytes. Failed sends,
+close, cancellation and destruction of queued messages need exactly-once cleanup.
+A channel must not make a nontransferable resource transferable by hiding it.
+
+Neither Mutex nor Channel should depend on a particular executor. They can serve
+executions from different schedulers and use each waiter's resumption mechanism.
+Actors could then be built from channels and confined storage without becoming
+the mandatory language execution model.
+
+## Waiting, cancellation and scheduling
+
+Keep waiting independent of backend policy. Distinguish the roles of a wait
+source, an owned registration, a wake handle and the current execution's wait
+context without committing to four public types.
+
+A notification is neither successful acquisition nor proof of completion. The
+protocol needs try, register, recheck, park, notify and retry semantics that handle
+lost wakeups, duplicate notifications and contention. Registration ownership must
+remain valid while a notifier can access it. Cancellation racing with notification
+must safely remove or retire the registration.
+
+Start with cooperative cancellation and distinguish:
+
+```text
+cancellation requested != execution completed != resources reclaimed
+```
+
+A running worker may still use its resources after a request. Ordinary exits
+should perform cleanup; cancellation must not free storage prematurely. Define
+which waiting and queue operations preserve progress when cancelled.
+
+Keep native threads as the initial backend without choosing stackful green
+threads or stackless transformation yet. First specify a backend-neutral wait
+interface. Green threads would additionally require suspended-stack lifetimes,
+cleanup, context switching, migration constraints and adapters for blocking FFI.
+Do not promise transparent suspension for arbitrary foreign calls or introduce
+async function annotations merely to settle the runtime representation early.
+
+## Formal specification still needed
+
+Before extending transfer or the runtime substantially, write a small set of
+rules that works without mentioning Executor, Mutex or Channel:
+
+- What identifies an access region, and how do reachable aliases establish overlap?
+- Which authority is required by reading, writing, moving, destroying and replacing?
+- Which preconditions permit loans and transfers between execution domains?
+- How are transitive and latent effects inferred, bounded and checked through
+  recursion, virtual dispatch, foreign calls and cleanup?
+- How do ordinary values and opaque domains retain obligations without duplication?
+- What evidence establishes completion, publication and authority restoration?
+- How do failure, cancellation, branch joins and generation changes conserve that evidence?
+- How are affinity and resource-specific concurrent guarantees represented after erasure?
+
+Use existing summaries and storage receipts where their semantics fit. Do not
+assume lifetime dependencies alone encode access effects, or that callback raw
+addresses authenticate task storage. The boundary must retain initialization,
+cleanup ownership and exact completion identity.
+
+System.executor also remains blocked by VM handling of virtual capabilities with
+native-only methods: eager lowering currently reaches callback-valued signatures
+outside the VM subset. Resolve that independently of the authority model.
+
+## Acceptance cases for the design
+
+These describe required outcomes, not settled source syntax:
+
+| Case | Required result |
+| --- | --- |
+| Two mutable aliases used sequentially in one domain | Accepted |
+| Exclusive concurrent loan followed by caller access through another alias | Rejected until certified completion |
+| Two concurrent read loans | Accepted while incompatible writes and destruction remain unavailable |
+| Owner destruction may mutate an unsynchronized allocator also used by the caller | Rejected without exclusive authority or a verified synchronization guarantee |
+| Access through an erased virtual contract | Preserves the same access and resource obligations |
+| Completion returns authority and an owning result | Restores only matching permissions; never stale generations or consumed ownership |
+
+Extend these with nested aggregates, unknown aliases, opaque storage, wrappers,
+failed submission, discarded results and cancellation. A useful design must make
+these outcomes follow from common rules rather than per-abstraction exceptions.
+
+## References for further investigation
+
+These are design references, not a decision to adopt their full models:
+
+- [Pony reference capabilities](https://tutorial.ponylang.org/capabilities/reference-capabilities.html): mutable aliasing within confinement and isolation across boundaries.
+- [Swift region-based isolation, SE-0414](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0414-region-based-isolation.md): contextual transfer using alias-connected regions.
+- [Rust Send and Sync](https://doc.rust-lang.org/nomicon/send-and-sync.html) and [scoped threads](https://doc.rust-lang.org/std/thread/struct.Scope.html): transfer guarantees and bounded borrowed execution.
+- [Go Mutex](https://go.dev/src/sync/mutex.go): the runtime synchronization contract.
+- [Rust Waker](https://doc.rust-lang.org/std/task/struct.Waker.html) and [Tokio select cancellation safety](https://docs.rs/tokio/latest/tokio/macro.select.html): notification, registration and cancellation concerns.
+- [Zig 0.16 release notes](https://ziglang.org/download/0.16.0/release-notes.html) and the local `references/zig` checkout: typed task adapters and alternative I/O/wait backends to investigate.
