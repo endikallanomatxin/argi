@@ -88,6 +88,104 @@ verified protocol retains that responsibility elsewhere. Such delegation must
 retain the resource until all users finish; simply dropping an observer is not
 completion.
 
+## Binding effects to resources
+
+Use the following abstract record to discuss an operation; these are semantic
+components, not proposed source keywords or a chosen serialized representation:
+
+```text
+Effect = (MayAccess, ExecutionRequirements, RetainedObligations, MustTransitions)
+```
+
+`MayAccess` is an upper bound on accesses during the operation, not just its final
+writes. `MustTransitions` states what holds on every selected returning path.
+Keeping these components independent prevents a postcondition from erasing a
+memory effect or making an unknown execution requirement appear satisfied.
+
+A region selector is rooted at an ordinary input, a captured capability or an
+identified global. Field selection and reference traversal are different steps.
+Bind a named contract region through the selected implementation mapping; do not
+interpret its local numeric index as an identity shared by unrelated contracts or
+instances. Equal names do not prove aliasing, and distinct selectors do not prove
+nonoverlap. Instantiation resolves them to known storage or conservative symbolic
+regions, with the necessary generation and traversal evidence.
+
+For a latent call, retain the relation:
+
+```text
+(owner occurrence, selected operation, captured capability selector,
+ operation requirements, relevant generation and cleanup responsibility)
+```
+
+The same selected destructor can therefore have different instantiated effects
+for different values. Its summary can refer to an operation on a captured virtual
+capability without knowing that capability's implementation. This is a required
+semantic relation, not a proposal to store another callback in every value.
+
+For example, cleanup of an owner containing an erased release capability has a
+latent requirement to invoke that capability's release operation. Reading the
+owner's payload does not itself invoke release. A handoff must nevertheless retain
+a valid cleanup plan for every path where release may become necessary. The
+capability's contract or additional verified evidence must provide the required
+bound; merely recording an unresolved latent call does not discharge it.
+
+Substitution must preserve the owner-to-capture relationship through ordinary
+calls, record fields, moves and erasure. A dependency on the capability's lifetime
+cannot stand in for the operation requirement. Requirements conditional on another
+captured capability remain conditional until that instance supplies the evidence.
+
+### Unknown effects
+
+Distinguish a known empty effect from an unknown effect. An unresolved selector is
+not an empty region; an unbounded call is not `no_access`. A readonly input or the
+absence of visible writes in a wrapper does not close a transitive effect bound.
+The existing `unknown_access` bit has no region scope and cannot establish that a
+call avoids a pending loan.
+
+In a context with potentially concurrent accesses, an unknown effect must be
+checked conservatively against every region it may reach. Narrowing its scope
+requires verified bounds, not a heuristic based on the visible argument layout.
+Unknown execution requirements likewise cannot establish portability even if the
+memory-access bound is known empty.
+
+Sequential unknown calls remain subject to existing validity and foreign-boundary
+rules. Extending concurrency requires a principled account of native start, join
+and other operations as well: do not exempt them because their names or modules
+belong to a bundled executor. A future audited boundary must explain both its
+access bound and the transition it certifies.
+
+### Temporal composition
+
+An operation's final completion guarantee does not authorize all accesses in its
+body using the resulting authority. These two bodies have different obligations:
+
+```text
+write(region); certify_completion(receipt)
+certify_completion(receipt); write(region)
+```
+
+Absent an ordering proof, check the may-access bound against entry authority.
+To admit the second ordering when entry authority is insufficient, a summary must
+preserve that the matching certified transition precedes that access on every
+applicable path. The proof must name the same execution, region and generation;
+completion of a different receipt cannot satisfy it.
+
+This is a general requirement for authority-changing transitions, including guard
+acquisition, publication and cleanup delegation. Do not add a special after-await
+exception. Accesses may require entry authority or authority established by a
+verified predecessor transition. A final post-value alone proves neither.
+
+At branch joins, retain every possible access and only those ordering/transition
+guarantees established on all relevant paths. Outcome-specific evidence may refine
+the selected path. Loops need a finite conservative fixed point, not an unbounded
+expansion of event histories. When ordering is unresolved, retain the entry
+requirement rather than assuming a favorable order.
+
+Apply the same rule to opaque retention. A completion postcondition cannot justify
+losing a pending receipt before completion. Conversely, a proven prior completion
+can permit retaining the already completed value. The current conservative
+retention filters must remain until that distinction can be represented.
+
 ## Three sources of evidence
 
 | Source | Can establish | Cannot establish alone |
@@ -189,10 +287,51 @@ Include provider aliases hidden in other elements, returned collections, nested
 owners and cleanup-only accesses. The selected element's nominal type and the
 vtable's implementation identity alone are insufficient answers.
 
+## Implementation map and confirmed gaps
+
+| Existing mechanism | Reuse | Missing information |
+| --- | --- | --- |
+| `InputPath`, `InputAccess`, `GlobalAccess`, `unknown_access` | Caller-relative may-access bounds | Scoped unknown effects and transition-relative access requirements |
+| `DomainFacts`, symbolic pointees and `RegionTraversal` | Captured region and traversal identities | General symbolic/opaque extraction with correlated alternatives |
+| `ValueEffect` dependencies and domain effects | Substitution through values and calls | Latent operation requirements bound to the retained capability occurrence |
+| Selected `Deinit` evidence and cleanup flags | Cleanup selection and unique responsibility, including indirect moves | Execution requirements of latent cleanup and delegated responsibility |
+| Execution receipts and `completed_executions` | Exact pending identity and final completion guarantees | Ordering between completion, accesses and retention |
+
+A build-only investigation at `b5f23c664` confirmed two currently accepted cases
+that the general rules must reject. They were not executed:
+
+- An unbounded contract setter, `where {}`, writes a captured mutable reference.
+  A wrapper taking only `Virtual#(Contract)` invokes it while a worker has a read
+  loan of that referent. An unknown access summary does not currently prevent
+  that caller-side conflict. Existing worker-side isolation restrictions do not
+  establish safety for arbitrary operations executed by the caller.
+- A wrapper writes through an input reference and only then awaits a future whose
+  worker borrows that referent. Its completion is applied before its access bound
+  is checked at the caller, admitting an earlier incompatible write.
+
+The second probe's distinguishing body is:
+
+```rg
+finish_after_write := (.future: $&Future#(Int32), .value: $&Int32) -> () {
+    value& = 7
+    _ = unwrap_or_abort(.value = await(future))
+}
+```
+
+Calling it with a pending future reading `value` must fail. Reversing the two
+statements is semantically safe only with a proven ordering; a conservative
+implementation may reject both until it has that evidence. Neither case requires
+any dynamic conformance machinery to expose the problem.
+
+These are safety gaps, not supported concurrent programs or performance tests.
+Close them through general access authorization and transition rules, while
+specifying the native boundary, before widening the payload or runtime subset.
+
 ## Decisions required before implementation
 
 1. Specify the shared representation of indirect operation requirements and
-   latent cleanup effects in safety summaries and virtual contracts.
+   latent cleanup effects in safety summaries and virtual contracts, including
+   unknown effects and transition-relative access requirements.
 2. Specify how erased and opaque values conserve correlated region, generation,
    execution and cleanup evidence, including joins and extraction.
 3. Apply those rules to the matrix above, first using static contracts and

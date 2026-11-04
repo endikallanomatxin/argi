@@ -48,8 +48,12 @@ for the missing completion protocol.
 Possible cleanup on an error path does not certify completion on a path that
 retains the receipt. Completed futures and tasks without borrowed inputs may
 still be stored in collections. The model does not promise general
-data-race freedom or exclusive mutable references. Atomic cells synchronize their
-own native operations without authorizing unrelated value transfer.
+data-race freedom or exclusive mutable references. Known caller-side gaps remain
+for unbounded erased calls and accesses inside wrappers that complete an execution:
+a final completion guarantee must not authorize earlier accesses. These cases can
+currently compile; see the [confirmed design probes](../plan/virtual_execution_safety.md#implementation-map-and-confirmed-gaps).
+Atomic cells synchronize their own native operations without authorizing unrelated
+value transfer.
 
 Workers use an isolated callback signature, checked over all resolved reachable
 bodies. They cannot access mutable module storage, module globals containing
