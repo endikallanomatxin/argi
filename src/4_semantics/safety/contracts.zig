@@ -136,7 +136,15 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.completed_executions, completed) |input, *path| path.* = .{ .input_index = input };
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, completed, &conditional);
     const access_bounds = try allocator.alloc(facts.InputAccess, declaration.access_bounds.len);
-    for (declaration.access_bounds, access_bounds) |bound, *access| access.* = .{ .target = .{ .input_index = bound.input_index }, .mode = if (bound.write) .write else .read };
+    for (declaration.access_bounds, access_bounds) |bound, *access| {
+        if (bound.fields.len != 0) return error.UnresolvedAccessContractPath;
+        const projections = try allocator.alloc(@import("place.zig").Projection, bound.projections.len);
+        for (bound.projections, projections) |source, *target| target.* = switch (source) {
+            .field => |index| .{ .field = index },
+            .dereference => .dereference,
+        };
+        access.* = .{ .target = .{ .input_index = bound.input_index, .projections = projections, .storage_domain = bound.domain_index }, .mode = if (bound.write) .write else .read };
+    }
     return .{ .bounded_access = declaration.bounded_access, .access_bounds = access_bounds, .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .completed_executions = completed, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
@@ -660,11 +668,16 @@ fn checkAccessBounds(contract: Contract, summary: facts.SafetySummary) ?Failure 
         for (contract.access_bounds) |bound| {
             if (bound.target.input_index != access.target.input_index or access.target.storage_domain != null) continue;
             if (access.mode == .write and bound.mode != .write) continue;
-            // The input's first dereference is implicit in summary coordinates.
-            // Its direct subobjects are covered; following a stored reference
-            // reaches another region and requires a separately expressible bound.
+            if (bound.target.projections.len > access.target.projections.len) continue;
+            var prefix = true;
+            for (bound.target.projections, access.target.projections[0..bound.target.projections.len]) |expected, actual| {
+                if (!std.meta.eql(expected, actual)) prefix = false;
+            }
+            if (!prefix) continue;
+            // Direct subobjects of the selected region are covered. Another
+            // reference traversal needs its own explicitly selected region.
             var indirect = false;
-            for (access.target.projections) |projection| if (projection == .dereference) {
+            for (access.target.projections[bound.target.projections.len..]) |projection| if (projection == .dereference) {
                 indirect = true;
                 break;
             };
@@ -1821,6 +1834,17 @@ test "access bounds are opt-in and reject unknown or global effects" {
     })).?.kind);
 }
 
+test "access contracts never publish unresolved field names as whole-input bounds" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.UnresolvedAccessContractPath, fromDeclaration(arena.allocator(), .{
+        .output_count = 0,
+        .source = .{ .file_index = 0, .offset = 0 },
+        .bounded_access = true,
+        .access_bounds = &.{.{ .input_index = 0, .fields = &.{.{ .start = 0, .len = 1 }} }},
+    }));
+}
+
 test "access bounds cover direct subobjects without following stored references" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1834,6 +1858,9 @@ test "access bounds cover direct subobjects without following stored references"
     write.access_bounds = &.{.{ .target = .{ .input_index = 1 }, .mode = .write }};
     try std.testing.expect((try check(a, write, .{ .input_accesses = &.{.{ .target = direct, .mode = .write }} })) == null);
     try std.testing.expectEqual(Failure.Kind.undeclared_access, (try check(a, write, .{ .input_accesses = &.{.{ .target = indirect, .mode = .read }} })).?.kind);
+    write.access_bounds = &.{.{ .target = indirect, .mode = .write }};
+    try std.testing.expect((try check(a, write, .{ .input_accesses = &.{.{ .target = indirect, .mode = .write }} })) == null);
+    try std.testing.expectEqual(Failure.Kind.undeclared_access, (try check(a, write, .{ .input_accesses = &.{.{ .target = .{ .input_index = 1, .projections = &.{ .{ .field = 0 }, .dereference, .dereference } }, .mode = .write }} })).?.kind);
     try std.testing.expectEqual(Failure.Kind.undeclared_access, (try check(a, write, .{ .input_accesses = &.{.{ .target = .{ .input_index = 2 }, .mode = .read }} })).?.kind);
     const merged = try mergeContracts(a, read, .{ .outputs = &.{} });
     try std.testing.expect(merged.bounded_access);

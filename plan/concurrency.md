@@ -122,10 +122,16 @@ callbacks and selected cleanup. A destructor is a latent operation carried by an
 owner: moving only a String's bytes does not account for its eventual call into
 a shared allocator.
 
-Direct reference inputs now support checked `reads`, `writes` and `no_access`
-bounds, independently of lifetime and ownership clauses. Unknown and global effects
-cannot satisfy those bounds. Bounds on indirect/captured regions and synchronized
-access remain open; ordinary memory effects do not certify unknown native behavior.
+Reference inputs and known field paths now support checked `reads`, `writes` and
+`no_access` bounds, independently of lifetime and ownership clauses. Paths can name
+references in by-value records and captures in statically known receivers. Named
+receiver domains also bound erased captured regions, using existing implementation
+mappings and preserving identities through wrappers. The implicit receiver region
+is separate from the handle's own storage. Symbolic receiver evidence is retained
+rather than inventing a concrete place or publishing an empty effect set.
+Unknown and global effects cannot satisfy a closed bound. Intermediate-reference
+mappings, general symbolic domain storage and synchronized access remain open;
+ordinary memory effects do not certify unknown native behavior.
 
 Virtual interfaces must preserve a conservative bound on permitted access effects
 through type erasure, including captured provider identities. Their implementations
@@ -150,6 +156,23 @@ Execution guarantees belong to individual operations, not just a type-wide
 concurrent remote deallocation and cleanup delegated to the originating domain.
 A resource may permit reading in one domain while requiring destruction in another.
 These are requirements to represent, not guarantees of current Allocation values.
+
+## Acquiring additional virtual evidence
+
+Keep implementation-wide guarantees separate from instance-specific authority,
+affinity and captured resources. A possible future representation is an immutable
+conformance descriptor referenced by a method table, retaining the two-pointer
+handle. This is an open design, not implemented RTTI or a commitment to that layout.
+Thread IDs and instance-specific affinity do not belong in a shared method table.
+
+Ordinary calls should use the contract's static evidence. Recovering an additional
+hidden guarantee may require an explicit fallible acquisition once at a transfer
+boundary, followed by a refined capability or retained proof. Every witness must
+be verified for all instances covered by it; captured-provider requirements may
+still need instance evidence. The acquired proof must track its exact value,
+generation and retained capabilities through moves and storage. Replacement or
+changed captures must invalidate or re-establish it. No descriptor flag by itself
+grants authority, prolongs a lifetime or discharges an execution obligation.
 
 ## Partitioning and serialized access
 

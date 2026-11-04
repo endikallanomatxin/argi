@@ -166,10 +166,8 @@ fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, cont
 
 pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, contract: primitives.MethodSafetyContract, erased_participant: bool) !?[]const u8 {
     for (contract.access_bounds) |bound| {
-        if (bound.input_index >= inputs.len) return "access bound names an unknown input";
-        const ty = self.graph.semanticType(self.graph.fields.items[inputs.start + bound.input_index].ty);
-        if (ty != .pointer) return "reads and writes require a reference input";
-        if (bound.write and ty.pointer.mutability != .read_write) return "writes requires a mutable reference input";
+        const resolved = try @import("access_contracts.zig").resolve(self, located.module_index, inputs, bound, .{ .participant = contract_ty, .domains = located.definition.domains });
+        if (resolved == .failure) return resolved.failure;
     }
     if (relocationInheritanceFailure(contract)) |message| return message;
     for (contract.transfers) |transfer| if (outcomeHasStorageSource(contract.outcomes, transfer.output_index)) return "from_storage cannot be combined with exact transfers for the same output";
@@ -478,9 +476,18 @@ fn globalGeneralOutcome(self: *Resolver, module_index: usize, outcome: *primitiv
     outcome.outcomes = children;
 }
 
-pub fn globalSafetyContract(self: *Resolver, module_index: usize, declared: primitives.MethodSafetyContract, inputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId) !primitives.MethodSafetyContract {
+pub fn globalSafetyContract(self: *Resolver, module_index: usize, declared: primitives.MethodSafetyContract, inputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, access_context: @import("access_contracts.zig").Context) !primitives.MethodSafetyContract {
     var contract = declared;
     contract.source = self.sourceFor(module_index, contract.source);
+    const bounds = try (try self.graph.safetyAllocator(self.allocator)).alloc(primitives.MethodSafetyContract.AccessBound, declared.access_bounds.len);
+    for (declared.access_bounds, bounds) |bound, *target| {
+        const resolved = try @import("access_contracts.zig").resolve(self, module_index, inputs, bound, access_context);
+        target.* = switch (resolved) {
+            .bound => |value| value,
+            .failure => return error.InvalidContractAccessBound,
+        };
+    }
+    contract.access_bounds = bounds;
     if (declared.outcomes.len != 0) {
         const fields = global_types.fields(self.graph, output_type) orelse return error.InvalidContractRequirementOutput;
         const outcomes = try (try self.graph.safetyAllocator(self.allocator)).dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);

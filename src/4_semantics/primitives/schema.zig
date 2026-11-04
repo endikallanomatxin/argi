@@ -237,6 +237,10 @@ pub const MethodSafetyContract = struct {
     /// Frees independently allocated declaration metadata. Arena-backed GlobalSG
     /// proofs are released with their arena instead of through this method.
     pub fn deinit(self: MethodSafetyContract, allocator: std.mem.Allocator) void {
+        for (self.access_bounds) |bound| {
+            allocator.free(bound.fields);
+            allocator.free(bound.projections);
+        }
         for (self.outcomes) |outcome| outcome.deinit(allocator);
         inline for (@typeInfo(MethodSafetyContract).@"struct".fields) |field| {
             if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
@@ -244,7 +248,14 @@ pub const MethodSafetyContract = struct {
     }
 
     pub const Relocation = struct { destination: u32, source: u32 };
-    pub const AccessBound = struct { input_index: u32, write: bool = false };
+    pub const AccessProjection = union(enum) { field: u32, dereference };
+    pub const AccessBound = struct {
+        input_index: u32,
+        write: bool = false,
+        domain_index: ?u32 = null,
+        fields: []const StringRange = &.{},
+        projections: []const AccessProjection = &.{},
+    };
     pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
     pub const Retention = struct { storage: StorageInput, input: u32 };
     pub const StorageDependency = struct { output_index: u32, storage: StorageInput };

@@ -78,9 +78,10 @@ The compiler infers conservative may-access effects in safety summaries and
 rejects mutable-global access from isolated callbacks. Task loans use the declared
 reference capability, rather than narrowing authority to a worker's inferred
 minimum effects. Virtual contracts can publish checked `reads`, `writes` and
-`no_access` bounds for direct reference inputs; see
-[access bounds](134_virtual_types.md#access-bounds). Captured provider access paths,
-affinity and owning resource transfer remain open work. A bound on ordinary
+`no_access` bounds for reference inputs, known field paths and mapped captured regions;
+see [access bounds](134_virtual_types.md#access-bounds). Wrappers preserve receiver
+and captured-region identities, including symbolic receiver references. Deeper
+reference mappings, affinity and owning resource transfer remain open work. A bound on ordinary
 memory accesses is neither a synchronization guarantee nor thread-transfer permission.
 
 ## Futures and executors

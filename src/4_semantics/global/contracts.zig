@@ -2892,7 +2892,7 @@ pub const Resolver = struct {
         const declared = requirement.safety_contract orelse return;
         const instance = (try self.requirementInstanceForContractUse(use, contract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidContractRequirement;
         const signature = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
-        const contract = try contract_safety.globalSafetyContract(self, located.module_index, declared, signature, instance.output);
+        const contract = try contract_safety.globalSafetyContract(self, located.module_index, declared, signature, instance.output, .{ .participant = contract_ty, .domains = located.definition.domains });
         const input = instance.input;
         const fields = global_types.fields(self.graph, input) orelse return error.InvalidContractRequirementInput;
         try self.graph.completeVirtualSignature(self.allocator, registry_id, contract, fields.len, instance.output);
@@ -2922,7 +2922,7 @@ pub const Resolver = struct {
         for (self.graph.contract_safety_conformances.items) |existing| {
             if (std.meta.eql(existing.selection, selection) and existing.method == method) return;
         }
-        const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output) catch |err| switch (err) {
+        const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output, .{ .participant = concrete, .domains = located.definition.domains }) catch |err| switch (err) {
             error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {
                 self.virtual_signature_failure = .{
                     .source = source,

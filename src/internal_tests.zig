@@ -216,6 +216,7 @@ comptime {
     _ = safety_summaries;
     _ = safety_summary_infer;
     _ = @import("4_semantics/safety/contracts.zig");
+    _ = @import("4_semantics/safety/access_bounds.zig");
     _ = @import("4_semantics/safety/domains.zig");
     _ = global_lsp_index;
     _ = semantic_representation_test;

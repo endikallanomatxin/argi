@@ -241,8 +241,9 @@ Access effects are independent of validity and ownership. By default they remain
 unknown: `where {}` does not claim that a method accesses no memory.
 
 `reads(input)` and `writes(input)` opt into a closed upper bound on ordinary
-memory accesses outside the method's local values. Both require reference inputs;
-`writes` requires a mutable reference and includes reading. Multiple clauses form
+memory accesses outside the method's local values. They select a reference input
+or a field path reaching referenced storage; `writes` requires a mutable reference
+to the selected region and includes reading. Multiple clauses form
 one bound. `no_access()` declares an empty bound and cannot be combined with them.
 
 ```rg
@@ -261,11 +262,54 @@ effects still need their separate clauses.
 Bounds cover the directly referenced storage and its structural subobjects.
 Following a reference stored within that region reaches another region: declaring
 `writes(self)` cannot hide an access to an external allocator or counter.
-These indirect regions, hidden domains and conditional access bounds are not yet
-expressible. Declare bounds outside `on` clauses. Wrappers propagate bounds on
-ordinary reference inputs; accesses to an erased receiver retain uncertainty in
-wrapper summaries until captured access paths can be represented. Isolated
-callbacks still reject virtual calls.
+Known field paths can select those regions explicitly:
+
+```rg
+Context := (.counter: $&Int32)
+Updater#(.Participant: Type): Contract = (
+    .update: (.self: &Participant, .context: Context) -> ()
+        where { writes(context.counter) }
+)
+```
+
+A reference-valued field selects its referent, not the slot containing the
+reference. Nested paths follow each intervening reference; reads needed to
+traverse intermediate regions must also fit the declared bounds. Field visibility
+is checked in the declaring contract's module. Mutability follows the selected
+reference: a readonly record may contain a mutable reference to another region.
+The same paths work on statically known receivers. An erased participant's private
+layout remains unavailable. Name a contract domain to retain an access region
+without exposing that layout:
+
+```rg
+Counter#(.Participant: Type): Contract = (
+    domain state
+    .set: (.self: &Participant) -> () where { writes(self.state) }
+)
+Provider := (._counter: $&Int32)
+implement Counter#(Provider) (
+    .set = (.self: &Provider) -> () { self&._counter& = 42 }
+) where { state(self._counter) }
+```
+
+A mapped reference field selects its referent; a mapped value field selects its
+own storage. Grouped and nested structural field mappings are supported. Locating
+the resource permits reading the receiver representation, but not following
+unmapped references. A write bound requires mutable mapped storage or a mutable
+reference to the mapped referent, even for a no-op implementation. Mappings that
+cross intermediate reference fields remain unsupported for access effects.
+
+Region identity survives ordinary handle copies, returns and wrappers. The
+receiver's region remains distinct from the local handle slot: copying a handle
+does not access its receiver. Unknown captured regions may alias other unknown
+caller referents and must be checked conservatively. Missing identity evidence
+is an error, not an empty access set; lifetime dependencies alone do not supply it.
+Opaque extraction and erased factories still require exact identity-preserving
+effects before they can recover such evidence.
+
+Declare bounds outside `on` clauses; conditional access bounds remain unsupported.
+Isolated callbacks still reject virtual calls. These checks add no runtime lookup
+or new pointer to a virtual handle and do not certify transfer or synchronization.
 
 ## Consuming resources
 
@@ -591,7 +635,7 @@ extraction. Returning the collection cannot hide a local referent either.
 > `retains` requires a value input; wrap borrowed references in a value rather
 > than using it to move an owner through a reference. Conditional `retains`
 > requires correlated ownership transitions and remains rejected. Grouped domain
-> mappings require exact hidden transfer identities. Domain mappings crossing
+> mappings require exact hidden transfer identities. Opaque ownership domain mappings crossing
 > or selecting reference fields require referent identities and are rejected.
 > Naming erased `Participant` directly does not name its storage; select a domain.
 > Outputs that own storage or contain references conservatively carry possible

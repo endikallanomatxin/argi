@@ -354,8 +354,18 @@ pub const Infer = struct {
             try states.append(.{ .target = retention.input, .initializedness = .initialized, .opaque_ownership = .conditional, .opaque_storage = retention.storage });
             try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
         }
+        var access_bounds: std.ArrayList(facts.InputAccess) = .empty;
+        for (contract.access_bounds) |bound| {
+            var access = bound;
+            if (access.target.input_index == registry.receiver_input_index) {
+                if (access.target.storage_domain != null) {
+                    try access_bounds.append(self.allocator, .{ .target = .{ .input_index = registry.receiver_input_index, .storage_domain = @import("access_bounds.zig").receiver_domain }, .mode = .read });
+                } else access.target.storage_domain = @import("access_bounds.zig").receiver_domain;
+            }
+            try access_bounds.append(self.allocator, access);
+        }
         const required_paths = try required.toOwnedSlice(self.allocator);
-        return .{ .unknown_access = !contract.bounded_access, .input_accesses = contract.access_bounds, .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .completed_executions = contract.completed_executions, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+        return .{ .unknown_access = !contract.bounded_access, .input_accesses = try access_bounds.toOwnedSlice(self.allocator), .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .completed_executions = contract.completed_executions, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
     }
 
     fn appendContractPostStates(self: *Infer, states: *std.array_list.Managed(facts.PlacePostState), contract: contracts.Contract) !void {
@@ -4560,20 +4570,10 @@ pub const Infer = struct {
             },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
-                var summary = try self.virtualSummary(call.safety_methods) orelse {
+                const summary = try self.virtualSummary(call.safety_methods) orelse {
                     sink.unknown = true;
                     return;
                 };
-                var explicit: std.ArrayList(facts.InputAccess) = .empty;
-                for (summary.input_accesses) |access| {
-                    if (access.target.input_index == call.self_input_index) {
-                        // A wrapper input names the virtual handle, not its
-                        // erased receiver. Until captured access paths can be
-                        // expressed, preserve uncertainty for receiver effects.
-                        summary.unknown_access = true;
-                    } else try explicit.append(self.allocator, access);
-                }
-                summary.input_accesses = try explicit.toOwnedSlice(self.allocator);
                 try self.composeAccesses(function, summary, call.input, null);
             },
             .captured_expression => sink.unknown = true,
@@ -4647,6 +4647,31 @@ pub const Infer = struct {
             return;
         };
         for (summary.input_accesses) |access| {
+            if (access.target.storage_domain) |domain| {
+                const paths = try self.substituteRequiredInputPath(function, access.target, arguments, override);
+                if (paths.len == 0) sink.unknown = true;
+                for (paths) |path| {
+                    if (path.storage_domain == null and domain == @import("access_bounds.zig").receiver_domain) {
+                        try sink.addInput(path, access.mode);
+                    } else if (path.storage_domain == null) {
+                        const mapped = @import("access_bounds.zig").region(self.allocator, self.graph, self.graph.function(function), path, access.mode) catch |err| {
+                            if (err == error.OutOfMemory) return err;
+                            sink.unknown = true;
+                            continue;
+                        };
+                        for (mapped) |item| try sink.addInput(item.target, item.mode);
+                    } else if (domain == @import("access_bounds.zig").receiver_domain) {
+                        const selected = @import("access_bounds.zig").selectedType(self.graph, self.graph.function(function), path) catch {
+                            sink.unknown = true;
+                            continue;
+                        };
+                        var target = path;
+                        if (self.graph.semanticType(selected.ty) != .virtual) target.storage_domain = null;
+                        try sink.addInput(target, access.mode);
+                    } else try sink.addInput(path, access.mode);
+                }
+                continue;
+            }
             const paths = try self.substituteInputPath(function, access.target, arguments, override, .place);
             for (paths) |path| try sink.addInput(path, access.mode);
             if (paths.len != 0) continue;
@@ -5712,9 +5737,13 @@ pub const Infer = struct {
         const virtualize = self.graph.virtualizes.items[@intFromEnum(id)];
         var result = try self.inferExpression(function_id, virtualize.value);
         const receiver_paths = try self.inferInputPaths(function_id, virtualize.value);
+        const receiver_value = try self.allocator.create(facts.ValueEffect);
+        receiver_value.* = .{ .input_generation_dependencies = receiver_paths };
+        result.domain_values = try self.allocator.dupe(facts.OutputDomainEffect, &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .value = receiver_value }});
         if (virtualize.domains.len != 0) {
-            const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, virtualize.domains.len);
-            for (virtualize.domains, domain_values) |mapping, *domain| {
+            const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, virtualize.domains.len + 1);
+            domain_values[virtualize.domains.len] = result.domain_values[0];
+            for (virtualize.domains, domain_values[0..virtualize.domains.len]) |mapping, *domain| {
                 var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
                 for (receiver_paths) |receiver| for (mapping.paths) |path| {
                     var projections = receiver.projections;

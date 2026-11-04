@@ -181,7 +181,7 @@ fn verifyVirtualImplementation(graph: *const graph_mod.GlobalSemanticGraph, desc
         for (contract.referents) |referent| try require(referent.input_index < function.input.len);
         for (contract.execution_transfers) |transfer| try require(transfer.input_index < function.input.len);
         for (contract.completed_executions) |input| try require(input < function.input.len);
-        for (contract.access_bounds) |access| try require(access.input_index < function.input.len and contract.bounded_access);
+        for (contract.access_bounds) |access| try require(access.input_index < function.input.len and contract.bounded_access and access.fields.len == 0);
         for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < function.input.len);
         for (contract.invalidated_domains) |domain| try require(domain.input_index < function.input.len);
     }

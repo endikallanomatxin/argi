@@ -404,6 +404,10 @@ pub const Context = struct {
         var bounded_access = false;
         var access_bounds: std.ArrayList(primitives.MethodSafetyContract.AccessBound) = .empty;
         defer access_bounds.deinit(self.allocator);
+        errdefer for (access_bounds.items) |bound| {
+            self.allocator.free(bound.fields);
+            self.allocator.free(bound.projections);
+        };
         var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
         defer outcomes.deinit(self.allocator);
         errdefer for (outcomes.items) |outcome| outcome.deinit(self.allocator);
@@ -564,14 +568,24 @@ pub const Context = struct {
             if (bounded_access.* and access_bounds.items.len == 0) return self.contractError(node, "no_access cannot be combined with reads or writes");
             const field = self.tree.valueField(arguments.fields[0]).?;
             if (field.name_token != null) return self.contractError(node, "safety contract arguments must be positional names");
-            const input = (try self.contractFieldIndex(requirement.input, field.value)) orelse return self.contractError(field.value, "access bounds must name a method input");
+            var names: std.ArrayList(primitives.StringRange) = .empty;
+            defer names.deinit(self.allocator);
+            var root = field.value;
+            while (self.tree.structFieldAccess(root)) |selected| {
+                try names.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, selected.field_token)));
+                root = selected.value;
+            }
+            std.mem.reverse(primitives.StringRange, names.items);
+            const input = (try self.contractFieldIndex(requirement.input, root)) orelse return self.contractError(field.value, "access bounds must name a method input or its field path");
             const write = std.mem.eql(u8, name, "writes");
-            for (access_bounds.items) |*existing| if (existing.input_index == input) {
+            for (access_bounds.items) |*existing| if (existing.input_index == input and names.items.len == 0 and existing.fields.len == 0) {
                 existing.write = existing.write or write;
                 return;
             };
             bounded_access.* = true;
-            try access_bounds.append(self.allocator, .{ .input_index = input, .write = write });
+            const selected_fields = try names.toOwnedSlice(self.allocator);
+            errdefer self.allocator.free(selected_fields);
+            try access_bounds.append(self.allocator, .{ .input_index = input, .write = write, .fields = selected_fields });
             return;
         }
         if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.specialization_arguments == null) {

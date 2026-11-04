@@ -220,6 +220,12 @@ test "virtual cache keys preserve declared access bounds" {
     graph.virtual_registries.items[0] = declaration;
     graph.virtual_registries.items[0].safety_contract.?.bounded_access = false;
     try std.testing.expect(!virtualsMatch(&graph, dependencies));
+    graph.virtual_registries.items[0] = declaration;
+    graph.virtual_registries.items[0].safety_contract.?.access_bounds = &.{.{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } }};
+    try std.testing.expect(!virtualsMatch(&graph, dependencies));
+    graph.virtual_registries.items[0] = declaration;
+    graph.virtual_registries.items[0].safety_contract.?.access_bounds = &.{.{ .input_index = 0, .domain_index = 0 }};
+    try std.testing.expect(!virtualsMatch(&graph, dependencies));
 }
 
 // Declaration trees contain scalar coordinates and immutable slices only.

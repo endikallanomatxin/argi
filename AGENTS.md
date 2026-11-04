@@ -356,10 +356,16 @@ feature first.
   remain unknown rather than become an empty effect set. Summary equality and
   cached publications include this dimension. Contract reads/writes/no_access
   clauses opt into checked bounds on direct reference storage and subobjects;
-  stored reference targets require separate regions. Empty where clauses retain
-  unknown access. Virtual explicit-input effects compose through wrappers; erased
-  receiver access in wrapper summaries remains unknown until captured access
-  paths exist. Bounds grant neither thread transfer nor synchronization.
+  stored reference targets require explicit field paths on known input types.
+  Resolve these paths before erasure into canonical summary projections and check
+  field privacy and the selected reference's mutability. Named receiver domains
+  preserve access regions through erasure; reference-field mappings select their
+  referents, with intermediate-reference mappings still rejected. The implicit
+  receiver region is distinct from the handle slot. Preserve symbolic receiver
+  identities through copies, joins and summary instantiation; empty or unknown
+  identity is never proof of no access. Unknown external domains may alias symbolic
+  input loans. Empty where clauses retain unknown access. Bounds grant neither
+  thread transfer nor synchronization.
   Isolated callbacks reject mutable
   module storage through converged summaries; plain payload types alone grant
   no cross-execution authority. Native tasks admit loans of plain referents;

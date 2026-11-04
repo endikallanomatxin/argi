@@ -154,7 +154,10 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
                 try require(dependency.input_index <= input.count());
             }
             for (contract.completed_executions) |index| try require(index < input.count());
-            for (contract.access_bounds) |access| try require(access.input_index < input.count() and contract.bounded_access);
+            for (contract.access_bounds) |access| {
+                try require(access.input_index < input.count() and contract.bounded_access and access.projections.len == 0 and access.domain_index == null);
+                for (access.fields) |field| try require(verify.stringFits(field, graph.strings.items));
+            }
             for (contract.execution_transfers) |dependency| try require(dependency.output_index < contract.output_count and dependency.input_index < input.count());
             for (contract.referents, 0..) |referent, index| {
                 try require(referent.output_index < contract.output_count);
