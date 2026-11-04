@@ -39,7 +39,11 @@ A receipt identifies each pending execution and its actual storage generations.
 Successful join publishes the worker's writes and completes only that execution's
 loans. Failed submission creates no pending loan, while failed join retains it.
 Pending execution receipts cannot be stored in user opaque containers until those
-containers can carry their obligations. The model does not promise general
+containers can carry their obligations. This includes receipts nested in records
+or choices and retained through helper calls or fallible collection insertion.
+Possible cleanup on an error path does not certify completion on a path that
+retains the receipt. Completed futures and tasks without borrowed inputs may
+still be stored in collections. The model does not promise general
 data-race freedom or exclusive mutable references. Atomic cells synchronize their
 own native operations without authorizing unrelated value transfer.
 
@@ -73,8 +77,11 @@ an empty lifetime contract does not establish absence of memory access.
 The compiler infers conservative may-access effects in safety summaries and
 rejects mutable-global access from isolated callbacks. Task loans use the declared
 reference capability, rather than narrowing authority to a worker's inferred
-minimum effects. Virtual access bounds, affinity and owning resource transfer
-remain open work.
+minimum effects. Virtual contracts can publish checked `reads`, `writes` and
+`no_access` bounds for direct reference inputs; see
+[access bounds](134_virtual_types.md#access-bounds). Captured provider access paths,
+affinity and owning resource transfer remain open work. A bound on ordinary
+memory accesses is neither a synchronization guarantee nor thread-transfer permission.
 
 ## Futures and executors
 

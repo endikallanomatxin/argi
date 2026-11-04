@@ -165,6 +165,12 @@ fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, cont
 }
 
 pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, contract: primitives.MethodSafetyContract, erased_participant: bool) !?[]const u8 {
+    for (contract.access_bounds) |bound| {
+        if (bound.input_index >= inputs.len) return "access bound names an unknown input";
+        const ty = self.graph.semanticType(self.graph.fields.items[inputs.start + bound.input_index].ty);
+        if (ty != .pointer) return "reads and writes require a reference input";
+        if (bound.write and ty.pointer.mutability != .read_write) return "writes requires a mutable reference input";
+    }
     if (relocationInheritanceFailure(contract)) |message| return message;
     for (contract.transfers) |transfer| if (outcomeHasStorageSource(contract.outcomes, transfer.output_index)) return "from_storage cannot be combined with exact transfers for the same output";
     for (contract.referents) |referent| if (outcomeHasStorageSource(contract.outcomes, referent.output_index)) return "from_storage cannot be combined with exact refers_to for the same output";

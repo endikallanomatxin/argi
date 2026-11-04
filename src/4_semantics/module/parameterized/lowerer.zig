@@ -401,6 +401,9 @@ pub const Context = struct {
     fn lowerMethodSafetyContract(self: *Context, requirement: syn.ContractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {
         const node = requirement.safety_contract orelse return null;
         var general_conditions = false;
+        var bounded_access = false;
+        var access_bounds: std.ArrayList(primitives.MethodSafetyContract.AccessBound) = .empty;
+        defer access_bounds.deinit(self.allocator);
         var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
         defer outcomes.deinit(self.allocator);
         errdefer for (outcomes.items) |outcome| outcome.deinit(self.allocator);
@@ -459,6 +462,10 @@ pub const Context = struct {
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
                     var transferred = false;
                     defer if (!transferred) effect.deinit(self.allocator);
+                    if (effect.bounded_access) {
+                        try self.contractError(statement, "access bounds must be declared outside on clauses");
+                        unreachable;
+                    }
                     if (effect.retained_inputs.len != 0) {
                         try self.contractError(statement, "conditional opaque storage clauses require correlated hidden storage post-states; declare unconditional effects instead");
                         unreachable;
@@ -508,15 +515,17 @@ pub const Context = struct {
                     continue;
                 }
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
-                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
+                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources, &bounded_access, &access_bounds);
             }
-        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
+        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources, &bounded_access, &access_bounds);
         var result: primitives.MethodSafetyContract = .{
             .general_conditions = general_conditions,
+            .bounded_access = bounded_access,
             .output_count = @intCast((try self.contractSignatureFields(requirement.output)).count()),
             .source = self.sourceRef(node),
         };
         errdefer result.deinit(self.allocator);
+        result.access_bounds = try access_bounds.toOwnedSlice(self.allocator);
         result.outcomes = try outcomes.toOwnedSlice(self.allocator);
         result.dependencies = try dependencies.toOwnedSlice(self.allocator);
         result.referents = try referents.toOwnedSlice(self.allocator);
@@ -540,9 +549,31 @@ pub const Context = struct {
         return error.Reported;
     }
 
-    fn lowerDependencyClause(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), execution_transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), completed_executions: *std.ArrayList(u32), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency)) !void {
-        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers, carries_execution, completes_execution, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
+    fn lowerDependencyClause(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), execution_transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), completed_executions: *std.ArrayList(u32), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency), bounded_access: *bool, access_bounds: *std.ArrayList(primitives.MethodSafetyContract.AccessBound)) !void {
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected reads, writes, no_access, depends_on, refers_to, owns, transfers, carries_execution, completes_execution, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        if ((std.mem.eql(u8, name, "reads") or std.mem.eql(u8, name, "writes") or std.mem.eql(u8, name, "no_access")) and call.module_qualifier == null and call.specialization_arguments == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            const empty = std.mem.eql(u8, name, "no_access");
+            if (empty) {
+                if (arguments.fields.len != 0 or bounded_access.*) return self.contractError(node, "no_access requires no arguments and cannot be combined with other access bounds");
+                bounded_access.* = true;
+                return;
+            }
+            if (arguments.fields.len != 1) return self.contractError(node, "reads and writes require one reference input");
+            if (bounded_access.* and access_bounds.items.len == 0) return self.contractError(node, "no_access cannot be combined with reads or writes");
+            const field = self.tree.valueField(arguments.fields[0]).?;
+            if (field.name_token != null) return self.contractError(node, "safety contract arguments must be positional names");
+            const input = (try self.contractFieldIndex(requirement.input, field.value)) orelse return self.contractError(field.value, "access bounds must name a method input");
+            const write = std.mem.eql(u8, name, "writes");
+            for (access_bounds.items) |*existing| if (existing.input_index == input) {
+                existing.write = existing.write or write;
+                return;
+            };
+            bounded_access.* = true;
+            try access_bounds.append(self.allocator, .{ .input_index = input, .write = write });
+            return;
+        }
         if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.specialization_arguments == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             const empty = std.mem.eql(u8, name, "empties");
@@ -666,7 +697,7 @@ pub const Context = struct {
         }
         if (call.module_qualifier != null or call.specialization_arguments != null or
             (!is_referent and !std.mem.eql(u8, name, "depends_on") and !std.mem.eql(u8, name, "carries_execution")))
-            return self.contractError(node, "expected depends_on, refers_to, owns, transfers, carries_execution, completes_execution, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
+            return self.contractError(node, "expected reads, writes, no_access, depends_on, refers_to, owns, transfers, carries_execution, completes_execution, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const literal = self.tree.structValueLiteral(call.input).?;
         if (std.mem.eql(u8, name, "carries_execution")) {
             if (literal.fields.len != 2) return self.contractError(node, "carries_execution requires one output and one input");

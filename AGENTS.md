@@ -354,7 +354,13 @@ feature first.
   selected structural cleanup, including earlier reference targets after alias
   reassignment. Unknown foreign/virtual effects and unresolved alias flow must
   remain unknown rather than become an empty effect set. Summary equality and
-  cached publications include this dimension. Isolated callbacks reject mutable
+  cached publications include this dimension. Contract reads/writes/no_access
+  clauses opt into checked bounds on direct reference storage and subobjects;
+  stored reference targets require separate regions. Empty where clauses retain
+  unknown access. Virtual explicit-input effects compose through wrappers; erased
+  receiver access in wrapper summaries remains unknown until captured access
+  paths exist. Bounds grant neither thread transfer nor synchronization.
+  Isolated callbacks reject mutable
   module storage through converged summaries; plain payload types alone grant
   no cross-execution authority. Native tasks admit loans of plain referents;
   private execution receipts carry exact pending identities independently of

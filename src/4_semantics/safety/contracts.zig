@@ -21,6 +21,8 @@ pub const Output = struct {
 /// permissions; unsupported effects are rejected, never silently discarded.
 pub const Contract = struct {
     general_conditions: bool = false,
+    bounded_access: bool = false,
+    access_bounds: []const facts.InputAccess = &.{},
     outputs: []const Output,
     outcomes: []const Outcome = &.{},
     /// Each complete conditional contract must be proved under its whole guard.
@@ -133,7 +135,9 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     const completed = try allocator.alloc(facts.InputPath, declaration.completed_executions.len);
     for (declaration.completed_executions, completed) |input, *path| path.* = .{ .input_index = input };
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, completed, &conditional);
-    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .completed_executions = completed, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+    const access_bounds = try allocator.alloc(facts.InputAccess, declaration.access_bounds.len);
+    for (declaration.access_bounds, access_bounds) |bound, *access| access.* = .{ .target = .{ .input_index = bound.input_index }, .mode = if (bound.write) .write else .read };
+    return .{ .bounded_access = declaration.bounded_access, .access_bounds = access_bounds, .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .completed_executions = completed, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
 fn appendGeneralContracts(allocator: std.mem.Allocator, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, enclosing: facts.ChoiceConditions, common: Contract, result: *std.ArrayList(Contract.Guarded)) anyerror!void {
@@ -197,6 +201,8 @@ pub fn mergeContracts(allocator: std.mem.Allocator, a: Contract, b: Contract) an
     for (a.outputs, b.outputs, outputs) |left, right, *output| output.* = try mergeOutputs(allocator, left, right);
     return .{
         .outputs = outputs,
+        .bounded_access = a.bounded_access or b.bounded_access,
+        .access_bounds = try mergeEffectSets(allocator, facts.InputAccess, a.access_bounds, b.access_bounds),
         .consumed_inputs = try mergeEffectSets(allocator, facts.InputPath, a.consumed_inputs, b.consumed_inputs),
         .relocations = try mergeEffectSets(allocator, Contract.Relocation, a.relocations, b.relocations),
         .retained_inputs = try mergeEffectSets(allocator, Contract.Retention, a.retained_inputs, b.retained_inputs),
@@ -214,6 +220,7 @@ fn effectPathEqual(a: facts.InputPath, b: facts.InputPath) bool {
 }
 
 fn effectEqual(comptime T: type, a: T, b: T) bool {
+    if (T == facts.InputAccess) return a.mode == b.mode and effectPathEqual(a.target, b.target);
     if (T == facts.InputPath) return effectPathEqual(a, b);
     if (T == facts.InputDomain) return a.domain_index == b.domain_index and effectPathEqual(a.path, b.path);
     if (T == Contract.Relocation) return effectPathEqual(a.source, b.source) and effectPathEqual(a.destination, b.destination);
@@ -463,6 +470,8 @@ pub const Failure = struct {
         missing_choice_relation,
         missing_execution_transfer,
         missing_execution_completion,
+        undeclared_access,
+        unknown_access,
     };
     kind: Kind,
     output_index: ?u32 = null,
@@ -472,6 +481,8 @@ pub const Failure = struct {
 
     pub fn description(self: Failure) []const u8 {
         return switch (self.kind) {
+            .undeclared_access => "memory access exceeds the declared reads/writes bounds",
+            .unknown_access => "cannot prove access bounds: implementation has unknown or global memory effects",
             .missing_execution_completion => "cannot prove completes_execution: input receipt remains pending",
             .missing_execution_transfer => "cannot prove carries_execution: output does not carry the input receipt",
             .missing_choice_relation => "cannot prove the complete input/output choice condition; partial selector evidence is insufficient",
@@ -507,6 +518,7 @@ pub fn checkStatic(allocator: std.mem.Allocator, contract: Contract, summary: fa
 /// Temporary proof data and returned failure conditions use the supplied
 /// allocator, which must outlive inspection of the returned diagnostic.
 pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.SafetySummary) anyerror!?Failure {
+    if (checkAccessBounds(contract, summary)) |failure| return failure;
     if (summary.storage_observation_conflicts.len != 0) return .{
         .kind = .unsupported_alias_obligation,
         .input = summary.storage_observation_conflicts[0].consumed,
@@ -638,6 +650,29 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
         .input = summary.storage_capability_conflicts[0].first,
     };
     return checkGuardedRelations(allocator, contract.guarded_effects, summary);
+}
+
+fn checkAccessBounds(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    if (!contract.bounded_access) return null;
+    if (summary.unknown_access or summary.global_accesses.len != 0) return .{ .kind = .unknown_access };
+    for (summary.input_accesses) |access| {
+        var permitted = false;
+        for (contract.access_bounds) |bound| {
+            if (bound.target.input_index != access.target.input_index or access.target.storage_domain != null) continue;
+            if (access.mode == .write and bound.mode != .write) continue;
+            // The input's first dereference is implicit in summary coordinates.
+            // Its direct subobjects are covered; following a stored reference
+            // reaches another region and requires a separately expressible bound.
+            var indirect = false;
+            for (access.target.projections) |projection| if (projection == .dereference) {
+                indirect = true;
+                break;
+            };
+            if (!indirect) permitted = true;
+        }
+        if (!permitted) return .{ .kind = .undeclared_access, .input = access.target };
+    }
+    return null;
 }
 
 fn checkGeneralContract(allocator: std.mem.Allocator, contract: Contract, summary: facts.SafetySummary) !?Failure {
@@ -1770,4 +1805,37 @@ test "execution completion is a definite conditional guarantee" {
     try std.testing.expect((try check(arena.allocator(), contract, summary)) == null);
     const absent: facts.OutcomePostStates = .{ .variant_index = 0, .input_post_states = &.{} };
     try std.testing.expectEqual(Failure.Kind.missing_execution_completion, (try check(arena.allocator(), contract, .{ .outputs = &.{.{}}, .outcome_post_states = &.{absent} })).?.kind);
+}
+
+test "access bounds are opt-in and reject unknown or global effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const unknown: facts.SafetySummary = .{ .unknown_access = true };
+    try std.testing.expect((try check(a, .{ .outputs = &.{} }, unknown)) == null);
+    const closed: Contract = .{ .outputs = &.{}, .bounded_access = true };
+    try std.testing.expectEqual(Failure.Kind.unknown_access, (try check(a, closed, unknown)).?.kind);
+    try std.testing.expect((try check(a, closed, .{})) == null);
+    try std.testing.expectEqual(Failure.Kind.unknown_access, (try check(a, closed, .{
+        .global_accesses = &.{.{ .binding = 0, .mode = .read }},
+    })).?.kind);
+}
+
+test "access bounds cover direct subobjects without following stored references" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const direct: facts.InputPath = .{ .input_index = 1, .projections = &.{ .{ .field = 0 }, .{ .static_index = 2 } } };
+    const indirect: facts.InputPath = .{ .input_index = 1, .projections = &.{ .{ .field = 0 }, .dereference } };
+    const read: Contract = .{ .outputs = &.{}, .bounded_access = true, .access_bounds = &.{.{ .target = .{ .input_index = 1 }, .mode = .read }} };
+    try std.testing.expect((try check(a, read, .{ .input_accesses = &.{.{ .target = direct, .mode = .read }} })) == null);
+    try std.testing.expectEqual(Failure.Kind.undeclared_access, (try check(a, read, .{ .input_accesses = &.{.{ .target = direct, .mode = .write }} })).?.kind);
+    var write = read;
+    write.access_bounds = &.{.{ .target = .{ .input_index = 1 }, .mode = .write }};
+    try std.testing.expect((try check(a, write, .{ .input_accesses = &.{.{ .target = direct, .mode = .write }} })) == null);
+    try std.testing.expectEqual(Failure.Kind.undeclared_access, (try check(a, write, .{ .input_accesses = &.{.{ .target = indirect, .mode = .read }} })).?.kind);
+    try std.testing.expectEqual(Failure.Kind.undeclared_access, (try check(a, write, .{ .input_accesses = &.{.{ .target = .{ .input_index = 2 }, .mode = .read }} })).?.kind);
+    const merged = try mergeContracts(a, read, .{ .outputs = &.{} });
+    try std.testing.expect(merged.bounded_access);
+    try std.testing.expectEqual(@as(usize, 1), merged.access_bounds.len);
 }

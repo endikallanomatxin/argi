@@ -355,7 +355,7 @@ pub const Infer = struct {
             try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
         }
         const required_paths = try required.toOwnedSlice(self.allocator);
-        return .{ .unknown_access = true, .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .completed_executions = contract.completed_executions, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+        return .{ .unknown_access = !contract.bounded_access, .input_accesses = contract.access_bounds, .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .completed_executions = contract.completed_executions, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
     }
 
     fn appendContractPostStates(self: *Infer, states: *std.array_list.Managed(facts.PlacePostState), contract: contracts.Contract) !void {
@@ -832,7 +832,7 @@ pub const Infer = struct {
         var completion_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
         defer completion_effects.deinit();
         const raw_completions = try self.inferOpaqueStorageEffects(function_id, function.body.?, &completion_effects);
-        const completed_executions = try self.filterReturnedExecutionCompletions(outputs, raw_completions, null);
+        const completed_executions = try self.filterRetainedExecutionCompletions(opaque_storage_effects.items, try self.filterReturnedExecutionCompletions(outputs, raw_completions, null));
         const has_completion_effect = self.opaque_empty_seen;
         self.inferring_completions = false;
         profile.accumulate(self.profile_io, start, &self.opaque_ns);
@@ -890,7 +890,8 @@ pub const Infer = struct {
                     else
                         completed_executions;
                     self.inferring_completions = false;
-                    const selected_completions = try self.filterReturnedExecutionCompletions(outputs, raw_selected_completions, selector);
+                    const retained = if (has_opaque_empty_effect) selected_opaque_effects.items else opaque_storage_effects.items;
+                    const selected_completions = try self.filterRetainedExecutionCompletions(retained, try self.filterReturnedExecutionCompletions(outputs, raw_selected_completions, selector));
                     try outcomes.append(.{
                         .reachable = outcome_exits != null,
                         .output_index = @intCast(output_index),
@@ -4255,6 +4256,22 @@ pub const Infer = struct {
         return result.toOwnedSlice();
     }
 
+    // A possible cleanup does not complete a receipt that may instead have
+    // moved into opaque storage. Its finalization requires the storage's own
+    // verified completion protocol, independently of lifetime dependencies.
+    fn filterRetainedExecutionCompletions(self: *Infer, retained: []const facts.OpaqueStorageEffect, paths: []const facts.InputPath) ![]const facts.InputPath {
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (paths) |path| {
+            var carried = false;
+            for (retained) |effect| if (returnedExecutionOverlaps(effect.hidden_dependencies, path)) {
+                carried = true;
+                break;
+            };
+            if (!carried) try result.append(path);
+        }
+        return result.toOwnedSlice();
+    }
+
     fn returnedExecutionOverlaps(effect: facts.ValueEffect, path: facts.InputPath) bool {
         for (effect.input_execution_receipts) |receipt| {
             if (receipt.input_index != path.input_index or receipt.storage_domain != path.storage_domain) continue;
@@ -4329,6 +4346,11 @@ pub const Infer = struct {
         }
         return .{
             .input_dependencies = input_dependencies,
+            // Erasing representation must not erase pending execution
+            // obligations. The caller checks these before retaining a value
+            // in an opaque domain that has no completion protocol yet.
+            .input_execution_receipts = effect.input_execution_receipts,
+            .fresh_executions = effect.fresh_executions,
             .input_places = effect.input_places,
             .input_generation_dependencies = effect.input_generation_dependencies,
             .input_captured_storages = effect.input_captured_storages,
@@ -4536,9 +4558,25 @@ pub const Infer = struct {
                     try self.composeAccesses(function, summary, call.input, null);
                 } else sink.unknown = true;
             },
-            // Lifetime contracts do not yet bound access effects. Never infer
-            // a closed effect set from implementation enumeration or `where {}`.
-            .virtual_call, .captured_expression => sink.unknown = true,
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                var summary = try self.virtualSummary(call.safety_methods) orelse {
+                    sink.unknown = true;
+                    return;
+                };
+                var explicit: std.ArrayList(facts.InputAccess) = .empty;
+                for (summary.input_accesses) |access| {
+                    if (access.target.input_index == call.self_input_index) {
+                        // A wrapper input names the virtual handle, not its
+                        // erased receiver. Until captured access paths can be
+                        // expressed, preserve uncertainty for receiver effects.
+                        summary.unknown_access = true;
+                    } else try explicit.append(self.allocator, access);
+                }
+                summary.input_accesses = try explicit.toOwnedSlice(self.allocator);
+                try self.composeAccesses(function, summary, call.input, null);
+            },
+            .captured_expression => sink.unknown = true,
             // The initial may-target scan does not solve loop-carried alias
             // assignments to a fixed point. Retain its known effects, but do
             // not publish a closed access set for those bodies yet.
@@ -7640,6 +7678,17 @@ test "virtual safety contract scalar summaries require no concrete implementatio
     graph.virtual_registries.items[0].safety_contract.?.general_conditions = true;
     infer.virtual_summaries.clearRetainingCapacity();
     try std.testing.expect(summaries.summaryEql(transitions, (try infer.virtualSummary(@enumFromInt(0))).?));
+
+    try std.testing.expect(transitions.unknown_access);
+    declaration.bounded_access = true;
+    declaration.access_bounds = &.{ .{ .input_index = 0 }, .{ .input_index = 1, .write = true } };
+    graph.virtual_registries.items[0].safety_contract = declaration;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const bounded = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expect(!bounded.unknown_access);
+    try std.testing.expectEqual(@as(usize, 2), bounded.input_accesses.len);
+    try std.testing.expectEqual(facts.AccessMode.read, bounded.input_accesses[0].mode);
+    try std.testing.expectEqual(facts.AccessMode.write, bounded.input_accesses[1].mode);
 }
 
 test "validity-only transfer retains loaded input anchor paths" {
@@ -7947,4 +7996,25 @@ test "returned receipts prevent completion only in their selected outcome" {
     try std.testing.expectEqual(@as(usize, 0), (try infer.filterReturnedExecutionCompletions(&.{output}, &.{path}, null)).len);
     try std.testing.expectEqual(@as(usize, 0), (try infer.filterReturnedExecutionCompletions(&.{output}, &.{path}, .{ .output_index = 0, .variant_index = 0 })).len);
     try std.testing.expectEqual(@as(usize, 1), (try infer.filterReturnedExecutionCompletions(&.{output}, &.{path}, .{ .output_index = 0, .variant_index = 1 })).len);
+}
+
+test "opaque retention preserves receipts and prevents false completion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    const retained: facts.InputPath = .{ .input_index = 1, .projections = &.{.{ .field = 2 }} };
+    const unrelated: facts.InputPath = .{ .input_index = 1, .projections = &.{.{ .field = 3 }} };
+    const input: facts.ValueEffect = .{ .input_execution_receipts = &.{retained} };
+    const hidden = try infer.dependencyOnlyEffect(.{ .fields = &.{.{ .index = 0, .value = &input }} });
+    try std.testing.expectEqual(@as(usize, 1), hidden.fields[0].value.input_execution_receipts.len);
+    const completions = try infer.filterRetainedExecutionCompletions(
+        &.{.{ .storage = .{ .input_index = 0 }, .hidden_dependencies = hidden }},
+        &.{ retained, unrelated },
+    );
+    try std.testing.expectEqual(@as(usize, 1), completions.len);
+    try std.testing.expect(summaries.inputPathEql(unrelated, completions[0]));
 }

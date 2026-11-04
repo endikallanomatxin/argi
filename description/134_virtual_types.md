@@ -235,6 +235,38 @@ Editor#(.Participant: Type): Contract = (
 )
 ```
 
+## Access bounds
+
+Access effects are independent of validity and ownership. By default they remain
+unknown: `where {}` does not claim that a method accesses no memory.
+
+`reads(input)` and `writes(input)` opt into a closed upper bound on ordinary
+memory accesses outside the method's local values. Both require reference inputs;
+`writes` requires a mutable reference and includes reading. Multiple clauses form
+one bound. `no_access()` declares an empty bound and cannot be combined with them.
+
+```rg
+Reader#(.Participant: Type): Contract = (
+    .read: (.self: &Participant, .source: &Int32) -> (.value: Int32)
+        where { reads(source) }
+)
+```
+
+Every selected implementation must satisfy the bound, including transitive calls
+and selected cleanup. Global or unknown effects cannot satisfy a closed bound.
+Virtual calls use the declared bound, even if a concrete implementation does less.
+Access bounds grant neither generation invalidation nor ownership transfer; those
+effects still need their separate clauses.
+
+Bounds cover the directly referenced storage and its structural subobjects.
+Following a reference stored within that region reaches another region: declaring
+`writes(self)` cannot hide an access to an external allocator or counter.
+These indirect regions, hidden domains and conditional access bounds are not yet
+expressible. Declare bounds outside `on` clauses. Wrappers propagate bounds on
+ordinary reference inputs; accesses to an erased receiver retain uncertainty in
+wrapper summaries until captured access paths can be represented. Isolated
+callbacks still reject virtual calls.
+
 ## Consuming resources
 
 `consumes(input)` guarantees that a resource passed by mutable reference is

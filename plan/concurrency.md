@@ -122,10 +122,10 @@ callbacks and selected cleanup. A destructor is a latent operation carried by an
 owner: moving only a String's bytes does not account for its eventual call into
 a shared allocator.
 
-Candidate effect concepts include `reads`, `writes`, `requires_exclusive` and
-`synchronized_access`. These are descriptive names, not proposed public syntax.
-Implementations must satisfy checked contracts; a user-written annotation cannot
-certify unknown native behavior.
+Direct reference inputs now support checked `reads`, `writes` and `no_access`
+bounds, independently of lifetime and ownership clauses. Unknown and global effects
+cannot satisfy those bounds. Bounds on indirect/captured regions and synchronized
+access remain open; ordinary memory effects do not certify unknown native behavior.
 
 Virtual interfaces must preserve a conservative bound on permitted access effects
 through type erasure, including captured provider identities. Their implementations
@@ -145,6 +145,26 @@ only where necessary. With no verified concurrent guarantee, conservatively
 require exclusive access to a virtual deallocator's provider. Do not synchronize
 all allocators: confinement and exclusive transfer remain useful strategies.
 
+Execution guarantees belong to individual operations, not just a type-wide
+`ThreadSafe` classification. Distinguish confined allocation, exclusive transfer,
+concurrent remote deallocation and cleanup delegated to the originating domain.
+A resource may permit reading in one domain while requiring destruction in another.
+These are requirements to represent, not guarantees of current Allocation values.
+
+## Partitioning and serialized access
+
+Prioritize isolation, ownership transfer and independent partitions alongside
+shared-state synchronization. A checked split of one initialized buffer should
+produce disjoint ranges without requiring general proofs about dynamic index
+arithmetic. Existing aliases to the entire buffer must still conflict with loans
+of either partition. Partition identity must survive views, calls and moves.
+
+Scheduler-certified serialization is a separate possible source of isolation.
+A serial executor prevents overlapping handlers but need not fix their physical
+thread; a local executor may impose affinity without preventing suspension and
+reentry. Merely sharing an executor proves neither property. Any serialization
+guarantee needs an explicit trusted protocol and must account for reentry.
+
 ## Conserved obligations and certified transitions
 
 The conceptual operations needed are:
@@ -161,6 +181,13 @@ The current checked `carries_execution` and `completes_execution` effects
 conserve task receipt obligations through virtual dispatch. Generalize obligation
 transport through opaque storage and owning resources without relying on lifetime
 dependencies alone.
+
+Opaque transport needs identities finer than the domain's conservative union of
+hidden dependencies. Extracting one slot must recover only that slot's execution
+obligations; completing it must not release sibling tasks. Domain-empty markers
+are not completion evidence. Until that protocol is represented, reject retaining
+pending receipts, including nested and summarized transfers. Error-path cleanup
+cannot certify completion when another path retains the receipt.
 
 Exclusive authority cannot be duplicated, silently lost while work continues or
 returned early. Evidence must identify the actual storage, relevant generation,
@@ -232,6 +259,7 @@ Lock and unlock must establish real memory publication through audited atomics o
 OS synchronization. Static authority alone does not create happens-before.
 A semaphore's multiple permits do not automatically authorize writes to one
 shared region; its resource protocol must specify what each permit grants.
+Keep resource budgets, access authority and completion obligations independent.
 
 Channels naturally move ownership from producer to queue to consumer. They must
 retain access and execution obligations as well as payload bytes. Failed sends,
@@ -271,6 +299,17 @@ interface. Green threads would additionally require suspended-stack lifetimes,
 cleanup, context switching, migration constraints and adapters for blocking FFI.
 Do not promise transparent suspension for arbitrary foreign calls or introduce
 async function annotations merely to settle the runtime representation early.
+Distinguish optional independent execution, which may run inline, from work that
+requires concurrency to make progress. An executor must reject the latter when it
+cannot provide the required progress guarantee.
+
+Atomic access, publication and permission to use ordinary data are separate.
+Future memory-order APIs and audited shared-storage protocols must preserve that
+distinction. Publication, protected observation, retirement and deferred reclamation
+are useful later tests of the model; do not require immediate destruction of
+retired storage or attempt general lock-free correctness proofs in the checker.
+Validate trusted runtime protocols with native race instrumentation and bounded
+interleaving exploration where practical, beyond checking final test values.
 
 ## Formal specification still needed
 
@@ -308,6 +347,11 @@ These describe required outcomes, not settled source syntax:
 | Owner destruction may mutate an unsynchronized allocator also used by the caller | Rejected without exclusive authority or a verified synchronization guarantee |
 | Access through an erased virtual contract | Preserves the same access and resource obligations |
 | Completion returns authority and an owning result | Restores only matching permissions; never stale generations or consumed ownership |
+| Two workers mutate partitions of one buffer | Accepted only with preserved evidence of nonoverlap; whole-buffer aliases remain restricted |
+| Serialized handlers access shared mutable state | Requires certified nonoverlap, separately from thread affinity and suspension/reentry |
+| A resource is destroyed in another domain | Checks that operation's cleanup policy, including concurrent or delegated release |
+| Semaphore permits or atomic flags coordinate work | Grant no unrelated ordinary-memory authority |
+| Retired storage remains visible to protected readers | Reclamation waits for the protocol's reader obligations, not only one task's join |
 
 Extend these with nested aggregates, unknown aliases, opaque storage, wrappers,
 failed submission, discarded results and cancellation. A useful design must make
@@ -323,3 +367,7 @@ These are design references, not a decision to adopt their full models:
 - [Go Mutex](https://go.dev/src/sync/mutex.go): the runtime synchronization contract.
 - [Rust Waker](https://doc.rust-lang.org/std/task/struct.Waker.html) and [Tokio select cancellation safety](https://docs.rs/tokio/latest/tokio/macro.select.html): notification, registration and cancellation concerns.
 - [Zig 0.16 release notes](https://ziglang.org/download/0.16.0/release-notes.html) and the local `references/zig` checkout: typed task adapters and alternative I/O/wait backends to investigate.
+- [Rayon scoped work](https://docs.rs/rayon/latest/rayon/fn.scope.html): data-parallel partitioning and bounded task lifetimes to investigate.
+- [Boost.Asio strands](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/core/strands.html): serialized execution as a separate design case.
+- [Seastar SMP](https://docs.seastar.io/master/group__smp-module.html): shard-owned resources and cleanup policies to investigate.
+- [ThreadSanitizer](https://clang.llvm.org/docs/ThreadSanitizer.html) and [Loom](https://docs.rs/loom/latest/loom/): runtime race instrumentation and bounded protocol exploration.

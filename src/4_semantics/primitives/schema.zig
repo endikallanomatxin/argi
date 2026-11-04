@@ -214,6 +214,8 @@ pub const SourceRef = struct {
 pub const MethodSafetyContract = struct {
     /// General selectors may combine entry inputs and distinct returned values.
     general_conditions: bool = false,
+    bounded_access: bool = false,
+    access_bounds: []const AccessBound = &.{},
     output_count: u32,
     dependencies: []const Dependency = &.{},
     referents: []const Dependency = &.{},
@@ -242,6 +244,7 @@ pub const MethodSafetyContract = struct {
     }
 
     pub const Relocation = struct { destination: u32, source: u32 };
+    pub const AccessBound = struct { input_index: u32, write: bool = false };
     pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
     pub const Retention = struct { storage: StorageInput, input: u32 };
     pub const StorageDependency = struct { output_index: u32, storage: StorageInput };

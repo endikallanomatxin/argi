@@ -199,6 +199,29 @@ fn covers(available: []const Selector, wanted: []const Selector) bool {
     return true;
 }
 
+test "virtual cache keys preserve declared access bounds" {
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const declaration: g.VirtualMethodRegistry = .{
+        .receiver_input_index = 0,
+        .contract_input_count = 1,
+        .safety_contract = .{
+            .output_count = 0,
+            .source = .{ .file_index = 0, .offset = 0 },
+            .bounded_access = true,
+            .access_bounds = &.{.{ .input_index = 0 }},
+        },
+    };
+    try graph.virtual_registries.append(std.testing.allocator, declaration);
+    const dependencies: []const VirtualDependency = &.{.{ .registry = @enumFromInt(0), .signature = declaration }};
+    try std.testing.expect(virtualsMatch(&graph, dependencies));
+    graph.virtual_registries.items[0].safety_contract.?.access_bounds = &.{.{ .input_index = 0, .write = true }};
+    try std.testing.expect(!virtualsMatch(&graph, dependencies));
+    graph.virtual_registries.items[0] = declaration;
+    graph.virtual_registries.items[0].safety_contract.?.bounded_access = false;
+    try std.testing.expect(!virtualsMatch(&graph, dependencies));
+}
+
 // Declaration trees contain scalar coordinates and immutable slices only.
 // Compare contents, not slice addresses: signatures are independently owned.
 fn declarationEql(a: anytype, b: @TypeOf(a)) bool {
