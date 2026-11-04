@@ -621,6 +621,15 @@ An unannotated contract can still select a statically known implementation,
 but cannot be erased into a virtual handle. Adding an implementation does not
 change the safety obligations of existing virtual calls.
 
+`carries_execution(output, input)` guarantees that the output carries the
+execution receipts from an input. `completes_execution(input)` guarantees that
+the input's executions have completed. Either may appear in an `on` outcome;
+the implementation must prove the corresponding receipt provenance or completion
+on every applicable return. These checked effects survive virtual dispatch and
+are independent of lifetime dependencies. They do not grant general access to
+other fields of the input. [Concurrency](173_concurrency.md) describes their use
+by executors.
+
 Core's `ArgumentSource` illustrates borrowed results: `length` has an empty
 contract, while `get` permits its successful `StringView` to depend on `self`.
 Its ordinary error has no borrowed dependencies. Both native `Arguments` and borrowed

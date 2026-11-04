@@ -104,6 +104,8 @@ fn outcomeSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, c
     if (try methodSafetyContractFailure(self, inputs, .{ .start = 0, .len = 0 }, output_type, contract_ty, located, .{
         .output_count = 0,
         .dependencies = outcome.dependencies,
+        .execution_transfers = outcome.execution_transfers,
+        .completed_executions = outcome.completed_executions,
         .storage_sources = outcome.storage_sources,
         .emptied_inputs = outcome.emptied_inputs,
         .consumed_inputs = outcome.consumed_inputs,
@@ -133,6 +135,8 @@ fn generalOutcomeClauseFailure(self: *Resolver, inputs: global_sg.FieldRange, ou
     if (try methodSafetyContractFailure(self, inputs, outputs, output_type, contract_ty, located, .{
         .output_count = outputs.len,
         .dependencies = outcome.dependencies,
+        .execution_transfers = outcome.execution_transfers,
+        .completed_executions = outcome.completed_executions,
         .domain_dependencies = outcome.domain_dependencies,
         .owned_outputs = outcome.owned_outputs,
         .storage_sources = outcome.storage_sources,
@@ -199,6 +203,20 @@ pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange
     for (contract.dependencies) |dependency| {
         if (dependency.input_index >= inputs.len) {
             reason = "dependency names an unknown input";
+            break;
+        }
+    }
+    for (contract.completed_executions) |input| if (input >= inputs.len) {
+        reason = "completes_execution names an unknown input";
+        break;
+    };
+    for (contract.execution_transfers) |transfer| {
+        if (transfer.input_index >= inputs.len) {
+            reason = "carries_execution names an unknown input";
+            break;
+        }
+        if (self.graph.semanticType(self.graph.fields.items[inputs.start + transfer.input_index].ty) == .pointer) {
+            reason = "carries_execution requires a by-value input";
             break;
         }
     }

@@ -33,6 +33,11 @@ const Builder = struct {
             .opaque_storage_dependencies = allowed.storage_sources,
             .explicit_dependency = allowed.dependencies.len != 0 or allowed.domains.len != 0,
         };
+        // Execution obligations are value receipts, not the entire lifetime
+        // envelope of a request (which may also borrow a transient byte buffer).
+        // Only receipt leaves receive their identities through type erasure.
+        if (types.isExecutionReceiptType(self.graph, ty))
+            result.input_execution_receipts = allowed.execution_transfers;
         if (allowed.ownership_transfers.len != 0) return result;
         const semantic = self.graph.semanticType(ty);
         if (semantic == .pointer or semantic == .virtual or semantic == .builtin) return result;

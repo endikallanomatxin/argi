@@ -170,6 +170,7 @@ pub const SafetyChecker = struct {
     // Nested calls install their own map so repeated acquisitions stay distinct.
     next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
+    active_fresh_executions: ?*std.AutoHashMap(facts.FreshEffectSource, facts.ExecutionId) = null,
     active_post_captures: ?*std.array_list.Managed(PostCapture) = null,
     active_entry_generations: []const state_mod.StorageGeneration = &.{},
     active_entry_symbolic: []const state_mod.SymbolicPointeeState = &.{},
@@ -263,6 +264,7 @@ pub const SafetyChecker = struct {
         inference.cache = self.summary_cache;
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
+        try self.validateIsolatedAccessEffects(&engine);
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
         self.stats.summary_evaluations = inference.evaluations;
         self.stats.summary_reused = inference.cache_reused.count();
@@ -309,6 +311,129 @@ pub const SafetyChecker = struct {
             const cache = self.summary_cache orelse return error.MissingSafetySummaryCache;
             try cache.stage(batch, &engine, &inference.requested_selectors, &inference.cache_reused);
         }
+    }
+
+    /// A callback can run in a different execution domain. Until explicit
+    /// authority transfer exists, no mutable module storage is authorized there.
+    /// Inspect converged summaries so wrappers, recursion and selected cleanup
+    /// cannot hide a global access behind otherwise plain argument types.
+    fn validateIsolatedAccessEffects(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
+        for (self.graph.nodes.items, 0..) |node, raw| {
+            if (node.content != .function_address) continue;
+            if (self.unit) |unit| if (!unit.containsNode(@enumFromInt(raw))) continue;
+            const ty = self.graph.resolvedSemanticType(node.ty orelse continue) orelse continue;
+            if (ty != .nominal) continue;
+            const definition = self.graph.typeDefinition(ty.nominal);
+            if (definition.struct_layout != .c_function_pointer) continue;
+            if (!self.graph.function(definition.function_id orelse continue).flags.is_isolated_callback) continue;
+            const target = node.content.function_address;
+            try self.validateBorrowedExecutionLifetimes(engine, target, node.source);
+            const summary = engine.summaries.get(target) orelse continue;
+            for (summary.global_accesses) |access| {
+                const binding = self.graph.binding(@enumFromInt(access.binding));
+                if (binding.mutability != .variable and access.mode == .read) continue;
+                try self.report(node.source, "isolated callback cannot {s} mutable global storage '{s}'; no cross-execution access authority has been established", .{
+                    if (access.mode == .write) @as([]const u8, "write") else "read",
+                    self.graph.text(binding.name),
+                });
+            }
+        }
+    }
+
+    fn validateBorrowedExecutionLifetimes(self: *SafetyChecker, engine: *summary_engine.Engine, target: graph_mod.GlobalFunctionId, source: primitives.SourceRef) !void {
+        var unit = try @import("../global/reachability.zig").dependencyUnit(self.allocator, self.graph, &.{target});
+        defer unit.deinit();
+        var has_ingress = false;
+        var ingress_functions = unit.values.keyIterator();
+        while (ingress_functions.next()) |id| {
+            if (self.graph.function(id.*).safety_primitive == .execution_input) {
+                has_ingress = true;
+                break;
+            }
+        }
+        if (!has_ingress) return;
+        var functions = unit.values.keyIterator();
+        while (functions.next()) |id| {
+            const function = self.graph.function(id.*);
+            // Primitive effects are handled by their trusted transfers. In
+            // particular, worker ingress establishes the copied input buffer.
+            if (function.safety_primitive != .none) continue;
+            const summary = engine.summaries.get(id.*) orelse continue;
+            if (self.borrowedExecutionPostStatesUnsafe(function, summary.input_post_states)) {
+                try self.report(source, "borrowed execution must preserve referent lifetime and initialization", .{});
+                return;
+            }
+            for (summary.outcome_post_states) |outcome| {
+                if (!outcome.reachable) continue;
+                if (self.borrowedExecutionPostStatesUnsafe(function, outcome.input_post_states)) {
+                    try self.report(source, "borrowed execution must preserve referent lifetime and initialization", .{});
+                    return;
+                }
+            }
+        }
+    }
+
+    fn borrowedExecutionPostStatesUnsafe(self: *SafetyChecker, function: graph_mod.Function, posts: []const facts.PlacePostState) bool {
+        for (posts) |post| {
+            if (post.target.input_index >= function.input.len) continue;
+            const field = self.graph.fields.items[function.input.start + post.target.input_index];
+            if (!self.inputTypeHasReferences(field.ty, 0)) continue;
+            var refers_to_input = isPointer(self.graph, field.ty);
+            for (post.target.projections) |projection| if (projection == .dereference) {
+                refers_to_input = true;
+                break;
+            };
+            if (!refers_to_input) continue;
+            // An owning/nonplain receiver cannot be an admitted borrowed leaf.
+            // Its own lifetime may end inside the worker; effects through any
+            // reference fields still have their separate projected obligations.
+            if (isPointer(self.graph, field.ty) and post.target.projections.len == 0 and
+                !self.plainExecutionStorage(self.graph.semanticType(field.ty).pointer.child, 0)) continue;
+            const plain_write = blk: {
+                var target = field.ty;
+                if (isPointer(self.graph, target)) target = self.graph.semanticType(target).pointer.child;
+                for (post.target.projections) |projection| {
+                    target = switch (projection) {
+                        .field => |index| field_ty: {
+                            const fields = types.fields(self.graph, target) orelse break :blk false;
+                            if (index >= fields.len) break :blk false;
+                            break :field_ty self.graph.fields.items[fields.start + index].ty;
+                        },
+                        .variant => |index| variant_ty: {
+                            const variants = types.variants(self.graph, target) orelse break :blk false;
+                            if (index >= variants.len) break :blk false;
+                            break :variant_ty self.graph.variants.items[variants.start + index].payload_type orelse break :blk false;
+                        },
+                        .static_index, .dynamic_index => types.arrayElement(self.graph, target) orelse break :blk false,
+                        .dereference => if (isPointer(self.graph, target)) self.graph.semanticType(target).pointer.child else break :blk false,
+                    };
+                }
+                break :blk self.plainExecutionStorage(target, 0) and post.initialization == .definite and post.initializedness == .initialized;
+            };
+            if (post.initializedness != .initialized or post.initialization == .possible or
+                post.ends_previous_roots or post.refreshes_storage_generation or
+                post.opaque_ownership != .none or (post.may_repopulate_opaque_storage and !plain_write))
+                return true;
+        }
+        return false;
+    }
+
+    fn plainExecutionStorage(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        if (depth > 128 or types.hasDestructor(self.graph, ty)) return false;
+        if (@import("../global/c_abi.zig").isRawPointer(self.graph, ty) or @import("../global/c_abi.zig").isFunctionPointer(self.graph, ty)) return false;
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
+        if (semantic == .pointer or semantic == .virtual or semantic == .definition) return false;
+        if (semantic == .builtin) return semantic.builtin != .Any and semantic.builtin != .Type;
+        if (types.arrayElement(self.graph, ty)) |element| return self.plainExecutionStorage(element, depth + 1);
+        if (types.fields(self.graph, ty)) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (!self.plainExecutionStorage(field.ty, depth + 1)) return false;
+            return true;
+        }
+        if (types.variants(self.graph, ty)) |variants| {
+            for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| if (variant.payload_type) |child| if (!self.plainExecutionStorage(child, depth + 1)) return false;
+            return true;
+        }
+        return false;
     }
 
     fn checkIndependentBody(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, engine: *summary_engine.Engine) !void {
@@ -424,10 +549,23 @@ pub const SafetyChecker = struct {
         // Domain paths and scalar invalidation normalization precede the
         // general proof conversion. Raw payload views are not interchangeable
         // with complete conditional contracts.
+        contract = @import("execution_contracts.zig").normalize(self.allocator, self.graph, function, contract) catch |err| switch (err) {
+            error.ExecutionTransferHasNoReceipt => {
+                try self.report(declared.source, "carries_execution requires an input containing an execution receipt", .{});
+                return;
+            },
+            else => return err,
+        };
+        summary = try @import("execution_contracts.zig").filteredSummary(self.allocator, self.graph, function, summary);
         contract = try contracts.withOutcomeGuards(self.allocator, contract);
         var check_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer check_arena.deinit();
-        const violation = if (dispatch == .concrete) try contracts.checkStatic(check_arena.allocator(), contract, summary) else try contracts.check(check_arena.allocator(), contract, summary);
+        const execution_violation = if (@import("execution_contracts.zig").usesExecutionReceipts(self.graph, function))
+            @import("execution_contracts.zig").checkOrigins(contract, summary)
+        else
+            null;
+        const violation = execution_violation orelse
+            (if (dispatch == .concrete) try contracts.checkStatic(check_arena.allocator(), contract, summary) else try contracts.check(check_arena.allocator(), contract, summary));
         if (violation) |failure| {
             const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
             if (failure.input) |path| {
@@ -814,6 +952,7 @@ pub const SafetyChecker = struct {
                 .assignment => |assignment| {
                     const binding = self.graph.binding(assignment.binding);
                     const storage = facts.Place{ .root = assignment.binding };
+                    try self.requireExecutionAccess(node.source, storage, null, .write, state);
                     const previous_state = state.initializednessAtPlace(storage);
                     if (previous_state == .moved)
                         try self.reportMovedReassignment(node.source, storage, state);
@@ -842,6 +981,7 @@ pub const SafetyChecker = struct {
                 },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
+                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
@@ -854,6 +994,7 @@ pub const SafetyChecker = struct {
                 },
                 .array_store => |store| {
                     const pointer = try self.evaluateArrayStorage(function, node.source, store.array_ptr, state) orelse continue;
+                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     _ = try self.evaluate(function, store.index, state);
                     const symbolic = if (pointer.referenced_place == null) blk: {
                         const index = self.staticIndex(store.index) orelse break :blk null;
@@ -869,6 +1010,7 @@ pub const SafetyChecker = struct {
                 .pointer_assignment => |assignment| {
                     const operand = try self.evaluateWritePointer(function, assignment.pointer, state);
                     var pointer = operand.value;
+                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     const was_deinitialized = if (pointer.referenced_place) |target|
                         state.initializednessAtPlace(target) == .deinitialized
                     else
@@ -1086,6 +1228,7 @@ pub const SafetyChecker = struct {
         return switch (node.content) {
             .binding_use => |binding| blk: {
                 const storage = facts.Place{ .root = binding };
+                try self.requireExecutionAccess(node.source, storage, null, .read, state);
                 const place = state.getPlace(storage) orelse break :blk .{};
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
                 try self.requireDescendantsInitialized(function, node.source, storage, state);
@@ -1098,6 +1241,7 @@ pub const SafetyChecker = struct {
             .move_value => |child| blk: {
                 const value = try self.evaluate(function, child, state);
                 if (try self.resolvePlace(child, state)) |storage| {
+                    try self.requireExecutionAccess(node.source, storage, null, .write, state);
                     try self.requirePlaceInitialized(function, node.source, storage, state.initializednessAtPlace(storage), state);
                     try state.markMoved(storage, value, node.source);
                 }
@@ -1117,13 +1261,14 @@ pub const SafetyChecker = struct {
             .address_of => |child| try self.evaluateAddress(function, node.source, child, state, false),
             .dereference => |deref| blk: {
                 const pointer = try self.evaluatePointerUse(function, node.source, deref.pointer, state) orelse break :blk .{};
+                try self.requireExecutionPointerAccess(node.source, pointer, .read, state);
                 var value: facts.ValueFacts = .{};
                 if (pointer.referenced_place) |storage| {
                     const initializedness = state.initializednessAtPlace(storage);
                     try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     try self.requireDescendantsInitialized(function, node.source, storage, state);
                     value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
-                }
+                } else if (pointer.symbolic_pointees.len != 0) value = try self.readSymbolicValue(state, pointer, node.ty);
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
             .struct_field_access => try self.readEvaluatedAccess(function, node.source, node.ty, try self.evaluateAccess(function, node_id, state), state),
@@ -1455,7 +1600,13 @@ pub const SafetyChecker = struct {
         outcome: ?u32,
     ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
-        const summary = try self.selectEntryGuardedSummary(engine.summaryFor(callee) orelse return null, values, state);
+        const complete_summary = engine.summaryFor(callee) orelse return null;
+        const summary = try self.selectEntryGuardedSummary(complete_summary, values, state);
+        var executions = std.AutoHashMap(facts.FreshEffectSource, facts.ExecutionId).init(self.allocator);
+        defer executions.deinit();
+        const previous_executions = self.active_fresh_executions;
+        self.active_fresh_executions = &executions;
+        defer self.active_fresh_executions = previous_executions;
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer call_capabilities.deinit();
         const previous_capabilities = self.active_fresh_capabilities;
@@ -1489,7 +1640,40 @@ pub const SafetyChecker = struct {
             break;
         };
         const result = try self.applyOutcomeSummary(source, effects, argument_nodes, values, state);
+        try self.activateReturningExecutionEvidence(complete_summary, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);
+    }
+
+    fn activateReturningExecutionEvidence(self: *SafetyChecker, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) !void {
+        if (!summary.guarded_returns_complete or summary.guarded_effects.len == 0) return;
+        const first = summary.guarded_effects[0];
+        if (first.conditions.impossible) return;
+        for (first.conditions.terms) |condition| {
+            if (condition.subject != .entry_input or condition.index >= arguments.len) continue;
+            var shared = true;
+            for (summary.guarded_effects[1..]) |other| {
+                if (other.conditions.impossible) continue;
+                var found = false;
+                for (other.conditions.terms) |term| if (term.eql(condition)) {
+                    found = true;
+                    break;
+                };
+                if (!found) {
+                    shared = false;
+                    break;
+                }
+            }
+            if (!shared) continue;
+            const value = try self.entryConditionValue(arguments[condition.index], condition.projections, state) orelse continue;
+            for (value.variants) |variant| if (variant.index == condition.variant_index)
+                self.activateExecutionEvidence(variant.value.*, state);
+        }
+    }
+
+    fn activateExecutionEvidence(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) void {
+        for (value.generation_outcomes) |proof| for (proof.completed_executions) |id| state.completeExecution(id);
+        for (value.fields) |field| self.activateExecutionEvidence(field.value.*, state);
+        if (value.known_choice_variant) |active| for (value.variants) |variant| if (variant.index == active) self.activateExecutionEvidence(variant.value.*, state);
     }
 
     fn valueHasPostCaptures(value: facts.ValueEffect) bool {
@@ -2217,6 +2401,110 @@ pub const SafetyChecker = struct {
         return node;
     }
 
+    /// Execution identities authorize one pending invocation, independently of
+    /// its OS thread and of the validity roots it borrows. Receipt moves retain
+    /// these identities; only certified completion discharges them.
+    fn lendExecution(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, inputs: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef) !facts.ValueFacts {
+        var loans = std.array_list.Managed(facts.ExecutionLoan).init(self.allocator);
+        try self.collectExecutionLoans(ty, inputs, state, &loans, source);
+        if (loans.items.len == 0) return .{};
+        for (loans.items) |loan| try self.requireExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, state);
+        const id = try state.establishExecution(try loans.toOwnedSlice());
+        // A pending execution retains its backing generations through the
+        // obligation itself. Do not turn these temporary loans into ordinary
+        // lifetime dependencies that would survive certified completion.
+        return .{ .execution_receipts = try self.allocator.dupe(facts.ExecutionId, &.{id}) };
+    }
+
+    fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
+        const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
+        if (semantic == .pointer) {
+            try self.requireLive(self.call_stack.getLast(), source, value, state);
+            var generations = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            for (value.dependencies) |dependency| try appendRootFact(&generations, dependency.root);
+            const roots = try generations.toOwnedSlice();
+            const mode: facts.AccessMode = if (semantic.pointer.mutability == .read_write) .write else .read;
+            if (value.referenced_place) |storage| {
+                try loans.append(.{ .storage = storage, .generations = roots, .mode = mode });
+            } else if (value.symbolic_pointees.len != 0) {
+                for (value.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = roots, .mode = mode });
+            } else try self.report(source, "borrowed execution requires an authenticated reference target", .{});
+            return;
+        }
+        if (types.arrayElement(self.graph, ty)) |element| {
+            if (!self.inputTypeHasReferences(element, 0)) return;
+            const length = types.arrayLength(self.graph, ty).?;
+            for (0..length) |index|
+                try self.collectExecutionLoans(element, try self.projectValueFacts(value, &.{.{ .static_index = index }}), state, loans, source);
+            return;
+        }
+        if (types.fields(self.graph, ty)) |fields| for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+            if (self.inputTypeHasReferences(field.ty, 0))
+                try self.collectExecutionLoans(field.ty, try self.projectValueFacts(value, &.{.{ .field = @intCast(index) }}), state, loans, source);
+        };
+    }
+
+    fn seedExecutionValue(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, state: *FunctionState, backing: *?facts.ValidityRootId, generation: *?facts.ValidityRootId) anyerror!facts.ValueFacts {
+        if (isPointer(self.graph, ty)) return self.seedInputValue(ty, state, backing, generation, null, .{ .input_index = 0 });
+        var result: facts.ValueFacts = .{};
+        if (!self.inputTypeHasReferences(ty, 0)) return result;
+        if (types.arrayElement(self.graph, ty)) |element| {
+            const length = types.arrayLength(self.graph, ty).?;
+            const fields = try self.allocator.alloc(facts.FieldFacts, length);
+            for (fields, 0..) |*field, index| {
+                const child = try self.allocator.create(facts.ValueFacts);
+                child.* = try self.seedExecutionValue(element, state, backing, generation);
+                field.* = .{ .index = @intCast(index), .value = child };
+                result = try self.mergeValueFacts(result, child.*);
+            }
+            result.fields = fields;
+        } else if (types.fields(self.graph, ty)) |layout| {
+            const fields = try self.allocator.alloc(facts.FieldFacts, layout.len);
+            for (fields, self.graph.fields.items[layout.start..][0..layout.len], 0..) |*field, item, index| {
+                const child = try self.allocator.create(facts.ValueFacts);
+                child.* = try self.seedExecutionValue(item.ty, state, backing, generation);
+                field.* = .{ .index = @intCast(index), .value = child };
+                result = try self.mergeValueFacts(result, child.*);
+            }
+            result.fields = fields;
+        }
+        result.symbolic_pointees = &.{};
+        return result;
+    }
+
+    fn completeExecutionReceipts(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) void {
+        for (value.execution_receipts) |id| state.completeExecution(id);
+        for (value.fields) |field| self.completeExecutionReceipts(field.value.*, state);
+        for (value.variants) |variant| self.completeExecutionReceipts(variant.value.*, state);
+    }
+
+    fn requireExecutionAccess(self: *SafetyChecker, source: primitives.SourceRef, storage: ?facts.Place, symbolic: ?facts.SymbolicPointeeId, mode: facts.AccessMode, state: *const FunctionState) !void {
+        for (state.executions.items) |execution| {
+            if (!execution.pending) continue;
+            for (execution.loans) |loan| {
+                if (mode == .read and loan.mode == .read) continue;
+                const overlaps = if (storage) |place|
+                    if (loan.storage) |other| place.mayOverlap(other) else loan.symbolic != null and self.graph.isModuleBinding(place.root)
+                else if (symbolic) |identity|
+                    if (loan.symbolic) |other| state.symbolicStorageMayOverlap(identity, other) else loan.storage != null and self.graph.isModuleBinding(loan.storage.?.root)
+                else
+                    false;
+                if (!overlaps) continue;
+                try self.report(source, "concurrent access conflicts with a pending execution", .{});
+                return;
+            }
+        }
+    }
+
+    fn requireExecutionPointerAccess(self: *SafetyChecker, source: primitives.SourceRef, pointer: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
+        if (pointer.referenced_place) |place| try self.requireExecutionAccess(source, place, null, mode, state);
+        for (pointer.symbolic_pointees) |identity| try self.requireExecutionAccess(source, null, identity, mode, state);
+    }
+
+    fn applyExecutionCompletions(self: *SafetyChecker, paths: []const facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !void {
+        for (paths) |path| self.completeExecutionReceipts(try self.load_summary_input_value(path, arguments, state), state);
+    }
+
     fn evaluatePrimitive(
         self: *SafetyChecker,
         caller: graph_mod.GlobalFunctionId,
@@ -2231,6 +2519,25 @@ pub const SafetyChecker = struct {
             if (index < values.len) try self.consume_storage_capabilities(source, values[index], 1, 1, state);
         }
         return switch (primitive_transfer.forPrimitive(primitive).value) {
+            .execution_lend => if (values.len != 0) try self.lendExecution(self.graph.fields.items[self.graph.function(callee).input.start].ty, values[0], state, source) else .{},
+            .execution_complete => blk: {
+                if (values.len != 0) {
+                    const receipt: facts.ValueFacts = if (values[0].referenced_place) |storage| self.valueAtPlace(state, storage) orelse .{} else try self.readSymbolicValue(state, values[0], null);
+                    self.completeExecutionReceipts(receipt, state);
+                }
+                break :blk .{};
+            },
+            .execution_input => blk: {
+                if (values.len < 2) break :blk .{};
+                const output = self.graph.fields.items[self.graph.function(callee).output.start].ty;
+                const ty = self.graph.semanticType(output).pointer.child;
+                var backing: ?facts.ValidityRootId = null;
+                var generation: ?facts.ValidityRootId = null;
+                const value = try self.seedExecutionValue(ty, state, &backing, &generation);
+                const buffer = try state.establishSymbolicInput(ty, null);
+                try state.setSymbolicValue(.{ .identity = buffer.identity, .value = value }, true, true);
+                break :blk .{ .dependencies = values[1].dependencies, .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{buffer.identity}) };
+            },
             .empty => .{},
             .raw_storage => blk: {
                 const id = try state.establishCapability();
@@ -2467,6 +2774,10 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         const operands = primitive_transfer.opaqueMoveOperands(primitive, values.len) orelse return;
+        for (values[operands.owner].execution_receipts) |id| if (state.executionPending(id)) {
+            try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
+            return;
+        };
         if (operands.storage) |storage_index| {
             try self.closeOpaqueOwnedRoots(source, values[operands.owner], state, null);
             if (try self.primitiveArgumentStorage(argument_ids, values, storage_index, state)) |storage| {
@@ -2851,6 +3162,34 @@ pub const SafetyChecker = struct {
         self.next_outcome_guard += 1;
         for (summary.outcome_post_states) |outcome| {
             if (!outcome.reachable) continue;
+            for (outcome.completed_executions) |path| {
+                const receipt = try self.load_summary_input_value(path, arguments, state);
+                if (receipt.execution_receipts.len == 0) continue;
+                // The place and generation provide the existing proof shape;
+                // completion itself depends only on the captured execution IDs.
+                const storage = try self.resolveSummaryInputPath(path, argument_ids, arguments, state) orelse continue;
+                const generation = try state.storageGeneration(storage);
+                const proof = facts.GenerationOutcome{
+                    .storage = storage,
+                    .generation = generation,
+                    .guard = guard,
+                    .invalidates = false,
+                    .completed_executions = receipt.execution_receipts,
+                    .source = source,
+                };
+                if (summary.outputs.len == 1) {
+                    try self.attachOutcomeGeneration(&result, outcome.parent_variants, outcome.variant_index, proof);
+                } else {
+                    const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
+                    result.fields = fields;
+                    for (fields) |*field| if (field.index == outcome.output_index) {
+                        const value = try self.allocator.create(facts.ValueFacts);
+                        value.* = field.value.*;
+                        field.value = value;
+                        try self.attachOutcomeGeneration(value, outcome.parent_variants, outcome.variant_index, proof);
+                    };
+                }
+            }
             for (outcome.opaque_storage_empties) |path| {
                 const storage = try self.resolveSummaryOpaqueStoragePath(path, argument_ids, arguments, state) orelse continue;
                 // An unconditional guarantee has already discharged this domain.
@@ -3311,6 +3650,26 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
+        try self.applyExecutionCompletions(summary.completed_executions, arguments, state);
+        for (summary.input_post_states) |post| {
+            if (post.initializedness != .deinitialized and !post.ends_previous_roots) continue;
+            const value = try self.load_summary_input_value(post.target, arguments, state);
+            for (value.execution_receipts) |id| if (state.executionPending(id)) {
+                try self.report(source, "cannot abandon a pending execution before certified completion", .{});
+                break;
+            };
+        }
+        for (summary.input_accesses) |access| {
+            if (try self.resolveSummaryInputPath(access.target, argument_ids, arguments, state)) |storage| {
+                try self.requireExecutionAccess(source, storage, null, access.mode, state);
+            } else if (access.target.input_index < arguments.len) {
+                // Conservatively cover unknown referents carried in records.
+                const value = try self.projectValueFacts(arguments[access.target.input_index], access.target.projections);
+                try self.requireExecutionPointerAccess(source, value, access.mode, state);
+            }
+        }
+        for (summary.global_accesses) |access|
+            try self.requireExecutionAccess(source, .{ .root = @enumFromInt(access.binding) }, null, access.mode, state);
         for (summary.invalidated_domains) |domain| {
             if (domain.path.input_index >= arguments.len) continue;
             const value = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
@@ -3938,6 +4297,26 @@ pub const SafetyChecker = struct {
     ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{ .explicit_dependency = effect.explicit_dependency };
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+        var execution_ids = std.array_list.Managed(facts.ExecutionId).init(self.allocator);
+        for (effect.input_execution_receipts) |path| {
+            const value = try self.load_summary_input_value(path, arguments, state);
+            for (value.execution_receipts) |id| if (std.mem.indexOfScalar(facts.ExecutionId, execution_ids.items, id) == null) try execution_ids.append(id);
+        }
+        for (effect.fresh_executions) |fresh| {
+            if (!self.inputTypeHasReferences(@enumFromInt(fresh.input_type), 0)) continue;
+            const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
+            const maybe_id: ?facts.ExecutionId = existing orelse blk: {
+                const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities);
+                const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source);
+                if (receipt.execution_receipts.len == 0) break :blk null;
+                const new_id = receipt.execution_receipts[0];
+                if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);
+                break :blk new_id;
+            };
+            const id = maybe_id orelse continue;
+            if (std.mem.indexOfScalar(facts.ExecutionId, execution_ids.items, id) == null) try execution_ids.append(id);
+        }
+        result.execution_receipts = try execution_ids.toOwnedSlice();
         for (effect.fresh_dependencies) |fresh| {
             const root = try self.instantiateFreshRoot(fresh, state, fresh_roots);
             try appendDependencyFact(&dependencies, .{ .root = root });
@@ -4232,7 +4611,45 @@ pub const SafetyChecker = struct {
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         result.known_choice_variant = effect.known_choice_variant;
         if (referenced_place) |target| result.referenced_place = target;
+        try self.attachAbsentFreshExecutions(effect, &result, state);
         return result;
+    }
+
+    fn freshEffectContains(effect: facts.ValueEffect, source: facts.FreshEffectSource) bool {
+        for (effect.fresh_executions) |fresh| if (fresh.source == source) return true;
+        for (effect.fields) |field| if (freshEffectContains(field.value.*, source)) return true;
+        for (effect.variants) |variant| if (freshEffectContains(variant.value.*, source)) return true;
+        return false;
+    }
+
+    fn valueHasExecution(value: facts.ValueFacts, id: facts.ExecutionId) bool {
+        if (std.mem.indexOfScalar(facts.ExecutionId, value.execution_receipts, id) != null) return true;
+        for (value.fields) |field| if (valueHasExecution(field.value.*, id)) return true;
+        for (value.variants) |variant| if (valueHasExecution(variant.value.*, id)) return true;
+        return false;
+    }
+
+    fn attachAbsentFreshExecutions(self: *SafetyChecker, effect: facts.ValueEffect, result: *facts.ValueFacts, state: *FunctionState) !void {
+        const executions = self.active_fresh_executions orelse return;
+        if (result.variants.len == 0) return;
+        var iterator = executions.iterator();
+        while (iterator.next()) |entry| {
+            if (!freshEffectContains(effect, entry.key_ptr.*)) continue;
+            const id = entry.value_ptr.*;
+            const execution = state.executionState(id) orelse continue;
+            if (execution.loans.len == 0 or execution.loans[0].generations.len == 0) continue;
+            const storage = execution.loans[0].storage orelse blk: {
+                if (self.call_stack.items.len == 0) continue;
+                const function = self.graph.function(self.call_stack.getLast());
+                if (function.input_bindings.len == 0) continue;
+                break :blk facts.Place{ .root = self.graph.binding_refs.items[function.input_bindings.start] };
+            };
+            const ids = try self.allocator.dupe(facts.ExecutionId, &.{id});
+            const proof = facts.GenerationOutcome{ .storage = storage, .generation = execution.loans[0].generations[0], .guard = 0, .invalidates = false, .completed_executions = ids };
+            for (result.variants) |variant| {
+                if (!valueHasExecution(variant.value.*, id)) try self.attachOutcomeGeneration(result, &.{}, variant.index, proof);
+            }
+        }
     }
 
     fn instantiateFreshRoot(
@@ -4340,6 +4757,9 @@ pub const SafetyChecker = struct {
         var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
         for (left.storage_capabilities) |value| try appendCapabilityFact(&capabilities, value);
         for (right.storage_capabilities) |value| try appendCapabilityFact(&capabilities, value);
+        var executions = std.array_list.Managed(facts.ExecutionId).init(self.allocator);
+        for (left.execution_receipts) |id| try executions.append(id);
+        for (right.execution_receipts) |id| if (std.mem.indexOfScalar(facts.ExecutionId, executions.items, id) == null) try executions.append(id);
         var opaque_provenance = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
         for (left.opaque_provenance) |value| try appendOpaqueProvenanceFact(&opaque_provenance, value);
         for (right.opaque_provenance) |value| try appendOpaqueProvenanceFact(&opaque_provenance, value);
@@ -4403,6 +4823,7 @@ pub const SafetyChecker = struct {
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
             .storage_capabilities = try capabilities.toOwnedSlice(),
+            .execution_receipts = try executions.toOwnedSlice(),
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
@@ -5148,6 +5569,13 @@ pub const SafetyChecker = struct {
         roots: []const facts.ValidityRootId,
     ) !bool {
         for (roots) |root| {
+            for (state.executions.items) |execution| {
+                if (!execution.pending) continue;
+                for (execution.loans) |loan| if (containsRoot(loan.generations, root)) {
+                    try self.report(source, "cannot end storage borrowed by a pending execution", .{});
+                    return false;
+                };
+            }
             var externally_hidden = false;
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!containsRoot(opaque_storage.hidden_dependencies, root)) continue;
@@ -6142,6 +6570,8 @@ pub const SafetyChecker = struct {
     }
 
     fn readEvaluatedAccess(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, ty: ?graph_mod.GlobalTypeId, access: EvaluatedAccess, state: *FunctionState) !facts.ValueFacts {
+        if (access.storage) |storage| try self.requireExecutionAccess(source, storage, null, .read, state);
+        if (access.storage == null) if (access.pointer) |pointer| try self.requireExecutionPointerAccess(source, pointer, .read, state);
         if (access.value) |value| return value;
         if (access.pointer) |pointer| try self.requireLive(function, source, pointer, state);
         var value: facts.ValueFacts = .{};
@@ -6504,6 +6934,11 @@ pub const SafetyChecker = struct {
         value: facts.ValueFacts,
         state: *FunctionState,
     ) ?facts.ValidityRootId {
+        for (value.execution_receipts) |id| if (state.executionState(id)) |execution| {
+            if (!execution.pending) continue;
+            for (execution.loans) |loan| for (loan.generations) |root|
+                if (self.isLocalStorageGeneration(function, state, root)) return root;
+        };
         for (value.dependencies) |dependency|
             if (self.isLocalStorageGeneration(function, state, dependency.root)) return dependency.root;
         for (value.opaque_provenance) |provenance|
@@ -6565,7 +7000,22 @@ pub const SafetyChecker = struct {
         }
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.nodes.items[@intFromEnum(node)].content) {
-            .binding_declaration => |binding| try state.endLexicalStorage(binding),
+            .binding_declaration => |binding| {
+                var borrowed = false;
+                for (state.storage_generations.items) |generation| {
+                    if (generation.storage.root != binding) continue;
+                    for (state.executions.items) |execution| {
+                        if (!execution.pending) continue;
+                        for (execution.loans) |loan| if (containsRoot(loan.generations, generation.generation)) {
+                            borrowed = true;
+                            break;
+                        };
+                    }
+                }
+                if (borrowed) {
+                    try self.report(self.graph.binding(binding).source, "cannot end storage borrowed by a pending execution", .{});
+                } else try state.endLexicalStorage(binding);
+            },
             else => {},
         };
     }
@@ -6735,6 +7185,17 @@ pub const SafetyChecker = struct {
         for (left.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
         for (right.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
 
+        try joined.executions.appendSlice(left.executions.items);
+        for (right.executions.items) |execution| {
+            var found = false;
+            for (joined.executions.items) |*existing| if (existing.id == execution.id) {
+                existing.pending = existing.pending or execution.pending;
+                found = true;
+                break;
+            };
+            if (!found) try joined.executions.append(execution);
+        }
+
         for (left.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
             try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
@@ -6808,6 +7269,11 @@ pub const SafetyChecker = struct {
             defer transfers.deinit();
 
             try self.validateBlock(function, body, &iteration, &transfers);
+            for (iteration.executions.items) |execution| {
+                if (!execution.pending or entry.executionPending(execution.id)) continue;
+                try self.report(self.graph.declaration(self.graph.function(function).declaration).source, "pending execution loans must complete within their loop iteration", .{});
+                return;
+            }
             if (transfers.continue_state) |*continue_state|
                 try self.mergeLoopTransfer(&iteration, continue_state);
             if (iteration.reachable) {
@@ -7259,6 +7725,10 @@ pub const SafetyChecker = struct {
 
     fn activate_conditional_resources(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
         for (value.generation_outcomes) |outcome| {
+            if (outcome.completed_executions.len != 0) {
+                for (outcome.completed_executions) |id| state.completeExecution(id);
+                continue;
+            }
             if (outcome.empties_opaque_storage) {
                 var current = false;
                 for (state.storage_generations.items) |generation| if (generation.storage.eql(outcome.storage) and generation.generation == outcome.generation and !generation.needs_current_generation and state.tracker.isAlive(generation.generation)) {
@@ -7722,6 +8192,8 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
+    for (left.executions.items) |execution| if (execution.pending and !right.executionPending(execution.id)) return false;
+    for (right.executions.items) |execution| if (execution.pending and !left.executionPending(execution.id)) return false;
     if (left.reachable != right.reachable or
         left.tracker.roots.items.len != right.tracker.roots.items.len or
         left.storage_capabilities.items.len != right.storage_capabilities.items.len or
@@ -7815,6 +8287,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (!std.mem.eql(facts.ExecutionId, left.execution_receipts, right.execution_receipts)) return false;
     if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
     for (left.symbolic_pointees) |identity|
         if (std.mem.indexOfScalar(facts.SymbolicPointeeId, right.symbolic_pointees, identity) == null) return false;

@@ -3,7 +3,7 @@ implement Executor#(ForwardingExecutor) (
     .submit = (.self: $&ForwardingExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {
-        result = Executor#(ThreadedExecutor).submit(.self = self&.base, .request = request)
+        result = Executor#(ThreadedExecutor).submit(.self = self&.base, .request = ~request)
     }
 )
 compute := (.value: Int32 = 21) -> (.result: Int32) { result = value * 2 }

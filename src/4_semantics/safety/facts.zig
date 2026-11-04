@@ -19,6 +19,23 @@ pub const ValidityRoot = base.ValidityRoot;
 pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
+pub const AccessMode = base.AccessMode;
+
+// Identities name logical executions, not threads or validity generations.
+pub const ExecutionId = enum(u32) { _ };
+pub const ExecutionLoan = struct {
+    storage: ?Place = null,
+    symbolic: ?SymbolicPointeeId = null,
+    generations: []const ValidityRootId = &.{},
+    mode: AccessMode,
+};
+pub const ExecutionState = struct {
+    id: ExecutionId,
+    loans: []const ExecutionLoan,
+    pending: bool = true,
+};
+pub const InputAccess = base.InputAccess;
+pub const GlobalAccess = base.GlobalAccess;
 pub const CapturedStorage = base.CapturedStorage;
 pub const InputDependency = base.InputDependency;
 pub const InputDomain = base.InputDomain;
@@ -26,6 +43,7 @@ pub const OutputFieldEffect = base.OutputFieldEffect;
 pub const OutputDomainEffect = base.OutputDomainEffect;
 pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
+pub const FreshExecution = base.FreshExecution;
 pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
 pub const StorageObservationConflict = base.StorageObservationConflict;
@@ -53,6 +71,8 @@ pub const GenerationOutcome = struct {
     /// Discharge only hidden contents guarded by this call and generation.
     /// This does not end, initialize or restore a resource.
     empties_opaque_storage: bool = false,
+    /// Completion applies to these exact logical executions after the tag is selected.
+    completed_executions: []const ExecutionId = &.{},
     /// Resource proofs retain identities, never snapshots of caller values.
     resource_state: ?value_state.Initializedness = null,
     owned_roots: []const ValidityRootId = &.{},
@@ -77,7 +97,8 @@ pub const GenerationOutcome = struct {
         } else if (other.relocation != null) return false;
         return self.generation == other.generation and self.guard == other.guard and
             self.invalidates == other.invalidates and self.empties_opaque_storage == other.empties_opaque_storage and self.resource_state == other.resource_state and
-            std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and self.storage.eql(other.storage);
+            std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and
+            std.mem.eql(ExecutionId, self.completed_executions, other.completed_executions) and self.storage.eql(other.storage);
     }
 };
 
@@ -118,6 +139,7 @@ pub const ValueFacts = struct {
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
     symbolic_pointees: []const SymbolicPointeeId = &.{},
+    execution_receipts: []const ExecutionId = &.{},
     opaque_provenance: []const OpaqueProvenance = &.{},
     /// Concrete vtable method identities carried by a `Virtual` value. Keeping
     /// this in transient safety facts lets exact dispatch survive bindings and
@@ -138,6 +160,7 @@ pub const ValueFacts = struct {
             .storage_capabilities = self.storage_capabilities,
             .referenced_place = self.referenced_place,
             .symbolic_pointees = self.symbolic_pointees,
+            .execution_receipts = self.execution_receipts,
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
             .domains = self.domains,
@@ -155,6 +178,8 @@ pub const ValueFacts = struct {
     /// from manufacturing dependencies or ownership for plain scalar values.
     pub fn scalarOpaqueRead(self: ValueFacts) ValueFacts {
         return .{
+            .generation_outcomes = self.generation_outcomes,
+            .execution_receipts = self.execution_receipts,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
@@ -211,6 +236,7 @@ pub const Tracker = struct {
         next_id: u32 = 0,
         next_symbolic_id: u32 = 0,
         next_capability_id: u32 = 0,
+        next_execution_id: u32 = 0,
         projected_storage: std.ArrayList(struct {
             parent: SymbolicPointeeId,
             parent_generation: ValidityRootId,

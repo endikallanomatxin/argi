@@ -87,3 +87,14 @@ test "nested dynamic input demands retain a conservative representative" {
     defer a.free(empty);
     try std.testing.expectEqual(@as(usize, 0), empty.len);
 }
+
+test "receipt demands traverse captured input field and array paths" {
+    const a = std.testing.allocator;
+    const captured: facts.ValueEffect = .{ .input_execution_receipts = &.{.{ .input_index = 0, .projections = &.{ .{ .field = 1 }, .{ .static_index = 3 } } }}, .fields = &.{.{ .index = 0, .value = &.{ .input_dependencies = &.{.{ .path = .{ .input_index = 0, .projections = &.{ .{ .field = 1 }, .{ .static_index = 7 } } } }} } }} };
+    const summary: facts.SafetySummary = .{ .outputs = &.{.{ .fresh_executions = &.{.{ .source = 1, .inputs = &captured, .input_type = 0 }} }} };
+    const selected = try arrayIndices(a, &summary, .{ .input_index = 0, .projections = &.{.{ .field = 1 }} }, 8);
+    defer a.free(selected);
+    try std.testing.expectEqual(@as(usize, 2), selected.len);
+    try std.testing.expect(std.mem.indexOfScalar(u32, selected, 3) != null);
+    try std.testing.expect(std.mem.indexOfScalar(u32, selected, 7) != null);
+}

@@ -624,8 +624,8 @@ pub const Resolver = struct {
             self.stats.calls += 1;
             return .resolved;
         }
-        if (reference.module_path == null and std.mem.eql(u8, name, "is_plain_data")) {
-            const node = (self.makeIsPlainData(input, self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+        if (reference.module_path == null and (std.mem.eql(u8, name, "is_plain_data") or std.mem.eql(u8, name, "is_borrowable_data"))) {
+            const node = (self.makeIsPlainData(input, self.sourceFor(module_index, reference.source), std.mem.eql(u8, name, "is_borrowable_data")) catch |err| switch (err) {
                 error.ComptimeExecutionPending => return .deferred,
                 else => return err,
             }) orelse return .deferred;
@@ -2280,7 +2280,7 @@ pub const Resolver = struct {
         return .{ .source = source, .ty = original, .content = .{ .int_literal = bound } };
     }
 
-    fn makeIsPlainData(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) anyerror!?global_sg.Node {
+    fn makeIsPlainData(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef, borrowable: bool) anyerror!?global_sg.Node {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -2290,11 +2290,11 @@ pub const Resolver = struct {
         if (!std.mem.eql(u8, self.graph.text(field.name), "type")) return null;
         const ty = global_types.typeValue(self.graph, field.value) orelse return null;
         const contracts = self.nested_call_context orelse return null;
-        const plain = try self.isPlainDataType(contracts, ty, 0);
+        const plain = try self.isPlainDataType(contracts, ty, 0, borrowable);
         return .{ .source = source, .ty = try self.generics.internType(.{ .builtin = .Bool }), .content = .{ .bool_literal = plain } };
     }
 
-    fn isPlainDataType(self: *Resolver, contracts: *contract_mod.Resolver, ty: global_sg.GlobalTypeId, depth: usize) anyerror!bool {
+    fn isPlainDataType(self: *Resolver, contracts: *contract_mod.Resolver, ty: global_sg.GlobalTypeId, depth: usize, borrowable: bool) anyerror!bool {
         if (depth > 128) return false;
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.ComptimeExecutionPending;
         if (semantic == .generic and global_types.genericInstance(self.graph, ty) == null) {
@@ -2302,27 +2302,29 @@ pub const Resolver = struct {
             if (global_types.genericInstance(self.graph, ty) == null) return error.ComptimeExecutionPending;
         }
         if (@import("c_abi.zig").isRawPointer(self.graph, ty) or @import("c_abi.zig").isFunctionPointer(self.graph, ty)) return false;
-        if (semantic == .pointer or semantic == .virtual or semantic == .definition) return false;
+        if (semantic == .pointer) return borrowable and try self.isPlainDataType(contracts, semantic.pointer.child, depth + 1, false);
+        if (semantic == .virtual or semantic == .definition) return false;
         if (semantic == .nullable or semantic == .inferred_errable) return error.ComptimeExecutionPending;
         if (standard_contracts.standardDefinition(self.graph, "Deinit")) |contract| {
             if (try contracts.implements(ty, contract)) return false;
         }
         if (global_types.representationType(self.graph, ty)) |representation| {
-            if (representation != ty) return self.isPlainDataType(contracts, representation, depth + 1);
+            if (representation != ty) return self.isPlainDataType(contracts, representation, depth + 1, borrowable);
         } else return error.ComptimeExecutionPending;
         if (semantic == .builtin) return semantic.builtin != .Type and semantic.builtin != .Any;
-        if (global_types.arrayElement(self.graph, ty)) |element| return self.isPlainDataType(contracts, element, depth + 1);
+        if (global_types.arrayElement(self.graph, ty)) |element| return self.isPlainDataType(contracts, element, depth + 1, borrowable);
         if (global_types.fields(self.graph, ty)) |fields| {
             for (0..fields.len) |index| {
                 const child = self.graph.fields.items[fields.start + index].ty;
-                if (!try self.isPlainDataType(contracts, child, depth + 1)) return false;
+                if (!try self.isPlainDataType(contracts, child, depth + 1, borrowable)) return false;
             }
             return true;
         }
         if (global_types.variants(self.graph, ty)) |variants| {
+            if (borrowable) return self.isPlainDataType(contracts, ty, depth + 1, false);
             for (0..variants.len) |index| {
                 const child = self.graph.variants.items[variants.start + index].payload_type orelse continue;
-                if (!try self.isPlainDataType(contracts, child, depth + 1)) return false;
+                if (!try self.isPlainDataType(contracts, child, depth + 1, borrowable)) return false;
             }
             return true;
         }
@@ -4105,8 +4107,8 @@ pub const Resolver = struct {
             }
             if (module_path == null and std.mem.eql(u8, name, "_zeroed"))
                 return (try self.resolver.core.makeZeroed(input, self.resolver.sourceFor(self.module_index, source))) orelse error.DeferredGenericFunction;
-            if (module_path == null and std.mem.eql(u8, name, "is_plain_data"))
-                return (try self.resolver.makeIsPlainData(input, self.resolver.sourceFor(self.module_index, source))) orelse error.DeferredGenericFunction;
+            if (module_path == null and (std.mem.eql(u8, name, "is_plain_data") or std.mem.eql(u8, name, "is_borrowable_data")))
+                return (try self.resolver.makeIsPlainData(input, self.resolver.sourceFor(self.module_index, source), std.mem.eql(u8, name, "is_borrowable_data"))) orelse error.DeferredGenericFunction;
             if (module_path == null and std.mem.eql(u8, name, "size_of"))
                 return (try self.resolver.makeSizeOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.SizeOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "alignment_of"))

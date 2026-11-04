@@ -40,6 +40,17 @@ pub const InputPath = struct {
     storage_domain: ?u32 = null,
 };
 
+/// May-access effects are independent of lifetime requirements and final
+/// post-values: writing the same value still requires write authority.
+pub const AccessMode = enum { read, write };
+pub const InputAccess = struct { target: InputPath, mode: AccessMode };
+pub const GlobalAccess = struct {
+    /// Indexed module binding identity in the retained graph. Summary caches
+    /// are graph-local; this is not a native address or a validity root.
+    binding: u32,
+    mode: AccessMode,
+};
+
 pub const CapturedStorage = struct {
     path: InputPath,
     /// A final generation needs an ordered proof; stale also represents an
@@ -68,12 +79,19 @@ pub const FreshEffectSource = usize;
 
 /// Symbolic value facts for a function output. All references to caller state
 /// remain expressed as InputPath until call instantiation.
+pub const FreshExecution = struct {
+    source: FreshEffectSource,
+    inputs: *const ValueEffect,
+    input_type: u32,
+};
+
 pub const ValueEffect = struct {
     /// Preserves the use-site check for declared dependencies across calls.
     explicit_dependency: bool = false,
     input_dependencies: []const InputDependency = &.{},
     /// Scalar/raw facts copied without borrowing the source lifetime.
     input_storage_capabilities: []const InputPath = &.{},
+    input_execution_receipts: []const InputPath = &.{},
     input_places: []const InputPath = &.{},
     /// Storage generations borrowed by a value, without making those places
     /// the value's referenced storage.
@@ -95,6 +113,7 @@ pub const ValueEffect = struct {
     variants: []const OutputVariantEffect = &.{},
     known_choice_variant: ?u32 = null,
     fresh_dependencies: []const FreshEffectSource = &.{},
+    fresh_executions: []const FreshExecution = &.{},
     /// Nominal cleanup can be required without acquiring storage. This marker
     /// checks ownership permissions without inventing a lifetime root.
     fresh_cleanup_obligation: bool = false,
@@ -180,6 +199,11 @@ pub const GuardedSafetyEffects = struct {
 };
 
 pub const SafetySummary = struct {
+    input_accesses: []const InputAccess = &.{},
+    global_accesses: []const GlobalAccess = &.{},
+    /// Unknown external/erased effects cannot be interpreted as no access.
+    /// This remains conservative until access contracts bound those calls.
+    unknown_access: bool = false,
     /// Unconditional fields retain the conservative approximation for unknown
     /// conditions. Guarded records cannot silently remove those obligations.
     guarded_effects: []const GuardedSafetyEffects = &.{},
@@ -201,6 +225,7 @@ pub const SafetySummary = struct {
     outcome_post_states: []const OutcomePostStates = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     opaque_storage_empties: []const InputPath = &.{},
+    completed_executions: []const InputPath = &.{},
     invalidated_domains: []const InputDomain = &.{},
 
     /// A borrowed view of the current outcome effects, retaining common
@@ -212,6 +237,7 @@ pub const SafetySummary = struct {
         selected.input_post_states = outcome.input_post_states;
         selected.invalidated_domains = outcome.invalidated_domains;
         selected.opaque_storage_empties = outcome.opaque_storage_empties;
+        selected.completed_executions = outcome.completed_executions;
         return selected;
     }
 };
@@ -226,6 +252,7 @@ pub const OutcomePostStates = struct {
     input_post_states: []const PlacePostState,
     invalidated_domains: []const InputDomain = &.{},
     opaque_storage_empties: []const InputPath = &.{},
+    completed_executions: []const InputPath = &.{},
 };
 
 pub const OpaqueStorageEffect = struct {

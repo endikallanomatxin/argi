@@ -7,6 +7,7 @@ const facts = @import("safety_facts.zig");
 pub const Output = struct {
     dependencies: []const facts.InputPath = &.{},
     ownership_transfers: []const facts.InputPath = &.{},
+    execution_transfers: []const facts.InputPath = &.{},
     storage_sources: []const facts.InputPath = &.{},
     referent: ?facts.InputPath = null,
     domains: []const facts.InputDomain = &.{},
@@ -29,6 +30,7 @@ pub const Contract = struct {
     relocations: []const Relocation = &.{},
     retained_inputs: []const Retention = &.{},
     emptied_inputs: []const facts.InputPath = &.{},
+    completed_executions: []const facts.InputPath = &.{},
     /// Paths are resolved domain mappings, not source field names. Ending a
     /// generation permits invalidating references, but grants no permission to
     /// consume owned resources or replace hidden dependency contents.
@@ -82,6 +84,9 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
         var transfers: std.ArrayList(facts.InputPath) = .empty;
         for (declaration.transfers) |transfer| if (transfer.output_index == index) try transfers.append(allocator, .{ .input_index = transfer.input_index });
         output.ownership_transfers = try transfers.toOwnedSlice(allocator);
+        var execution_transfers: std.ArrayList(facts.InputPath) = .empty;
+        for (declaration.execution_transfers) |transfer| if (transfer.output_index == index) try execution_transfers.append(allocator, .{ .input_index = transfer.input_index });
+        output.execution_transfers = try execution_transfers.toOwnedSlice(allocator);
         var storage_sources: std.ArrayList(facts.InputPath) = .empty;
         for (declaration.storage_sources) |source| if (source.output_index == index) try storage_sources.append(allocator, storageInputPath(source.storage));
         output.storage_sources = try storage_sources.toOwnedSlice(allocator);
@@ -94,6 +99,7 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
             const contract = try fromDeclaration(allocator, .{
                 .output_count = declaration.output_count,
                 .dependencies = outcome.dependencies,
+                .execution_transfers = outcome.execution_transfers,
                 .domain_dependencies = outcome.domain_dependencies,
                 .owned_outputs = outcome.owned_outputs,
                 .storage_sources = outcome.storage_sources,
@@ -124,8 +130,10 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.retained_inputs, retained) |declared, *retention| retention.* = .{ .storage = storageInputPath(declared.storage), .input = .{ .input_index = declared.input } };
     const emptied = try allocator.alloc(facts.InputPath, declaration.emptied_inputs.len);
     for (declaration.emptied_inputs, emptied) |input, *path| path.* = storageInputPath(input);
-    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, &conditional);
-    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+    const completed = try allocator.alloc(facts.InputPath, declaration.completed_executions.len);
+    for (declaration.completed_executions, completed) |input, *path| path.* = .{ .input_index = input };
+    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, completed, &conditional);
+    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .completed_executions = completed, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
 fn appendGeneralContracts(allocator: std.mem.Allocator, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, enclosing: facts.ChoiceConditions, common: Contract, result: *std.ArrayList(Contract.Guarded)) anyerror!void {
@@ -144,10 +152,12 @@ fn appendGeneralContracts(allocator: std.mem.Allocator, outcomes: []const @impor
         var clause = try fromDeclaration(allocator, .{
             .output_count = @intCast(common.outputs.len),
             .dependencies = outcome.dependencies,
+            .execution_transfers = outcome.execution_transfers,
             .domain_dependencies = outcome.domain_dependencies,
             .owned_outputs = outcome.owned_outputs,
             .storage_sources = outcome.storage_sources,
             .emptied_inputs = outcome.emptied_inputs,
+            .completed_executions = outcome.completed_executions,
             .consumed_inputs = outcome.consumed_inputs,
             .relocations = outcome.relocations,
             .invalidates = outcome.invalidates,
@@ -191,6 +201,7 @@ pub fn mergeContracts(allocator: std.mem.Allocator, a: Contract, b: Contract) an
         .relocations = try mergeEffectSets(allocator, Contract.Relocation, a.relocations, b.relocations),
         .retained_inputs = try mergeEffectSets(allocator, Contract.Retention, a.retained_inputs, b.retained_inputs),
         .emptied_inputs = try mergeEffectSets(allocator, facts.InputPath, a.emptied_inputs, b.emptied_inputs),
+        .completed_executions = try mergeEffectSets(allocator, facts.InputPath, a.completed_executions, b.completed_executions),
         .invalidates = try mergeEffectSets(allocator, facts.InputPath, a.invalidates, b.invalidates),
         .invalidated_domains = try mergeEffectSets(allocator, facts.InputDomain, a.invalidated_domains, b.invalidated_domains),
     };
@@ -240,6 +251,7 @@ fn mergeOutputs(allocator: std.mem.Allocator, a: Output, b: Output) anyerror!Out
     return .{
         .dependencies = try std.mem.concat(allocator, facts.InputPath, &.{ a.dependencies, b.dependencies }),
         .ownership_transfers = try std.mem.concat(allocator, facts.InputPath, &.{ a.ownership_transfers, b.ownership_transfers }),
+        .execution_transfers = try std.mem.concat(allocator, facts.InputPath, &.{ a.execution_transfers, b.execution_transfers }),
         .storage_sources = try std.mem.concat(allocator, facts.InputPath, &.{ a.storage_sources, b.storage_sources }),
         .referent = a.referent orelse b.referent,
         .domains = try std.mem.concat(allocator, facts.InputDomain, &.{ a.domains, b.domains }),
@@ -262,6 +274,7 @@ pub fn effectsUnderConditions(allocator: std.mem.Allocator, contract: Contract, 
             effects.consumed_inputs = &.{};
             effects.relocations = &.{};
             effects.emptied_inputs = &.{};
+            effects.completed_executions = &.{};
         }
         result = try mergeContracts(allocator, result, effects);
     }
@@ -279,12 +292,13 @@ pub fn possibleEffects(allocator: std.mem.Allocator, contract: Contract) !Contra
         permissions.consumed_inputs = &.{};
         permissions.relocations = &.{};
         permissions.emptied_inputs = &.{};
+        permissions.completed_executions = &.{};
         result = try mergeContracts(allocator, result, permissions);
     }
     return result;
 }
 
-fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, common_emptied: []const facts.InputPath, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
+fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, common_emptied: []const facts.InputPath, common_completed: []const facts.InputPath, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
     for (outcomes) |outcome| {
         const effects = try allocator.create(Contract);
         effects.* = try fromDeclaration(allocator, .{
@@ -293,6 +307,7 @@ fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, o
             .consumed_inputs = outcome.consumed_inputs,
             .relocations = outcome.relocations,
             .emptied_inputs = outcome.emptied_inputs,
+            .completed_executions = outcome.completed_executions,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
         });
@@ -303,10 +318,11 @@ fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, o
         // those declared before an otherwise empty nested selector.
         effects.relocations = try std.mem.concat(allocator, Contract.Relocation, &.{ common_relocations, effects.relocations });
         effects.emptied_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ common_emptied, effects.emptied_inputs });
+        effects.completed_executions = try std.mem.concat(allocator, facts.InputPath, &.{ common_completed, effects.completed_executions });
         const variant = outcome.variant_index orelse return error.UnresolvedOutcomeContract;
         try result.append(allocator, .{ .output_index = outcome.output_index, .parent_variants = parents, .variant_index = variant, .effects = effects });
         const child_parents = try std.mem.concat(allocator, u32, &.{ parents, &.{variant} });
-        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, effects.relocations, effects.emptied_inputs, result);
+        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, effects.relocations, effects.emptied_inputs, effects.completed_executions, result);
     }
 }
 
@@ -423,6 +439,7 @@ fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, commo
     output.fresh_owner = output.fresh_owner or common.fresh_owner;
     output.referent = common.referent;
     output.ownership_transfers = common.ownership_transfers;
+    output.execution_transfers = try std.mem.concat(allocator, facts.InputPath, &.{ common.execution_transfers, output.execution_transfers });
     // Hidden provenance is an output permission, not an input post-state.
     // Preserve enclosing permissions while adding this payload's own sources.
     output.storage_sources = try std.mem.concat(allocator, facts.InputPath, &.{ common.storage_sources, output.storage_sources });
@@ -444,6 +461,8 @@ pub const Failure = struct {
         unsupported_capability_effect,
         unsupported_alias_obligation,
         missing_choice_relation,
+        missing_execution_transfer,
+        missing_execution_completion,
     };
     kind: Kind,
     output_index: ?u32 = null,
@@ -453,6 +472,8 @@ pub const Failure = struct {
 
     pub fn description(self: Failure) []const u8 {
         return switch (self.kind) {
+            .missing_execution_completion => "cannot prove completes_execution: input receipt remains pending",
+            .missing_execution_transfer => "cannot prove carries_execution: output does not carry the input receipt",
             .missing_choice_relation => "cannot prove the complete input/output choice condition; partial selector evidence is insufficient",
             .output_count => "the number of outputs differs",
             .undeclared_dependency => "undeclared output dependency",
@@ -517,6 +538,11 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
     }
     if (contract.outputs.len != summary.outputs.len) return .{ .kind = .output_count };
     for (contract.outputs, summary.outputs, 0..) |allowed, actual, index| {
+        if (checkExecutionTransfers(allowed, actual)) |failure| {
+            var result = failure;
+            result.output_index = @intCast(index);
+            return result;
+        }
         if (checkValue(allowed, actual)) |failure| {
             var result = failure;
             result.output_index = @intCast(index);
@@ -539,6 +565,14 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
     for (contract.outcomes) |required| {
+        for (required.effects.completed_executions) |input| {
+            var represented = false;
+            for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
+                represented = true;
+                break;
+            };
+            if (!represented) return .{ .kind = .missing_execution_completion, .input = input };
+        }
         for (required.effects.emptied_inputs) |storage| {
             var represented = false;
             for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
@@ -566,6 +600,7 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
     for (summary.outcome_post_states) |outcome| {
         if (!outcome.reachable) continue;
         const allowed = effectsForSelector(contract, outcome);
+        for (allowed.completed_executions) |input| if (!covers(outcome.completed_executions, input) and !covers(summary.completed_executions, input)) return .{ .kind = .missing_execution_completion, .input = input, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
         for (allowed.emptied_inputs) |storage| if (!containsExactPath(outcome.opaque_storage_empties, storage) and !containsExactPath(summary.opaque_storage_empties, storage)) return .{ .kind = .missing_empty_storage, .input = storage, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
         for (outcome.opaque_storage_empties) |storage| if (!containsExactPath(allowed.emptied_inputs, storage) and !permitsConsumedStorageEmpty(allowed, storage, outcome.input_post_states)) return .{ .kind = .unsupported_opaque_effect, .input = storage };
         for (allowed.relocations) |relocation| {
@@ -590,6 +625,7 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
     for (summary.opaque_storage_empties) |path| {
         if (!permitsEmptyStorage(contract, path) and !permitsConsumedStorageEmpty(contract, path, summary.input_post_states)) return .{ .kind = .unsupported_opaque_effect, .input = path };
     }
+    for (contract.completed_executions) |path| if (!covers(summary.completed_executions, path)) return .{ .kind = .missing_execution_completion, .input = path };
     for (contract.emptied_inputs) |path| {
         if (!containsExactPath(summary.opaque_storage_empties, path)) return .{ .kind = .missing_empty_storage, .input = path };
     }
@@ -642,6 +678,7 @@ fn checkGeneralRegion(allocator: std.mem.Allocator, contract: Contract, conditio
         allowed.consumed_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ allowed.consumed_inputs, required.effects.consumed_inputs });
         allowed.relocations = try std.mem.concat(allocator, Contract.Relocation, &.{ allowed.relocations, required.effects.relocations });
         allowed.emptied_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ allowed.emptied_inputs, required.effects.emptied_inputs });
+        allowed.completed_executions = try std.mem.concat(allocator, facts.InputPath, &.{ allowed.completed_executions, required.effects.completed_executions });
     }
     if (try check(allocator, allowed, actual)) |failure| {
         var result = failure;
@@ -728,6 +765,39 @@ fn guardHasUnreachableOutcome(conditions: facts.ChoiceConditions, summary: facts
         }
     }
     return false;
+}
+
+// A receipt may be nested in an output record. Choice alternatives must each
+// retain it unless the contract selects a specific output variant.
+fn carriesReceipt(actual: facts.ValueEffect, required: facts.InputPath) bool {
+    if (covers(actual.input_execution_receipts, required)) return true;
+    for (actual.fields) |field| if (carriesReceipt(field.value.*, required)) return true;
+    if (actual.variants.len != 0) {
+        if (actual.known_choice_variant) |known| {
+            for (actual.variants) |variant| if (variant.index == known) return carriesReceipt(variant.value.*, required);
+            return false;
+        }
+        for (actual.variants) |variant| if (!carriesReceipt(variant.value.*, required)) return false;
+        return true;
+    }
+    return false;
+}
+
+fn checkExecutionTransfers(allowed: Output, actual: facts.ValueEffect) ?Failure {
+    for (allowed.execution_transfers) |required| if (!carriesReceipt(actual, required))
+        return .{ .kind = .missing_execution_transfer, .input = required };
+    for (allowed.outcomes) |outcome| {
+        if (actual.known_choice_variant) |known| if (known != outcome.variant_index) continue;
+        var found = false;
+        for (actual.variants) |variant| if (variant.index == outcome.variant_index) {
+            found = true;
+            if (checkExecutionTransfers(outcome.value.*, variant.value.*)) |failure| return failure;
+        };
+        // A missing variant has no represented payload evidence.
+        if (!found and outcome.value.execution_transfers.len != 0)
+            return .{ .kind = .missing_execution_transfer, .input = outcome.value.execution_transfers[0] };
+    }
+    return null;
 }
 
 fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
@@ -1649,4 +1719,55 @@ test "conditional conformance errors propagate and failure conditions retain cal
             }
         }.validate, .{fallback});
     }
+}
+
+test "execution transfer contracts retain selected outcome permissions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const result = try fromDeclaration(arena.allocator(), .{
+        .output_count = 1,
+        .source = source,
+        .outcomes = &.{.{
+            .variant = .{ .start = 0, .len = 0 },
+            .variant_index = 0,
+            .source = source,
+            .execution_transfers = &.{.{ .output_index = 0, .input_index = 1 }},
+        }},
+    });
+    try std.testing.expectEqual(@as(usize, 0), result.outputs[0].execution_transfers.len);
+    try std.testing.expectEqual(@as(usize, 1), result.outputs[0].outcomes[0].value.execution_transfers.len);
+    try std.testing.expectEqual(@as(u32, 1), result.outputs[0].outcomes[0].value.execution_transfers[0].input_index);
+}
+
+test "execution transfer requires input receipt provenance" {
+    const required: facts.InputPath = .{ .input_index = 1, .projections = &.{.{ .field = 2 }} };
+    const allowed: Output = .{ .execution_transfers = &.{required} };
+    const carried: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &.{ .input_execution_receipts = &.{.{ .input_index = 1 }} } }} };
+    try std.testing.expect(checkExecutionTransfers(allowed, carried) == null);
+    const unrelated: facts.ValueEffect = .{ .input_execution_receipts = &.{.{ .input_index = 0 }} };
+    try std.testing.expectEqual(Failure.Kind.missing_execution_transfer, checkExecutionTransfers(allowed, unrelated).?.kind);
+}
+
+test "execution completion is a definite conditional guarantee" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const contract = try fromDeclaration(arena.allocator(), .{
+        .output_count = 1,
+        .source = source,
+        .outcomes = &.{.{
+            .variant = .{ .start = 0, .len = 0 },
+            .variant_index = 0,
+            .source = source,
+            .completed_executions = &.{1},
+        }},
+    });
+    try std.testing.expectEqual(@as(usize, 0), contract.completed_executions.len);
+    try std.testing.expectEqual(@as(u32, 1), contract.outcomes[0].effects.completed_executions[0].input_index);
+    const outcome: facts.OutcomePostStates = .{ .variant_index = 0, .input_post_states = &.{}, .completed_executions = &.{.{ .input_index = 1 }} };
+    const summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .outcome_post_states = &.{outcome} };
+    try std.testing.expect((try check(arena.allocator(), contract, summary)) == null);
+    const absent: facts.OutcomePostStates = .{ .variant_index = 0, .input_post_states = &.{} };
+    try std.testing.expectEqual(Failure.Kind.missing_execution_completion, (try check(arena.allocator(), contract, .{ .outputs = &.{.{}}, .outcome_post_states = &.{absent} })).?.kind);
 }

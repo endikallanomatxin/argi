@@ -146,6 +146,11 @@ pub const Engine = struct {
 };
 
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
+    if (a.unknown_access != b.unknown_access or a.input_accesses.len != b.input_accesses.len or a.global_accesses.len != b.global_accesses.len) return false;
+    for (a.input_accesses, b.input_accesses) |left, right|
+        if (left.mode != right.mode or !inputPathEql(left.target, right.target)) return false;
+    for (a.global_accesses, b.global_accesses) |left, right|
+        if (left.binding != right.binding or left.mode != right.mode) return false;
     if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
     for (a.guarded_effects, b.guarded_effects) |left, right| {
         if (!left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
@@ -167,14 +172,15 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         a.input_post_states.len != b.input_post_states.len or
         a.outcome_post_states.len != b.outcome_post_states.len or
         a.opaque_storage_effects.len != b.opaque_storage_effects.len or
-        a.opaque_storage_empties.len != b.opaque_storage_empties.len) return false;
+        a.opaque_storage_empties.len != b.opaque_storage_empties.len or a.completed_executions.len != b.completed_executions.len) return false;
 
     for (a.outputs, b.outputs) |left, right| if (!valueEffectEql(left, right)) return false;
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.required_opaque_inputs, b.required_opaque_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
     for (a.outcome_post_states, b.outcome_post_states) |left, right| {
-        if (left.reachable != right.reachable or !std.mem.eql(u32, left.parent_variants, right.parent_variants) or left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len or left.opaque_storage_empties.len != right.opaque_storage_empties.len) return false;
+        if (left.reachable != right.reachable or !std.mem.eql(u32, left.parent_variants, right.parent_variants) or left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len or left.opaque_storage_empties.len != right.opaque_storage_empties.len or left.completed_executions.len != right.completed_executions.len) return false;
+        for (left.completed_executions, right.completed_executions) |a_path, b_path| if (!inputPathEql(a_path, b_path)) return false;
         for (left.opaque_storage_empties, right.opaque_storage_empties) |a_path, b_path| if (!inputPathEql(a_path, b_path)) return false;
         for (left.invalidated_domains, right.invalidated_domains) |a_domain, b_domain| if (a_domain.domain_index != b_domain.domain_index or !inputPathEql(a_domain.path, b_domain.path)) return false;
         for (left.input_post_states, right.input_post_states) |left_state, right_state|
@@ -183,6 +189,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     for (a.opaque_storage_effects, b.opaque_storage_effects) |left, right| {
         if (!inputPathEql(left.storage, right.storage) or !valueEffectEql(left.hidden_dependencies, right.hidden_dependencies)) return false;
     }
+    for (a.completed_executions, b.completed_executions) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_storage_empties, b.opaque_storage_empties) |left, right| if (!inputPathEql(left, right)) return false;
     return true;
 }
@@ -236,6 +243,9 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     };
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_dependencies, b.fresh_dependencies)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_owned_roots, b.fresh_owned_roots)) return false;
+    if (a.input_execution_receipts.len != b.input_execution_receipts.len or a.fresh_executions.len != b.fresh_executions.len) return false;
+    for (a.input_execution_receipts, b.input_execution_receipts) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.fresh_executions, b.fresh_executions) |left, right| if (left.source != right.source or left.input_type != right.input_type or !valueEffectEql(left.inputs.*, right.inputs.*)) return false;
     if (a.input_storage_capabilities.len != b.input_storage_capabilities.len) return false;
     for (a.input_storage_capabilities, b.input_storage_capabilities) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_storage_capabilities, b.fresh_storage_capabilities)) return false;
@@ -308,7 +318,7 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     return true;
 }
 
-fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
+pub fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
     if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
     return true;
@@ -547,4 +557,14 @@ test "summary changes publish every observer or preserve the old approximation" 
             }
         }.update, .{existing});
     }
+}
+
+test "execution receipt and completion effects participate in equality" {
+    const input = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} };
+    const execution = facts.FreshExecution{ .source = 4, .inputs = &input, .input_type = 2 };
+    try std.testing.expect(!valueEffectEql(.{ .fresh_executions = &.{execution} }, .{}));
+    try std.testing.expect(!valueEffectEql(.{ .input_execution_receipts = &.{.{ .input_index = 0 }} }, .{}));
+    try std.testing.expect(!summaryEql(.{ .completed_executions = &.{.{ .input_index = 0 }} }, .{}));
+    const outcome = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{}, .completed_executions = &.{.{ .input_index = 1 }} };
+    try std.testing.expectEqual(@as(usize, 1), (facts.SafetySummary{}).outcomeEffects(outcome).completed_executions.len);
 }

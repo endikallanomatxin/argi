@@ -82,6 +82,7 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
             try require(verify.sourceFits(contract.source, graph.files.items.len));
             for (contract.dependencies) |dependency| try require(dependency.output_index < contract.output_count);
             for (contract.referents) |referent| try require(referent.output_index < contract.output_count);
+            for (contract.execution_transfers) |transfer| try require(transfer.output_index < contract.output_count);
             for (contract.domain_dependencies) |dependency| try require(dependency.output_index < contract.output_count);
         }
     }
@@ -178,6 +179,8 @@ fn verifyVirtualImplementation(graph: *const graph_mod.GlobalSemanticGraph, desc
         for (contract.invalidates) |index| try require(index < function.input.len);
         for (contract.dependencies) |dependency| try require(dependency.input_index < function.input.len);
         for (contract.referents) |referent| try require(referent.input_index < function.input.len);
+        for (contract.execution_transfers) |transfer| try require(transfer.input_index < function.input.len);
+        for (contract.completed_executions) |input| try require(input < function.input.len);
         for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < function.input.len);
         for (contract.invalidated_domains) |domain| try require(domain.input_index < function.input.len);
     }

@@ -1,8 +1,7 @@
-completed :: Int32 = 0
-work := () -> () {
+work := () -> (.result: UIntNative) {
     value :: UIntNative = 0
     while value < 1000000 { value = value + 1 }
-    completed = 42
+    result = value
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
@@ -11,6 +10,5 @@ main := (.system: System) -> () {
         future ::= unwrap_or_abort(.value = async#(work)(.args = ()))
         moved ::= ~future
     }
-    -- The worker is joined by moved's cleanup before this ordinary read.
-    if completed != 42 { abort }
+    -- Cleanup joins before reclaiming the moved task's native buffers.
 }

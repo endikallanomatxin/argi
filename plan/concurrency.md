@@ -2,23 +2,19 @@
 
 ## Status and purpose
 
-This is an open design proposal, not a specification of guarantees already
-provided by Argi. The aim is to extend temporal safety to isolation and safe
-coordination of resources while preserving mutable aliasing. The difficult work
-is establishing general safety rules; adding more executor features cannot
-substitute for those rules. Development order belongs in [the release plan](0.5.md).
+This note records open work toward general resource transfer and execution
+requirements. Development order belongs in [the release plan](0.5.md).
 
-Function identities, signature introspection, argument preparation and packed
-invocation already support generated task specializations. The initial native
-Future and ThreadedExecutor use stable buffers, single result extraction and
-join-before-cleanup, restricted to plain inputs and results. They demonstrate
-monomorphic scheduling, not a general transfer protocol. `is_plain_data` is not
-proof of concurrent safety: isolated callbacks currently permit mutable numeric
-globals, whose accesses still require caller coordination. See
-[the implemented interface](../description/173_concurrency.md).
+The native Future and ThreadedExecutor support plain results and nonowning input
+records or arrays whose reference leaves point to plain data. Checked execution
+receipts preserve loans through ordinary calls, wrappers and executor erasure;
+completion restores matching authority. `is_plain_data` and `is_borrowable_data`
+are shape queries, not general transfer guarantees. Isolated callbacks also reject
+mutable globals through transitive access summaries. The precise implemented
+boundary is described in [the concurrency specification](../description/173_concurrency.md).
 
-The direction below should guide further investigation. Region representation,
-effect syntax, proof transport and the trusted boundary remain unresolved.
+Extend that boundary to owning resources, opaque obligation transport, virtual
+access effects, affinity and synchronization before claiming general race freedom.
 
 ## Principles to preserve
 
@@ -84,8 +80,9 @@ authority. Destruction, replacement and generation termination must also respect
 outstanding access. Synchronized or atomic operations need their own verified
 protocol, rather than being ordinary writes exempted by assertion.
 
-The exact identity and granularity of regions, treatment of unknown referents,
-and joins across branches and loops need a formal definition. A single global
+The general identity and granularity of regions, treatment of unknown referents,
+and joins across branches and loops need a formal definition beyond the current
+plain-referent task loans. A single global
 flag toggled on an object by async would not preserve obligations across calls,
 aliases and hidden storage.
 
@@ -160,9 +157,10 @@ The conceptual operations needed are:
 | Synchronize completion | Prove execution has ended and its effects have been published |
 | Restore access | Return exactly the authority justified by completed obligations |
 
-These need not become five builtins or special language types. Investigate
-extensions to `retains`, `from_storage`, `empties` and checked postconditions before
-adding a parallel system of AccessLease or CompletionProof objects.
+The current checked `carries_execution` and `completes_execution` effects
+conserve task receipt obligations through virtual dispatch. Generalize obligation
+transport through opaque storage and owning resources without relying on lifetime
+dependencies alone.
 
 Exclusive authority cannot be duplicated, silently lost while work continues or
 returned early. Evidence must identify the actual storage, relevant generation,
@@ -188,8 +186,8 @@ again by a worker. Moving a Future must not move storage referenced by execution
 Copying a representation is not a transfer of ownership or safety evidence.
 
 An accepted task carries authorization to execute exactly once. The current
-callback-and-buffer TaskRequest is not yet this general owning abstraction.
-Candidate lifecycle:
+move-only TaskRequest carries a private execution receipt but is not yet a general
+owning payload abstraction. Candidate lifecycle:
 
 ```text
 Prepared -- submission rejected --> recover or destroy prepared inputs
@@ -217,8 +215,9 @@ policy, not a universal requirement. Blocking a sole scheduler worker during
 cleanup could deadlock. A different owner may retain execution until completion,
 but dropping an observer must never abandon live storage obligations.
 
-Structured task groups are the preferred direction for borrowed tasks: all work
-must finish before the enclosing scope releases borrowed resources. Detached work
+Structured task groups are a possible extension for borrowed tasks: all work
+must finish before the enclosing scope releases borrowed resources. The current
+Future instead retains its loan until a successful join or joining cleanup. Detached work
 requires independently surviving resources and a stable completion owner.
 
 ## Synchronization and ownership transfer

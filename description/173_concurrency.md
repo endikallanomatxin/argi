@@ -1,9 +1,8 @@
 # Concurrency
 
-The current interface is an initial restricted implementation. Access authority,
-execution effects and general resource transfer are under design in
-[the concurrency proposal](../plan/concurrency.md); they are not guarantees of
-the implementation described here.
+The current interface supports restricted borrowed task inputs. General resource
+transfer and execution requirements remain under design in
+[the concurrency proposal](../plan/concurrency.md).
 
 Argi's concurrency model builds on ordinary function identities and explicit
 capabilities. Function metaprogramming generates a task specialization from a
@@ -19,37 +18,63 @@ from another thread. In particular, an Allocation can retain an allocator's
 deallocation evidence, and a nominal owner can retain thread-affine foreign
 state. An implicitly copyable value is not automatically thread-transferable.
 
-Borrowed references require both a live backing owner until completion and an
-explicit permission to use the referent on another thread. Reference mutability
-alone establishes neither permission nor synchronization. The model does not
-promise general data-race freedom or exclusive mutable references. Atomic cells
-can synchronize native operations without authorizing unrelated value transfer.
+Task inputs may contain references to recursively plain, reference-free data.
+The caller retains the backing storage until completion. Each readonly reference
+lends read authority; each mutable reference lends write authority, even if the
+worker itself performs fewer accesses. Multiple readers may coexist. A pending
+write loan blocks caller reads and writes; any pending loan blocks incompatible
+writes, destruction, replacement and ending the backing lifetime. These rules
+follow aliases and calls, including wrappers. A loan must end within the loop
+iteration that created it.
 
-The worker owns task inputs while running. The caller cannot free task storage
-until completion, including when it drops or moves the associated Future.
-Completion must publish output initialization before the caller extracts the
-result. A failed start must preserve cleanup of prepared inputs. A failed join
-must preserve the running task's storage obligation.
+`is_borrowable_data(.type = T)` recognizes plain nonowning input records and
+arrays with eligible reference leaves. Referents must be recursively plain and
+reference-free; destructors, raw pointers, callbacks and virtual handles are not
+eligible, and choices containing references are unsupported. Task results must
+satisfy `is_plain_data`. Unsupported input or result types return
+`unsupported_task_value` before a worker is created. These shape queries do not
+by themselves grant access authority or transfer an owning resource.
 
-The first backend accepts only plain values: recursively reference-free data
-without selected destructors, raw pointer handles, virtual handles or callbacks.
-`is_plain_data(.type = T)` reports this conservative type property; it grants no
-ownership permission. Unsupported input or result types return
-`unsupported_task_value` before a worker is created. Prepared owning inputs still
-receive ordinary cleanup on that path. Transferring owners and borrowed values
-requires further transfer evidence and storage accounting.
+A receipt identifies each pending execution and its actual storage generations.
+Successful join publishes the worker's writes and completes only that execution's
+loans. Failed submission creates no pending loan, while failed join retains it.
+Pending execution receipts cannot be stored in user opaque containers until those
+containers can carry their obligations. The model does not promise general
+data-race freedom or exclusive mutable references. Atomic cells synchronize their
+own native operations without authorizing unrelated value transfer.
 
 Workers use an isolated callback signature, checked over all resolved reachable
-bodies. They cannot access module globals containing references or owners, or
-call unknown foreign, indirect or virtual targets. Plain numeric globals remain
-available; the caller must synchronize their concurrent access. An ordinary
-function's plain input and output types alone would not bound its global loans.
+bodies. They cannot access mutable module storage, module globals containing
+references or owners, or unknown foreign, indirect or virtual targets. Immutable
+plain globals remain available. The mutable-global restriction includes reads,
+writes through helpers and effects of selected cleanup. Plain input and output
+types alone do not establish isolation.
 
 Raw context pointers and callback addresses establish no safe-reference validity
 or lifetime facts. The bundled worker's trusted borrows are bounded by its
 invocation: the native adapter owns correctly sized and aligned buffers until
-the worker returns, and the plain-value restriction prevents borrowed leaves or
-destructors from escaping that boundary.
+the worker returns. Inputs permit only plain referents, and results prevent
+borrowed leaves or destructors from escaping that boundary. A private
+ingress operation reconstructs the checked nested reference facts for the worker.
+
+## Access effects
+
+Access requirements are separate from validity and final initialization state.
+Reading a referent requires read authority; writing, consuming it or ending its
+generation requires write authority. Writing an unchanged value still counts as
+a write. Multiple mutable aliases within one sequential execution remain valid.
+
+Effects propagate through ordinary calls using caller-relative input paths,
+including references stored inside by-value records. Global access and selected
+cleanup effects are transitive. Calls whose effects are not bounded, including
+virtual calls with only lifetime contracts, retain unknown access effects;
+an empty lifetime contract does not establish absence of memory access.
+
+The compiler infers conservative may-access effects in safety summaries and
+rejects mutable-global access from isolated callbacks. Task loans use the declared
+reference capability, rather than narrowing authority to a worker's inferred
+minimum effects. Virtual access bounds, affinity and owning resource transfer
+remain open work.
 
 ## Futures and executors
 
@@ -83,12 +108,15 @@ assume its virtual Executor handle. This initial backend creates one OS thread
 per task. It has no worker pool, cancellation or task groups and currently runs
 only in native execution.
 
-Executor has one monomorphic submit operation. Its opaque TaskRequest binds the
-callback, source borrow, sizes and alignments; their private fields cannot be
-altered by forwarding providers. TaskReceipt owns native completion and cleanup.
-Forwarding executors must preserve the request and obey the declared storage
-effects. Futures reject receipts for a different typed worker with
-`executor_mismatch`. A foreign holder may invoke a callback repeatedly, so a
+Executor has one monomorphic submit operation. Its move-only TaskRequest binds the
+callback, source borrow, sizes, alignments and a private execution receipt.
+TaskReceipt owns native completion and cleanup. The submit contract requires
+`carries_execution(result, request)` on success and
+`completes_execution(request)` on failure; these checked guarantees survive
+virtual dispatch. Forwarding providers move the request with `~request` rather
+than duplicating it. A provider taking responsibility for a request must move it
+into a lexical owner before a fallible start. Futures reject receipts for a
+different typed worker with `executor_mismatch`. A foreign holder may invoke a callback repeatedly, so a
 callback's reachable body cannot consume a `once` function.
 
 ## Implementation boundary
@@ -104,6 +132,6 @@ transport, joining, write publication, and rejection of destruction before join.
 The native handle has one owner and its operations are serialized. Destruction
 does not detach or implicitly join a thread. A failed join leaves the handle live.
 
-General cross-thread transfer contracts for owners and references are not yet
+Owning payloads and general cross-thread resource contracts are not yet
 implemented. The next steps are recorded in
 [the concurrency plan](../plan/concurrency.md).

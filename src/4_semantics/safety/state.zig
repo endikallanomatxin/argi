@@ -76,6 +76,7 @@ pub const State = struct {
     // Sparse value facts are separate from slot identity and initialization.
     // Ordinary scalar slots need no entry; immutable aggregates share facts.
     symbolic_values: std.array_list.Managed(SymbolicStoredValue),
+    executions: std.array_list.Managed(facts.ExecutionState),
     storage_capabilities: std.array_list.Managed(StorageCapabilityState),
     storage_generations: std.array_list.Managed(StorageGeneration),
     lexical_storage_generations: std.array_list.Managed(facts.ValidityRootId),
@@ -100,6 +101,7 @@ pub const State = struct {
             .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
             .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
             .symbolic_values = std.array_list.Managed(SymbolicStoredValue).init(allocator),
+            .executions = std.array_list.Managed(facts.ExecutionState).init(allocator),
             .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
             .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
             .lexical_storage_generations = std.array_list.Managed(facts.ValidityRootId).init(allocator),
@@ -115,6 +117,7 @@ pub const State = struct {
         self.places.deinit();
         self.symbolic_pointees.deinit();
         self.symbolic_values.deinit();
+        self.executions.deinit();
         self.storage_capabilities.deinit();
         self.storage_generations.deinit();
         self.lexical_storage_generations.deinit();
@@ -165,6 +168,41 @@ pub const State = struct {
             if (comptime std.mem.eql(u8, field.name, "tracker") or std.mem.eql(u8, field.name, "reachable")) continue;
             @field(self, field.name).allocator = allocator;
         }
+    }
+
+    /// Completed entries remain present so an execution identity is never reused.
+    pub fn establishExecution(self: *State, loans: []const facts.ExecutionLoan) !facts.ExecutionId {
+        var next: u32 = 0;
+        if (self.tracker.namespace) |namespace| {
+            next = namespace.next_execution_id;
+        } else {
+            for (self.executions.items) |execution| {
+                const id = @intFromEnum(execution.id);
+                if (id == std.math.maxInt(u32)) return error.SafetyExecutionIdentityLimit;
+                next = @max(next, id + 1);
+            }
+        }
+        if (next == std.math.maxInt(u32)) return error.SafetyExecutionIdentityLimit;
+        const id: facts.ExecutionId = @enumFromInt(next);
+        try self.executions.append(.{ .id = id, .loans = loans });
+        if (self.tracker.namespace) |namespace| namespace.next_execution_id = next + 1;
+        return id;
+    }
+
+    pub fn executionState(self: *const State, id: facts.ExecutionId) ?facts.ExecutionState {
+        for (self.executions.items) |execution| if (execution.id == id) return execution;
+        return null;
+    }
+
+    pub fn executionPending(self: *const State, id: facts.ExecutionId) bool {
+        return if (self.executionState(id)) |execution| execution.pending else false;
+    }
+
+    pub fn completeExecution(self: *State, id: facts.ExecutionId) void {
+        for (self.executions.items) |*execution| if (execution.id == id) {
+            execution.pending = false;
+            return;
+        };
     }
 
     pub fn establishCapability(self: *State) !facts.StorageCapabilityId {
@@ -1355,4 +1393,45 @@ test "Safety symbolic overlap compares unequal-depth paths at their common ances
         try std.testing.expect(state.symbolicStorageMayOverlap(@enumFromInt(pair[0]), @enumFromInt(pair[1])));
         try std.testing.expect(state.symbolicStorageMayOverlap(@enumFromInt(pair[1]), @enumFromInt(pair[0])));
     }
+}
+
+test "execution receipts keep distinct identities across branches and completion" {
+    const a = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = State.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const first = try state.establishExecution(&.{});
+    var branch = try state.clone(a);
+    defer branch.deinit();
+    const second = try branch.establishExecution(&.{});
+    const third = try state.establishExecution(&.{});
+    try std.testing.expect(first != second and second != third and first != third);
+    branch.completeExecution(first);
+    try std.testing.expect(!branch.executionPending(first));
+    try std.testing.expect(state.executionPending(first));
+    try std.testing.expect(branch.executionPending(second));
+    state.completeExecution(first);
+    try std.testing.expect(state.executionPending(third));
+    const later = try state.establishExecution(&.{});
+    try std.testing.expect(later != first);
+}
+
+fn executionReceiptAllocation(allocator: std.mem.Allocator) !void {
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var state = State.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const first = state.establishExecution(&.{}) catch |err| {
+        try std.testing.expectEqual(@as(u32, 0), namespace.next_execution_id);
+        return err;
+    };
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(first));
+    try std.testing.expectEqual(@as(u32, 1), namespace.next_execution_id);
+}
+
+test "execution receipt allocation commits its identity only after success" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, executionReceiptAllocation, .{});
 }

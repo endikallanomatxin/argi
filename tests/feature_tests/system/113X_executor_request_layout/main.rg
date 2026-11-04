@@ -4,7 +4,7 @@ implement Executor#(BadExecutor) (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {
         request._output_size = 1
-        result = Executor#(ThreadedExecutor).submit(.self = self&.base, .request = request)
+        result = Executor#(ThreadedExecutor).submit(.self = self&.base, .request = ~request)
     }
 )
 compute := () -> (.result: Int32) { result = 42 }

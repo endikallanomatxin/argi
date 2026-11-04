@@ -31,6 +31,10 @@ pub const Infer = struct {
     // Both requirement scans share control-flow and cleanup traversal. Their
     // obligations remain separate so metadata access does not read elements.
     collecting_opaque_requirements: bool = false,
+    // Collected during the ordinary requirement walk, sharing its selected
+    // cleanup and completed-call traversal. Authority is not a liveness fact.
+    access_sink: ?*AccessEffects = null,
+    reading_access_targets: bool = false,
     post_state_ns: u64 = 0,
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
@@ -39,6 +43,7 @@ pub const Infer = struct {
     guards_ns: u64 = 0,
     unbound_opaque_dependencies: facts.ValueEffect = .{},
     opaque_empty_seen: bool = false,
+    inferring_completions: bool = false,
     virtual_summary_ns: u64 = 0,
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
@@ -51,6 +56,10 @@ pub const Infer = struct {
     engine: *summaries.Engine,
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
+    // May-targets retain earlier aliases even after sequential reassignment.
+    // Final value provenance alone cannot describe accesses earlier in a body.
+    access_place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
+    module_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
     addressed_outputs: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
@@ -79,6 +88,32 @@ pub const Infer = struct {
         parent_variants: []const u32 = &.{},
     };
 
+    const AccessEffects = struct {
+        inputs: std.array_list.Managed(facts.InputAccess),
+        globals: std.array_list.Managed(facts.GlobalAccess),
+        unknown: bool = false,
+
+        fn init(allocator: std.mem.Allocator) AccessEffects {
+            return .{ .inputs = .init(allocator), .globals = .init(allocator) };
+        }
+
+        fn addInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode) !void {
+            for (self.inputs.items) |*existing| if (summaries.inputPathEql(existing.target, target)) {
+                if (mode == .write) existing.mode = .write;
+                return;
+            };
+            try self.inputs.append(.{ .target = target, .mode = mode });
+        }
+
+        fn addGlobal(self: *AccessEffects, binding: u32, mode: facts.AccessMode) !void {
+            for (self.globals.items) |*existing| if (existing.binding == binding) {
+                if (mode == .write) existing.mode = .write;
+                return;
+            };
+            try self.globals.append(.{ .binding = binding, .mode = mode });
+        }
+    };
+
     pub fn init(
         allocator: std.mem.Allocator,
         graph: *const graph_mod.GlobalSemanticGraph,
@@ -93,6 +128,8 @@ pub const Infer = struct {
             .engine = engine,
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect).init(allocator),
             .place_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath).init(allocator),
+            .access_place_bindings = .init(allocator),
+            .module_bindings = .init(allocator),
             .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
             .addressed_outputs = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
@@ -110,6 +147,8 @@ pub const Infer = struct {
         self.cache_reused.deinit(self.allocator);
         self.bindings.deinit();
         self.place_bindings.deinit();
+        self.access_place_bindings.deinit();
+        self.module_bindings.deinit();
         self.local_address_bindings.deinit();
         self.addressed_outputs.deinit();
         self.virtual_summaries.deinit();
@@ -128,6 +167,11 @@ pub const Infer = struct {
         try self.cancellation.check();
         if (self.cache) |cache| if (cache.graph != self.graph) return error.ForeignSafetySummaryCache;
         self.engine.retain_dependencies = self.cache != null;
+        self.module_bindings.clearRetainingCapacity();
+        for (self.graph.roots.items) |root| switch (self.graph.node(root).content) {
+            .binding_declaration => |binding| try self.module_bindings.put(binding, {}),
+            else => {},
+        };
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
         defer functions.deinit();
 
@@ -143,6 +187,8 @@ pub const Infer = struct {
                 }
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
             }
+            if (function.body == null or function.safety_primitive != .none)
+                self.engine.summaries.getPtr(id).?.unknown_access = true;
             if (function.flags.has_foreign_capability) {
                 // Authorization must remain live even for imports whose other
                 // storage effects are unknown. Callers compose this requirement
@@ -232,7 +278,7 @@ pub const Infer = struct {
         for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
         for (outputs, 0..) |_, output_index| {
             var guarded_generation = false;
-            for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0 or outcome.effects.emptied_inputs.len != 0)) {
+            for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0 or outcome.effects.emptied_inputs.len != 0 or outcome.effects.completed_executions.len != 0)) {
                 guarded_generation = true;
                 break;
             };
@@ -244,7 +290,7 @@ pub const Infer = struct {
                 const effects = contracts.effectsForSelector(contract, selector);
                 var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
                 try self.appendContractPostStates(&states, effects);
-                try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains, .opaque_storage_empties = effects.emptied_inputs });
+                try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains, .opaque_storage_empties = effects.emptied_inputs, .completed_executions = effects.completed_executions });
             }
         }
         var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
@@ -309,7 +355,7 @@ pub const Infer = struct {
             try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
         }
         const required_paths = try required.toOwnedSlice(self.allocator);
-        return .{ .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+        return .{ .unknown_access = true, .outputs = outputs, .required_live_inputs = required_paths, .storage_observations = required_paths, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .completed_executions = contract.completed_executions, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
     }
 
     fn appendContractPostStates(self: *Infer, states: *std.array_list.Managed(facts.PlacePostState), contract: contracts.Contract) !void {
@@ -327,7 +373,7 @@ pub const Infer = struct {
         var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
         try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
         for (contract.outcomes) |outcome| {
-            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0 and outcome.effects.relocations.len == 0 and outcome.effects.emptied_inputs.len == 0) continue;
+            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0 and outcome.effects.relocations.len == 0 and outcome.effects.emptied_inputs.len == 0 and outcome.effects.completed_executions.len == 0) continue;
             const selector = outcome_selectors.Selector{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index };
             var duplicate = false;
             for (wanted.items) |existing| if (existing.output_index == selector.output_index and existing.variant_index == selector.variant_index and std.mem.eql(u32, existing.parent_variants, selector.parent_variants)) {
@@ -662,6 +708,7 @@ pub const Infer = struct {
             self.allocator = parent;
             self.bindings.clearRetainingCapacity();
             self.place_bindings.clearRetainingCapacity();
+            self.access_place_bindings.clearRetainingCapacity();
             self.local_address_bindings.clearRetainingCapacity();
             self.addressed_outputs.clearRetainingCapacity();
             self.domain_invalidations.clearRetainingCapacity();
@@ -688,6 +735,9 @@ pub const Infer = struct {
         // identities are call-site stable. Keeping declarations fact-free here
         // also prevents one global primitive root identity leaking across calls.
         if (function.safety_primitive != .none or function.body == null) return .{
+            .input_accesses = previous.input_accesses,
+            .global_accesses = previous.global_accesses,
+            .unknown_access = previous.unknown_access,
             .outputs = outputs,
             .required_live_inputs = previous.required_live_inputs,
             .required_opaque_inputs = previous.required_opaque_inputs,
@@ -699,6 +749,7 @@ pub const Infer = struct {
             .outcome_post_states = previous.outcome_post_states,
             .opaque_storage_effects = previous.opaque_storage_effects,
             .opaque_storage_empties = previous.opaque_storage_empties,
+            .completed_executions = previous.completed_executions,
         };
 
         // Drop activation depends only on the finalized GlobalSG. Cache it
@@ -713,6 +764,7 @@ pub const Infer = struct {
 
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
+        self.access_place_bindings.clearRetainingCapacity();
         self.local_address_bindings.clearRetainingCapacity();
         self.addressed_outputs.clearRetainingCapacity();
         self.domain_invalidations.clearRetainingCapacity();
@@ -724,8 +776,14 @@ pub const Infer = struct {
         profile.accumulate(self.profile_io, start, &self.output_ns);
 
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        var accesses = AccessEffects.init(self.allocator);
+        defer accesses.inputs.deinit();
+        defer accesses.globals.deinit();
         start = profile.timestamp(self.profile_io);
+        self.access_sink = &accesses;
+        errdefer self.access_sink = null;
         try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_live_inputs);
+        self.access_sink = null;
         var required_opaque_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
         {
             self.collecting_opaque_requirements = true;
@@ -769,6 +827,14 @@ pub const Infer = struct {
             &opaque_storage_effects,
         );
         const has_opaque_empty_effect = self.opaque_empty_seen;
+        self.inferring_completions = true;
+        self.opaque_empty_seen = false;
+        var completion_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+        defer completion_effects.deinit();
+        const raw_completions = try self.inferOpaqueStorageEffects(function_id, function.body.?, &completion_effects);
+        const completed_executions = try self.filterReturnedExecutionCompletions(outputs, raw_completions, null);
+        const has_completion_effect = self.opaque_empty_seen;
+        self.inferring_completions = false;
         profile.accumulate(self.profile_io, start, &self.opaque_ns);
         start = profile.timestamp(self.profile_io);
         // Each choice is considered independently. We never construct a product
@@ -780,7 +846,7 @@ pub const Infer = struct {
         var forwarded_selectors = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
         defer forwarded_selectors.deinit();
         try self.forwardingSelectors(function_id, function.body.?, &forwarded_selectors);
-        if (post_states.items.len != 0 or common_domains.len != 0 or requested_outcomes or has_opaque_empty_effect or forwarded_selectors.items.len != 0) {
+        if (post_states.items.len != 0 or common_domains.len != 0 or requested_outcomes or has_opaque_empty_effect or has_completion_effect or forwarded_selectors.items.len != 0) {
             for (0..function.output.len) |output_index| {
                 const output_ty = self.graph.fields.items[function.output.start + @as(u32, @intCast(output_index))].ty;
                 var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
@@ -817,6 +883,14 @@ pub const Infer = struct {
                         try self.inferOpaqueStorageEffects(function_id, function.body.?, &selected_opaque_effects)
                     else
                         opaque_storage_empties;
+                    self.selected_forward_applied = false;
+                    self.inferring_completions = true;
+                    const raw_selected_completions = if (has_completion_effect)
+                        try self.inferOpaqueStorageEffects(function_id, function.body.?, &completion_effects)
+                    else
+                        completed_executions;
+                    self.inferring_completions = false;
+                    const selected_completions = try self.filterReturnedExecutionCompletions(outputs, raw_selected_completions, selector);
                     try outcomes.append(.{
                         .reachable = outcome_exits != null,
                         .output_index = @intCast(output_index),
@@ -825,6 +899,7 @@ pub const Infer = struct {
                         .input_post_states = if (outcome_exits) |exits| try self.allocator.dupe(facts.PlacePostState, exits.items) else &.{},
                         .invalidated_domains = selected_domains,
                         .opaque_storage_empties = selected_empties,
+                        .completed_executions = selected_completions,
                     });
                 }
             }
@@ -890,6 +965,20 @@ pub const Infer = struct {
             }
         }
 
+        // Consuming a referent or ending its generation requires write
+        // authority even when cleanup has no explicit pointer store.
+        for (post_states.items) |post| {
+            if (post.ends_previous_roots or post.refreshes_storage_generation or
+                post.initializedness == .moved or post.initializedness == .deinitialized or
+                post.initialization == .definite)
+                try accesses.addInput(post.target, .write);
+        }
+        for (common_domains) |domain| {
+            var target = domain.path;
+            target.storage_domain = domain.domain_index;
+            try accesses.addInput(target, .write);
+        }
+
         // This finite domain tracks authorization separately from lifetime:
         // counts saturate at two, so recursion can express repeated consumption
         // without growing symbolic histories or introducing another scheduler.
@@ -927,6 +1016,9 @@ pub const Infer = struct {
 
         profile.accumulate(self.profile_io, start, &self.capability_ns);
         var summary: facts.SafetySummary = .{
+            .input_accesses = try accesses.inputs.toOwnedSlice(),
+            .global_accesses = try accesses.globals.toOwnedSlice(),
+            .unknown_access = accesses.unknown,
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
@@ -938,6 +1030,7 @@ pub const Infer = struct {
             .outcome_post_states = outcome_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_empties = opaque_storage_empties,
+            .completed_executions = completed_executions,
             .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
         };
         start = profile.timestamp(self.profile_io);
@@ -1068,7 +1161,7 @@ pub const Infer = struct {
     /// conservative summary; unsupported control flow discards this precision.
     fn inferEntryChoiceOutputGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, complete: *bool) ![]const facts.GuardedSafetyEffects {
         const function = self.graph.function(function_id);
-        if (summary.outputs.len == 0 or function.input.start + function.input.len > self.graph.fields.items.len) return &.{};
+        if (function.input.start + function.input.len > self.graph.fields.items.len) return &.{};
         const output_facts = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         @memset(output_facts, .{});
         const initialized = try self.allocator.alloc(bool, summary.outputs.len);
@@ -1110,7 +1203,9 @@ pub const Infer = struct {
         return switch (self.graph.node(value).content) {
             .binding_use, .int_literal, .float_literal, .char_literal, .bool_literal => true,
             .dereference => |read| self.entryOutputExpressionSafe(read.pointer),
-            .denied_implicit_copy => |child| self.entryOutputExpressionSafe(child),
+            .denied_implicit_copy, .move_value => |child| self.entryOutputExpressionSafe(child),
+            .choice_payload_access => |access| self.entryOutputExpressionSafe(access.value),
+            .struct_field_access => |access| self.entryOutputExpressionSafe(access.value),
             .choice_literal => |literal| if (literal.payload) |child| self.entryOutputExpressionSafe(child) else true,
             .struct_value_literal => |literal| blk: {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
@@ -1134,6 +1229,7 @@ pub const Infer = struct {
         return switch (self.graph.node(node_id).content) {
             .return_statement => |ret| ret.expression == null and ret.cleanup.len == 0,
             .auto_deinit_binding => |id| blk: {
+                if (self.cleanup) |active| if (!active.roots.contains(id)) break :blk true;
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
                 break :blk cleanup.deinit_fn == null and cleanup.fields.len == 0;
             },
@@ -1219,7 +1315,12 @@ pub const Infer = struct {
                     try self.recordEntryOutputGuard(flow.*, summary, guards);
                     flow.reachable = false;
                 },
+                .abort_statement => {
+                    flow.reachable = false;
+                    return true;
+                },
                 .auto_deinit_binding => |id| {
+                    if (self.cleanup) |active| if (!active.roots.contains(id)) continue;
                     const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
                     if (cleanup.deinit_fn != null or cleanup.fields.len != 0) return false;
                 },
@@ -1278,6 +1379,7 @@ pub const Infer = struct {
                     try self.local_address_bindings.put(binding, try self.localAddressTargets(initialization));
                     try self.bindings.put(binding, effect);
                     try self.place_bindings.put(binding, try self.inferInputPaths(function_id, initialization));
+                    try self.retainAccessTargets(binding, try self.accessTargets(function_id, initialization));
                 },
                 .assignment => |assignment| {
                     const effect = try self.inferExpression(function_id, assignment.value);
@@ -1296,6 +1398,7 @@ pub const Infer = struct {
                         try self.local_address_bindings.put(assignment.binding, try joined.toOwnedSlice());
                         try self.bindings.put(assignment.binding, effect);
                         try self.place_bindings.put(assignment.binding, try self.inferInputPaths(function_id, assignment.value));
+                        try self.retainAccessTargets(assignment.binding, try self.accessTargets(function_id, assignment.value));
                     }
                 },
                 .function_call => |call| {
@@ -2745,6 +2848,7 @@ pub const Infer = struct {
     fn selectForwardedEffects(self: *Infer, summary: facts.SafetySummary, selected: facts.OutcomePostStates) !facts.SafetySummary {
         var result = summary;
         result.opaque_storage_empties = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.opaque_storage_empties, selected.opaque_storage_empties });
+        result.completed_executions = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.completed_executions, selected.completed_executions });
         if (summary.outputs.len == 1) {
             result.input_post_states = selected.input_post_states;
             result.invalidated_domains = selected.invalidated_domains;
@@ -3451,7 +3555,7 @@ pub const Infer = struct {
                 var body_state = try state.clone(self.allocator);
                 defer body_state.deinit();
                 try self.inferOpaqueEmptyBlock(function_id, statement.body, effects, &body_state, exits);
-                state.emptied.clearRetainingCapacity();
+                if (!self.inferring_completions) state.emptied.clearRetainingCapacity();
                 state.outcome_variant = null;
                 state.outcome_parent_mismatch = false;
             },
@@ -3465,7 +3569,7 @@ pub const Infer = struct {
                 try self.inferOpaqueEmptyBlock(function_id, statement.body, effects, &body_state, exits);
                 if (body_state.reachable) if (statement.increment) |increment|
                     try self.inferOpaqueEmptyNode(function_id, increment, effects, &body_state, exits);
-                state.emptied.clearRetainingCapacity();
+                if (!self.inferring_completions) state.emptied.clearRetainingCapacity();
                 state.outcome_variant = null;
                 state.outcome_parent_mismatch = false;
             },
@@ -3503,24 +3607,30 @@ pub const Infer = struct {
             .struct_field_store => |store| {
                 try self.inferOpaqueEmptyExpression(function_id, store.struct_ptr, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
-                state.emptied.clearRetainingCapacity();
-                state.outcome_variant = null;
-                state.outcome_parent_mismatch = false;
+                if (!self.inferring_completions) {
+                    state.emptied.clearRetainingCapacity();
+                    state.outcome_variant = null;
+                    state.outcome_parent_mismatch = false;
+                }
             },
             .array_store => |store| {
                 try self.inferOpaqueEmptyExpression(function_id, store.array_ptr, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.index, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
-                state.emptied.clearRetainingCapacity();
-                state.outcome_variant = null;
-                state.outcome_parent_mismatch = false;
+                if (!self.inferring_completions) {
+                    state.emptied.clearRetainingCapacity();
+                    state.outcome_variant = null;
+                    state.outcome_parent_mismatch = false;
+                }
             },
             .pointer_assignment => |assignment| {
                 try self.inferOpaqueEmptyExpression(function_id, assignment.pointer, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
-                state.emptied.clearRetainingCapacity();
-                state.outcome_variant = null;
-                state.outcome_parent_mismatch = false;
+                if (!self.inferring_completions) {
+                    state.emptied.clearRetainingCapacity();
+                    state.outcome_variant = null;
+                    state.outcome_parent_mismatch = false;
+                }
             },
             .code_block, .value_sequence, .replacement => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
             .break_statement, .continue_statement, .abort_statement => state.reachable = false,
@@ -3552,7 +3662,14 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
+        const binding_effect = if (cleanup.targetNode()) |target|
+            try self.inferExpression(function_id, target)
+        else if (self.bindings.get(cleanup.ownerBinding().?)) |value|
+            value
+        else if (self.inputIndex(function_id, cleanup.ownerBinding().?)) |index|
+            try self.inputValueEffect(index, &.{})
+        else
+            null;
         try self.applyCleanupOpaqueEffects(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, effects, state);
     }
 
@@ -3671,6 +3788,8 @@ pub const Infer = struct {
                 self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else null else null;
                 defer self.forwarded_outcome = previous_forwarded;
                 try self.applyOpaqueEmptyFunctionCall(function_id, call.callee, call.input, effects, state);
+                if (self.inferring_completions) if (self.engine.summaryFor(call.callee)) |summary|
+                    try self.applyReturningEntryCompletions(function_id, summary, call.input, effects, state);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
@@ -3710,6 +3829,70 @@ pub const Infer = struct {
         try self.joinOpaqueEmptyFallthrough(state, &executed, &skipped);
     }
 
+    // Complete guard coverage proves that every normal return selected each
+    // common entry condition. Apply only the matching earlier call's definite
+    // completions; its argument expressions have already been evaluated.
+    fn applyReturningEntryCompletions(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: facts.SafetySummary, input: graph_mod.GlobalNodeId, effects: *std.array_list.Managed(facts.OpaqueStorageEffect), state: *OpaqueEmptyState) anyerror!void {
+        if (!callee.guarded_returns_complete) return;
+        const args = self.structArguments(input) orelse return;
+        var first: ?facts.ChoiceConditions = null;
+        for (callee.guarded_effects) |guard| if (!guard.conditions.impossible) {
+            first = guard.conditions;
+            break;
+        };
+        const initial = first orelse return;
+        for (initial.terms) |term| {
+            if (term.subject != .entry_input or term.index >= args.len) continue;
+            var common = true;
+            for (callee.guarded_effects) |guard| {
+                if (guard.conditions.impossible) continue;
+                var present = false;
+                for (guard.conditions.terms) |other| if (term.eql(other)) {
+                    present = true;
+                    break;
+                };
+                if (!present) {
+                    common = false;
+                    break;
+                }
+            }
+            if (!common) continue;
+            const origin = try self.expressionForwardOrigin(args[term.index].value) orelse continue;
+            const output_index = origin.output_index orelse continue;
+            var parents = std.array_list.Managed(u32).init(self.allocator);
+            defer parents.deinit();
+            try parents.appendSlice(origin.parent_variants);
+            var supported = true;
+            for (term.projections) |projection| switch (projection) {
+                .variant => |variant| try parents.append(variant),
+                else => {
+                    supported = false;
+                    break;
+                },
+            };
+            if (!supported) continue;
+            const origin_node = self.graph.node(origin.call);
+            const source_summary: ?facts.SafetySummary = switch (origin_node.content) {
+                .function_call => |call| self.engine.summaryFor(call.callee),
+                .virtual_call => |id| try self.virtualSummary(self.graph.virtual_calls.items[@intFromEnum(id)].safety_methods),
+                else => null,
+            };
+            const summary = source_summary orelse continue;
+            const source_input = switch (origin_node.content) {
+                .function_call => |call| call.input,
+                .virtual_call => |id| self.graph.virtual_calls.items[@intFromEnum(id)].input,
+                else => continue,
+            };
+            const source_args = self.structArguments(source_input) orelse continue;
+            for (summary.outcome_post_states) |outcome| {
+                if (!outcome.reachable or outcome.output_index != output_index or outcome.variant_index != term.variant_index or !std.mem.eql(u32, outcome.parent_variants, parents.items)) continue;
+                const selected = try self.selectForwardedEffects(summary, outcome);
+                try self.applyOpaqueEmptySummaryArguments(function_id, selected, source_args, effects, state, null);
+                break;
+            }
+        }
+    }
+
     fn applyOpaqueEmptyFunctionCall(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -3720,6 +3903,17 @@ pub const Infer = struct {
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         const callee_function = self.graph.function(callee);
+        if (self.inferring_completions) {
+            if (callee_function.safety_primitive == .execution_complete) {
+                if (arguments.len != 1) return;
+                try self.recordOpaqueStorageEmpties(state, try self.inferInputPaths(function_id, arguments[0].value));
+                return;
+            }
+            if (callee_function.safety_primitive != .none) return;
+            const summary = self.engine.summaryFor(callee) orelse return;
+            try self.applyOpaqueEmptySummary(function_id, summary, input, effects, state, null);
+            return;
+        }
         switch (primitive_transfer.forPrimitive(callee_function.safety_primitive).opaque_state) {
             .clear_empty => {
                 state.emptied.clearRetainingCapacity();
@@ -3774,6 +3968,26 @@ pub const Infer = struct {
         state: *OpaqueEmptyState,
         override: ?SymbolicInputOverride,
     ) !void {
+        if (self.inferring_completions) {
+            for (summary.outcome_post_states) |outcome| if (outcome.completed_executions.len != 0) {
+                self.opaque_empty_seen = true;
+                break;
+            };
+            for (summary.completed_executions) |completed| {
+                if (completed.input_index >= arguments.len) continue;
+                if (override) |receiver| if (receiver.input_index == completed.input_index) {
+                    var value = receiver.effect;
+                    for (completed.projections) |projection| value = try self.projectValueEffect(value, projection);
+                    // Cleanup of a by-value receipt field completes its carried
+                    // identities, not the lifetime of the temporary self slot.
+                    try self.recordOpaqueStorageEmpties(state, value.input_execution_receipts);
+                    continue;
+                };
+                const paths = try self.substituteRequiredInputPath(function_id, completed, arguments, override);
+                try self.recordOpaqueStorageEmpties(state, paths);
+            }
+            return;
+        }
         if (self.summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
         for (summary.outcome_post_states) |outcome| if (outcome.opaque_storage_empties.len != 0) {
             self.opaque_empty_seen = true;
@@ -3996,6 +4210,68 @@ pub const Infer = struct {
         return false;
     }
 
+    // Structural cleanup may be summarized even when a field moved into a
+    // return value. Its receipt is still live, so it cannot establish a join.
+    fn filterReturnedExecutionCompletions(self: *Infer, outputs: []const facts.ValueEffect, paths: []const facts.InputPath, selector: ?outcome_selectors.Selector) ![]const facts.InputPath {
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (paths) |path| {
+            var carried = false;
+            for (outputs, 0..) |output, index| {
+                var selected = output;
+                if (selector) |choice| if (choice.output_index == index) {
+                    // Descend only through explicitly represented variant
+                    // payloads. If a selector is unavailable retain the full
+                    // envelope, which is conservative.
+                    var found_all = true;
+                    for (choice.parent_variants) |parent| {
+                        var found = false;
+                        for (selected.variants) |variant| if (variant.index == parent) {
+                            selected = variant.value.*;
+                            found = true;
+                            break;
+                        };
+                        if (!found) {
+                            found_all = false;
+                            break;
+                        }
+                    }
+                    if (found_all) {
+                        var found = false;
+                        for (selected.variants) |variant| if (variant.index == choice.variant_index) {
+                            selected = variant.value.*;
+                            found = true;
+                            break;
+                        };
+                        if (!found) selected = output;
+                    } else selected = output;
+                };
+                if (returnedExecutionOverlaps(selected, path)) {
+                    carried = true;
+                    break;
+                }
+            }
+            if (!carried) try result.append(path);
+        }
+        return result.toOwnedSlice();
+    }
+
+    fn returnedExecutionOverlaps(effect: facts.ValueEffect, path: facts.InputPath) bool {
+        for (effect.input_execution_receipts) |receipt| {
+            if (receipt.input_index != path.input_index or receipt.storage_domain != path.storage_domain) continue;
+            const shared = @min(receipt.projections.len, path.projections.len);
+            var overlaps = true;
+            for (receipt.projections[0..shared], path.projections[0..shared]) |a, b| {
+                if (std.meta.eql(a, b) or a == .dynamic_index or b == .dynamic_index) continue;
+                overlaps = false;
+                break;
+            }
+            if (overlaps) return true;
+        }
+        for (effect.fields) |field| if (returnedExecutionOverlaps(field.value.*, path)) return true;
+        for (effect.variants) |variant| if (returnedExecutionOverlaps(variant.value.*, path)) return true;
+        return false;
+    }
+
     fn inputPathPrefix(self: *Infer, prefix: facts.InputPath, path: facts.InputPath) bool {
         _ = self;
         if (prefix.input_index != path.input_index or prefix.storage_domain != path.storage_domain or prefix.projections.len > path.projections.len) return false;
@@ -4089,6 +4365,7 @@ pub const Infer = struct {
         required: *std.array_list.Managed(facts.InputPath),
     ) anyerror!void {
         const node = self.graph.node(node_id);
+        if (self.access_sink != null) try self.recordNodeAccess(function_id, node_id);
         if (pointerUseOperand(node.content)) |pointer|
             try self.recordPointerUseRequirement(function_id, pointer, required);
 
@@ -4225,6 +4502,128 @@ pub const Infer = struct {
     ) anyerror!void {
         for (self.graph.node_refs.items[range.start..][0..range.len]) |node|
             try self.inferRequiredLiveInputsNode(function_id, node, required);
+    }
+
+    /// Use the same caller-relative place substitution as temporal summaries,
+    /// but retain accesses even when no initialization/generation changes.
+    fn recordNodeAccess(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) !void {
+        const previous = self.reading_access_targets;
+        self.reading_access_targets = true;
+        defer self.reading_access_targets = previous;
+        const sink = self.access_sink.?;
+        const stored: ?graph_mod.GlobalNodeId = switch (self.graph.node(node).content) {
+            .pointer_assignment => |write| write.value,
+            .struct_field_store => |write| write.value,
+            .array_store => |write| write.value,
+            else => null,
+        };
+        if (stored) |value| if (self.graph.node(value).ty) |ty| {
+            // TODO: substitute access targets through reference-field writes
+            // in source order, including callees that retarget borrowed slots.
+            if (self.typeContainsPointer(ty)) sink.unknown = true;
+        };
+        switch (self.graph.node(node).content) {
+            .binding_use => |binding| try self.recordGlobalAccess(binding, .read),
+            .assignment => |write| try self.recordGlobalAccess(write.binding, .write),
+            .dereference => |read| try self.recordPointeeAccess(function, read.pointer, null, .read),
+            .array_index => |read| try self.recordPointeeAccess(function, read.array_ptr, if (self.staticIndex(read.index)) |index| .{ .static_index = index } else .dynamic_index, .read),
+            .pointer_assignment => |write| try self.recordPointeeAccess(function, write.pointer, null, .write),
+            .struct_field_store => |write| try self.recordPointeeAccess(function, write.struct_ptr, .{ .field = write.field_index }, .write),
+            .array_store => |write| try self.recordPointeeAccess(function, write.array_ptr, if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index, .write),
+            .function_call => |call| {
+                if (call.callee_value != null) sink.unknown = true;
+                if (self.engine.summaryFor(call.callee)) |summary| {
+                    try self.composeAccesses(function, summary, call.input, null);
+                } else sink.unknown = true;
+            },
+            // Lifetime contracts do not yet bound access effects. Never infer
+            // a closed effect set from implementation enumeration or `where {}`.
+            .virtual_call, .captured_expression => sink.unknown = true,
+            // The initial may-target scan does not solve loop-carried alias
+            // assignments to a fixed point. Retain its known effects, but do
+            // not publish a closed access set for those bodies yet.
+            .while_statement, .for_statement => sink.unknown = true,
+            else => {},
+        }
+    }
+
+    fn recordGlobalAccess(self: *Infer, binding: graph_mod.GlobalBindingId, mode: facts.AccessMode) !void {
+        if (!self.module_bindings.contains(binding) or types.isStaticBinding(self.graph, binding)) return;
+        try self.access_sink.?.addGlobal(@intFromEnum(binding), mode);
+    }
+
+    fn retainAccessTargets(self: *Infer, binding: graph_mod.GlobalBindingId, paths: []const facts.InputPath) !void {
+        if (paths.len == 0) return;
+        var joined = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        try joined.appendSlice(self.access_place_bindings.get(binding) orelse &.{});
+        for (paths) |path| try appendInputPath(&joined, path);
+        try self.access_place_bindings.put(binding, try joined.toOwnedSlice());
+    }
+
+    fn accessTargets(self: *Infer, function: graph_mod.GlobalFunctionId, value: graph_mod.GlobalNodeId) ![]const facts.InputPath {
+        if (self.graph.node(value).ty) |ty| if (!self.typeContainsPointer(ty)) return &.{};
+        const previous = self.reading_access_targets;
+        self.reading_access_targets = true;
+        defer self.reading_access_targets = previous;
+        return self.inferInputPaths(function, value);
+    }
+
+    fn recordPointeeAccess(self: *Infer, function: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId, projection: ?facts.Projection, mode: facts.AccessMode) !void {
+        var paths = try self.inferPointeePaths(function, pointer);
+        if (projection) |child| paths = try self.projectInputPaths(paths, child);
+        const signature = self.graph.function(function);
+        for (paths) |path| {
+            if (path.input_index >= signature.input.len) continue;
+            const ty = self.graph.fields.items[signature.input.start + path.input_index].ty;
+            // Addressing the local copy of a by-value scalar/record does not
+            // grant access to its caller's storage. A reference leaf does.
+            if (self.pathReachesReferent(ty, path.projections))
+                try self.access_sink.?.addInput(path, mode);
+        }
+        // Local addresses do not escape into the caller's effect set. Global
+        // addresses do, including aliases whose initializers retain the address.
+        const targets = try self.localAddressTargets(pointer);
+        for (targets) |target| try self.recordAddressedGlobal(target, mode);
+        if (paths.len == 0 and targets.len == 0) self.access_sink.?.unknown = true;
+    }
+
+    fn recordAddressedGlobal(self: *Infer, node: graph_mod.GlobalNodeId, mode: facts.AccessMode) anyerror!void {
+        switch (self.graph.node(node).content) {
+            .binding_use => |binding| try self.recordGlobalAccess(binding, mode),
+            .struct_field_access => |field| try self.recordAddressedGlobal(field.value, mode),
+            .choice_payload_access => |field| try self.recordAddressedGlobal(field.value, mode),
+            .dereference, .array_index => self.access_sink.?.unknown = true,
+            else => {},
+        }
+    }
+
+    fn composeAccesses(self: *Infer, function: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, input: graph_mod.GlobalNodeId, override: ?SymbolicInputOverride) !void {
+        const previous = self.reading_access_targets;
+        self.reading_access_targets = true;
+        defer self.reading_access_targets = previous;
+        const sink = self.access_sink.?;
+        sink.unknown = sink.unknown or summary.unknown_access;
+        for (summary.global_accesses) |access| try sink.addGlobal(access.binding, access.mode);
+        const arguments = self.structArguments(input) orelse {
+            if (summary.input_accesses.len != 0) sink.unknown = true;
+            return;
+        };
+        for (summary.input_accesses) |access| {
+            const paths = try self.substituteInputPath(function, access.target, arguments, override, .place);
+            for (paths) |path| try sink.addInput(path, access.mode);
+            if (paths.len != 0) continue;
+            if (access.target.input_index >= arguments.len) {
+                sink.unknown = true;
+                continue;
+            }
+            const argument = arguments[access.target.input_index].value;
+            const targets = try self.localAddressTargets(argument);
+            for (targets) |target| try self.recordAddressedGlobal(target, access.mode);
+            // By-value local copies can contain references whose targets are
+            // unknown here. Preserve uncertainty instead of treating them as
+            // private merely because their lifetime has no input dependency.
+            if (targets.len == 0) sink.unknown = true;
+        }
     }
 
     fn recordPointerUseRequirement(
@@ -4481,6 +4880,7 @@ pub const Infer = struct {
             } else try self.inferRequiredLiveInputsNode(function_id, input, required);
             if (cleanup.deinit_fn) |deinit_fn| {
                 if (self.engine.summaryFor(deinit_fn)) |summary| {
+                    if (self.access_sink != null) try self.composeAccesses(function_id, summary, input, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
                     for (self.requiredInputPaths(summary)) |path| {
                         if (cleanup.storage == .indirect and path.input_index == cleanup.self_field_index) continue;
                         try self.substituteRequiredLiveInputsWithOverride(
@@ -4525,16 +4925,19 @@ pub const Infer = struct {
                     };
                 } else try self.inferRequiredLiveInputsNode(function_id, input, required);
                 if (field.deinit_fn) |deinit_fn| {
-                    if (self.engine.summaryFor(deinit_fn)) |summary| for (self.requiredInputPaths(summary)) |path| {
-                        if (guarded_receiver and path.input_index == field.self_field_index) continue;
-                        try self.substituteRequiredLiveInputsWithOverride(
-                            function_id,
-                            &.{path},
-                            input,
-                            required,
-                            .{ .input_index = field.self_field_index, .effect = field_effect },
-                        );
-                    };
+                    if (self.engine.summaryFor(deinit_fn)) |summary| {
+                        if (self.access_sink != null) try self.composeAccesses(function_id, summary, input, .{ .input_index = field.self_field_index, .effect = field_effect });
+                        for (self.requiredInputPaths(summary)) |path| {
+                            if (guarded_receiver and path.input_index == field.self_field_index) continue;
+                            try self.substituteRequiredLiveInputsWithOverride(
+                                function_id,
+                                &.{path},
+                                input,
+                                required,
+                                .{ .input_index = field.self_field_index, .effect = field_effect },
+                            );
+                        }
+                    }
                 }
             }
             try self.inferAutoDeinitFieldRequiredLiveInputs(function_id, field.fields, field_effect, required, guarded_receiver);
@@ -4657,6 +5060,20 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         const callee_function = self.graph.function(callee);
         const arguments = self.structArguments(input) orelse return .{};
+        if (callee_function.safety_primitive == .execution_lend) {
+            if (arguments.len == 0) return .{};
+            const input_type = self.graph.node(arguments[0].value).ty orelse return .{};
+            const inputs = try self.allocator.create(facts.ValueEffect);
+            inputs.* = try self.inferExpression(function_id, arguments[0].value);
+            const executions = try self.allocator.alloc(facts.FreshExecution, 1);
+            executions[0] = .{ .source = self.freshSource(call_node, 0), .inputs = inputs, .input_type = @intFromEnum(input_type) };
+            return .{ .fresh_executions = executions, .fresh_cleanup_obligation = true };
+        }
+        if (callee_function.safety_primitive == .execution_complete) return .{};
+        if (callee_function.safety_primitive == .execution_input) {
+            if (arguments.len < 2) return .{};
+            return self.validityOnlyEffect(try self.inferExpression(function_id, arguments[1].value));
+        }
         if (callee_function.safety_primitive != .none) {
             const effect = try self.primitiveValueEffect(callee_function.safety_primitive, self.freshSource(call_node, 0), callee);
             return self.substituteOutput(function_id, effect, arguments);
@@ -5613,7 +6030,7 @@ pub const Infer = struct {
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index|
                 try self.oneInputPath(index, &.{})
             else
-                self.place_bindings.get(binding) orelse &.{},
+                (if (self.reading_access_targets) self.access_place_bindings.get(binding) else null) orelse self.place_bindings.get(binding) orelse &.{},
             .address_of => |value| self.inferInputPaths(function_id, value),
             .move_value, .denied_implicit_copy => |value| self.inferInputPaths(function_id, value),
             // A reference stored in a by-value Args field denotes a caller
@@ -5755,6 +6172,26 @@ pub const Infer = struct {
         }
         result.domain_values = domain_values;
 
+        const executions = try self.allocator.alloc(facts.FreshExecution, effect.fresh_executions.len);
+        for (effect.fresh_executions, executions) |execution, *mapped| {
+            const inputs = try self.allocator.create(facts.ValueEffect);
+            inputs.* = try self.substituteOutputInContext(function_id, execution.inputs.*, arguments, override, context);
+            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .inputs = inputs };
+        }
+        result.fresh_executions = executions;
+        for (effect.input_execution_receipts) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var value = if (override) |symbolic|
+                if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
+            else
+                try context.effect(path.input_index);
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| value = pointee;
+            }
+            for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+            result.input_execution_receipts = try self.union_input_paths(result.input_execution_receipts, value.input_execution_receipts);
+            result.fresh_executions = try self.mergeFreshExecutions(result.fresh_executions, value.fresh_executions);
+        }
         for (effect.input_storage_capabilities) |path| {
             if (path.input_index >= arguments.len) continue;
             var value = if (override) |symbolic|
@@ -5900,11 +6337,12 @@ pub const Infer = struct {
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
         inline for (.{
-            "input_domains",                  "input_dependencies",            "input_storage_capabilities",
-            "input_places",                   "input_generation_dependencies", "input_captured_storages",
-            "input_receiver_values",          "input_place_values",            "input_owned_roots",
-            "opaque_generation_dependencies", "opaque_storage_dependencies",
+            "input_domains",            "input_dependencies",             "input_storage_capabilities",
+            "input_execution_receipts", "input_places",                   "input_generation_dependencies",
+            "input_captured_storages",  "input_receiver_values",          "input_place_values",
+            "input_owned_roots",        "opaque_generation_dependencies", "opaque_storage_dependencies",
         }) |field| if (@field(effect, field).len != 0) return true;
+        for (effect.fresh_executions) |execution| if (requiresOutputSubstitution(execution.inputs.*)) return true;
         for (effect.domain_values) |domain| if (requiresOutputSubstitution(domain.value.*)) return true;
         for (effect.fields) |field| if (requiresOutputSubstitution(field.value.*)) return true;
         for (effect.variants) |variant| if (requiresOutputSubstitution(variant.value.*)) return true;
@@ -5958,6 +6396,7 @@ pub const Infer = struct {
         }
         result.input_dependencies = dependencies;
         result.input_storage_capabilities = try self.projectInputPaths(effect.input_storage_capabilities, projection);
+        result.input_execution_receipts = try self.projectInputPaths(effect.input_execution_receipts, projection);
         result.input_places = try self.projectInputPaths(effect.input_places, projection);
         // Borrowed generations describe the source value's lifetime, not
         // storage selected by a projection of that value.
@@ -6087,6 +6526,8 @@ pub const Infer = struct {
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
+            .input_execution_receipts = try self.union_input_paths(left.input_execution_receipts, right.input_execution_receipts),
+            .fresh_executions = try self.mergeFreshExecutions(left.fresh_executions, right.fresh_executions),
             .input_places = try input_places.toOwnedSlice(),
             .input_generation_dependencies = try input_generations.toOwnedSlice(),
             .input_captured_storages = try captured_storages.toOwnedSlice(),
@@ -6171,7 +6612,7 @@ pub const Infer = struct {
     fn inputValueEffect(self: *Infer, input_index: u32, projections: []const facts.Projection) !facts.ValueEffect {
         const dependencies = try self.allocator.alloc(facts.InputDependency, 1);
         dependencies[0] = .{ .path = .{ .input_index = input_index, .projections = projections } };
-        return .{ .input_dependencies = dependencies };
+        return .{ .input_dependencies = dependencies, .input_execution_receipts = try self.oneInputPath(input_index, projections) };
     }
 
     fn oneInputPath(self: *Infer, input_index: u32, projections: []const facts.Projection) ![]const facts.InputPath {
@@ -6200,7 +6641,7 @@ pub const Infer = struct {
                 result.explicit_dependency = transfer == .depend_on;
                 break :blk result;
             },
-            .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty => .{},
+            .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty, .execution_lend, .execution_complete, .execution_input => .{},
             .inherited_reference, .inherited_storage => self.validityOnlyEffect(try self.inputValueEffect(1, &.{})),
             .allocation => self.ownedAllocationEffect(source, callee orelse return error.InvalidAllocationPrimitive),
             .raw_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFresh(source) },
@@ -6241,6 +6682,13 @@ pub const Infer = struct {
         if (!hasFreshSources(effect)) return effect;
         var result = effect;
         result.fresh_dependencies = try self.rebaseFreshSlice(effect.fresh_dependencies, call_node);
+        const executions = try self.allocator.alloc(facts.FreshExecution, effect.fresh_executions.len);
+        for (effect.fresh_executions, executions) |execution, *mapped| {
+            const inputs = try self.allocator.create(facts.ValueEffect);
+            inputs.* = try self.rebaseFreshSources(execution.inputs.*, call_node);
+            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .inputs = inputs };
+        }
+        result.fresh_executions = executions;
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
         result.fresh_storage_capabilities = try self.rebaseFreshSlice(effect.fresh_storage_capabilities, call_node);
         const unavailable = try self.allocator.alloc(facts.FreshStorageCapabilityState, effect.unavailable_fresh_storage.len);
@@ -6271,11 +6719,28 @@ pub const Infer = struct {
     }
 
     fn hasFreshSources(effect: facts.ValueEffect) bool {
-        if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
+        if (effect.fresh_executions.len != 0 or effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
             effect.fresh_storage_capabilities.len != 0 or effect.unavailable_fresh_storage.len != 0) return true;
         for (effect.fields) |field| if (hasFreshSources(field.value.*)) return true;
         for (effect.variants) |variant| if (hasFreshSources(variant.value.*)) return true;
         return false;
+    }
+
+    fn mergeFreshExecutions(self: *Infer, left: []const facts.FreshExecution, right: []const facts.FreshExecution) anyerror![]const facts.FreshExecution {
+        var result = std.array_list.Managed(facts.FreshExecution).init(self.allocator);
+        try result.appendSlice(left);
+        for (right) |entry| {
+            var found = false;
+            for (result.items) |*existing| if (existing.source == entry.source and existing.input_type == entry.input_type) {
+                const inputs = try self.allocator.create(facts.ValueEffect);
+                inputs.* = try self.mergeValueEffects(existing.inputs.*, entry.inputs.*);
+                existing.inputs = inputs;
+                found = true;
+                break;
+            };
+            if (!found) try result.append(entry);
+        }
+        return result.toOwnedSlice();
     }
 
     fn union_input_paths(self: *Infer, left: []const facts.InputPath, right: []const facts.InputPath) ![]const facts.InputPath {
@@ -6294,6 +6759,8 @@ pub const Infer = struct {
         for (effect.input_place_values) |path| try appendInputPath(&paths, path);
         return .{
             .input_storage_capabilities = try paths.toOwnedSlice(),
+            .input_execution_receipts = effect.input_execution_receipts,
+            .fresh_executions = effect.fresh_executions,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
             .integer_address = effect.integer_address,
@@ -7371,4 +7838,113 @@ fn clonePartitionedPostFlow(allocator: std.mem.Allocator) !void {
 
 test "outcome partitions clone independently under allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, clonePartitionedPostFlow, .{});
+}
+
+test "access effects retain nested referents, earlier aliases and transitive writes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const name = try graph.addString(a, "value");
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const int: graph_mod.GlobalTypeId = @enumFromInt(0);
+    const pointer: graph_mod.GlobalTypeId = @enumFromInt(1);
+    const box: graph_mod.GlobalTypeId = @enumFromInt(2);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = int, .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    for ([_]graph_mod.GlobalTypeId{ pointer, box, pointer, pointer }) |ty|
+        try graph.fields.append(a, .{ .name = name, .ty = ty, .source = source });
+    for ([_]graph_mod.GlobalTypeId{ box, pointer, pointer, pointer }) |ty|
+        try graph.bindings.append(a, .{ .name = name, .ty = ty, .source = source, .mutability = .variable });
+    try graph.binding_refs.appendSlice(a, &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(3) });
+    for (0..2) |_| try graph.declarations.append(a, .{ .kind = .function, .name = name, .source = source });
+    try graph.functions.appendSlice(a, &.{
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 0, .len = 2 }, .output_bindings = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) },
+        .{ .declaration = @enumFromInt(1), .input = .{ .start = 3, .len = 1 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 2, .len = 1 }, .output_bindings = .{ .start = 0, .len = 0 }, .body = @enumFromInt(1) },
+    });
+    // wrapper(box, other): alias = box.value; read(alias); alias = other;
+    // write(alias). Both possible referents must survive alias reassignment.
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = box, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = pointer, .content = .{ .struct_field_access = .{ .value = @enumFromInt(0), .field_name = name, .field_index = 0 } } },
+        .{ .source = source, .ty = null, .content = .{ .binding_declaration = @enumFromInt(2) } },
+        .{ .source = source, .ty = pointer, .content = .{ .binding_use = @enumFromInt(2) } },
+        .{ .source = source, .ty = int, .content = .{ .dereference = .{ .pointer = @enumFromInt(3), .ty = int, .pointer_type = pointer } } },
+        .{ .source = source, .ty = pointer, .content = .{ .binding_use = @enumFromInt(1) } },
+        .{ .source = source, .ty = null, .content = .{ .assignment = .{ .binding = @enumFromInt(2), .value = @enumFromInt(5) } } },
+        .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(1), .input = @enumFromInt(7) } } },
+        .{ .source = source, .ty = pointer, .content = .{ .binding_use = @enumFromInt(3) } },
+        .{ .source = source, .ty = int, .content = .{ .int_literal = 7 } },
+        .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(9), .value = @enumFromInt(10) } } },
+    });
+    graph.bindings.items[2].initialization = @enumFromInt(1);
+    try graph.value_fields.append(a, .{ .name = name, .value = @enumFromInt(3) });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(2), @enumFromInt(4), @enumFromInt(6), @enumFromInt(8), @enumFromInt(11) });
+    try graph.blocks.appendSlice(a, &.{
+        .{ .nodes = .{ .start = 0, .len = 4 } },
+        .{ .nodes = .{ .start = 4, .len = 1 } },
+    });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    try infer.inferSafetySummariesFixedPoint();
+    const leaf = engine.summaries.get(@enumFromInt(1)).?;
+    try std.testing.expect(!leaf.unknown_access);
+    try std.testing.expectEqual(@as(usize, 1), leaf.input_accesses.len);
+    try std.testing.expectEqual(.write, leaf.input_accesses[0].mode);
+    try std.testing.expectEqual(@as(u32, 0), leaf.input_accesses[0].target.input_index);
+    const wrapper = engine.summaries.get(@enumFromInt(0)).?;
+    try std.testing.expect(!wrapper.unknown_access);
+    try std.testing.expectEqual(@as(usize, 2), wrapper.input_accesses.len);
+    var nested = false;
+    var other = false;
+    for (wrapper.input_accesses) |access| {
+        try std.testing.expectEqual(.write, access.mode);
+        if (access.target.input_index == 0) {
+            nested = summaries.inputPathEql(access.target, .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } });
+        } else if (access.target.input_index == 1) other = access.target.projections.len == 0;
+    }
+    try std.testing.expect(nested and other);
+    try expectGlobalReseedingStable(&infer);
+
+    // Replacing the leaf write with a read must not require write authority
+    // merely because its parameter is a mutable reference.
+    graph.nodes.items[11].content = .{ .dereference = .{ .pointer = @enumFromInt(9), .ty = int, .pointer_type = pointer } };
+    graph.nodes.items[11].ty = int;
+    var read_engine = summaries.Engine.init(a);
+    defer read_engine.deinit();
+    var read_infer = Infer.init(a, &graph, &read_engine);
+    defer read_infer.deinit();
+    try read_infer.inferSafetySummariesFixedPoint();
+    const reads = read_engine.summaries.get(@enumFromInt(0)).?;
+    try std.testing.expect(!reads.unknown_access);
+    try std.testing.expectEqual(@as(usize, 2), reads.input_accesses.len);
+    for (reads.input_accesses) |access| try std.testing.expectEqual(.read, access.mode);
+    try expectGlobalReseedingStable(&read_infer);
+}
+
+test "returned receipts prevent completion only in their selected outcome" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    const path: facts.InputPath = .{ .input_index = 1, .projections = &.{.{ .field = 2 }} };
+    const receipt: facts.ValueEffect = .{ .input_execution_receipts = &.{path} };
+    const empty: facts.ValueEffect = .{};
+    const output: facts.ValueEffect = .{
+        .input_execution_receipts = &.{path},
+        .variants = &.{ .{ .index = 0, .value = &receipt }, .{ .index = 1, .value = &empty } },
+    };
+    try std.testing.expectEqual(@as(usize, 0), (try infer.filterReturnedExecutionCompletions(&.{output}, &.{path}, null)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try infer.filterReturnedExecutionCompletions(&.{output}, &.{path}, .{ .output_index = 0, .variant_index = 0 })).len);
+    try std.testing.expectEqual(@as(usize, 1), (try infer.filterReturnedExecutionCompletions(&.{output}, &.{path}, .{ .output_index = 0, .variant_index = 1 })).len);
 }

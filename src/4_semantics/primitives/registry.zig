@@ -19,6 +19,9 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .execution_lend, .path = "core/memory/execution_access.rg", .name = "_execution_lend", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
+    .{ .primitive = .execution_complete, .path = "core/memory/execution_access.rg", .name = "_execution_complete", .signatures = &.{"(.receipt: $&_ExecutionReceipt) -> ()"} },
+    .{ .primitive = .execution_input, .path = "core/memory/execution_access.rg", .name = "_execution_input", .signatures = &.{"#(.t: Type)(.address: UIntNative, .anchor: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .prepare_allocation_metadata, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_prepare_allocation_metadata", .signatures = &.{"#(.t: Type)(.allocation: &Allocation) -> (.state: UIntNative)"} },
     .{ .primitive = .allocation_metadata_layout, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_allocation_metadata_layout", .signatures = &.{"#(.t: Type)() -> (.layout: _AllocationMetadataLayout)"} },
     .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },
@@ -210,6 +213,9 @@ pub const Transfer = struct {
         opaque_relocate,
         opaque_mark_empty,
         opaque_drop,
+        execution_lend,
+        execution_complete,
+        execution_input,
     };
 
     pub const Input = enum { none, consume_opaque_owner, relocate, ignore };
@@ -218,6 +224,9 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
+        .execution_lend => .{ .value = .execution_lend },
+        .execution_complete => .{ .value = .execution_complete },
+        .execution_input => .{ .value = .execution_input },
         .none, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata => .{ .value = .empty },
         // Physical release identity selects an execution boundary. Language
         // consumption remains in checked allocation-owner cleanup, not raw ABI.

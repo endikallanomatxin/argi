@@ -349,6 +349,22 @@ feature first.
   observers establish permission to transfer Argi values/references across threads.
   Native concurrent probes must join all workers before releasing their cells.
 
+- Access effects in SafetySummary are independent of lifetime requirements and
+  final post-values. Preserve read/write effects through ordinary calls and
+  selected structural cleanup, including earlier reference targets after alias
+  reassignment. Unknown foreign/virtual effects and unresolved alias flow must
+  remain unknown rather than become an empty effect set. Summary equality and
+  cached publications include this dimension. Isolated callbacks reject mutable
+  module storage through converged summaries; plain payload types alone grant
+  no cross-execution authority. Native tasks admit loans of plain referents;
+  private execution receipts carry exact pending identities independently of
+  validity roots and physical threads. Only certified completion restores access,
+  never initialization, moved ownership or an ended generation. Virtual submission
+  uses checked carries_execution/completes_execution effects; move TaskRequest
+  once and establish a lexical owner before a fallible start. Preserve receipt
+  identities through summaries, guards and input choices that must hold on normal
+  return. Owning payloads and pending receipts in opaque containers remain unsupported.
+
 - Filesystem extensions use `core/platforms/shared/filesystem.c` and its private
   `filesystem.h` ABI header through the same selected runtime adapters. Directory
   and temporary-directory owners borrow `FileSystem`; their native handles grant

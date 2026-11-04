@@ -14,8 +14,6 @@ main := (.system: System) -> () {
     }
     if drops != 1 { abort }
     value: Int32 = 42
-    match async#(read)(.args = (.value = &value)) {
-        ..ok ~unexpected { abort }
-        ..error _ {}
-    }
+    borrowed ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
+    if unwrap_or_abort(.value = await($&borrowed)) != 42 { abort }
 }

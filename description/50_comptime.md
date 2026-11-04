@@ -76,6 +76,12 @@ raw pointers, virtual handles, callbacks or selected destructor. This is a type
 query, not a copy or transfer capability; unknown types remain unresolved until
 their representation and conformance evidence are available.
 
+`is_borrowable_data(.type = T)` recognizes plain nonowning records and arrays
+that may contain reference leaves to recursively plain, reference-free data.
+Choices containing references, destructors, raw pointers, callbacks and virtual
+handles are excluded. This shape query does not authorize concurrent access;
+see [concurrency](173_concurrency.md) for task loan checks.
+
 ## Compile-time entry points
 
 `#run` declares and immediately executes an anonymous function. Its signature

@@ -25,6 +25,8 @@ fn verifyOutcome(graph: *const graph_mod.ModuleSemanticGraph, outcome: @import("
         try require(dependency.output_index < output_count);
         try require(dependency.input_index <= input_count);
     }
+    for (outcome.completed_executions) |input| try require(input < input_count);
+    for (outcome.execution_transfers) |dependency| try require(dependency.output_index < output_count and dependency.input_index < input_count);
     for (outcome.domain_dependencies) |dependency| {
         try require(dependency.output_index < output_count);
         try require(dependency.input.input_index < input_count);
@@ -151,6 +153,8 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
                 try require(dependency.output_index < contract.output_count);
                 try require(dependency.input_index <= input.count());
             }
+            for (contract.completed_executions) |index| try require(index < input.count());
+            for (contract.execution_transfers) |dependency| try require(dependency.output_index < contract.output_count and dependency.input_index < input.count());
             for (contract.referents, 0..) |referent, index| {
                 try require(referent.output_index < contract.output_count);
                 try require(referent.input_index < input.count());

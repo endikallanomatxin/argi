@@ -5,12 +5,12 @@ implement Executor#(MismatchedExecutor) (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {
         if is(.value = self&.stash, .variant = ..none) {
-            saved ::= Executor#(ThreadedExecutor).submit(.self = self&.base, .request = request)!
+            saved ::= Executor#(ThreadedExecutor).submit(.self = self&.base, .request = ~request)!
             self&.stash = ..some(.value = ~saved)
-            result = Executor#(ThreadedExecutor).submit(.self = self&.base, .request = request)
+            result = ..error(.reason = ..task_start_failed)
             return
         }
-        discarded ::= Executor#(ThreadedExecutor).submit(.self = self&.base, .request = request)!
+        discarded ::= Executor#(ThreadedExecutor).submit(.self = self&.base, .request = ~request)!
         match ~self&.stash {
             ..some ~receipt { result = ..ok ~receipt.value }
             ..none { abort }
