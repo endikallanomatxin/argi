@@ -1187,7 +1187,7 @@ pub const CodeGenerator = struct {
             },
             .move_value => |value| blk: {
                 const child = self.graph.node(value);
-                if (child.content == .array_index) {
+                if (@import("../move_cleanup.zig").usesReferentStorage(self.graph, value)) {
                     const storage = try self.addressablePointer(value);
                     const ty = child.ty orelse return CodegenError.InvalidType;
                     const type_ref = try self.toLLVMType(ty);

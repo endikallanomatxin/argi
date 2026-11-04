@@ -1,0 +1,207 @@
+# Virtual resources and execution safety
+
+## Status and scope
+
+Design proposal for 0.5, not an implemented language guarantee or runtime ABI.
+Resolve these rules before extending owning task transfer or introducing dynamic
+conformance lookup. The current boundary remains in
+[the concurrency specification](../description/173_concurrency.md); broader work
+is tracked in [the concurrency plan](concurrency.md).
+
+Preserve mutable aliasing within one execution domain. Do not introduce a
+Rust-style pair of type-wide transfer/sharing markers as the complete model.
+Contracts may express reusable guarantees, but authorization also depends on the
+actual value, its aliases, captured resources and destination execution.
+
+The rules must apply to ordinary resources. Allocator, String, Future and Executor
+are design examples, not compiler-recognized exceptions.
+
+## Distinct properties
+
+| Property | Question | Does not establish |
+| --- | --- | --- |
+| Transfer | Can responsibility and the required authority move to another execution? | Simultaneous access or unrestricted migration between physical threads |
+| Concurrent operation | Can this operation overlap other specified operations on the same region under a verified protocol? | Object lifetime, safe destruction, or concurrency of other methods |
+| Cleanup | Where, under which authority and by which owner can destruction occur? | Permission to mutate or share the payload |
+
+These properties supplement validity and ownership; they do not replace them.
+An unsynchronized provider may be usable after exclusive transfer if its execution
+requirements permit it. A provider may support concurrent release without
+supporting concurrent allocation. A payload may be readable elsewhere while its
+cleanup must return to the originating domain.
+
+Neither a readonly handle nor a lifetime dependency proves any of these execution
+guarantees. A readonly method can still follow a mutable captured reference.
+
+## Operation obligations
+
+Describe an operation by a conservative bound on:
+
+- Accessed regions, including indirect captures, and the required access mode.
+- Execution restrictions, including affinity and permitted migration.
+- Synchronization preconditions and the publication guaranteed by its transitions.
+- Retained resources, latent operations and responsibilities created or discharged.
+
+The same description applies to selected cleanup as to an explicit function call.
+Infer effects through ordinary calls and verify implementations against their
+contracts. A closed access bound such as `writes(self.state)` describes reachable
+storage; it does not certify synchronization or execution on another thread.
+Unknown effects remain unknown across erasure, recursion and foreign calls.
+
+Do not equate a resource's lifetime dependency graph with its access-region graph.
+Two independent allocations can depend on one provider. Access to their bytes
+need not conflict, while their destructors may conflict through that provider.
+Keep those relationships separate and retain the latent operation's connection to
+its exact captured capability.
+
+## Authorization rules
+
+A candidate judgment is:
+
+```text
+validity facts; authority and obligations |- operation(value) @ domain
+    -> updated validity facts; authority and obligations
+```
+
+It is valid only when:
+
+1. Every selected resource and observation is live in the required generation.
+2. Every possible ordinary access has compatible authority. Overlapping accesses
+   from potentially concurrent domains conflict if either requires writing.
+3. The operation's execution and synchronization requirements are satisfied.
+4. Every retained or newly created obligation has a responsible owner on every
+   returning path. Authority and cleanup responsibility cannot be duplicated or
+   silently discarded.
+5. Every discharged obligation has matching verified transition evidence.
+   Completion must identify the execution and storage incarnation, and establish
+   publication before permissions or results are recovered.
+
+Multiple mutable aliases in one domain share its authority. Certified
+serialization or synchronization can supply a different access protocol, but
+sharing an executor alone supplies neither. The checker must not infer arbitrary
+lock-free correctness from the presence of atomics.
+
+A handoff must specify the destination's permitted operations and a cleanup plan.
+Check the transitive resources those operations require, including permitted
+failure and cancellation cleanup. Do not require cleanup in the destination if a
+verified protocol retains that responsibility elsewhere. Such delegation must
+retain the resource until all users finish; simply dropping an observer is not
+completion.
+
+## Three sources of evidence
+
+| Source | Can establish | Cannot establish alone |
+| --- | --- | --- |
+| Static contract guarantees | Requirements and bounds valid for every conforming implementation, available even for an unknown erased value | Stronger optional behavior of one implementation, current exclusive authority, or an instance's originating domain |
+| Contextual checker evidence | Actual region identities, generations, aliases, exclusive handoff, retained dependencies and completion obligations | An undocumented guarantee of an unknown implementation or an arbitrary native synchronization protocol |
+| Dynamic implementation evidence | A verified additional conformance discovered after erasure, if a representation and acquisition protocol are provided | Liveness, authority, per-instance affinity, or guarantees of separately captured providers |
+
+Combine evidence rather than replacing one source with another. The compiler may
+use concrete knowledge at construction, but that knowledge is useful only if its
+relevant evidence survives calls, moves and erasure. An API receiving an unrelated
+erased value must rely on its contract and retained evidence, not rediscover the
+concrete implementation by specialization.
+
+Static contracts plus contextual evidence can already describe an exclusively
+transferred portable provider without a concurrent-operation guarantee. They can
+also support a uniformly stronger virtual interface. They cannot recover an
+optional guarantee that an unknown producer erased and did not retain.
+
+Dynamic evidence is a candidate for that last case, not a prerequisite for every
+virtual call. Alternatives include preserving stronger static evidence at the
+producer or returning a separately checked capability. Compare the ergonomics,
+representation and compatibility costs against the acceptance cases before
+choosing a descriptor design.
+
+## Erasure and heterogeneous storage
+
+Virtual must retain the safety meaning of its interface. Its method table is not
+permission to forget effects or captured resource requirements. An owner containing
+a virtual capability must retain its latent obligations even when its own nominal
+type does not mention the concrete provider.
+
+For an erased value, preserve correlations between each possible implementation,
+its captured region identities and its operation requirements. A join may retain
+conservative alternatives. Authorization must cover every feasible alternative
+unless checked evidence narrows them. Never combine one alternative's concurrency
+guarantee with another's provider identity.
+
+Collections make this requirement observable. Extracting an element must recover
+evidence for that element and generation, or a sound set of possible elements.
+A container-wide union of lifetime roots cannot recover an exact receipt, invent
+access authority or select the most permissive implementation. Completing one
+extracted task cannot complete its siblings.
+
+Replacement must retire or re-establish evidence for the replaced value. A proof
+for one element is not a proof for the entire collection. An all-elements proof
+needs a membership/shape invariant and checked insertion and replacement rules.
+Conservative rejection is acceptable when these relations cannot be represented.
+
+## Candidate dynamic acquisition boundary
+
+Keep `Virtual` as two pointers while possible. Do not add runtime flags,
+descriptors, a third handle pointer or new trusted operations at this stage.
+
+If additional dynamic evidence proves necessary, acquisition should be explicit
+and potentially fallible. An implementation-wide witness must be verified for
+all instances sharing it. State-dependent guarantees need separate instance
+conditions. Thread identity and captured-provider authority are not properties of
+a shared method table. A wrapper delegating to an unknown captured service
+cannot publish an unconditional guarantee merely because its own body has no
+local writes. A witness can instead express a verified requirement on that
+service; acquisition must also establish the instance's captured evidence.
+
+A successful acquisition would bind the guarantee to the relevant virtual value,
+implementation and captures. Moving that value preserves the relationship;
+retargeting captures, replacement or incompatible context changes require
+revalidation. A copyable conformance fact does not duplicate exclusive authority
+or cleanup ownership. Those obligations retain their own conservation rules.
+
+Subsequent calls can use the retained proof without automatically repeating a
+runtime conformance query. Their validity, authority and execution preconditions
+still apply. In particular, a concurrent method is not permission to destroy its
+receiver while another execution uses it. A dynamic witness also cannot certify
+an arbitrary FFI body: the underlying protocol needs a verified implementation or
+an explicitly justified audited native boundary.
+
+## String as a design test
+
+Use a heterogeneous collection of String values with virtual deallocators as an
+acceptance test for the general rules. This does not propose String-specific
+annotations, transfer operations or runtime checks. The same outcomes must follow
+for a user-defined owner retaining an erased cleanup capability.
+
+| Case | Required outcome |
+| --- | --- |
+| Isolated payload; portable provider with a verified concurrent release operation | Transfer may proceed if lifetime and the remaining operation requirements hold |
+| Isolated payload; portable unsynchronized provider transferred exclusively | May proceed while every incompatible provider access is unavailable |
+| Same provider remains in incompatible use by the caller | Reject despite isolated payload ownership |
+| Cleanup is affine to the originating domain | Reject worker-side destruction; permit delegation only with a verified cleanup owner and completion protocol |
+| Provider permits concurrent release but not concurrent allocation | Release guarantee does not authorize allocation |
+| Unknown erased provider, without sufficient static or contextual evidence | Reject the requested operation; a future explicit acquisition may succeed or fail |
+| Two payloads alias mutable bytes, despite strong deallocator guarantees | Reject incompatible payload access |
+| Extracted element has several possible deallocators | Check all alternatives, or narrow them using retained verified evidence |
+| One element passes an additional guarantee check | Preserve the proof for that element; do not strengthen its siblings |
+| Element replacement or a changed captured provider | Do not apply the former value's proof to the replacement |
+| Failure or cancellation before worker completion | Preserve cleanup responsibility and outstanding authority obligations |
+
+Include provider aliases hidden in other elements, returned collections, nested
+owners and cleanup-only accesses. The selected element's nominal type and the
+vtable's implementation identity alone are insufficient answers.
+
+## Decisions required before implementation
+
+1. Specify the shared representation of indirect operation requirements and
+   latent cleanup effects in safety summaries and virtual contracts.
+2. Specify how erased and opaque values conserve correlated region, generation,
+   execution and cleanup evidence, including joins and extraction.
+3. Apply those rules to the matrix above, first using static contracts and
+   contextual evidence. Identify exactly which remaining cases need a dynamic
+   query rather than a stronger producer-side contract.
+4. Only then compare concrete dynamic witness representations and their costs.
+   Any trusted transition must state what it authenticates and why existing
+   verified operations cannot establish that fact.
+
+Do not broaden task payload eligibility or remove conservative opaque-retention
+checks until these rules can justify the new cases without names specific to a
+library abstraction.

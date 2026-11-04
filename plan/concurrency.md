@@ -28,6 +28,9 @@ access effects, affinity and synchronization before claiming general race freedo
   globals, FFI, callbacks, virtual calls, destructors and synchronization.
 - Separate safety from scheduling. Executor, Mutex and Channel should be library
   compositions of general mechanisms, not names recognized by the checker.
+- Treat transfer, simultaneous operation and cleanup requirements independently;
+  do not reduce them to a pair of type-wide markers. Erasure must preserve the
+  relevant verified guarantees and contextual obligations.
 - Keep explicit capability injection. Network and FileSystem remain independent
   of Executor; no implicit global runtime is required.
 
@@ -150,9 +153,10 @@ Deallocator exposes an important unresolved choice:
   exclusively on different threads at different times.
 
 First define the general effect guarantee; introduce specialized capabilities
-only where necessary. With no verified concurrent guarantee, conservatively
-require exclusive access to a virtual deallocator's provider. Do not synchronize
-all allocators: confinement and exclusive transfer remain useful strategies.
+only where necessary. An unsynchronized operation requires exclusive provider
+access, but exclusivity alone does not establish portability or satisfy unknown
+affinity requirements. Do not synchronize all allocators: confinement and verified
+exclusive transfer remain useful strategies.
 
 Execution guarantees belong to individual operations, not just a type-wide
 `ThreadSafe` classification. Distinguish confined allocation, exclusive transfer,
@@ -160,22 +164,14 @@ concurrent remote deallocation and cleanup delegated to the originating domain.
 A resource may permit reading in one domain while requiring destruction in another.
 These are requirements to represent, not guarantees of current Allocation values.
 
-## Acquiring additional virtual evidence
+## Virtual execution evidence
 
-Keep implementation-wide guarantees separate from instance-specific authority,
-affinity and captured resources. A possible future representation is an immutable
-conformance descriptor referenced by a method table, retaining the two-pointer
-handle. This is an open design, not implemented RTTI or a commitment to that layout.
-Thread IDs and instance-specific affinity do not belong in a shared method table.
-
-Ordinary calls should use the contract's static evidence. Recovering an additional
-hidden guarantee may require an explicit fallible acquisition once at a transfer
-boundary, followed by a refined capability or retained proof. Every witness must
-be verified for all instances covered by it; captured-provider requirements may
-still need instance evidence. The acquired proof must track its exact value,
-generation and retained capabilities through moves and storage. Replacement or
-changed captures must invalidate or re-establish it. No descriptor flag by itself
-grants authority, prolongs a lifetime or discharges an execution obligation.
+Before extending owning transfers or adding dynamic conformance lookup, use
+[the virtual execution safety proposal](virtual_execution_safety.md) to compare
+static contracts, contextual evidence and optional dynamic witnesses. It defines
+operation-level requirements and a heterogeneous-owner acceptance matrix without
+choosing a runtime representation. Keep the two-pointer handle and preserve
+instance-specific obligations independently of implementation-wide guarantees.
 
 ## Partitioning and serialized access
 
@@ -224,6 +220,33 @@ access must never revive invalid references or consumed ownership.
 Summaries, wrappers, virtual dispatch and opaque storage must preserve these
 relationships. Obligations need a responsible owner on every success and failure
 path, not just a linear token disconnected from the resource it protects.
+
+## Opaque evidence transport
+
+Opaque storage currently retains conservative lifetime dependencies for a whole
+domain. Those roots do not identify which value, slot or represented type will be
+extracted. They must not be reinterpreted as access-region identities or execution
+receipts. In particular, completing an arbitrary extracted value cannot discharge
+an execution whose exact receipt was lost during storage.
+
+Before relaxing this boundary, define how a typed stored value retains its region
+paths, generations and execution obligations, and how extraction transfers that
+evidence together with cleanup responsibility. Ambiguous contents may require a
+conservative set of alternatives; missing evidence cannot become an empty effect
+set. Domain emptiness alone does not certify execution completion.
+
+Pending receipts remain rejected both when dependency effects retain them and
+when ownership post-states consume them, including moves through input references.
+Mutation through an opaque slot must enforce the same boundary. Completed receipts
+remain eligible for ordinary opaque storage. General access-region recovery and
+pending execution transport are still unimplemented.
+
+Completion summaries conservatively discard a completion proof when the same
+receipt may be returned or retained. Consequently, joining and then storing a
+future inside one helper can still be rejected even though joining in the caller
+before storage works. Distinguishing definite prior completion from possible
+cleanup requires ordered completion evidence; do not remove the retention filter
+without that proof.
 
 ## Task ownership and lifecycle
 

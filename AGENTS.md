@@ -378,7 +378,11 @@ feature first.
   uses checked carries_execution/completes_execution effects; move TaskRequest
   once and establish a lexical owner before a fallible start. Preserve receipt
   identities through summaries, guards and input choices that must hold on normal
-  return. Owning payloads and pending receipts in opaque containers remain unsupported.
+  return. Check opaque retention against entry values before any summary post-state
+  consumes or overwrites them, including ownership moves through reference inputs,
+  captured domains and writes through opaque slot pointers. Apply certified
+  completion before that check. Native task payloads with ownership and pending
+  receipts in opaque containers remain unsupported.
 
 - Filesystem extensions use `core/platforms/shared/filesystem.c` and its private
   `filesystem.h` ABI header through the same selected runtime adapters. Directory
@@ -429,6 +433,8 @@ feature first.
   Retargetable/unknown aliases and indexed replacement still require an evaluated
   destination and shared cleanup identity. VM lowering rejects owning writes
   through unresolved aliases and indexed storage until those identities are modeled.
+  Indirect moves evaluate their storage once and consume its referent cleanup
+  evidence in both backends, including projected fields and variant payloads.
   A reference field's cleanup flag describes its slot, never its referent.
   Bytecode cleanup flags are attached to sorted owner slots through the shared
   immutable cleanup layouts and start false on frame entry. Projections select

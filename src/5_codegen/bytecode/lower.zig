@@ -1328,7 +1328,7 @@ const FunctionLower = struct {
         }
         if (node.content == .move_value) {
             const child = self.parent.graph.node(node.content.move_value);
-            if (child.content == .array_index) {
+            if (@import("../move_cleanup.zig").usesReferentStorage(self.parent.graph, node.content.move_value)) {
                 const place_ = try self.place(node.content.move_value);
                 const result = try self.newSlot(child.ty orelse return error.InvalidBytecode);
                 _ = try self.emit(node.source, .{ .load = .{ .dst = result, .place = place_ } });

@@ -41,6 +41,10 @@ loans. Failed submission creates no pending loan, while failed join retains it.
 Pending execution receipts cannot be stored in user opaque containers until those
 containers can carry their obligations. This includes receipts nested in records
 or choices and retained through helper calls or fallible collection insertion.
+Moving through a reference, including a field of a referenced record, must be
+checked at the opaque ownership transition itself. Ordinary writes through opaque
+slot pointers are subject to the same rule; lifetime summaries cannot substitute
+for the missing completion protocol.
 Possible cleanup on an error path does not certify completion on a path that
 retains the receipt. Completed futures and tasks without borrowed inputs may
 still be stored in collections. The model does not promise general

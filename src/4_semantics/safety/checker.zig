@@ -3693,6 +3693,40 @@ pub const SafetyChecker = struct {
         return false;
     }
 
+    fn validateOpaqueExecutionRetention(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        summary: facts.SafetySummary,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !bool {
+        // Inspect entry contents before any post-state consumes or overwrites
+        // them. Lifetime roots cannot stand in for an execution receipt.
+        for (summary.opaque_storage_effects) |effect| {
+            if (try self.opaqueEffectHasPendingExecution(effect.hidden_dependencies, arguments, state)) {
+                try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
+                return false;
+            }
+        }
+        for (summary.input_post_states) |post| {
+            if (post.opaque_ownership == .definite or post.opaque_ownership == .conditional) {
+                if (hasPendingExecution(try self.load_summary_input_value(post.target, arguments, state), state)) {
+                    try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
+                    return false;
+                }
+            }
+            if (post.opaque_ownership != .none or post.initializedness != .initialized or !post.may_repopulate_opaque_storage or post.target.input_index >= arguments.len) continue;
+            var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+            defer storages.deinit();
+            try self.collectOpaqueDomainsAccessedBy(state, arguments[post.target.input_index], &storages);
+            if (storages.items.len != 0 and try self.opaqueEffectHasPendingExecution(post.value, arguments, state)) {
+                try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
+                return false;
+            }
+        }
+        return true;
+    }
+
     fn applySummaryEffects(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -3702,6 +3736,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         try self.applyExecutionCompletions(summary.completed_executions, arguments, state);
+        if (!try self.validateOpaqueExecutionRetention(source, summary, arguments, state)) return;
         for (summary.input_post_states) |post| {
             if (post.initializedness != .deinitialized and !post.ends_previous_roots) continue;
             const value = try self.load_summary_input_value(post.target, arguments, state);
@@ -3778,7 +3813,7 @@ pub const SafetyChecker = struct {
         try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
         try self.applySummaryInputPostStates(source, summary, argument_ids, arguments, state);
         try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
-        try self.applySummaryOpaqueStorageEffects(source, summary, argument_ids, arguments, state);
+        try self.applySummaryOpaqueStorageEffects(summary, argument_ids, arguments, state);
     }
 
     // Ending a value preserves its backing storage. Distinct input accesses
@@ -4223,17 +4258,12 @@ pub const SafetyChecker = struct {
 
     fn applySummaryOpaqueStorageEffects(
         self: *SafetyChecker,
-        source: primitives.SourceRef,
         summary: facts.SafetySummary,
         argument_ids: []const graph_mod.GlobalValueFieldId,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
         for (summary.opaque_storage_effects) |effect| {
-            if (try self.opaqueEffectHasPendingExecution(effect.hidden_dependencies, arguments, state)) {
-                try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
-                continue;
-            }
             const storage = try self.resolveSummaryOpaqueStoragePath(effect.storage, argument_ids, arguments, state) orelse continue;
             var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer hidden.deinit();
@@ -4271,12 +4301,21 @@ pub const SafetyChecker = struct {
             const value = try self.load_summary_input_value(dependency.path, arguments, state);
             if (hasPendingExecution(value, state)) return true;
         }
-        for ([_][]const facts.InputPath{ effect.input_place_values, effect.input_execution_receipts }) |paths| {
+        for ([_][]const facts.InputPath{ effect.input_place_values, effect.input_execution_receipts, effect.input_receiver_values }) |paths| {
             for (paths) |path| {
                 const value = try self.load_summary_input_value(path, arguments, state);
                 if (hasPendingExecution(value, state)) return true;
             }
         }
+        for (effect.input_domains) |domain| {
+            if (domain.path.input_index >= arguments.len) continue;
+            const value = if (domain.path.projections.len == 0) arguments[domain.path.input_index] else try self.load_summary_input_value(domain.path, arguments, state);
+            for (try self.domainStorage(value, domain.domain_index, state)) |storage| {
+                const stored = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
+                if (hasPendingExecution(stored, state)) return true;
+            }
+        }
+        for (effect.domain_values) |domain| if (try self.opaqueEffectHasPendingExecution(domain.value.*, arguments, state)) return true;
         for (effect.fields) |field| if (try self.opaqueEffectHasPendingExecution(field.value.*, arguments, state)) return true;
         for (effect.variants) |variant| if (try self.opaqueEffectHasPendingExecution(variant.value.*, arguments, state)) return true;
         return false;
@@ -5556,6 +5595,10 @@ pub const SafetyChecker = struct {
                 try domains.append(domain)
             else if (self.inferTransferredOpaqueDomain(state, pointer)) |domain|
                 try domains.append(domain);
+        }
+        if (domains.items.len != 0 and hasPendingExecution(value, state)) {
+            try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
+            return;
         }
         for (domains.items) |domain| {
             if (try self.opaqueWriteCreatesOwnershipCycle(state, domain, value)) {
@@ -8689,6 +8732,84 @@ test "pending executions remain visible inside retained aggregates" {
     try std.testing.expect(SafetyChecker.hasPendingExecution(nested, &state));
     state.completeExecution(second);
     try std.testing.expect(!SafetyChecker.hasPendingExecution(nested, &state));
+}
+
+test "opaque retention checks execution obligations behind receiver and domain effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const id = try state.establishExecution(&.{});
+    const storage: facts.Place = .{ .root = @enumFromInt(0) };
+    try state.setPlace(storage, .initialized, .{ .execution_receipts = &.{id} });
+    const receiver = facts.ValueFacts{ .referenced_place = storage };
+    const domain = facts.ValueFacts{ .domains = &.{.{ .domain_index = 0, .storages = &.{storage} }} };
+    const receiver_effect: facts.ValueEffect = .{ .input_receiver_values = &.{.{ .input_index = 0 }} };
+    const domain_effect: facts.ValueEffect = .{ .input_domains = &.{.{ .path = .{ .input_index = 0 }, .domain_index = 0 }} };
+    const nested: facts.ValueEffect = .{ .domain_values = &.{.{ .domain_index = 0, .value = &domain_effect }} };
+    try std.testing.expect(try checker.opaqueEffectHasPendingExecution(receiver_effect, &.{receiver}, &state));
+    try std.testing.expect(try checker.opaqueEffectHasPendingExecution(domain_effect, &.{domain}, &state));
+    try std.testing.expect(try checker.opaqueEffectHasPendingExecution(nested, &.{domain}, &state));
+    state.completeExecution(id);
+    try std.testing.expect(!try checker.opaqueEffectHasPendingExecution(receiver_effect, &.{receiver}, &state));
+    try std.testing.expect(!try checker.opaqueEffectHasPendingExecution(nested, &.{domain}, &state));
+}
+
+test "opaque execution preflight preserves source receipts before summary consumption" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const id = try state.establishExecution(&.{});
+    const receipt: facts.ValueFacts = .{ .execution_receipts = &.{id} };
+    try state.setPlace(slot, .initialized, receipt);
+    const summary: facts.SafetySummary = .{ .input_post_states = &.{.{
+        .target = .{ .input_index = 0 },
+        .initializedness = .moved,
+        .opaque_ownership = .definite,
+        .opaque_storage = .{ .input_index = 1 },
+    }} };
+    const arguments = [_]facts.ValueFacts{ .{ .referenced_place = slot }, .{} };
+    try checker.applySummaryEffects(source, summary, &.{}, &arguments, &state);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, state.initializednessAtPlace(slot));
+    try std.testing.expect(SafetyChecker.hasPendingExecution(checker.valueAtPlace(&state, slot).?, &state));
+    state.completeExecution(id);
+    try std.testing.expect(try checker.validateOpaqueExecutionRetention(source, summary, &arguments, &state));
+}
+
+test "ordinary opaque writes cannot erase a pending receipt" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const storage: facts.Place = .{ .root = @enumFromInt(0) };
+    const generation = try state.tracker.establish(.fresh);
+    const id = try state.establishExecution(&.{});
+    try checker.mergeOpaqueStorage(&state, storage, &.{});
+    try checker.recordOpaqueWrite(.{ .file_index = 0, .offset = 0 }, &state, .{ .opaque_provenance = &.{.{ .storage = storage, .generation = generation }} }, .{ .execution_receipts = &.{id} });
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expect(state.executionPending(id));
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
 }
 
 test "opaque ownership cycle detection follows indirect edges" {
