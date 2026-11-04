@@ -360,7 +360,10 @@ feature first.
   Resolve these paths before erasure into canonical summary projections and check
   field privacy and the selected reference's mutability. Named receiver domains
   preserve access regions through erasure; reference-field mappings select their
-  referents, with intermediate-reference mappings still rejected. The implicit
+  referents. Intermediate references require concrete targets and retained
+  traversal evidence: retargeting a slot must not leave a stale region authorized.
+  Preserve that evidence through copies, joins and summary transport; unknown
+  symbolic intermediate targets remain rejected. The implicit
   receiver region is distinct from the handle slot. Preserve symbolic receiver
   identities through copies, joins and summary instantiation; empty or unknown
   identity is never proof of no access. Unknown external domains may alias symbolic

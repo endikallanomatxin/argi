@@ -189,12 +189,24 @@ pub const ValueFacts = struct {
     }
 };
 
+/// A captured region reached through a reference remains exact only while
+/// that reference still denotes the captured storage.
+pub const RegionTraversal = struct {
+    slot: Place,
+    target: Place,
+
+    pub fn eql(a: RegionTraversal, b: RegionTraversal) bool {
+        return a.slot.eql(b.slot) and a.target.eql(b.target);
+    }
+};
+
 /// Domain storage identities remain usable across handle copies. Current
 /// generations are looked up at the call, while returned borrows capture the
 /// old generation. Domain invalidation never transfers cleanup ownership.
 pub const DomainFacts = struct {
     domain_index: u32,
     storages: []const Place,
+    traversals: []const RegionTraversal = &.{},
     /// The internal receiver region can retain an unknown caller referent
     /// without inventing a concrete Place. Named lifetime domains still use
     /// materialized storage until symbolic domain projections are represented.

@@ -10,6 +10,34 @@ const Projection = @import("place.zig").Projection;
 /// Internal domain for the erased receiver itself, distinct from its handle.
 pub const receiver_domain: u32 = std.math.maxInt(u32);
 
+pub fn usesDomain(graph: *const g.GlobalSemanticGraph, methods: schema.Range(g.GlobalVirtualRegistryId), index: u32) bool {
+    for (graph.virtual_registry_refs.items[methods.start..][0..methods.len]) |id| {
+        const contract = graph.virtual_registries.items[@intFromEnum(id)].safety_contract orelse continue;
+        for (contract.access_bounds) |bound| if (bound.domain_index == index) return true;
+    }
+    return false;
+}
+
+pub fn mappingProjections(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, concrete: g.GlobalTypeId, fields: []const u32) ![]const Projection {
+    var ty = concrete;
+    var projections: std.ArrayList(Projection) = .empty;
+    errdefer projections.deinit(a);
+    for (fields) |index| {
+        var depth: usize = 0;
+        while (graph.semanticType(ty) == .pointer) {
+            if (depth == 128) return error.InvalidAccessRegion;
+            depth += 1;
+            try projections.append(a, .dereference);
+            ty = graph.semanticType(ty).pointer.child;
+        }
+        const layout = types.fields(graph, ty) orelse return error.InvalidAccessRegion;
+        if (index >= layout.len) return error.InvalidAccessRegion;
+        try projections.append(a, .{ .field = index });
+        ty = graph.fields.items[layout.start + index].ty;
+    }
+    return projections.toOwnedSlice(a);
+}
+
 pub fn selectedType(graph: *const g.GlobalSemanticGraph, function: g.Function, path: facts.InputPath) !struct { ty: g.GlobalTypeId, external: bool, mutable: bool } {
     if (path.input_index >= function.input.len) return error.InvalidAccessRegion;
     var ty = graph.fields.items[function.input.start + path.input_index].ty;
@@ -78,8 +106,12 @@ pub fn resolveContract(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph
             if (mapping.paths.len == 0) return error.MissingAccessDomain;
             found = true;
             for (mapping.paths) |path| {
-                const projections = try a.alloc(Projection, path.fields.len);
-                for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                const input = graph.semanticType(graph.fields.items[function.input.start + receiver.?].ty);
+                if (input != .pointer) return error.InvalidAccessDomainReceiver;
+                const projections = try mappingProjections(a, graph, input.pointer.child, path.fields);
+                for (projections, 0..) |projection, index| if (projection == .dereference) {
+                    try accesses.append(a, .{ .target = .{ .input_index = receiver.?, .projections = projections[0 .. index + 1] }, .mode = .read });
+                };
                 try accesses.appendSlice(a, try region(a, graph, function, .{ .input_index = receiver.?, .projections = projections }, access.mode));
             }
         };
@@ -120,10 +152,46 @@ test "mapped access domains cover their referents without permitting unrelated w
     try std.testing.expectError(error.ReadonlyAccessDomain, resolveContract(a, &graph, function, &allowed, &.{.{ .domain_index = 0, .paths = &.{.{ .fields = &.{0} }} }}, 0));
 }
 
+test "intermediate access mappings preserve traversal and final reference authority" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: schema.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } },
+        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_only } },
+        .{ .structural = .{ .fields = .{ .start = 2, .len = 1 } } },
+        .{ .pointer = .{ .child = @enumFromInt(4), .mutability = .read_only } },
+    });
+    for ([_]g.GlobalTypeId{ @enumFromInt(1), @enumFromInt(1), @enumFromInt(3), @enumFromInt(5) }) |ty|
+        try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = ty, .source = source });
+    const function: g.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 3, .len = 1 }, .output = .{ .start = 0, .len = 0 } };
+    const declared: contracts.Contract = .{ .outputs = &.{}, .bounded_access = true, .access_bounds = &.{.{ .target = .{ .input_index = 0, .storage_domain = 0 }, .mode = .write }} };
+    const mappings: []const schema.StorageDomainMapping = &.{.{ .domain_index = 0, .paths = &.{.{ .fields = &.{ 0, 0 } }} }};
+    var allowed = declared;
+    try resolveContract(a, &graph, function, &allowed, mappings, 0);
+    const target: facts.InputPath = .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 0 }, .dereference } };
+    try std.testing.expect((try contracts.check(a, allowed, .{ .input_accesses = &.{
+        .{ .target = .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } }, .mode = .read },
+        .{ .target = target, .mode = .write },
+    } })) == null);
+    try std.testing.expectEqual(contracts.Failure.Kind.undeclared_access, (try contracts.check(a, allowed, .{ .input_accesses = &.{.{
+        .target = .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference, .{ .field = 1 }, .dereference } },
+        .mode = .read,
+    }} })).?.kind);
+    graph.fields.items[0].ty = @enumFromInt(0);
+    allowed = declared;
+    try std.testing.expectError(error.ReadonlyAccessDomain, resolveContract(a, &graph, function, &allowed, mappings, 0));
+}
+
 pub fn description(err: anyerror) []const u8 {
     return switch (err) {
         error.ReadonlyAccessDomain => "writes requires mutable storage or a mutable reference in its access domain mapping",
-        error.IndirectAccessDomainMapping => "access domain mappings cannot cross intermediate references; select the captured reference field directly",
+        error.IndirectAccessDomainMapping => "access domain mapping does not identify a valid structural field",
         error.InvalidAccessDomainReceiver => "access domains must select the participant receiver",
         else => "access domain has no valid concrete storage mapping",
     };

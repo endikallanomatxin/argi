@@ -129,9 +129,12 @@ receiver domains also bound erased captured regions, using existing implementati
 mappings and preserving identities through wrappers. The implicit receiver region
 is separate from the handle's own storage. Symbolic receiver evidence is retained
 rather than inventing a concrete place or publishing an empty effect set.
-Unknown and global effects cannot satisfy a closed bound. Intermediate-reference
-mappings, general symbolic domain storage and synchronized access remain open;
-ordinary memory effects do not certify unknown native behavior.
+Unknown and global effects cannot satisfy a closed bound. Concrete intermediate
+reference mappings include traversal reads and preserve target evidence through
+copies and wrappers. Retargeting an intermediate slot cannot authorize access
+using the previous region. Unknown symbolic intermediate targets, general symbolic
+domain storage and synchronized access remain open; ordinary memory effects do
+not certify unknown native behavior.
 
 Virtual interfaces must preserve a conservative bound on permitted access effects
 through type erasure, including captured provider identities. Their implementations

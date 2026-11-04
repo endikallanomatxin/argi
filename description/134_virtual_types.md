@@ -296,8 +296,17 @@ A mapped reference field selects its referent; a mapped value field selects its
 own storage. Grouped and nested structural field mappings are supported. Locating
 the resource permits reading the receiver representation, but not following
 unmapped references. A write bound requires mutable mapped storage or a mutable
-reference to the mapped referent, even for a no-op implementation. Mappings that
-cross intermediate reference fields remain unsupported for access effects.
+reference to the mapped referent, even for a no-op implementation. Intermediate
+reference fields are supported when their concrete targets are known at capture.
+For example, `state(self.holder.counter)` can follow a readonly holder reference
+to a mutable counter reference. Traversal reads are included in the checked bound;
+they do not authorize following other reference fields in the holder.
+
+The captured region retains evidence for each intermediate reference. Changing
+one to a different target makes that region unavailable through the existing
+handle, including copies and wrappers; create a new handle after retargeting.
+Unknown symbolic intermediate targets remain unsupported. Lifetime validity alone
+does not prove that a captured path still reaches the same storage.
 
 Region identity survives ordinary handle copies, returns and wrappers. The
 receiver's region remains distinct from the local handle slot: copying a handle

@@ -1309,10 +1309,14 @@ pub const SafetyChecker = struct {
                 }
                 if (value.referenced_place) |receiver| if (virtualize.domains.len != 0) {
                     var domains: std.ArrayList(facts.DomainFacts) = .empty;
+                    var traversal_dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                    defer traversal_dependencies.deinit();
+                    try traversal_dependencies.appendSlice(value.dependencies);
                     var captured: std.ArrayList(@import("domains.zig").Captured) = .empty;
                     defer captured.deinit(self.allocator);
                     for (virtualize.domains) |mapping| {
                         var storages: std.ArrayList(facts.Place) = .empty;
+                        var traversals: std.ArrayList(facts.RegionTraversal) = .empty;
                         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                         defer dependencies.deinit();
                         var visited = std.array_list.Managed(facts.Place).init(self.allocator);
@@ -1321,9 +1325,23 @@ pub const SafetyChecker = struct {
                             var storage = receiver;
                             var ty = virtualize.concrete_type;
                             for (path.fields) |field| {
-                                if (self.graph.semanticType(ty) == .pointer) {
+                                while (self.graph.semanticType(ty) == .pointer) {
+                                    // A captured target remains exact only while
+                                    // the pointer used to reach it is unchanged.
+                                    if (@import("access_bounds.zig").usesDomain(self.graph, virtualize.safety_methods, mapping.domain_index))
+                                        try appendDependencyFact(&traversal_dependencies, .{ .root = try state.storageGeneration(storage) });
                                     const stored: facts.ValueFacts = self.valueAtPlace(state, storage) orelse .{};
-                                    storage = stored.referenced_place orelse storage;
+                                    if (stored.referenced_place) |target| {
+                                        if (@import("access_bounds.zig").usesDomain(self.graph, virtualize.safety_methods, mapping.domain_index)) {
+                                            try traversals.append(self.allocator, .{ .slot = storage, .target = target });
+                                            try traversal_dependencies.appendSlice(stored.dependencies);
+                                            try appendDependencyFact(&traversal_dependencies, .{ .root = try state.storageGeneration(target) });
+                                        }
+                                        storage = target;
+                                    } else if (@import("access_bounds.zig").usesDomain(self.graph, virtualize.safety_methods, mapping.domain_index)) {
+                                        try self.report(virtualize.source, "captured access mapping requires a concrete intermediate reference target", .{});
+                                        break :blk facts.ValueFacts{};
+                                    }
                                     ty = self.graph.semanticType(ty).pointer.child;
                                 }
                                 storage = try self.project(storage, .{ .field = field });
@@ -1335,10 +1353,11 @@ pub const SafetyChecker = struct {
                         const roots = try self.allocator.alloc(facts.ValidityRootId, visited.items.len);
                         for (visited.items, roots) |storage, *root| root.* = try state.storageGeneration(storage);
                         try captured.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .generations = roots });
-                        try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator) });
+                        try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator), .traversals = try traversals.toOwnedSlice(self.allocator) });
                     }
                     if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Contract storage domains share a storage generation and cannot be invalidated independently", .{});
                     value.domains = try domains.toOwnedSlice(self.allocator);
+                    value.dependencies = try traversal_dependencies.toOwnedSlice();
                 };
                 if (value.referenced_place) |receiver_place| if (virtualize.domains.len == 0) {
                     var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
@@ -3700,11 +3719,11 @@ pub const SafetyChecker = struct {
                 for (receiver_pointees) |identity| try self.requireExecutionAccess(source, null, identity, access.mode, state);
                 const storages = self.domainStorage(receiver_value, domain, state) catch |err| {
                     if (err != error.MissingVirtualStorageDomain) return err;
-                    try self.report(source, "cannot establish captured access region identity from lifetime dependencies alone", .{});
+                    try self.report(source, "cannot establish captured access region identity: evidence is missing or an intermediate reference changed", .{});
                     continue;
                 };
                 if (storages.len == 0 and receiver_pointees.len == 0) {
-                    try self.report(source, "cannot establish captured access region identity from lifetime dependencies alone", .{});
+                    try self.report(source, "cannot establish captured access region identity: evidence is missing or an intermediate reference changed", .{});
                     continue;
                 }
                 for (storages) |storage| {
@@ -4558,10 +4577,28 @@ pub const SafetyChecker = struct {
             for (effect.domain_values) |domain| {
                 var storages = std.array_list.Managed(facts.Place).init(self.allocator);
                 var receiver_pointees = std.array_list.Managed(facts.SymbolicPointeeId).init(self.allocator);
+                var traversals = std.array_list.Managed(facts.RegionTraversal).init(self.allocator);
                 for (domain.value.input_generation_dependencies) |path| {
                     if (path.input_index >= arguments.len) continue;
                     if (domain.domain_index == @import("access_bounds.zig").receiver_domain and path.projections.len == 0) {
                         for (arguments[path.input_index].symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
+                    }
+                    var explicit_dereference = false;
+                    for (path.projections) |projection| if (projection == .dereference) {
+                        explicit_dereference = true;
+                        break;
+                    };
+                    if (explicit_dereference) {
+                        for (path.projections, 0..) |projection, index| if (projection == .dereference) {
+                            var prefix = path;
+                            prefix.projections = path.projections[0..index];
+                            const slot = try self.resolveSummaryInputPath(prefix, &.{}, arguments, state) orelse continue;
+                            prefix.projections = path.projections[0 .. index + 1];
+                            const target = try self.resolveSummaryInputPath(prefix, &.{}, arguments, state) orelse continue;
+                            try appendRegionTraversal(&traversals, .{ .slot = slot, .target = target });
+                        };
+                        if (try self.resolveSummaryInputPath(path, &.{}, arguments, state)) |target| try appendPlaceFact(&storages, target);
+                        continue;
                     }
                     var storage = arguments[path.input_index].referenced_place orelse continue;
                     for (path.projections) |projection| {
@@ -4575,12 +4612,20 @@ pub const SafetyChecker = struct {
                 for (domain.value.input_domains) |input| {
                     if (input.path.input_index >= arguments.len) continue;
                     const value = if (input.path.projections.len == 0) arguments[input.path.input_index] else try self.load_summary_input_value(input.path, arguments, state);
-                    for (try self.domainStorage(value, input.domain_index, state)) |storage| try appendPlaceFact(&storages, storage);
+                    // Forwarding region evidence does not access its storage.
+                    // Validate traversal identities when that evidence is used.
+                    if (self.domainFacts(value, input.domain_index, state)) |selected| {
+                        for (selected.storages) |storage| try appendPlaceFact(&storages, storage);
+                        for (selected.traversals) |traversal| try appendRegionTraversal(&traversals, traversal);
+                    } else |err| {
+                        if (err != error.MissingVirtualStorageDomain) return err;
+                        for (try self.domainStorage(value, input.domain_index, state)) |storage| try appendPlaceFact(&storages, storage);
+                    }
                     if (domain.domain_index == @import("access_bounds.zig").receiver_domain) {
                         for (try self.receiverDomainPointees(value, state)) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
                     }
                 }
-                try domains.append(self.allocator, .{ .domain_index = domain.domain_index, .storages = try storages.toOwnedSlice(), .symbolic_pointees = try receiver_pointees.toOwnedSlice() });
+                try domains.append(self.allocator, .{ .domain_index = domain.domain_index, .storages = try storages.toOwnedSlice(), .symbolic_pointees = try receiver_pointees.toOwnedSlice(), .traversals = try traversals.toOwnedSlice() });
             }
             result.domains = try domains.toOwnedSlice(self.allocator);
         }
@@ -6899,7 +6944,7 @@ pub const SafetyChecker = struct {
         var value = argument;
         if (index == @import("access_bounds.zig").receiver_domain) {
             for (0..128) |_| {
-                for (value.domains) |domain| if (domain.domain_index == index) return domain.storages;
+                for (value.domains) |domain| if (domain.domain_index == index) return self.checkedDomainStorage(domain, state);
                 const storage = value.referenced_place orelse {
                     // Access through these exact symbolic identities is checked
                     // separately; this grants no invented concrete storage.
@@ -6913,10 +6958,24 @@ pub const SafetyChecker = struct {
             }
             return error.MissingVirtualStorageDomain;
         }
+        return self.checkedDomainStorage(try self.domainFacts(value, index, state), state);
+    }
+
+    fn checkedDomainStorage(self: *SafetyChecker, domain: facts.DomainFacts, state: *FunctionState) ![]const facts.Place {
+        for (domain.traversals) |traversal| {
+            const stored = self.valueAtPlace(state, traversal.slot) orelse return error.MissingVirtualStorageDomain;
+            const target = stored.referenced_place orelse return error.MissingVirtualStorageDomain;
+            if (!target.eql(traversal.target)) return error.MissingVirtualStorageDomain;
+        }
+        return domain.storages;
+    }
+
+    fn domainFacts(self: *SafetyChecker, argument: facts.ValueFacts, index: u32, state: *FunctionState) !facts.DomainFacts {
+        var value = argument;
         if (value.domains.len == 0) if (value.referenced_place) |wrapper| {
             if (self.valueAtPlace(state, wrapper)) |stored| value = stored;
         };
-        for (value.domains) |domain| if (domain.domain_index == index) return domain.storages;
+        for (value.domains) |domain| if (domain.domain_index == index) return domain;
         return error.MissingVirtualStorageDomain;
     }
 
@@ -8416,6 +8475,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.domains.len != right.domains.len) return false;
     for (left.domains, right.domains) |a, b| {
         if (a.domain_index != b.domain_index or a.storages.len != b.storages.len or !std.mem.eql(facts.SymbolicPointeeId, a.symbolic_pointees, b.symbolic_pointees)) return false;
+        if (a.traversals.len != b.traversals.len) return false;
+        for (a.traversals, b.traversals) |x, y| if (!x.eql(y)) return false;
         for (a.storages, b.storages) |x, y| if (!x.eql(y)) return false;
     }
     if (left.explicit_dependency != right.explicit_dependency or
@@ -9967,6 +10028,11 @@ test "large numeric literals keep no per-element safety records" {
     try std.testing.expect(facts.isEmptyValue(try checker.mergeValueFacts(value, value)));
 }
 
+fn appendRegionTraversal(list: *std.array_list.Managed(facts.RegionTraversal), value: facts.RegionTraversal) !void {
+    for (list.items) |existing| if (existing.eql(value)) return;
+    try list.append(value);
+}
+
 fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFacts, right: []const facts.DomainFacts) ![]const facts.DomainFacts {
     var result: std.ArrayList(facts.DomainFacts) = .empty;
     for (left) |domain| try result.append(allocator, domain);
@@ -9978,6 +10044,10 @@ fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFact
             try storages.appendSlice(existing.storages);
             for (domain.storages) |storage| try appendPlaceFact(&storages, storage);
             existing.storages = try storages.toOwnedSlice();
+            var traversals = std.array_list.Managed(facts.RegionTraversal).init(allocator);
+            try traversals.appendSlice(existing.traversals);
+            for (domain.traversals) |traversal| try appendRegionTraversal(&traversals, traversal);
+            existing.traversals = try traversals.toOwnedSlice();
             var pointees = std.array_list.Managed(facts.SymbolicPointeeId).init(allocator);
             try pointees.appendSlice(existing.symbolic_pointees);
             for (domain.symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, pointees.items, identity) == null) try pointees.append(identity);
@@ -11245,6 +11315,35 @@ test "receiver region merges preserve symbolic identities rather than empty effe
     try std.testing.expectEqual(@as(usize, 2), merged.domains[0].symbolic_pointees.len);
     const repeated = try checker.mergeValueFacts(merged, first);
     try std.testing.expect(valueFactsEqual(merged, repeated));
+}
+
+test "captured traversal identity survives summary transport and rejects retargeting" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const target: facts.Place = .{ .root = @enumFromInt(1) };
+    const other: facts.Place = .{ .root = @enumFromInt(2) };
+    try state.setPlace(slot, .initialized, .{ .referenced_place = target });
+    const value: facts.ValueFacts = .{ .domains = &.{.{ .domain_index = 0, .storages = &.{target}, .traversals = &.{.{ .slot = slot, .target = target }} }} };
+    const domain: facts.ValueEffect = .{ .input_domains = &.{.{ .path = .{ .input_index = 0 }, .domain_index = 0 }} };
+    const forwarded = try checker.instantiateOutput(.{ .domain_values = &.{.{ .domain_index = 0, .value = &domain }} }, &.{value}, &state);
+    try std.testing.expect(valueFactsEqual(value, forwarded));
+    const changed: facts.ValueFacts = .{ .domains = &.{.{ .domain_index = 0, .storages = &.{target}, .traversals = &.{.{ .slot = slot, .target = other }} }} };
+    try std.testing.expect(!valueFactsEqual(value, changed));
+    const merged = try checker.mergeValueFacts(value, changed);
+    try std.testing.expectEqual(@as(usize, 2), merged.domains[0].traversals.len);
+    try std.testing.expectError(error.MissingVirtualStorageDomain, checker.domainStorage(merged, 0, &state));
+    try std.testing.expect((try checker.domainStorage(forwarded, 0, &state))[0].eql(target));
+    try state.setPlace(slot, .initialized, .{ .referenced_place = other });
+    try std.testing.expectError(error.MissingVirtualStorageDomain, checker.domainStorage(forwarded, 0, &state));
+    const stale_copy = try checker.instantiateOutput(.{ .domain_values = &.{.{ .domain_index = 0, .value = &domain }} }, &.{forwarded}, &state);
+    try std.testing.expect(valueFactsEqual(forwarded, stale_copy));
+    try std.testing.expectError(error.MissingVirtualStorageDomain, checker.domainStorage(stale_copy, 0, &state));
 }
 
 test "access region identity transport does not pin entry generations" {

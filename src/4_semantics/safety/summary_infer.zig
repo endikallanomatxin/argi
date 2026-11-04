@@ -5747,7 +5747,14 @@ pub const Infer = struct {
                 var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
                 for (receiver_paths) |receiver| for (mapping.paths) |path| {
                     var projections = receiver.projections;
-                    for (path.fields) |field| projections = try self.appendProjection(projections, .{ .field = field });
+                    if (@import("access_bounds.zig").usesDomain(self.graph, virtualize.safety_methods, mapping.domain_index)) {
+                        const selected = try @import("access_bounds.zig").mappingProjections(self.allocator, self.graph, virtualize.concrete_type, path.fields);
+                        for (selected) |projection| projections = try self.appendProjection(projections, projection);
+                    } else {
+                        for (path.fields) |field| {
+                            projections = try self.appendProjection(projections, .{ .field = field });
+                        }
+                    }
                     try appendInputPath(&paths, .{ .input_index = receiver.input_index, .projections = projections });
                 };
                 const value = try self.allocator.create(facts.ValueEffect);
