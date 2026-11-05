@@ -2,8 +2,11 @@
 
 ## Status and purpose
 
-This note records open work toward general resource transfer and execution
-requirements. Development order belongs in [the release plan](0.5.md).
+This note records research and possible extensions toward general resource
+transfer and execution requirements. The proposed minimal rules and common
+implementation gate live in [the resource authority core](resource_authority.md).
+Development order belongs in [the release plan](0.5.md); the broader mechanisms
+below are not simultaneous release requirements.
 
 The native Future and ThreadedExecutor support plain results and nonowning input
 records or arrays whose reference leaves point to plain data. Checked execution

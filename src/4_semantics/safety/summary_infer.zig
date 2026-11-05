@@ -1082,6 +1082,9 @@ pub const Infer = struct {
         // Consuming a referent or ending its generation requires write
         // authority even when cleanup has no explicit pointer store.
         for (post_states.items) |post| {
+            if (post.target.input_index >= function.input.len) continue;
+            const ty = self.graph.fields.items[function.input.start + post.target.input_index].ty;
+            if (!self.pathReachesReferent(ty, post.target.projections)) continue;
             if (post.ends_previous_roots or post.refreshes_storage_generation or
                 post.initializedness == .moved or post.initializedness == .deinitialized or
                 post.initialization == .definite)
@@ -3043,8 +3046,14 @@ pub const Infer = struct {
                     try self.recordInputStorageObservation(function_id, observed, states.items);
             }
             for (summary.storage_observation_conflicts) |conflict| {
-                const consumed = try self.substituteRequiredInputPath(function_id, conflict.incompatible, arguments, override);
-                const observed = try self.substituteRequiredInputPath(function_id, conflict.observed, arguments, override);
+                const consumed = if (conflict.incompatible.storage_domain != null)
+                    try self.substituteRequiredInputPath(function_id, conflict.incompatible, arguments, override)
+                else
+                    try self.substituteInputPath(function_id, conflict.incompatible, arguments, override, .place);
+                const observed = if (conflict.observed.storage_domain != null)
+                    try self.substituteRequiredInputPath(function_id, conflict.observed, arguments, override)
+                else
+                    try self.substituteInputPath(function_id, conflict.observed, arguments, override, .place);
                 for (consumed) |left| for (observed) |right| try self.recordStorageObservationConflict(.{ .incompatible = left, .observed = right, .kind = conflict.kind, .captures_reachable = conflict.captures_reachable });
             }
         }
@@ -4797,7 +4806,17 @@ pub const Infer = struct {
                 continue;
             }
             const paths = try self.substituteInputPath(function, access.target, arguments, override, .place);
-            for (paths) |path| try sink.addInput(path, access.mode);
+            const signature = self.graph.function(function);
+            for (paths) |path| {
+                if (path.input_index >= signature.input.len) {
+                    sink.unknown = true;
+                    continue;
+                }
+                const ty = self.graph.fields.items[signature.input.start + path.input_index].ty;
+                // A callee can modify a field in our local copy without touching
+                // caller storage. Crossing a reference leaf retains its effect.
+                if (self.pathReachesReferent(ty, path.projections)) try sink.addInput(path, access.mode);
+            }
             if (paths.len != 0) continue;
             if (access.target.input_index >= arguments.len) {
                 sink.unknown = true;

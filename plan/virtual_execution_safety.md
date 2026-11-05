@@ -2,9 +2,11 @@
 
 ## Status and scope
 
-Design proposal for 0.5, not an implemented language guarantee or runtime ABI.
-Resolve these rules before extending owning task transfer or introducing dynamic
-conformance lookup. The current boundary remains in
+Implementation investigation for 0.5, not an implemented language guarantee or
+runtime ABI. [The resource authority core](resource_authority.md) defines the
+proposed shared rules and minimal implementation gate. Resolve this note's
+concrete gaps within that model before extending owning task transfer or
+introducing dynamic conformance lookup. The current boundary remains in
 [the concurrency specification](../description/173_concurrency.md); broader work
 is tracked in [the concurrency plan](concurrency.md).
 
@@ -89,6 +91,11 @@ retain the resource until all users finish; simply dropping an observer is not
 completion.
 
 ## Binding effects to resources
+
+The common rules for contract roles, instance bindings and result post-relations
+are defined in [the core model](resource_authority.md#contract-relations-and-instance-bindings).
+The implementation must reuse ordinary output-summary relations; no Virtual-only
+permission model is proposed.
 
 Use the following abstract record to discuss an operation; these are semantic
 components, not proposed source keywords or a chosen serialized representation:
@@ -237,6 +244,8 @@ Conservative rejection is acceptable when these relations cannot be represented.
 
 ## Candidate dynamic acquisition boundary
 
+Deferred exploration, outside the current 0.5 core gate.
+
 Keep `Virtual` as two pointers while possible. Do not add runtime flags,
 descriptors, a third handle pointer or new trusted operations at this stage.
 
@@ -291,7 +300,7 @@ vtable's implementation identity alone are insufficient answers.
 
 | Existing mechanism | Reuse | Missing information |
 | --- | --- | --- |
-| `InputPath`, `InputAccess`, `GlobalAccess`, `unknown_access` | Caller-relative may-access bounds | Scoped unknown effects and transition-relative access requirements |
+| `InputPath`, `InputAccess`, `GlobalAccess`, `unknown_access` | Caller-relative may-access bounds | Unknown-call authorization; ordered effects deferred |
 | `DomainFacts`, symbolic pointees and `RegionTraversal` | Captured region and traversal identities | General symbolic/opaque extraction with correlated alternatives |
 | `ValueEffect` dependencies and domain effects | Substitution through values and calls | Latent operation requirements bound to the retained capability occurrence |
 | Selected `Deinit` evidence and cleanup flags | Cleanup selection and unique responsibility, including indirect moves | Execution requirements of latent cleanup and delegated responsibility |
@@ -464,7 +473,8 @@ traversals or correlated heterogeneous cleanup requirements.
 
 1. Specify the shared representation of indirect operation requirements and
    latent cleanup effects in safety summaries and virtual contracts, including
-   unknown effects and transition-relative access requirements.
+   unknown effects. Keep conservative call-entry requirements; general ordered
+   effects are outside the current design gate.
 2. Specify how erased and opaque values conserve correlated region, generation,
    execution and cleanup evidence, including joins and extraction.
 3. Apply those rules to the matrix above, first using static contracts and
@@ -495,12 +505,73 @@ record-field case.
 The unknown erased-call authorization gap remains open. An experiment rejected
 all summaries with `unknown_access` while any execution retained a storage loan.
 It also rejected valid `await` paths: native result-buffer references currently
-carry lifetime evidence without an authenticated access-region identity. Task
-submission also needs a verified synchronous footprint through the request's
-reference fields. That experiment is not enabled in this checkpoint.
+carry lifetime evidence without an authenticated access-region identity. The
+blanket rejection is not enabled. An attempted submission bound using
+`writes(self)` and `reads(request._input)` accepted an embedded provider but
+rejected the existing reference-based forwarding executor. Provider representation
+and captured provider storage are different regions. Publish a relational bound
+before closing that interface; do not silently widen `self` to all captures.
+
+Composition excludes writes to local by-value argument slots while retaining
+effects through reference leaves. Alias obligations substitute storage coordinates
+rather than mere lifetime sources, preserving exact referents through wrappers.
 
 Before enforcing the rule, represent those accesses using general opaque storage
 and provenance rules. Do not infer containment from a lifetime anchor or exempt
 `Future`/`Executor` by name. Native imports retain their audited FFI assumptions;
 Argi implementations must prove their bounds. A completion postcondition alone
 cannot authorize unknown accesses that may occur earlier in the call.
+
+Regression cases 111–114 cover mutation of local argument copies under
+`no_access`, rejected external reference writes, rejected possible module aliases,
+and a stateful executor that delegates to an embedded provider. The result-buffer
+provenance problem remains separate: lifetime dependence alone must not be
+reinterpreted as ownership, containment or independent access authority.
+
+## Existing whole-value relations
+
+The proposed relational core does not require a new clause for exact forwarding.
+`transfers(result, source)` already carries the entire value through a virtual
+method's output summary, including nested `Virtual` domain facts. Generic cases
+116 and 117X verify that a returned record retains shared-read compatibility and
+write conflicts with the original referent's pending loan. Cases 118X and 119X
+reject lifetime-only publication and returning a different input, respectively.
+No new authority, acquisition proof or runtime witness is introduced. Cases
+120X and 121 contrast heterogeneous extraction without a usable region identity
+against a common verified `no_access` contract, using different provider types.
+The latter is not a general certificate for arbitrary methods on stored values.
+
+This does not express every factory relation. A capability newly constructed from
+a provider, or a published subset of its captured roles, still needs sufficient
+verified post-relations. Do not equate that missing case with whole-value transfer
+or weaken `depends_on` to recover it.
+
+## Minimal next relation: delegation through named roles
+
+The next missing case is a wrapper whose operation delegates to a named region
+of a captured virtual capability. Mapping to the handle's bytes or only its
+implicit receiver is insufficient. Conceptually, an outer role must be able to
+select the captured occurrence and then one of that occurrence's contract roles,
+for example `outer.state = self.base.state`. This is a required semantic relation,
+not a claim that the current mapping parser accepts that path.
+
+Prefer extending the existing region-selector representation over introducing a
+new safety system or universal transfer marker. `InputPath` already separates
+structural projections from a terminal `storage_domain`; `InputDomain`,
+`OutputDomainEffect` and instance `DomainFacts` supply the other existing pieces.
+The implementation mapping must preserve the selected contract and occurrence;
+equal numeric domain indices from unrelated contracts are not identity evidence.
+A nested role is a selection of the captured virtual's public binding, not
+permission to inspect its concrete implementation or all its lifetime dependencies.
+
+A valid implementation proves the delegated method's instantiated requirements
+fit that selected outer role. Forwarding must preserve this relation across
+copies, generic helpers and retargeting checks. Missing or stale binding evidence
+stays unknown. No vtable descriptor, ordered-effect graph or native promise is
+needed for this relation.
+
+Before implementation, cover direct and nested delegation, unrelated role names
+or occurrences, reference retargeting, and static-versus-erased producer results.
+This extension would not by itself express every new result-region postcondition
+or make an unknown native address an owned region. Keep those requirements
+separate and reuse the same selectors when an actual gate case needs them.
