@@ -1104,6 +1104,7 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
             try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
         }
         if (tree.structTypeField(node)) |field| if (field.position == null) try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.property, declaration);
+        if (tree.tag(node) == .contract_region_requirement) try markSyntax(tree, classes, tree.mainToken(node), TOKEN_INDEX.property, declaration);
         if (tree.valueField(node)) |field| if (field.name_token) |name| try markSyntax(tree, classes, name, TOKEN_INDEX.property, 0);
         if (tree.structFieldAccess(node)) |field| try markSyntax(tree, classes, field.field_token, TOKEN_INDEX.property, 0);
         if (tree.choiceLiteral(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, 0);
@@ -1609,6 +1610,7 @@ test "LSP constructor navigation finds selected init bodies and default record d
 
 test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {
     const code =
+        \\Counter#(.T: Type): Contract = (.state: Region#(T))
         \\main := () -> (.status_code: Int32 = 0)  {
         \\    text := "héllo
         \\world"
@@ -1629,6 +1631,7 @@ test "LSP semantic tokens retain syntax roles with unresolved calls and multilin
     try expectSemanticToken(data.items, code, "main :=", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "Int32", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "missing(", TOKEN_INDEX.function, 0);
+    try expectSemanticToken(data.items, code, "state:", TOKEN_INDEX.property, 1);
     try expectSemanticToken(data.items, code, "value =", TOKEN_INDEX.property, 0);
     try expectSemanticToken(data.items, code, "abort", TOKEN_INDEX.keyword, 0);
     try expectSemanticToken(data.items, code, "\"héllo", TOKEN_INDEX.string, 0);

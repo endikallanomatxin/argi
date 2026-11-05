@@ -1,14 +1,15 @@
 CounterAccess#(.Provider: Type): Contract = (
-    domain state
+    .state: Region#(Provider)
     .get: (.self: &Provider) -> (.result: Int32) where { reads(self.state) }
     .set: (.self: &Provider) -> () where { writes(self.state) }
 )
 Holder := (.counter: $&Int32)
 Provider := (._holder: &Holder)
 implement CounterAccess#(Provider) (
+    .state = region(self._holder.counter),
     .get = (.self: &Provider) -> (.result: Int32) { result = self&._holder&.counter& }
     .set = (.self: &Provider) -> () { self&._holder&.counter& = 42 }
-) where { state(self._holder.counter) }
+)
 forward := (.counter: Virtual#(CounterAccess)) -> (.result: Virtual#(CounterAccess)) { result = counter }
 get := (.counter: Virtual#(CounterAccess)) -> (.result: Int32) {
     result = CounterAccess#().get(.self = &counter)

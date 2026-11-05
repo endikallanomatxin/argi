@@ -90,6 +90,9 @@ const Context = struct {
         const reference = try self.declarationRef(base_node, name, .contract);
         const participants = try self.lowerConformanceArguments(if (syntax_type == .generic) syntax_type.generic.arguments else null);
         var operations: primitives.Range(parameterized_storage.ContractOperationId) = .{ .start = 0, .len = 0 };
+        var region_mappings: std.ArrayList(parameterized_storage.DomainMapping) = .empty;
+        defer region_mappings.deinit(self.allocator);
+        errdefer for (region_mappings.items) |mapping| mapping.deinit(self.allocator);
         const associated = blk: {
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;
             defer arguments.deinit(self.allocator);
@@ -101,6 +104,19 @@ const Context = struct {
                 const member = self.tree.structTypeField(member_node).?;
                 const member_name = self.tree.tokenTextFromSource(self.source, member.name_token);
                 const value = member.default_value orelse return error.InvalidContractArgument;
+                if (self.tree.functionCall(value)) |call| {
+                    if (call.module_qualifier == null and call.specialization_arguments == null and
+                        std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, call.callee_token), "region"))
+                    {
+                        if (member.type_node != null) try self.conformanceError(member_node, "region members use '.name = region(self.path)' without an ordinary type annotation");
+                        for (region_mappings.items) |previous| if (std.mem.eql(u8, self.graph.text(previous.name), member_name))
+                            try self.conformanceError(member_node, "duplicate implementation region member");
+                        const mapping = try self.lowerRegionMapping(member_node, call);
+                        errdefer mapping.deinit(self.allocator);
+                        try region_mappings.append(self.allocator, mapping);
+                        continue;
+                    }
+                }
                 if (member.type_node) |annotation| {
                     if (self.tree.parameterizedDefinition(annotation) != null) {
                         var lowerer = self.parameterizedContext();
@@ -240,7 +256,7 @@ const Context = struct {
             break :blk try self.publishConformanceArguments(arguments.items);
         };
         try self.graph.semantic.parameterized_storage.contract_conformances.ensureUnusedCapacity(self.allocator, 1);
-        const domains = try self.lowerDomainMappings(relation.domain_mapping);
+        const domains = try region_mappings.toOwnedSlice(self.allocator);
         self.graph.semantic.parameterized_storage.contract_conformances.appendAssumeCapacity(.{
             .parameters = parameters,
             .operations = operations,
@@ -298,37 +314,25 @@ const Context = struct {
         return lowerer.lowerIntExpression(node);
     }
 
-    fn lowerDomainMappings(self: *Context, optional: ?syn.NodeIndex) ![]const parameterized_storage.DomainMapping {
-        const node = optional orelse return &.{};
-        var result: std.ArrayList(parameterized_storage.DomainMapping) = .empty;
-        defer result.deinit(self.allocator);
-        errdefer for (result.items) |domain| domain.deinit(self.allocator);
-        for (self.tree.codeBlock(node).?.statements) |statement| {
-            const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
-            const call = self.tree.functionCall(clause) orelse return error.InvalidStorageDomainMapping;
-            if (call.module_qualifier != null or call.specialization_arguments != null) return error.InvalidStorageDomainMapping;
-            var paths: std.ArrayList(parameterized_storage.DomainMapping.Path) = .empty;
-            defer paths.deinit(self.allocator);
-            errdefer for (paths.items) |path| self.allocator.free(path.fields);
-            for (self.tree.structValueLiteral(call.input).?.fields) |argument| {
-                const field = self.tree.valueField(argument).?;
-                if (field.name_token != null) return error.InvalidStorageDomainMapping;
-                var names: std.ArrayList(primitives.StringRange) = .empty;
-                defer names.deinit(self.allocator);
-                try self.lowerDomainPath(field.value, &names);
-                if (names.items.len == 0) return error.InvalidStorageDomainMapping;
-                try paths.ensureUnusedCapacity(self.allocator, 1);
-                paths.appendAssumeCapacity(.{ .fields = try names.toOwnedSlice(self.allocator) });
-            }
-            if (paths.items.len == 0) return error.InvalidStorageDomainMapping;
-            try result.ensureUnusedCapacity(self.allocator, 1);
-            const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token));
-            result.appendAssumeCapacity(.{
-                .name = name,
-                .paths = try paths.toOwnedSlice(self.allocator),
-            });
+    fn lowerRegionMapping(self: *Context, member: syn.NodeIndex, call: syn.FunctionCall) !parameterized_storage.DomainMapping {
+        var paths: std.ArrayList(parameterized_storage.DomainMapping.Path) = .empty;
+        defer paths.deinit(self.allocator);
+        errdefer for (paths.items) |path| self.allocator.free(path.fields);
+        for (self.tree.structValueLiteral(call.input).?.fields) |argument| {
+            const field = self.tree.valueField(argument).?;
+            if (field.name_token != null) try self.conformanceError(argument, "region projections require positional storage paths");
+            var names: std.ArrayList(primitives.StringRange) = .empty;
+            defer names.deinit(self.allocator);
+            self.lowerDomainPath(field.value, &names) catch |err| {
+                if (err != error.InvalidStorageDomainMapping) return err;
+                try self.conformanceError(field.value, "region projections must select fields from symbolic self");
+            };
+            if (names.items.len == 0) try self.conformanceError(argument, "region projections require a nonempty path from symbolic self");
+            try paths.ensureUnusedCapacity(self.allocator, 1);
+            paths.appendAssumeCapacity(.{ .fields = try names.toOwnedSlice(self.allocator) });
         }
-        return result.toOwnedSlice(self.allocator);
+        if (paths.items.len == 0) try self.conformanceError(member, "region projections require at least one storage path");
+        return .{ .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, self.tree.mainToken(member))), .paths = try paths.toOwnedSlice(self.allocator) };
     }
 
     fn lowerDomainPath(self: *Context, node: syn.NodeIndex, names: *std.ArrayList(primitives.StringRange)) anyerror!void {

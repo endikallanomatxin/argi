@@ -736,16 +736,16 @@ test "type rules: polymorphism/106X_virtual_safety_contract_domain_result_unknow
     try checkSource(
         "polymorphism/106X_virtual_safety_contract_domain_result_unknown",
         \\Source#(.Participant: Type): Contract = (
-        \\    domain storage
+        \\    .storage: Region#(Participant)
         \\    .get   : (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
         \\    .reset : (.self: $&Participant) -> () where invalidates(self.storage)
         \\)
         \\
         \\Cell := (.value: Int32)
         \\
-        \\implement Source#(Cell) (.get = _impl_get_Cell, .reset = _impl_reset_Cell) where {
-        \\    storage(self.value)
-        \\}
+        \\implement Source#(Cell) (
+        \\    .storage = region(self.value),
+        \\.get = _impl_get_Cell, .reset = _impl_reset_Cell)
         \\
         \\_impl_get_Cell := (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
         \\
@@ -1066,13 +1066,15 @@ test "type rules: polymorphism/267X_internal_storage_readonly_receiver" {
     try checkSource(
         "polymorphism/267X_internal_storage_readonly_receiver",
         \\Protocol#(.Participant: Type): Contract = (
-        \\    domain contents
+        \\    .contents: Region#(Participant)
         \\    .clear : (.self: &Participant) -> () where empties(self.contents)
         \\)
         \\
         \\Storage := (.first: Int32)
         \\
-        \\implement Protocol#(Storage) (.clear = _impl_clear_Storage) where { contents(self.first) }
+        \\implement Protocol#(Storage) (
+        \\    .contents = region(self.first),
+        \\.clear = _impl_clear_Storage)
         \\
         \\_impl_clear_Storage := (.self: &Storage) -> () {}
         \\
@@ -1539,18 +1541,18 @@ test "type rules: polymorphism/89X_virtual_safety_contract_domain_overlap" {
     try checkSource(
         "polymorphism/89X_virtual_safety_contract_domain_overlap",
         \\Source#(.Participant: Type): Contract = (
-        \\    domain storage
-        \\    domain sibling
+        \\    .storage: Region#(Participant)
+        \\    .sibling: Region#(Participant)
         \\    .get   : (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
         \\    .reset : (.self: $&Participant) -> () where invalidates(self.storage)
         \\)
         \\
         \\Cell := (.value: Int32, .other: Int32)
         \\
-        \\implement Source#(Cell) (.get = _impl_get_Cell, .reset = _impl_reset_Cell) where {
-        \\    storage(self.value)
-        \\    sibling(self.value)
-        \\}
+        \\implement Source#(Cell) (
+        \\    .storage = region(self.value),
+        \\    .sibling = region(self.value),
+        \\.get = _impl_get_Cell, .reset = _impl_reset_Cell)
         \\
         \\_impl_get_Cell := (.self: &Cell) -> (.value: &Int32) {
         \\    value = &self&.value
@@ -1588,7 +1590,7 @@ test "type rules: polymorphism/90X_virtual_safety_contract_domain_missing" {
     try checkSource(
         "polymorphism/90X_virtual_safety_contract_domain_missing",
         \\Source#(.Participant: Type): Contract = (
-        \\    domain storage
+        \\    .storage: Region#(Participant)
         \\    .get   : (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
         \\    .reset : (.self: $&Participant) -> () where invalidates(self.storage)
         \\)

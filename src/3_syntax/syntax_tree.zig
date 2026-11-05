@@ -78,7 +78,7 @@ pub const Node = struct {
         contract_conformance,
         contract_function_requirement,
         contract_inferred_operation_requirement,
-        contract_domain,
+        contract_region_requirement,
         contract_outcome,
         c_function_pointer_declaration,
         function_declaration,
@@ -228,7 +228,6 @@ pub const ConformanceExtra = struct {
     generic_params_end: ExtraIndex,
     generic_params_struct: OptionalNodeIndex,
     value: NodeIndex,
-    safety_contract: OptionalNodeIndex = .none,
 };
 pub const ContractExtra = struct {
     participants_struct: OptionalNodeIndex = .none,
@@ -316,7 +315,6 @@ pub const ContractConformance = struct {
     generic_params_struct: ?NodeIndex,
     contract_type: NodeIndex,
     implementation_members: NodeIndex,
-    domain_mapping: ?NodeIndex = null,
 };
 pub const ContractDeclaration = struct {
     participants_struct: ?NodeIndex = null,
@@ -840,7 +838,7 @@ pub const FileSyntaxTree = struct {
     pub fn contractConformance(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractConformance {
         if (tree.tag(node) != .contract_conformance) return null;
         const extra = tree.extraData(ConformanceExtra, tree.data(node).extra);
-        return .{ .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }), .generic_params_struct = extra.generic_params_struct.unwrap(), .contract_type = extra.value, .implementation_members = extra.implementation_members.unwrap().?, .domain_mapping = extra.safety_contract.unwrap() };
+        return .{ .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }), .generic_params_struct = extra.generic_params_struct.unwrap(), .contract_type = extra.value, .implementation_members = extra.implementation_members.unwrap().? };
     }
 
     pub fn contractDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractDeclaration {

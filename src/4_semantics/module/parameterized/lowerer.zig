@@ -374,8 +374,14 @@ pub const Context = struct {
                     const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.contract_requirements.items.len);
                     var domains: std.ArrayList(primitives.StringRange) = .empty;
                     defer domains.deinit(self.allocator);
+                    var regions: std.ArrayList(parameterized_storage.RegionRequirement) = .empty;
+                    defer regions.deinit(self.allocator);
                     for (contract.domains) |domain| {
+                        const root = try self.regionParticipant(domain, participants);
                         const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(domain));
+                        for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, text))
+                            try self.contractError(domain, "contract regions and associated elements require distinct names");
+                        try regions.append(self.allocator, .{ .name = try self.writer.addString(text), .participant = root, .source = self.sourceRef(domain) });
                         for (domains.items) |previous| {
                             if (std.mem.eql(u8, self.graph.text(previous), text)) {
                                 try self.contractError(domain, "duplicate Contract storage domain");
@@ -385,6 +391,9 @@ pub const Context = struct {
                         try domains.append(self.allocator, try self.writer.addString(text));
                     }
                     for (contract.requires_functions) |requirement_node| {
+                        const required_name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(requirement_node));
+                        for (domains.items) |region_name| if (std.mem.eql(u8, self.graph.text(region_name), required_name))
+                            try self.contractError(requirement_node, "contract operations and regions require distinct names");
                         if (self.tree.tag(requirement_node) == .contract_inferred_operation_requirement) {
                             const operation_name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(requirement_node));
                             for (self.graph.semantic.parameterized_storage.contract_requirements.items[req_start..]) |previous| {
@@ -437,7 +446,7 @@ pub const Context = struct {
                             .start = req_start,
                             .len = @intCast(self.graph.semantic.parameterized_storage.contract_requirements.items.len - req_start),
                         },
-                        .domains = try domains.toOwnedSlice(self.allocator),
+                        .domains = try regions.toOwnedSlice(self.allocator),
                     });
                     stats.contract_definitions += 1;
                 },
@@ -445,6 +454,34 @@ pub const Context = struct {
             }
         }
         return stats;
+    }
+
+    fn regionParticipant(self: *Context, node: syn.NodeIndex, participants: primitives.Range(ir.ComptimeParameterId)) !ir.ComptimeParameterId {
+        if (participants.len != 1) {
+            try self.contractError(node, "Region currently requires one explicit type participant");
+            unreachable;
+        }
+        const requirement = self.tree.syntaxType(self.tree.data(node).node).?.generic;
+        const args = self.tree.specializationArguments(requirement.arguments).?;
+        if (args.fields.len != 1) {
+            try self.contractError(node, "Region requires exactly one participant argument");
+            unreachable;
+        }
+        const argument = self.tree.structTypeField(args.fields[0]).?;
+        const root = argument.type_node orelse argument.default_value orelse {
+            try self.contractError(node, "Region requires a positional participant name");
+            unreachable;
+        };
+        if (argument.position == null or (self.tree.tag(root) != .identifier and self.tree.tag(root) != .type_name)) {
+            try self.contractError(node, "Region requires a positional participant name");
+            unreachable;
+        }
+        const root_parameter = self.graph.semantic.parameterized_storage.comptime_parameters.items[participants.start];
+        if (!std.mem.eql(u8, self.graph.text(root_parameter.name), self.tree.tokenTextFromSource(self.source, self.tree.mainToken(root)))) {
+            try self.contractError(node, "Region root must name the contract's participant");
+            unreachable;
+        }
+        return @enumFromInt(participants.start);
     }
 
     fn lowerMethodSafetyContract(self: *Context, requirement: syn.ContractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {

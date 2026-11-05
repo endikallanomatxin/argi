@@ -1,11 +1,12 @@
 CounterAccess#(.Provider: Type): Contract = (
-    domain state
+    .state: Region#(Provider)
     .set: (.self: &Provider) -> () where { writes(self.state) }
 )
 Provider := (._counter: &Int32)
 implement CounterAccess#(Provider) (
+    .state = region(self._counter),
     .set = (.self: &Provider) -> () {}
-) where { state(self._counter) }
+)
 main := () -> () {
     value :: Int32 = 7
     provider: Provider = (._counter = &value)

@@ -1,13 +1,14 @@
 Counter#(.Provider: Type): Contract = (
-    domain state
+    .state: Region#(Provider)
     .get: (.self: &Provider) -> (.result: Int32) where reads(self.state)
     .set: (.self: &Provider) -> () where writes(self.state)
 )
 CounterProvider := (.value: $&Int32)
 implement Counter#(CounterProvider) (
+    .state = region(self.value),
     .get = (.self: &CounterProvider) -> (.result: Int32) { result = self&.value& },
     .set = (.self: &CounterProvider) -> () { self&.value& = 42 }
-) where { state(self.value) }
+)
 RelayProvider := (.marker: Int32)
 Relay#(.Provider: Type): Contract = (
     .forward: (.self: &Provider, .source: &Virtual#(Counter)) -> (.result: Virtual#(Counter)) where {

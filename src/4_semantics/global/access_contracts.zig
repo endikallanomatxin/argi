@@ -7,7 +7,7 @@ const Resolver = @import("contracts.zig").Resolver;
 const Bound = schema.MethodSafetyContract.AccessBound;
 
 pub const Resolution = union(enum) { bound: Bound, failure: []const u8 };
-pub const Context = struct { participant: ?graph_mod.GlobalTypeId = null, domains: []const schema.StringRange = &.{} };
+pub const Context = struct { participant: ?graph_mod.GlobalTypeId = null, domains: []const @import("../module/parameterized/storage.zig").RegionRequirement = &.{} };
 
 pub fn resolve(self: *Resolver, module_index: usize, inputs: graph_mod.FieldRange, bound: Bound, context: Context) anyerror!Resolution {
     return resolveNames(try self.graph.safetyAllocator(self.allocator), self.graph, module_index, self.modules[module_index].strings.items, inputs, bound, context);
@@ -25,7 +25,7 @@ fn resolveNames(a: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGrap
     if (bound.input_index >= inputs.len) return .{ .failure = "access bound names an unknown input" };
     var ty = graph.fields.items[inputs.start + bound.input_index].ty;
     if (bound.fields.len == 1) for (context.domains, 0..) |domain, index| {
-        if (!std.mem.eql(u8, nameText(names, domain), nameText(names, bound.fields[0]))) continue;
+        if (!std.mem.eql(u8, nameText(names, domain.name), nameText(names, bound.fields[0]))) continue;
         const input = graph.semanticType(ty);
         if (input != .pointer or !types.equal(graph, input.pointer.child, context.participant orelse continue)) continue;
         var result = bound;

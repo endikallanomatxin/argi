@@ -1,11 +1,12 @@
 CounterAccess#(.Provider: Type): Contract = (
-    domain state
+    .state: Region#(Provider)
     .get: (.self: &Provider) -> (.result: Int32) where { reads(self.state) }
 )
 Provider := (._counter: $&Int32)
 implement CounterAccess#(Provider) (
+    .state = region(self._counter),
     .get = (.self: &Provider) -> (.result: Int32) { result = self&._counter& }
-) where { state(self._counter) }
+)
 Factory#(.Provider: Type): Contract = (
     .make: (.self: &Provider) -> (.result: Virtual#(CounterAccess)) where { depends_on(result, self) }
 )

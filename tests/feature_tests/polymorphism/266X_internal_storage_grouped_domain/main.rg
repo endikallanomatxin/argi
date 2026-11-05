@@ -1,13 +1,13 @@
 Protocol#(.Participant: Type): Contract = (
-    domain contents
+    .contents: Region#(Participant)
     .clear : (.self: $&Participant) -> () where empties(self.contents)
 )
 
 Storage := (.first: Int32, .second: Int32)
 
-implement Protocol#(Storage) (.clear = _impl_clear_Storage) where {
-    contents(self.first, self.second)
-}
+implement Protocol#(Storage) (
+    .contents = region(self.first, self.second),
+    .clear = _impl_clear_Storage)
 
 _impl_clear_Storage := (.self: $&Storage) -> () {}
 

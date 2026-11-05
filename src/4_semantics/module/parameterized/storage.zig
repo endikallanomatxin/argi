@@ -68,6 +68,12 @@ pub const ContractRequirement = struct {
     safety_contract: ?primitives.MethodSafetyContract = null,
 };
 
+pub const RegionRequirement = struct {
+    name: primitives.StringRange,
+    participant: ComptimeParameterId,
+    source: primitives.SourceRef,
+};
+
 pub const ContractDefinition = struct {
     participants: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     // Dependencies retain their own operation namespaces and are proved against
@@ -76,7 +82,7 @@ pub const ContractDefinition = struct {
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),
     requirements: primitives.Range(ContractRequirementId),
-    domains: []const primitives.StringRange = &.{},
+    domains: []const RegionRequirement = &.{},
 
     pub fn hasExplicitParticipants(self: ContractDefinition) bool {
         return self.participants.len != 0;

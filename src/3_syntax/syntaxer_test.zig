@@ -510,3 +510,38 @@ test "pipe stage error operators wrap the completed pipe" {
     try std.testing.expectEqual(syntax_tree.Node.Tag.pipe_expression, tree.tag(grouped));
     try std.testing.expectEqual(syntax_tree.Node.Tag.error_propagation, tree.tag(tree.binaryOperation(grouped).?.rhs));
 }
+
+test "associated regions remain static requirements rather than type parameters" {
+    const source =
+        \\Counter#(.T: Type): Contract = (
+        \\    .Result: Type
+        \\    .limit: UIntNative
+        \\    .state: Region#(T)
+        \\    .get: (.self: &T) -> (.value: Result) where reads(self.state)
+        \\)
+        \\implement Counter#(Cell) (
+        \\    .Result: Type = Int32
+        \\    .limit: UIntNative = 42
+        \\    .state = region(self.state, self.other)
+        \\    .get = read_cell
+        \\)
+    ;
+    var tree = try parseTestSource("region_members.rg", source);
+    defer tree.deinit(std.testing.allocator);
+    const contract = tree.contractDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 2), contract.generic_params.len);
+    try std.testing.expectEqual(@as(usize, 1), contract.domains.len);
+    try std.testing.expectEqual(@as(usize, 1), contract.requires_functions.len);
+    const region_node = contract.domains[0];
+    try std.testing.expectEqual(.contract_region_requirement, tree.tag(region_node));
+    try std.testing.expectEqualStrings("state", tree.tokenTextFromSource(source, tree.mainToken(region_node)));
+    try std.testing.expect(tree.syntaxType(tree.data(region_node).node).? == .generic);
+    const implementation = tree.contractConformance(tree.roots[1]).?;
+    const members = tree.structTypeLiteral(implementation.implementation_members).?.fields;
+    try std.testing.expectEqual(@as(usize, 4), members.len);
+    const projection = tree.structTypeField(members[2]).?;
+    try std.testing.expect(projection.type_node == null);
+    const call = tree.functionCall(projection.default_value.?).?;
+    try std.testing.expectEqualStrings("region", tree.tokenTextFromSource(source, call.callee_token));
+    try std.testing.expectEqual(@as(usize, 2), tree.structValueLiteral(call.input).?.fields.len);
+}

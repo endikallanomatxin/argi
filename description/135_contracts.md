@@ -564,24 +564,32 @@ Positional and reordered named type arguments bind the same parameters; output
 types do not supply bindings. Shared argument lookup removes separate matching
 rules for these forms.
 
-Unary contracts can declare storage domains. An implementation supplies their
-concrete paths after its members, for example:
+Contracts declare named requirements rather than runtime fields. Associated types,
+compile-time values, operations and storage projections share the member syntax.
+Unary contracts declare a static projection with `.name: Region#(Participant)`;
+an implementation supplies `.name = region(self.path)` inside its members:
 
 ```rg
 Source#(.Value: Type): Contract = (
-    domain storage
+    .storage: Region#(Value)
     .get: (.self: &Value) -> (.value: &Int32)
         where depends_on(value, self, self.storage)
 )
 implement#(.Tag: Type) Source#(Cell#(Tag)) (
+    .storage = region(self.storage),
     .get = get_cell
-) where { storage(self.storage) }
+)
 ```
 
 Static calls and virtual construction resolve those paths from the selected
 conformance. The existing ownership proofs reject missing, invalid or aliased
 domains. A domain mapping supplies no storage acquisition permission. Contracts
-with multiple participants still require an explicit domain receiver model.
+with multiple participants do not yet support region members. Region is a
+requirement form, not an ordinary runtime type; region(...) is a symbolic
+projection initializer, not an executable function. Its self names the
+participant instance, and grouped paths preserve separate storage identities.
+The implementation initializer selects physical fields even if a field shares
+the region member name. Operation where clauses retain their safety meaning.
 Virtual inputs retain the declared domains even before any concrete handle is
 constructed; checking an interface does not depend on available implementations.
 

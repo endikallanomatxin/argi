@@ -1,6 +1,6 @@
 Source#(.Value: Type): Contract = (
-    domain first
-    domain second
+    .first: Region#(Value)
+    .second: Region#(Value)
     .get : (.self: &Value) -> (.value: &Int32) where depends_on(value, self.first)
 )
 
@@ -8,10 +8,10 @@ State := (.value: Int32)
 
 Cell := (.first: &State, .second: &State)
 
-implement Source#(Cell) (.get = _source_get) where {
-    first(self.first)
-    second(self.second)
-}
+implement Source#(Cell) (
+    .first = region(self.first),
+    .second = region(self.second),
+    .get = _source_get)
 
 _source_get := (.self: &Cell) -> (.value: &Int32) {
     value = &self&.first&.value

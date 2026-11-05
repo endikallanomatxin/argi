@@ -3775,8 +3775,8 @@ test "virtual contract declarations retain domains without concrete implementati
     const a = arena.allocator();
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
         \\Storage#(.T: Type): Contract = (
-        \\    domain contents
-        \\    domain shape
+        \\    .contents: Region#(T)
+        \\    .shape: Region#(T)
         \\    .inspect: (.self: &T) -> (.value: Int32)
         \\)
         \\main := () -> (.status_code: Int32 = 0)  {}

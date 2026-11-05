@@ -1,8 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 SlotProtocol#(.Value: Type): Contract = (
-    domain contents
-
+    .contents: Region#(Value)
     .put  : (.self: $&Value, .value: Allocation) -> () where retains(self.contents, value)
     .take : (.self: $&Value) -> (.value: Allocation) where {
         owns(value)
@@ -14,9 +13,10 @@ SlotProtocol#(.Value: Type): Contract = (
 Slot := (.storage: Allocation)
 
 implement SlotProtocol#(Slot) (
+    .contents = region(self.storage),
     .put  = _slot_put
     .take = _slot_take
-) where { contents(self.storage) }
+)
 
 _slot_put := (.self: $&Slot, .value: Allocation) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(

@@ -1003,13 +1003,15 @@ test "semantic storage domain metadata is released with its graph owner" {
     defer diagnostics.deinit();
     var module = try sourceModule(a,
         \\Readable#(.Source: Type): Contract = (
-        \\    domain contents
+        \\    .contents: Region#(Source)
         \\    .read: (.source: &Source) -> (.result: Int32) where {}
         \\)
         \\Box := (.value: Int32)
         \\implement Readable#(Box) (
+        \\    .contents = region(self.value),
+        \\
         \\    .read = (.source: &Box) -> (.result: Int32) { result = source&.value }
-        \\) where { contents(self.value) }
+        \\)
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
         \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)

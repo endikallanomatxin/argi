@@ -184,7 +184,12 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
                 definition.participants.start + definition.participants.len <= definition.parameters.start);
         }
         try require(verify.rangeFits(definition.requirements, storage.contract_requirements.items.len));
-        for (definition.domains) |domain| try require(verify.stringFits(domain, graph.strings.items));
+        for (definition.domains) |domain| {
+            try require(verify.stringFits(domain.name, graph.strings.items));
+            try require(verify.sourceFits(domain.source, graph.file_offsets.items.len));
+            const root = @intFromEnum(domain.participant);
+            try require(root >= definition.participants.start and root - definition.participants.start < definition.participants.len);
+        }
         for (storage.contract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| if (requirement.safety_contract) |contract| {
             for (contract.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
             for (contract.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);

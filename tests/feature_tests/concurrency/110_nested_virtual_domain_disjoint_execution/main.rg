@@ -1,12 +1,13 @@
 Counter#(.Provider: Type): Contract = (
-    domain state
+    .state: Region#(Provider)
     .set: (.self: &Provider) -> () where { writes(self.state) }
 )
 Provider := (.value: $&Int32)
 Holder := (.counter: Virtual#(Counter))
 implement Counter#(Provider) (
+    .state = region(self.value),
     .set = (.self: &Provider) -> () { self&.value& = 42 }
-) where { state(self.value) }
+)
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 work := (.holder: Holder, .value: &Int32, .executor: Virtual#(Executor)) -> () {
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = value), .executor = executor))

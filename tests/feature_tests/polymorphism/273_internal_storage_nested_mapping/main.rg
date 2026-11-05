@@ -9,8 +9,7 @@ implement Deinit#(Tracked) (
 )
 
 SlotProtocol#(.Participant: Type): Contract = (
-    domain contents
-
+    .contents: Region#(Participant)
     .put  : (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
     .take : (.self: $&Participant) -> (.value: Tracked) where {
         owns(value)
@@ -23,9 +22,9 @@ Inner := (.storage: Allocation)
 
 Slot := (.inner: Inner)
 
-implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where {
-    contents(self.inner.storage)
-}
+implement SlotProtocol#(Slot) (
+    .contents = region(self.inner.storage),
+    .put = _impl_put_Slot, .take = _impl_take_Slot)
 
 _impl_put_Slot := (.self: $&Slot, .value: Tracked) -> () {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(

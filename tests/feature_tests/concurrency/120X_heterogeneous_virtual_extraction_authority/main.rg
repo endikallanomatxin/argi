@@ -1,18 +1,20 @@
 Counter#(.Provider: Type): Contract = (
-    domain state
+    .state: Region#(Provider)
     .get: (.self: &Provider) -> (.result: Int32) where reads(self.state)
     .set: (.self: &Provider) -> () where writes(self.state)
 )
 CounterProvider := (.value: $&Int32)
 implement Counter#(CounterProvider) (
+    .state = region(self.value),
     .get = (.self: &CounterProvider) -> (.result: Int32) { result = self&.value& },
     .set = (.self: &CounterProvider) -> () { self&.value& = 42 }
-) where { state(self.value) }
+)
 OtherCounterProvider := (.tag: UInt8, .value: $&Int32)
 implement Counter#(OtherCounterProvider) (
+    .state = region(self.value),
     .get = (.self: &OtherCounterProvider) -> (.result: Int32) { result = self&.value& },
     .set = (.self: &OtherCounterProvider) -> () { self&.value& = 42 }
-) where { state(self.value) }
+)
 Holder := (.counter: Virtual#(Counter))
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 use := (.array: &DynamicArray#(Holder), .index: UIntNative, .value: &Int32, .executor: Virtual#(Executor)) -> () {

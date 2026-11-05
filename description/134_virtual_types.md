@@ -283,13 +283,14 @@ without exposing that layout:
 
 ```rg
 Counter#(.Participant: Type): Contract = (
-    domain state
+    .state: Region#(Participant)
     .set: (.self: &Participant) -> () where { writes(self.state) }
 )
 Provider := (._counter: $&Int32)
 implement Counter#(Provider) (
+    .state = region(self._counter),
     .set = (.self: &Provider) -> () { self&._counter& = 42 }
-) where { state(self._counter) }
+)
 ```
 
 A mapped reference field selects its referent; a mapped value field selects its
@@ -539,8 +540,7 @@ without adding the hidden contents' dependencies to the absent-value outcome:
 ```rg
 Extractor#(.Participant: Type): Contract = (
     .item: Type
-    domain contents
-
+    .contents: Region#(Participant)
     .take: (.self: $&Participant) -> (.result: ?item) where {
         on result ..some {
             owns(result)
@@ -569,8 +569,7 @@ independent pending call cannot be undone by selecting an older result.
 
 ```rg
 Drain#(.Participant: Type): Contract = (
-    domain contents
-
+    .contents: Region#(Participant)
     .drain: (.self: $&Participant) -> (.result: ?Int32) where {
         on result ..some { empties(self.contents) }
         on result ..none {}
@@ -617,8 +616,7 @@ representation stays inside `Participant` can declare:
 ```rg
 SlotProtocol#(.Participant: Type): Contract = (
     .item: Type
-    domain contents
-
+    .contents: Region#(Participant)
     .put: (.self: $&Participant, .value: item) -> ()
         where retains(self.contents, value)
     .take: (.self: $&Participant) -> (.value: item) where {
@@ -659,8 +657,7 @@ methods refer to them through the receiver name:
 
 ```rg
 Source#(.Participant: Type): Contract = (
-    domain storage
-
+    .storage: Region#(Participant)
     .get: (.self: &Participant) -> (.value: &Int32)
         where depends_on(value, self.storage)
     .reset: (.self: $&Participant) -> ()
@@ -669,9 +666,10 @@ Source#(.Participant: Type): Contract = (
 
 Cell := (.value: Int32, .other: Int32)
 implement Source#(Cell) (
+    .storage = region(self.value),
     .get = (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
     .reset = (.self: $&Cell) -> () { self&.value = 0 }
-) where { storage(self.value) }
+)
 ```
 
 An implementation maps every declared domain exactly once. One mapping can name

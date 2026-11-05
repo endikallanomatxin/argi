@@ -1,7 +1,8 @@
 # Contract members and associated storage projections
 
-Proposal, not implemented syntax. This is a coherence refactor of contract
-declarations and conformance evidence, separate from expanding concurrency safety.
+Unary region members are implemented; multiple-participant projections remain a
+proposal. This is a coherence refactor of contract declarations and conformance
+evidence, separate from expanding concurrency safety.
 The authority rules remain in [the resource model](resource_authority.md).
 
 ## Contract model
@@ -216,7 +217,7 @@ First migrate unary declarations and implementations without expanding safety:
 domain state
 implement Counter#(Provider) (.set = set_counter) where { state(self._counter) }
 
--- Proposed
+-- Current unary syntax
 .state: Region#(T)
 implement Counter#(Provider) (.state = region(self._counter), .set = set_counter)
 ```

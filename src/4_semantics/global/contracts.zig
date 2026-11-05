@@ -414,7 +414,7 @@ pub const Resolver = struct {
         for (mappings) |mapping| {
             var domain_index: ?u32 = null;
             for (located.definition.domains, 0..) |domain, index| {
-                if (std.mem.eql(u8, self.modules[module_index].text(mapping.name), self.modules[located.module_index].text(domain))) domain_index = @intCast(index);
+                if (std.mem.eql(u8, self.modules[module_index].text(mapping.name), self.modules[located.module_index].text(domain.name))) domain_index = @intCast(index);
             }
             const index = domain_index orelse return self.domainFailure(source, "implementation mapping names an unknown Contract storage domain");
             for (result.items) |existing| if (existing.domain_index == index) return self.domainFailure(source, "duplicate implementation storage domain mapping");
@@ -2038,6 +2038,10 @@ pub const Resolver = struct {
                 failure.source = self.sourceFor(module_index, operation.source);
                 failure.operation = name;
                 failure.reason = "unknown implementation operation";
+                for (located.definition.domains) |region| if (std.mem.eql(u8, name, self.modules[located.module_index].text(region.name))) {
+                    failure.reason = "associated region requires a region(self.path) projection initializer";
+                    break;
+                };
                 return error.InvalidContractConformance;
             }
         }

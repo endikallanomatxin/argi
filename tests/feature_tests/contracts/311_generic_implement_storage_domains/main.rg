@@ -1,5 +1,5 @@
 Source#(.Value: Type): Contract = (
-    domain storage
+    .storage: Region#(Value)
     .get : (.self: &Value) -> (.value: &Int32) where depends_on(value, self, self.storage)
 )
 
@@ -9,7 +9,9 @@ _get_cell := #(.Tag: Type) (.self: &Cell#(Tag)) -> (.value: &Int32) {
     value = self&.storage
 }
 
-implement#(.Tag: Type) Source#(Cell#(Tag)) (.get = _get_cell) where { storage(self.storage) }
+implement#(.Tag: Type) Source#(Cell#(Tag)) (
+    .storage = region(self.storage),
+    .get = _get_cell)
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
 

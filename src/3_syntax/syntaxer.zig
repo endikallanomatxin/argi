@@ -586,6 +586,17 @@ pub const Syntaxer = struct {
                     try self.diags.add(self.tokenLocation(), .syntax, "associated contract members are supplied by implement; defaults are not supported", .{});
                     return SyntaxerError.ExpectedStructField;
                 }
+                if (self.file.syntaxType(member_type)) |requirement_type| if (requirement_type == .generic) {
+                    if (self.file.syntaxType(requirement_type.generic.base)) |base| if (base == .name and base.name.qualifier_token == null and std.mem.eql(u8, self.file.tokenTextFromSource(self.source, base.name.name_token), "Region")) {
+                        try self.scratch.append(self.allocator, try self.addNode(.contract_region_requirement, member.token, .{ .node = member_type }));
+                        self.skipNewLinesAndComments();
+                        if (self.tokenIs(.comma)) {
+                            self.advanceOne();
+                            self.skipNewLinesAndComments();
+                        }
+                        continue;
+                    };
+                };
                 const extra = try self.addExtra(syn.FieldExtra{
                     .type_node = syn.OptionalNodeIndex.init(member_type),
                     .default_value = .none,
@@ -599,15 +610,8 @@ pub const Syntaxer = struct {
                 continue;
             }
             if (self.currentIdentifierEquals("domain")) {
-                self.advanceOne();
-                const domain = try self.parseName();
-                try self.scratch.append(self.allocator, try self.addNode(.contract_domain, domain.token, .{ .unused = .{ 0, 0 } }));
-                self.skipNewLinesAndComments();
-                if (self.tokenIs(.comma)) {
-                    self.advanceOne();
-                    self.skipNewLinesAndComments();
-                }
-                continue;
+                try self.diags.add(self.tokenLocation(), .syntax, "legacy storage domains are unsupported; declare '.name: Region#(Participant)' and implement '.name = region(self.path)'", .{});
+                return SyntaxerError.ExpectedStructField;
             }
             var name = try self.parseName();
             if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
@@ -662,7 +666,7 @@ pub const Syntaxer = struct {
         index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .contract_domain) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .contract_region_requirement) try self.scratch.append(self.allocator, item);
         }
         const associated_start = self.scratch.items.len;
         index = scratch_top;
@@ -2322,18 +2326,16 @@ pub const Syntaxer = struct {
         if (std.mem.eql(u8, name.text, "implement")) {
             const contract_type = try self.parseType() orelse return SyntaxerError.ExpectedConformanceType;
             const members = try self.parseImplementationMembers(generic_params);
-            const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
-                self.advanceOne();
-                self.skipNewLinesAndComments();
-                break :blk try self.parseCodeBlock();
-            } else null;
+            if (self.currentIdentifierEquals("where")) {
+                try self.diags.add(self.tokenLocation(), .syntax, "legacy implementation storage mappings are unsupported; provide '.name = region(self.path)' inside implement", .{});
+                return SyntaxerError.ExpectedStructField;
+            }
             const extra = try self.addExtra(syn.ConformanceExtra{
                 .generic_params_start = generic_params.start,
                 .generic_params_end = generic_params.end,
                 .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                 .value = contract_type,
                 .implementation_members = syn.OptionalNodeIndex.init(members),
-                .safety_contract = syn.OptionalNodeIndex.init(domain_mapping),
             });
             return self.addNode(.contract_conformance, name.token, .{ .extra = extra });
         }

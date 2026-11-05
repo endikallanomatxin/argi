@@ -2,7 +2,7 @@ Counter#(.Provider: Type): Contract = (
     .set: (.self: $&Provider) -> () where { writes(self) }
 )
 ForwardCounter#(.Provider: Type): Contract = (
-    domain target
+    .target: Region#(Provider)
     .set: (.self: $&Provider) -> () where { writes(self.target) }
 )
 CounterState := (.value: Int32)
@@ -11,8 +11,9 @@ implement Counter#(CounterState) (
     .set = (.self: $&CounterState) -> () { self&.value = 42 }
 )
 implement ForwardCounter#(Forwarder) (
+    .target = region(self.base),
     .set = (.self: $&Forwarder) -> () { Counter#().set(.self = $&self&.base) }
-) where { target(self.base) }
+)
 make_counter := (.forwarder: $&Forwarder) -> (.result: Virtual#(ForwardCounter)) {
     result = to_virtual#(ForwardCounter)(forwarder)
 }

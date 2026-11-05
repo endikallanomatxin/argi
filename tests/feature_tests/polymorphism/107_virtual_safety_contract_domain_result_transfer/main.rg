@@ -1,14 +1,14 @@
 Source#(.Participant: Type): Contract = (
-    domain storage
+    .storage: Region#(Participant)
     .get   : (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
     .reset : (.self: $&Participant) -> () where invalidates(self.storage)
 )
 
 Cell := (.value: Int32)
 
-implement Source#(Cell) (.get = _impl_get_Cell, .reset = _impl_reset_Cell) where {
-    storage(self.value)
-}
+implement Source#(Cell) (
+    .storage = region(self.value),
+    .get = _impl_get_Cell, .reset = _impl_reset_Cell)
 
 _impl_get_Cell := (.self: &Cell) -> (.value: &Int32) { value = &self&.value }
 

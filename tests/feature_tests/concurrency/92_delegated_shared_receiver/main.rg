@@ -2,7 +2,7 @@ Counter#(.Provider: Type): Contract = (
     .get: (.self: &Provider) -> (.result: Int32) where { reads(self) }
 )
 ForwardCounter#(.Provider: Type): Contract = (
-    domain target
+    .target: Region#(Provider)
     .get: (.self: &Provider) -> (.result: Int32) where { reads(self.target) }
 )
 CounterState := (.value: Int32)
@@ -11,8 +11,9 @@ implement Counter#(CounterState) (
     .get = (.self: &CounterState) -> (.result: Int32) { result = self&.value }
 )
 implement ForwardCounter#(Forwarder) (
+    .target = region(self.base),
     .get = (.self: &Forwarder) -> (.result: Int32) { result = Counter#().get(.self = &self&.base) }
-) where { target(self.base) }
+)
 read := (.value: &CounterState) -> (.result: Int32) { result = value&.value }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
