@@ -208,6 +208,132 @@ class State:
                        for other in self.owners[i + 1:])
 
 
+@dataclass(frozen=True)
+class StorageObservation:
+    # Alternatives are possible physical regions, not lifetime roots or owner
+    # names. The oracle below knows their concrete bytes in this finite model.
+    alternatives: tuple[tuple[int, ...], ...]
+    generation: int
+
+    def access(self, state, execution, mode):
+        if not self.alternatives:
+            raise Denied("missing physical membership is not an empty footprint")
+        for region in self.alternatives:
+            state.access(execution, region, mode, self.generation)
+
+    def erase_in_frame(self, live_allocation_bytes):
+        # The frame is an oracle for allocation identities already live when
+        # the sealed value is published, not a timestamp on its container.
+        # A later fresh lexical allocation is outside this upper bound.
+        if not self.alternatives or any(not set(region).issubset(live_allocation_bytes)
+                                        for region in self.alternatives):
+            raise Denied("physical observation cannot claim an earlier frame")
+        return StorageObservation((tuple(sorted(live_allocation_bytes)),), self.generation)
+
+    def erase_with(self, other):
+        if self.generation != other.generation:
+            raise Denied("observation generations cannot be silently unified")
+        return StorageObservation(tuple(sorted(set(self.alternatives + other.alternatives))), self.generation)
+
+
+@dataclass(frozen=True)
+class AuthenticatedExtent:
+    # This is an oracle-supplied acquisition/containment hypothesis, not a
+    # compiler rule that can be asserted by constructing a nominal owner.
+    bytes: tuple[int, ...]
+    generation: int
+
+    def select(self, offset, size):
+        if offset < 0 or size < 0 or offset > len(self.bytes) or size > len(self.bytes) - offset:
+            raise Denied("selection exceeds authenticated physical extent")
+        return StorageObservation((self.bytes[offset:offset + size],), self.generation)
+
+
+def storage_observation_experiments():
+    extent = AuthenticatedExtent((0, 1), 0)
+    left, right = extent.select(0, 1), extent.select(1, 1)
+    uncertain = left.erase_with(right)
+    writer = State().lend(0, 1, (0,), WRITE)
+    right.access(writer, 0, WRITE)
+    denied(lambda: left.access(writer, 0, READ))
+    denied(lambda: uncertain.access(writer, 0, READ))
+    # Metadata inspection and bounded selection do not acquire authority. In
+    # particular, a checked address in byte zero is still unavailable to main.
+    selected = extent.select(0, 1)
+    assert writer.authority(0, 0) == 0
+    denied(lambda: selected.access(writer, 0, WRITE))
+    denied(lambda: extent.select(1, 2))
+    denied(lambda: extent.select(-1, 1))
+    denied(lambda: StorageObservation((), 0).access(writer, 0, READ))
+    # A different receipt/owner/observation identity does not prove disjointness.
+    overlapping = AuthenticatedExtent((0,), 0).select(0, 1)
+    denied(lambda: overlapping.access(writer, 0, READ))
+    # A no-access method body still needs its erased handle loaded from valid,
+    # authorized storage. The body bound cannot authorize that preceding load.
+    denied(lambda: uncertain.access(writer, 0, READ))
+    # Ending the generation invalidates membership observations, even if the
+    # new storage has the same physical byte coordinates.
+    denied(lambda: left.access(State(generation=1), 0, READ))
+    denied(lambda: left.erase_with(StorageObservation(((0,),), 1)))
+    checks = 0
+    states = (State(), writer, State().lend(0, 1, (0,), READ),
+              State().lend(0, 1, (1,), WRITE))
+    for state, precise, execution, mode in product(states, (left, right), range(3), (READ, WRITE)):
+        # Erasure can lose a previously valid access but cannot create one.
+        try:
+            uncertain.access(state, execution, mode)
+        except Denied:
+            pass
+        else:
+            precise.access(state, execution, mode)
+        checks += 1
+    return checks
+
+
+def sealed_storage_frame_experiments():
+    old = AuthenticatedExtent((0,), 0).select(0, 1)
+    later = AuthenticatedExtent((1,), 0).select(0, 1)
+    published = old.erase_in_frame((0,))
+    # The oracle now has a new, separate lexical allocation. Erasing an older
+    # well-formed storage value cannot let it point into that future allocation.
+    pending_later = State().lend(0, 1, (1,), WRITE)
+    published.access(pending_later, 0, READ)
+    # This is not physical freshness of the result: it can alias any old byte.
+    pending_old = State().lend(0, 1, (0,), WRITE)
+    denied(lambda: published.access(pending_old, 0, READ))
+    old.erase_in_frame((0, 1)).access(State(), 0, WRITE)
+    denied(lambda: old.erase_in_frame((0, 1)).access(pending_later, 0, READ))
+    # A newly derived view inherits its backing. It does not allocate new bytes
+    # or gain permission from its new observation/owner identity.
+    derived = AuthenticatedExtent((0,), 0).select(0, 1)
+    denied(lambda: derived.erase_in_frame((0,)).access(pending_old, 0, READ))
+    # Reusing an old container's frame after inserting a later reference would
+    # manufacture disjointness. Publication must inspect the value being stored.
+    denied(lambda: later.erase_in_frame((0,)))
+    changed = old.erase_with(later)
+    denied(lambda: changed.erase_in_frame((0,)))
+    denied(lambda: changed.erase_in_frame((0, 1)).access(pending_later, 0, READ))
+    # Even a read-only capsule can contain a mutable resource or be copied; the
+    # bound remains about allocation identity, independently of reference mode.
+    assert published.erase_with(published) == published
+    checks = 0
+    for source, frame, state, execution, mode in product(
+            (old, later), ((0,), (1,), (0, 1)),
+            (State(), pending_old, pending_later), range(3), (READ, WRITE)):
+        try:
+            widened = source.erase_in_frame(frame)
+        except Denied:
+            continue
+        try:
+            widened.access(state, execution, mode)
+        except Denied:
+            pass
+        else:
+            source.access(state, execution, mode)
+        checks += 1
+    return checks
+
+
 def denied(action):
     try:
         action()
@@ -646,6 +772,8 @@ def explore_interactions(depth=3):
 
 
 if __name__ == "__main__":
+    frames_checked = sealed_storage_frame_experiments()
+    observations_checked = storage_observation_experiments()
     adversarial_traces()
     owner_experiments()
     substitution_experiments()
@@ -657,6 +785,8 @@ if __name__ == "__main__":
     print(f"Authority experiment: {states} states, {transitions} accepted transitions; invariants hold")
     print(f"Resource transformer experiment: {compositions} modular compositions checked")
     print(f"Completion summaries: {summaries_checked} cases checked, {summaries_accepted} accepted conservatively")
+    print(f"Storage observations: {observations_checked} erasure checks and physical membership adversarial cases passed")
+    print(f"Sealed storage frames: {frames_checked} conservative erasure checks and late-capture adversarial cases passed")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")

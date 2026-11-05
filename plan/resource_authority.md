@@ -135,9 +135,12 @@ proof obligations from join's publication guarantee.
 
 ### Choosing a buffer protocol
 
-The current native adapter allocates input/output buffers and returns an integer
-result address after join. `trusted_establish_inherited_reference` supplies a
-lifetime dependency, not a Place or authenticated access region. Existing
+The native adapter allocates input/output buffers and exposes an integer
+result address after join. An unmerged integration experiment copies plain
+result bytes through initialized by-value native blocks into aligned local
+storage, without converting that native address to a caller-side safe reference.
+`trusted_establish_inherited_reference` supplies a lifetime dependency, not a Place
+or authenticated access region. Existing
 `allocation_slot` likewise supplies lifetime facts without complete concurrent
 physical-region authority. Reusing either alone cannot close unknown-call
 authorization safely.
@@ -157,6 +160,136 @@ select ownership/layout only after its transitions and failure behavior are
 specified. The existing native race probe can be instrumented as described in
 [testing.md](../docs/testing.md#native-task-race-instrumentation), independently
 of the unresolved compiler evidence.
+
+### Physical observations and abstraction: required distinction
+
+The current integration exposes a useful counterexample: a collection element
+contains a virtual handle whose operation has `no_access()`. Selecting the
+operation still loads that handle from collection storage. The operation's
+empty body footprint cannot authorize this preceding load. A closed footprint
+for slot establishment is a separate issue: checking an Allocation receipt's
+bounds reads the receipt, not the pointed-to bytes, and establishes no access
+authority by itself.
+
+Represent a physical observation abstractly as `(B, range, generation)`, where
+`B` overapproximates possible backing identities. Authorization must hold for
+**every** possible backing and the selected range. A missing backing relation
+means unknown access, not an empty footprint. Distinct observation, owner or
+acquisition names do not prove different physical bytes. A suballocation must
+retain its backing relation; erasure may add alternatives but must never remove
+a possible overlap. Observation validity and current authority remain separate.
+
+The executable experiment checks bounded selections against authenticated
+extents, overlapping receipts, stale generations, missing evidence and 48 erasure
+monotonicity cases using the existing authority state. Its authenticated extents
+are concrete oracle hypotheses. It does not implement a checker inference rule
+or establish how an abstract interface creates a valid observation.
+
+That last point is the remaining design obligation. Exact whole-value transfer
+can preserve an existing certificate; a factory producing new storage needs a
+verified output guarantee. `owns` alone publishes cleanup responsibility, and
+`depends_on` alone publishes lifetime. Neither publishes physical membership.
+A native acquisition origin retained only by a concrete implementation also
+cannot establish an erased interface guarantee. Conversely, requiring all
+allocator outputs to denote independent fresh acquisitions would incorrectly
+exclude arenas and other shared backing providers.
+
+Before adding a production effect, specify the weakest universal guarantee that
+supports both newly acquired storage and checked subranges of existing backing.
+Its implementation check, caller substitution and erasure must preserve possible
+aliasing. An existential valid range alone does not prove disjointness from a
+pending loan. An interface must preserve a usable relation, publish a stronger
+verified guarantee, or conservatively reject the access. Private runtime bounds
+are important to audit containment, but their mere presence in a nominal record
+is not a new static proof rule. Do not special-case collection access or consult
+a concrete allocator body to manufacture the missing public guarantee.
+
+### Preferred candidate: a sealed physical-storage value
+
+Do not add an allocator-specific `has_storage` assertion merely to make the
+current regression pass. A more compositional candidate is a sealed physical
+storage value, retained inside owners and views. Its semantic interpretation is:
+
+```text
+WFStorage(v) = exists backing, range, observation.
+    live_physical_extent(backing, range, observation)
+    and encodes_bounds(v, backing, range)
+    and bounds_not_retargeted(v, observation)
+```
+
+This predicate does **not** contain write authority, initialization of arbitrary
+contents, cleanup responsibility, thread transfer or establishment permission.
+Native acquisition proves it at a small audited boundary. Checked subranges
+preserve the backing identity and restrict the range. Copies/moves preserve its
+observation; invalidating its supporting owner ends the observation. An ordinary
+integer address, nominal owner or live anchor cannot construct such a value.
+
+The motivation is semantic encapsulation: RustBelt verifies abstract library
+types by giving them semantic interpretations and proving exported operations
+satisfy those interpretations ([Jung et al., section 6](https://people.mpi-sws.org/~dreyer/papers/rustbelt/paper.pdf)).
+This is a design analogy, not a proof of Argi. Do not import arbitrary user-defined
+logical predicates or a general invariant prover into the compiler. Investigate
+one restricted storage capability supplied by the resource kernel, using the
+existing acquisition receipt and authenticated bounds where possible.
+
+A well-formed value of this sealed type would preserve physical validity through
+an abstract return signature even when its exact backing is existential. That
+would follow from its type's verified construction discipline, **not** from
+`owns`, `depends_on`, a vtable flag or inspecting a hidden implementation. This
+requires auditing construction, casts, zeroing, reflection, field writes, native
+returns, VM materialization and opaque extraction. Private fields alone are not
+an implementation of that discipline. Existing numeric Allocation bounds have
+not yet established this semantic invariant.
+
+#### Existential backing and caller frames
+
+An existential observation may alias an existing input, retained provider or
+another existing allocation; it is not a fresh physical allocation. Nevertheless,
+a physically valid observation cannot point into a *later fresh lexical
+allocation*. This is an allocation/frame property, not lifetime-root separation.
+A candidate abstraction bounds possible lexical backing by the caller frame at
+publication, while retaining unknown external backing. Old globals and symbolic
+input referents remain possible aliases. New views never gain physical freshness
+from a new certificate identity.
+
+The finite experiment contrasts an older validated storage value with a later
+independent lexical loan, and rejects the corresponding old-storage loan. It
+also exposes an important counterexample: using a container's construction frame
+for a value inserted later can fabricate disjointness. The frame belongs to the
+physical observation being transported. Writes/retention and control-flow joins
+must widen possible backings when new values are introduced; storing a reference
+never inherits an older container's non-aliasing guarantee. Retargeting or
+replacing a certificate cannot preserve its old frame proof.
+
+The 72 additional finite checks validate conservative erasure against explicit
+byte alternatives. They do not prove the allocation/frame theorem or provide
+compiler scope inference. Before relying on this abstraction, specify its link
+to actual allocation identities, owner validity, summary instantiation, loops
+and opaque storage. Existing acquisition IDs or validity-root creation times
+must not be substituted for that evidence. If this abstraction costs more than
+preserving explicit backing alternatives, keep the latter and reject unknowns.
+
+#### Implementation gate for this candidate
+
+1. Retain a validated physical-storage value through acquisition and establishment;
+   consuming establishment permission must not destroy physical evidence.
+2. Derive views through checked bounds operations, including arena children that
+   share backing. Do not assume a new observation means independent bytes.
+3. Make erased signatures preserve only the verified type invariant, with
+   conservative backing alternatives; preserve stronger exact relations through
+   existing whole-value transfer when available.
+4. Authorize accesses via the resulting storage observations using the same
+   authority checker as ordinary references. Metadata bounds checks remain
+   distinct from the eventual content read.
+5. Preserve the heterogeneous virtual collection positive case unchanged; reject
+   aliased backing, expired owners, stale/corrupted bounds, receipt reuse and
+   late insertion into old containers. Do not enable the gate merely because a
+   type name or private record layout matches.
+
+This is the preferred next experiment, not an implemented public type, finalized
+ABI or completed soundness argument. It avoids adding an independent proof
+language to every contract while testing whether one reusable storage capability
+can cross the existing abstraction boundaries.
 
 ### Acquisition identity: implementation audit and candidate
 

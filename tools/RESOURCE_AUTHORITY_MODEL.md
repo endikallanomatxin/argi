@@ -37,6 +37,51 @@ small semantics only when a concrete counterexample requires another fundamental
 relation. In particular, do not treat these successful checks as evidence that
 the unknown-call or native-buffer gaps in develop have been closed.
 
+### Physical membership contrasts
+
+`AuthenticatedExtent` is an explicit oracle hypothesis about physical bytes;
+`StorageObservation` records possible selected regions and a generation. Neither
+creates grants in the existing `State`. Bounded selections reject out-of-range
+requests, and access checks every retained alternative against that same state's
+authority. Distinct receipt identities do not imply disjoint storage. An empty
+list of possible backings represents missing evidence and is rejected, while a
+known zero-sized selection is an explicitly empty physical region.
+
+The experiment includes 48 checks that widening backing alternatives cannot
+turn a rejected precise access into an accepted one. Adversarial examples cover
+stale generations, overlapping extents, unavailable bytes despite successful
+range validation, and loading an erased handle before a `no_access` method.
+Lifetime anchors and cleanup ownership provide no constructor for an extent in
+this experiment.
+
+This does not solve abstract factory results. The oracle supplies actual byte
+coordinates and assumes the extent is authenticated. The compiler still needs
+a verified contract relation that preserves physical membership through ordinary
+summaries, erasure and suballocation. Deriving that relation from a nominal owner
+or its lifetime dependency would bypass the very property under investigation.
+
+### Sealed storage and frame erasure candidate
+
+The experiment now contrasts a valid older storage observation with a later
+independent lexical allocation. Erasing its exact backing within the older
+allocation frame permits access under a loan of the later byte, but still
+rejects a loan of its possible older backing. Subviews retain their possible
+backing instead of receiving physical freshness from a new identity.
+
+`erase_in_frame` checks its supplied frame against the concrete oracle regions
+before widening. It performs 72 conservative erasure checks over valid source/
+frame combinations. An adversarial example inserts a later reference into an
+older container: using the container's old frame is rejected because it excludes
+the value's real backing. Joining the old and inserted values must retain that
+possible alias.
+
+These are checks of a proposed abstraction against an explicit oracle, not a
+model of stack allocation or a proof of the allocation/frame theorem. Allocation
+identity is assumed in the supplied frame; it is not reconstructed from timestamps
+or lifetime roots. The compiler has not implemented sealed type invariants or
+this frame abstraction. Its cost and its interaction with mutation/opaque storage
+must be justified before adopting it.
+
 ### Resource-transformer reference cases
 
 The same experiment includes a finite reference interpreter for access,

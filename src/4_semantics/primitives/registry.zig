@@ -285,6 +285,9 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .execution_input,
         .trusted_opaque_mark_empty,
         => &.{},
+        // Slot establishment checks the receipt's authenticated bounds and
+        // logical index. It does not read or initialize the addressed bytes.
+        .establish_allocation_slot => &.{.{ .input = 0 }},
         .execution_complete, .trusted_opaque_move => &.{.{ .input = 0, .write = true }},
         .trusted_opaque_move_in, .trusted_opaque_move_out => &.{.{ .input = 1, .write = true }},
         .relocate, .trusted_opaque_relocate => &.{
@@ -296,7 +299,6 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         // operations also lack a language storage identity for their addresses.
         .none,
         .prepare_allocation_metadata,
-        .establish_allocation_slot,
         .trusted_opaque_drop,
         .native_allocated_storage,
         .raw_allocated_storage,
