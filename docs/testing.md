@@ -284,3 +284,30 @@ both repeated-build IR checks and executable assertions. Semantic C boundary
 rejections use the frontend helpers; C enum grammar uses the syntax helpers.
 Safety wrapper-parity checks belong to the fixture whose output they build, so
 ordinary and wrapped execution cannot race with another worker for that output.
+
+## Native task race instrumentation
+
+On a host with a working C ThreadSanitizer runtime, the existing task probe can
+be run independently of compiler installation. From the repository root:
+
+```sh
+probe_dir=$(mktemp -d)
+cat > "$probe_dir/main.c" <<'C'
+#include <stdint.h>
+extern int32_t argi_task_probe(void);
+int main(void) { return argi_task_probe(); }
+C
+cc -std=c11 -g -O1 -fsanitize=thread -fno-omit-frame-pointer -pthread \
+  core/platforms/shared/task.c core/platforms/shared/thread.c \
+  core/platforms/shared/atomic.c \
+  tests/feature_tests/system/107_task_native/native.c "$probe_dir/main.c" \
+  -o "$probe_dir/task-probe"
+"$probe_dir/task-probe"
+```
+
+The probe checks stable aligned buffers, independent task storage, one-shot result
+extraction, invalid sizes and joining during destruction. It exercises the native
+runtime's publication/lifetime assumptions; it does not check Argi reference
+provenance or prove the runtime race-free. Sanitizer findings and host-runtime
+startup failures must be distinguished. Keep the temporary directory when
+investigating a failure; remove it after inspection.

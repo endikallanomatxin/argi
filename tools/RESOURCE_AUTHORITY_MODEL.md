@@ -164,3 +164,46 @@ A snapshot test distinguishes an evaluated receipt observation from its mutable
 source slot. Retargeting within the function remains unsupported rather than
 being reconstructed from final input values. These are explicit adversarial
 cases, not included in the exhaustive state/transition counts above.
+
+### Ownership and latent cleanup contrast
+
+A separate explicit experiment adds unique cleanup responsibility and a permanent
+handoff of payload authority. The two bytes now serve as a payload and an external
+cleanup provider. Establishment is an audited-acquisition assumption, not a right
+that ordinary code gains by holding a mutable reference. Cleanup retires payload
+bytes; stale routes cannot access them. This fragment does not reallocate retired
+storage or model nested resource-owning values.
+
+A handoff moves the payload grant and responsible holder together. The recipient
+must separately satisfy ordinary-access requirements of external cleanup. The
+same-shaped payload is accepted with local cleanup and rejected when its cleanup
+writes an unavailable provider. Lending that provider exclusively to the recipient
+permits cleanup; completing the provider loan later restores access to its bytes
+without reviving the retired payload. Shared readonly payload access does not
+invoke cleanup, but prevents destruction or exclusive handoff while pending.
+Duplicate responsibility, cleanup by the former holder and repeated cleanup are
+rejected.
+
+These are explicit traces, not additions to the exhaustive loan-state counts.
+They model operation footprints as known external regions, not inferred or erased
+Argi destructors. Thread affinity, synchronized/delegated cleanup, partial failure,
+recursive owners, opaque storage, and recovery after worker failure remain open.
+The experiment does not demonstrate transfer of String in the compiler.
+
+### Combined transition exploration and counterexample
+
+The experiment also combines loans, completion, protection, acquisitions, owner
+establishment, handoff and cleanup. Default depth three reaches 1,254 states
+through 1,687 accepted steps. Depth five reaches 13,144 states through 21,819
+accepted steps, with two loans, two acquisitions and two owner records as bounds.
+These counts are separate from the original loan-only exploration.
+
+Adding an invariant for live latent cleanup dependencies exposed an accepted
+sequence: destroy the provider, then establish an owner whose future cleanup
+requires that provider. The establishment transition had validated payload
+ownership but not the retained cleanup dependency. It now checks dependency
+liveness at retention. Provider cleanup separately rejects invalidation while
+another active owner retains that dependency. Both cases have explicit regression
+traces. Authority at the later cleanup call remains a separate requirement; live
+dependencies alone do not authorize access. This counterexample concerns the
+experimental model, not a newly demonstrated compiler bug.

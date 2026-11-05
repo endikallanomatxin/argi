@@ -35,8 +35,19 @@ class Acquisition:
 
 
 @dataclass(frozen=True)
+class Owner:
+    holder: int
+    payload: tuple[int, ...]
+    cleanup: tuple[tuple[tuple[int, ...], int], ...]
+    active: bool = True
+
+
+@dataclass(frozen=True)
 class State:
     initial: tuple[int, int] = (WRITE, WRITE)
+    residence: tuple[int, int] = (0, 0)
+    retired: frozenset[int] = frozenset()
+    owners: tuple[Owner, ...] = ()
     generation: int = 0
     live: bool = True
     loans: tuple[Loan, ...] = ()
@@ -44,12 +55,12 @@ class State:
     acquisitions: tuple[Acquisition, ...] = ()
 
     def authority(self, execution, byte):
-        if not self.live:
+        if not self.live or byte in self.retired:
             return 0
         if byte in self.protected:
             return WRITE if any(a.active and a.execution == execution and byte in a.region
                                 for a in self.acquisitions) else 0
-        grant = self.initial[byte] if execution == 0 else 0
+        grant = self.initial[byte] if execution == self.residence[byte] else 0
         for loan in self.loans:
             if loan.pending and loan.target == execution and byte in loan.region:
                 grant = max(grant, loan.mode)
@@ -129,6 +140,48 @@ class State:
         return replace(self, acquisitions=tuple(replace(a, active=False) if i == guard else a
                                                for i, a in enumerate(self.acquisitions)))
 
+    def establish_owner(self, holder, payload, cleanup=()):
+        self.access(holder, payload, WRITE)
+        if any(set(region) & self.retired for region, _ in cleanup):
+            raise Denied("latent cleanup dependency is already invalid")
+        if any(o.active and set(o.payload) & set(payload) for o in self.owners):
+            raise Denied("cleanup responsibility already exists")
+        # This transition stands for audited acquisition, never an ordinary
+        # constructor authorized solely by having a writable reference.
+        return replace(self, owners=self.owners + (Owner(holder, payload, cleanup),))
+
+    def handoff(self, owner, source, target):
+        value = self.owners[owner]
+        if not value.active or value.holder != source:
+            raise Denied("no source cleanup responsibility")
+        self.access(source, value.payload, WRITE)
+        # Latent external cleanup is checked before accepting the responsibility.
+        # This fragment models ordinary access only, not synchronized cleanup.
+        for region, mode in value.cleanup:
+            self.access(target, region, mode)
+        residence = tuple(target if b in value.payload else e for b, e in enumerate(self.residence))
+        owners = tuple(replace(o, holder=target) if i == owner else o for i, o in enumerate(self.owners))
+        return replace(self, residence=residence, owners=owners)
+
+    def cleanup_owner(self, owner, execution):
+        value = self.owners[owner]
+        if not value.active or value.holder != execution:
+            raise Denied("cleanup responsibility unavailable")
+        self.access(execution, value.payload, WRITE)
+        for region, mode in value.cleanup:
+            self.access(execution, region, mode)
+        # Latent cleanup retains a validity obligation independently of current
+        # authority. Owning the provider does not permit ending it underneath a
+        # different live owner's future cleanup operation.
+        for i, retained in enumerate(self.owners):
+            if i == owner or not retained.active:
+                continue
+            if any(set(region) & set(value.payload) for region, _ in retained.cleanup):
+                raise Denied("another owner retains this cleanup dependency")
+        return replace(self, retired=self.retired | frozenset(value.payload),
+                       owners=tuple(replace(o, active=False) if i == owner else o
+                                    for i, o in enumerate(self.owners)))
+
     def check(self):
         for byte in range(2):
             modes = [self.authority(e, byte) for e in range(3)]
@@ -139,11 +192,20 @@ class State:
         for loan in self.loans:
             if loan.pending:
                 assert self.live and loan.generation == self.generation
-                assert not set(loan.region) & self.protected
+                assert not set(loan.region) & (self.protected | self.retired)
         for acquired in self.acquisitions:
             if acquired.active:
                 assert self.live and acquired.generation == self.generation
                 assert set(acquired.region).issubset(self.protected)
+                assert not set(acquired.region) & self.retired
+        for i, owner in enumerate(self.owners):
+            if not owner.active:
+                continue
+            assert not set(owner.payload) & self.retired
+            assert all(not set(region) & self.retired for region, _ in owner.cleanup)
+            assert all(self.residence[b] == owner.holder for b in owner.payload)
+            assert all(not other.active or not set(owner.payload) & set(other.payload)
+                       for other in self.owners[i + 1:])
 
 
 def denied(action):
@@ -490,16 +552,113 @@ def protected_experiments():
     split.access(2, (1,), WRITE, guard=1)
 
 
+def owner_experiments():
+    local = State().establish_owner(0, (0,))
+    moved = local.handoff(0, 0, 1)
+    moved.check()
+    denied(lambda: moved.access(0, (0,), READ))
+    moved.access(1, (0,), WRITE)
+    denied(lambda: moved.cleanup_owner(0, 0))
+    destroyed = moved.cleanup_owner(0, 1)
+    destroyed.check()
+    denied(lambda: destroyed.cleanup_owner(0, 1))
+    denied(lambda: destroyed.access(1, (0,), READ))
+    # Identical payload shape, different cleanup operation requirements.
+    external = State().establish_owner(0, (0,), (((1,), WRITE),))
+    denied(lambda: external.handoff(0, 0, 1))
+    # Readonly payload sharing does not invoke the latent cleanup operation.
+    shared = external.lend(0, 1, (0,), READ)
+    shared.access(1, (0,), READ)
+    denied(lambda: shared.cleanup_owner(0, 0))
+    denied(lambda: shared.handoff(0, 0, 2))
+    shared.complete(0).cleanup_owner(0, 0).check()
+    # Exclusively lending the external provider permits remote cleanup while
+    # keeping the payload and provider's lifetimes/responsibilities distinct.
+    transferred = external.lend(0, 1, (1,), WRITE).handoff(0, 0, 1)
+    transferred.check()
+    denied(lambda: transferred.access(0, (1,), READ))
+    returned = transferred.cleanup_owner(0, 1).complete(0)
+    returned.check()
+    returned.access(0, (1,), WRITE)
+    denied(lambda: returned.access(0, (0,), READ))
+    denied(lambda: local.establish_owner(0, (0,)))
+    dependent = external.establish_owner(0, (1,))
+    denied(lambda: dependent.cleanup_owner(1, 0))
+    dependent.cleanup_owner(0, 0).cleanup_owner(1, 0).check()
+    ended_provider = State().establish_owner(0, (1,)).cleanup_owner(0, 0)
+    denied(lambda: ended_provider.establish_owner(0, (0,), (((1,), WRITE),)))
+    # Erasure must check each possible destructor requirement, not just bytes.
+    for candidate in (local, external):
+        if candidate == external:
+            denied(lambda: candidate.handoff(0, 0, 1))
+        else:
+            candidate.handoff(0, 0, 1).check()
+
+
+def explore_interactions(depth=3):
+    """Combine transitions under explicit allocation/identity bounds.
+
+    Establishment and synchronized acquisition remain audited assumptions.
+    Successful step invariants are checked rather than assuming the isolated
+    examples imply safety of their combinations.
+    """
+    frontier = {State()}
+    seen = set(frontier)
+    transitions = 0
+    for _ in range(depth):
+        following = set()
+        for state in frontier:
+            actions = []
+            for region in REGIONS:
+                actions.append(lambda r=region: state.protect(r))
+                if len(state.owners) < 2:
+                    actions.append(lambda r=region: state.establish_owner(0, r))
+                    actions.append(lambda r=region: state.establish_owner(0, r, (((1,), WRITE),)))
+                if len(state.acquisitions) < 2:
+                    for execution in range(3):
+                        actions.append(lambda r=region, e=execution: state.acquire(e, r))
+                if len(state.loans) < 2:
+                    for source, target, mode in product(range(3), (1, 2), (READ, WRITE)):
+                        actions.append(lambda r=region, a=source, b=target, m=mode: state.lend(a, b, r, m))
+            for receipt in range(len(state.loans)):
+                actions.append(lambda k=receipt: state.complete(k))
+            for guard, acquired in enumerate(state.acquisitions):
+                actions.append(lambda k=guard, e=acquired.execution: state.release(k, e))
+            for index, owner in enumerate(state.owners):
+                actions.append(lambda k=index, e=owner.holder: state.cleanup_owner(k, e))
+                for target in range(3):
+                    actions.append(lambda k=index, a=owner.holder, b=target: state.handoff(k, a, b))
+            for action in actions:
+                try:
+                    result = action()
+                except Denied:
+                    continue
+                try:
+                    result.check()
+                except AssertionError:
+                    raise AssertionError(f"interaction invariant failed: {state!r} -> {result!r}") from None
+                transitions += 1
+                if result not in seen:
+                    following.add(result)
+        seen.update(following)
+        frontier = following
+    return len(seen), transitions
+
+
 if __name__ == "__main__":
     adversarial_traces()
+    owner_experiments()
     substitution_experiments()
     protected_experiments()
     compositions = transformer_experiments()
     summaries_checked, summaries_accepted = summary_experiments()
     states, transitions = explore()
+    mixed_states, mixed_transitions = explore_interactions()
     print(f"Authority experiment: {states} states, {transitions} accepted transitions; invariants hold")
     print(f"Resource transformer experiment: {compositions} modular compositions checked")
     print(f"Completion summaries: {summaries_checked} cases checked, {summaries_accepted} accepted conservatively")
+    print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")
+    print(f"Combined transitions: {mixed_states} states, {mixed_transitions} accepted steps at depth three")
     print("Scope: two bytes, three executions, at most two loans, depth five; not a soundness proof")

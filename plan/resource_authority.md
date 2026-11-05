@@ -133,6 +133,67 @@ allocation and observation; integers or asserted where clauses cannot forge them
 The worker's callback validity and exactly-once output initialization are separate
 proof obligations from join's publication guarantee.
 
+### Choosing a buffer protocol
+
+The current native adapter allocates input/output buffers and returns an integer
+result address after join. `trusted_establish_inherited_reference` supplies a
+lifetime dependency, not a Place or authenticated access region. Existing
+`allocation_slot` likewise supplies lifetime facts without complete concurrent
+physical-region authority. Reusing either alone cannot close unknown-call
+authorization safely.
+
+| Candidate | Required evidence and cost |
+| --- | --- |
+| Argi owns stable acquired buffers; native worker borrows them | Retained physical extent/region identity after acquisition permission is consumed; initialization/publication states; cleanup joins before release |
+| Native owns buffers and returns authenticated storage observations | General native acquisition evidence tied to the real allocation and owner, not an arbitrary integer; separate initialized result and reclaim transitions |
+| Join copies into caller storage | Checked destination extent/alignment and initialized representation; copy footprint covers every byte; source remains native until join completes |
+
+Copy-out may simplify result lifetime, but does not remove initialization or
+physical membership obligations. Current `zeroed` intentionally does not
+initialize arbitrary result records, and native writes to erased `Any` cannot
+certify arbitrary typed storage. Do not expand either guarantee as a shortcut.
+Prefer acquired-region evidence reusable by ordinary allocated collections;
+select ownership/layout only after its transitions and failure behavior are
+specified. The existing native race probe can be instrumented as described in
+[testing.md](../docs/testing.md#native-task-race-instrumentation), independently
+of the unresolved compiler evidence.
+
+### Acquisition identity: implementation audit and candidate
+
+`State.establishCapability` already allocates nonreused identities and
+`consumeCapability` changes a separate availability state. This is a useful
+starting point: consuming establishment permission need not erase acquisition
+identity. However, `evaluatePrimitive` currently gives established Allocation
+data a fresh validity root without carrying its acquisition identity, and
+`ownedAllocationEffect` mirrors that lifetime-only result. `allocation_slot`
+returns lifetime dependencies without physical membership evidence. Ordinary
+raw references therefore cannot currently participate in access authorization
+as authenticated acquired storage.
+
+A candidate reuses the acquisition origin identity while separating two facts:
+linear establishment authorization and persistent membership of a checked range.
+The second fact must never be fed back into capability-use counting or permit a
+second establishment. Do not put a consumed capability into a field that existing
+code interprets as an available authorization. No extra runtime token is implied;
+whether a new static fact category is necessary depends on its consumers.
+
+Required propagation is acquisition -> established owner -> bounded slot/view ->
+borrowed reference, preserving origin plus checked range/observation and owner
+validity through moves and summaries. Offset/reinterpretation must preserve or
+restrict that range, never enlarge it solely from a new type's size. Unknown
+ranges conservatively overlap within an acquisition. Partition independence
+requires explicit evidence; separate lifetime roots alone are insufficient.
+Acquisition origin also does not prove allocator-provider authority for cleanup.
+
+Before implementation, specify how region membership is represented in InputPath
+substitution and contract roles, how branch alternatives preserve possible aliasing,
+and how current owner invalidation ends every derived observation. Regression
+cases must cover consumed-permission reuse, inspected address aliases, independent
+acquisitions, arena children sharing backing storage, out-of-bounds projections,
+moves, owner replacement, opaque extraction and returned references. Missing
+membership must remain unknown, never an empty footprint. This audit is not an
+implemented guarantee or a justification for a task-specific primitive.
+
 ## Evaluation and unresolved design obligations
 
 This proposal is coherent as a direction, but not yet a complete formal model.
@@ -226,6 +287,22 @@ must nevertheless account for that latent operation: exclusive provider handoff,
 a certified shared protocol, or retained cleanup delegation. A shared allocator
 lifetime does not merge independent payload regions. General owners must preserve
 responsibility, dependencies and permitted operations through storage and errors.
+
+For an exclusive owner handoff, transfer the payload grant and cleanup holder in
+one checked transition. Requirements on external cleanup regions remain separate:
+they can be temporarily lent, synchronized by a certified protocol or retained by
+an explicit cleanup delegate. Do not return payload authority by completing an
+external provider loan after that payload was destroyed. A borrowed read of the
+payload does not require executing its destructor but must prevent invalidation.
+The bounded experiment exercises this distinction; recursive owners and failure
+cleanup still require general rules before compiler payload eligibility expands.
+
+Retaining a latent cleanup requirement requires valid observations of its
+external resources at retention time. Those retained obligations must prevent
+incompatible invalidation until responsibility is discharged or verifiably
+transferred. Checking authority only when cleanup executes is too late if an
+intermediate transition can destroy its required provider. This rule applies to
+any retained operation, not only a deallocator or task payload.
 
 ## Implementation correspondence and acceptance gates
 
