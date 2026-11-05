@@ -575,3 +575,39 @@ or occurrences, reference retargeting, and static-versus-erased producer results
 This extension would not by itself express every new result-region postcondition
 or make an unknown native address an owned region. Keep those requirements
 separate and reuse the same selectors when an actual gate case needs them.
+
+
+## Minimal unknown-call reproduction
+
+After the associated-region migration, a compile-only probe still accepts an
+unbounded virtual read while a worker holds write authority over the same Int32.
+The contract declares `.get: (.self: &Provider) -> (.result: Int32) where {}`;
+its Int32 implementation returns `self&`. Construct the handle from `&value`,
+start a worker with `$&value`, then call `get(&handle)` before completion.
+Making the observed result affect control flow does not change acceptance.
+The corresponding `reads(self)` bound correctly rejects the call. Do not run the
+unbounded probe: compilation is the evidence of the missing authorization check.
+
+This case requires no owner transfer, raw address or heterogeneous extraction.
+It confirms that unknown-call authorization is an independent soundness gate,
+not merely a precision improvement for future resource types. Closing it still
+requires preserving valid join/result-buffer access and executor delegation;
+the native consolidation below does not discharge that gate.
+
+## Native buffer boundary consolidation
+
+The private native task ABI now has one lifecycle: create stable aligned input
+and output buffers, invoke the monomorphic callback once, join before extracting
+the result once, and join before reclaiming both buffers. Removed the unused
+handle-callback protocol and its separate read, write and copy-out operations;
+only the native probe still used them. There is no separate completion flag:
+successful join proves that the sole callback returned and published its output.
+The callback must initialize its complete output before returning.
+
+The native probe exercises the same path as async, including mismatched result
+sizes before completion, copied inputs, zero-sized aligned buffers, moving the
+handle, independently live result buffers and destruction of a running task.
+This reduces the audited native surface; it does not grant access-region
+provenance to a returned address or close unknown-call authorization. Those
+remain prerequisites for general owner transfer. No runtime strategy or new
+compiler primitive is introduced by this consolidation.
