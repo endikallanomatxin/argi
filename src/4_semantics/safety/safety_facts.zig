@@ -96,6 +96,8 @@ pub const ValueEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     /// Scalar/raw facts copied without borrowing the source lifetime.
     input_storage_capabilities: []const InputPath = &.{},
+    /// Select acquisition identity without copying establishment permission.
+    input_acquisition_origins: []const InputPath = &.{},
     input_execution_receipts: []const InputPath = &.{},
     input_places: []const InputPath = &.{},
     /// Storage generations borrowed by a value, without making those places
@@ -126,6 +128,7 @@ pub const ValueEffect = struct {
     integer_address: bool = false,
     foreign_storage: bool = false,
     fresh_storage_capabilities: []const FreshEffectSource = &.{},
+    fresh_acquisition_origins: []const FreshEffectSource = &.{},
     unavailable_fresh_storage: []const FreshStorageCapabilityState = &.{},
 };
 

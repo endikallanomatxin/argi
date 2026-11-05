@@ -2091,7 +2091,7 @@ pub const SafetyChecker = struct {
     }
 
     fn effectHasFreshRoles(effect: facts.ValueEffect) bool {
-        if (effect.fresh_owned_roots.len != 0 or effect.fresh_dependencies.len != 0 or effect.fresh_storage_capabilities.len != 0 or effect.fresh_cleanup_obligation) return true;
+        if (effect.fresh_owned_roots.len != 0 or effect.fresh_dependencies.len != 0 or effect.fresh_storage_capabilities.len != 0 or effect.fresh_acquisition_origins.len != 0 or effect.fresh_cleanup_obligation) return true;
         for (effect.fields) |field| if (effectHasFreshRoles(field.value.*)) return true;
         for (effect.variants) |variant| if (effectHasFreshRoles(variant.value.*)) return true;
         return false;
@@ -2918,7 +2918,7 @@ pub const SafetyChecker = struct {
                 for (fields, 0..) |*field, index| {
                     const value = try self.allocator.create(facts.ValueFacts);
                     value.* = if (index == shape.data_field)
-                        .{ .dependencies = try self.oneDependency(root) }
+                        .{ .dependencies = try self.oneDependency(root), .acquisition_origins = if (values.len != 0) try self.acquisitionOrigins(values[0]) else &.{} }
                     else
                         .{};
                     for (shape.borrowed_fields) |borrowed| if (index == borrowed.field) {
@@ -2965,6 +2965,13 @@ pub const SafetyChecker = struct {
             // communicated explicitly by mark_empty and by summaries.
             .opaque_drop => .{},
         };
+    }
+
+    fn acquisitionOrigins(self: *SafetyChecker, value: facts.ValueFacts) ![]const facts.StorageCapabilityId {
+        var origins = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        try origins.appendSlice(value.acquisition_origins);
+        for (value.storage_capabilities) |origin| try appendCapabilityFact(&origins, origin);
+        return origins.toOwnedSlice();
     }
 
     fn require_available_storage_capabilities(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, maximum: u2, state: *FunctionState) !void {
@@ -4900,6 +4907,16 @@ pub const SafetyChecker = struct {
             const input = (try self.load_summary_input_value(path, arguments, state)).scalarOpaqueRead();
             result = try self.mergeValueFacts(result, input);
         }
+        var origins = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        try origins.appendSlice(result.acquisition_origins);
+        for (effect.input_acquisition_origins) |path| {
+            const input = try self.load_summary_input_value(path, arguments, state);
+            for (input.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
+            for (input.storage_capabilities) |origin| try appendCapabilityFact(&origins, origin);
+        }
+        for (effect.fresh_acquisition_origins) |fresh|
+            try appendCapabilityFact(&origins, try self.instantiateFreshOrigin(fresh, state, fresh_capabilities));
+        result.acquisition_origins = try origins.toOwnedSlice();
         var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
         for (result.storage_capabilities) |capability| try appendCapabilityFact(&capabilities, capability);
         for (effect.fresh_storage_capabilities) |fresh|
@@ -5278,17 +5295,31 @@ pub const SafetyChecker = struct {
         return root;
     }
 
-    fn instantiateFreshCapability(
+    fn instantiateFreshOrigin(
         self: *SafetyChecker,
         source: facts.FreshEffectSource,
         state: *FunctionState,
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
     ) !facts.StorageCapabilityId {
         _ = self;
-        if (fresh.get(source)) |capability| return capability;
-        const capability = try state.establishCapability();
-        try fresh.put(source, capability);
-        return capability;
+        if (fresh.get(source)) |identity| return identity;
+        const identity = try state.reserveCapabilityIdentity();
+        try fresh.put(source, identity);
+        return identity;
+    }
+
+    fn instantiateFreshCapability(
+        self: *SafetyChecker,
+        source: facts.FreshEffectSource,
+        state: *FunctionState,
+        fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
+    ) !facts.StorageCapabilityId {
+        const identity = try self.instantiateFreshOrigin(source, state, fresh);
+        // Only an actual acquisition effect creates permission. Retained origin
+        // metadata neither grants it nor changes an already consumed state.
+        if (state.capabilityState(identity) == .absent)
+            state.storage_capabilities.items[@intFromEnum(identity)] = .available;
+        return identity;
     }
 
     fn projectValueFacts(
@@ -5425,7 +5456,11 @@ pub const SafetyChecker = struct {
                 try symbolic_pointees.append(self.allocator, identity);
         }
         const symbolic = try self.allocator.dupe(facts.SymbolicPointeeId, symbolic_pointees.items);
+        var origins = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        try origins.appendSlice(left.acquisition_origins);
+        for (right.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
         return .{
+            .acquisition_origins = try origins.toOwnedSlice(),
             .symbolic_pointees = symbolic,
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
@@ -9076,6 +9111,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
         left.foreign_storage != right.foreign_storage or
         left.known_choice_variant != right.known_choice_variant or
         !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
+        !std.mem.eql(facts.StorageCapabilityId, left.acquisition_origins, right.acquisition_origins) or
         !std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
@@ -12242,4 +12278,72 @@ test "symbolic domain captures keep hidden referents after their storage is empt
     state.tracker.end(external);
     try std.testing.expect(valueDependsOnDeadRoot(captured, &state));
     try std.testing.expect(state.domainGenerationIsCurrent(storage, region.generation));
+}
+
+test "allocation acquisition origin survives consumption without restoring permission" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph = try allocationPrimitiveTestGraph(a, 12);
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const origin = try state.establishCapability();
+    const arguments = [_]facts.ValueFacts{ .{ .storage_capabilities = &.{origin} }, .{}, .{}, .{}, .{} };
+    const value = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .establish_allocation, &.{}, &arguments, &state, .{ .file_index = 0, .offset = 0 });
+    const data = try checker.projectValueFacts(value, &.{.{ .field = primitive_transfer.AllocationTransfer.data_field }});
+    var engine = summary_engine.Engine.init(a);
+    defer engine.deinit();
+    var inference = summary_infer.Infer.init(a, &graph, &engine);
+    defer inference.deinit();
+    const effect = try inference.primitiveValueEffect(.establish_allocation, 1, @enumFromInt(0));
+    const summarized = try checker.instantiateOutput(effect, &arguments, &state);
+    const summary_data = try checker.projectValueFacts(summarized, &.{.{ .field = primitive_transfer.AllocationTransfer.data_field }});
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, data.acquisition_origins, summary_data.acquisition_origins);
+    try std.testing.expectEqual(@as(usize, 0), summary_data.storage_capabilities.len);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, data.acquisition_origins);
+    try std.testing.expectEqual(@as(usize, 0), data.storage_capabilities.len);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
+    const forwarded = try checker.instantiateOutput(.{ .input_acquisition_origins = &.{.{ .input_index = 0 }} }, &.{data}, &state);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, forwarded.acquisition_origins);
+    try std.testing.expectEqual(@as(usize, 0), forwarded.storage_capabilities.len);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
+    try std.testing.expect(forwarded.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 0), forwarded.symbolic_pointees.len);
+    try std.testing.expectEqual(@as(usize, 0), forwarded.owned_roots.len);
+    const scalar = forwarded.scalarOpaqueRead();
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, scalar.acquisition_origins);
+    try std.testing.expectEqual(@as(usize, 0), scalar.storage_capabilities.len);
+    const lifetime_only = try checker.instantiateOutput(.{ .input_acquisition_origins = &.{.{ .input_index = 0 }} }, &.{.{ .dependencies = data.dependencies }}, &state);
+    try std.testing.expectEqual(@as(usize, 0), lifetime_only.acquisition_origins.len);
+    const copy = forwarded.referenceCopy();
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, copy.acquisition_origins);
+    try std.testing.expectEqual(@as(usize, 0), copy.storage_capabilities.len);
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "fresh acquisition origin reservation does not grant or consume permission" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    var identities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(a);
+    defer identities.deinit();
+    const origin = try checker.instantiateFreshOrigin(7, &state, &identities);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.absent, state.capabilityState(origin));
+    try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities));
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(origin));
+    try std.testing.expectEqual(origin, try checker.instantiateFreshOrigin(7, &state, &identities));
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(origin));
+    state.consumeCapability(origin, true);
+    try std.testing.expectEqual(origin, try checker.instantiateFreshOrigin(7, &state, &identities));
+    try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities));
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
 }

@@ -6419,6 +6419,7 @@ pub const Infer = struct {
             .fresh_cleanup_obligation = effect.fresh_cleanup_obligation,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
+            .fresh_acquisition_origins = effect.fresh_acquisition_origins,
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
@@ -6496,6 +6497,22 @@ pub const Infer = struct {
             }
             for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
             result = try self.mergeValueEffects(result, try self.scalar_storage_effect(value));
+        }
+        for (effect.input_acquisition_origins) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var value = if (override) |symbolic|
+                if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
+            else
+                try context.effect(path.input_index);
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| value = pointee;
+            }
+            for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+            const scalar = try self.scalar_storage_effect(value);
+            result.input_acquisition_origins = try self.union_input_paths(result.input_acquisition_origins, scalar.input_acquisition_origins);
+            result.input_acquisition_origins = try self.union_input_paths(result.input_acquisition_origins, scalar.input_storage_capabilities);
+            result.fresh_acquisition_origins = try self.unionFreshOrigins(result.fresh_acquisition_origins, scalar.fresh_acquisition_origins);
+            result.fresh_acquisition_origins = try self.unionFreshOrigins(result.fresh_acquisition_origins, scalar.fresh_storage_capabilities);
         }
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_places) |path| {
@@ -6630,10 +6647,10 @@ pub const Infer = struct {
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
         inline for (.{
-            "input_domains",            "input_dependencies",             "input_storage_capabilities",
-            "input_execution_receipts", "input_places",                   "input_generation_dependencies",
-            "input_captured_storages",  "input_receiver_values",          "input_place_values",
-            "input_owned_roots",        "opaque_generation_dependencies", "opaque_storage_dependencies",
+            "input_domains",               "input_dependencies", "input_storage_capabilities",    "input_acquisition_origins",
+            "input_execution_receipts",    "input_places",       "input_generation_dependencies", "input_captured_storages",
+            "input_receiver_values",       "input_place_values", "input_owned_roots",             "opaque_generation_dependencies",
+            "opaque_storage_dependencies",
         }) |field| if (@field(effect, field).len != 0) return true;
         for (effect.fresh_executions) |execution| if (requiresOutputSubstitution(execution.inputs.*)) return true;
         for (effect.domain_values) |domain| {
@@ -6692,6 +6709,7 @@ pub const Infer = struct {
         }
         result.input_dependencies = dependencies;
         result.input_storage_capabilities = try self.projectInputPaths(effect.input_storage_capabilities, projection);
+        result.input_acquisition_origins = try self.projectInputPaths(effect.input_acquisition_origins, projection);
         result.input_execution_receipts = try self.projectInputPaths(effect.input_execution_receipts, projection);
         result.input_places = try self.projectInputPaths(effect.input_places, projection);
         // Borrowed generations describe the source value's lifetime, not
@@ -6719,6 +6737,13 @@ pub const Infer = struct {
         @memcpy(result[0..projections.len], projections);
         result[projections.len] = projection;
         return result;
+    }
+
+    fn unionFreshOrigins(self: *Infer, left: []const facts.FreshEffectSource, right: []const facts.FreshEffectSource) ![]const facts.FreshEffectSource {
+        var result = std.array_list.Managed(facts.FreshEffectSource).init(self.allocator);
+        for (left) |origin| try appendFresh(&result, origin);
+        for (right) |origin| try appendFresh(&result, origin);
+        return result.toOwnedSlice();
     }
 
     fn mergeRegionReads(self: *Infer, left: ?*const facts.ValueEffect, right: ?*const facts.ValueEffect) anyerror!?*const facts.ValueEffect {
@@ -6832,6 +6857,8 @@ pub const Infer = struct {
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
+            .input_acquisition_origins = try self.union_input_paths(left.input_acquisition_origins, right.input_acquisition_origins),
+            .fresh_acquisition_origins = try self.unionFreshOrigins(left.fresh_acquisition_origins, right.fresh_acquisition_origins),
             .input_execution_receipts = try self.union_input_paths(left.input_execution_receipts, right.input_execution_receipts),
             .fresh_executions = try self.mergeFreshExecutions(left.fresh_executions, right.fresh_executions),
             .input_places = try input_places.toOwnedSlice(),
@@ -6968,7 +6995,7 @@ pub const Infer = struct {
         empty.* = .{};
         for (fields, 0..) |*field, index| field.* = .{ .index = @intCast(index), .value = empty };
         const data = try self.allocator.create(facts.ValueEffect);
-        data.* = .{ .fresh_dependencies = try self.oneFresh(source) };
+        data.* = .{ .fresh_dependencies = try self.oneFresh(source), .input_acquisition_origins = try self.oneInputPath(0, &.{}) };
         fields[shape.data_field].value = data;
         for (shape.borrowed_fields) |borrowed| {
             const value = try self.allocator.create(facts.ValueEffect);
@@ -6997,6 +7024,7 @@ pub const Infer = struct {
         result.fresh_executions = executions;
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
         result.fresh_storage_capabilities = try self.rebaseFreshSlice(effect.fresh_storage_capabilities, call_node);
+        result.fresh_acquisition_origins = try self.rebaseFreshSlice(effect.fresh_acquisition_origins, call_node);
         const unavailable = try self.allocator.alloc(facts.FreshStorageCapabilityState, effect.unavailable_fresh_storage.len);
         for (effect.unavailable_fresh_storage, 0..) |entry, index| {
             unavailable[index] = entry;
@@ -7026,7 +7054,7 @@ pub const Infer = struct {
 
     fn hasFreshSources(effect: facts.ValueEffect) bool {
         if (effect.fresh_executions.len != 0 or effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
-            effect.fresh_storage_capabilities.len != 0 or effect.unavailable_fresh_storage.len != 0) return true;
+            effect.fresh_storage_capabilities.len != 0 or effect.fresh_acquisition_origins.len != 0 or effect.unavailable_fresh_storage.len != 0) return true;
         for (effect.fields) |field| if (hasFreshSources(field.value.*)) return true;
         for (effect.variants) |variant| if (hasFreshSources(variant.value.*)) return true;
         return false;
@@ -7065,9 +7093,11 @@ pub const Infer = struct {
         for (effect.input_place_values) |path| try appendInputPath(&paths, path);
         return .{
             .input_storage_capabilities = try paths.toOwnedSlice(),
+            .input_acquisition_origins = effect.input_acquisition_origins,
             .input_execution_receipts = effect.input_execution_receipts,
             .fresh_executions = effect.fresh_executions,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
+            .fresh_acquisition_origins = effect.fresh_acquisition_origins,
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
@@ -8311,4 +8341,30 @@ test "temporal alias preconditions survive guarded summary selection" {
     try std.testing.expectEqual(pair.kind, guarded[0].kind);
     try std.testing.expect(summaries.inputPathEql(pair.observed, guarded[0].observed));
     try std.testing.expectEqual(@as(usize, 0), initial.guarded_effects[0].effects.storage_observation_conflicts.len);
+}
+
+test "acquisition origin selectors compose without establishment permissions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var inference = Infer.init(a, &graph, &engine);
+    defer inference.deinit();
+    const origin: facts.ValueEffect = .{ .input_acquisition_origins = &.{.{ .input_index = 0 }}, .fresh_acquisition_origins = &.{7} };
+    try std.testing.expect(Infer.requiresOutputSubstitution(origin));
+    const scalar = try inference.scalar_storage_effect(origin);
+    try std.testing.expect(summaries.valueEffectEql(origin, scalar));
+    try std.testing.expectEqual(@as(usize, 0), scalar.input_storage_capabilities.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.fresh_storage_capabilities.len);
+    const merged = try inference.mergeValueEffects(origin, origin);
+    try std.testing.expect(summaries.valueEffectEql(origin, merged));
+    const projected = try inference.projectValueEffect(origin, .{ .field = 1 });
+    try std.testing.expectEqual(@as(usize, 1), projected.input_acquisition_origins[0].projections.len);
+    try std.testing.expectEqual(@as(usize, 0), projected.input_storage_capabilities.len);
+    const rebound = try inference.rebaseFreshSources(origin, @enumFromInt(2));
+    try std.testing.expectEqual(@as(usize, 1), rebound.fresh_acquisition_origins.len);
+    try std.testing.expectEqual(@as(usize, 0), rebound.fresh_storage_capabilities.len);
 }

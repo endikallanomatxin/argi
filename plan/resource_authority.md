@@ -163,12 +163,13 @@ of the unresolved compiler evidence.
 `State.establishCapability` already allocates nonreused identities and
 `consumeCapability` changes a separate availability state. This is a useful
 starting point: consuming establishment permission need not erase acquisition
-identity. However, `evaluatePrimitive` currently gives established Allocation
-data a fresh validity root without carrying its acquisition identity, and
-`ownedAllocationEffect` mirrors that lifetime-only result. `allocation_slot`
-returns lifetime dependencies without physical membership evidence. Ordinary
-raw references therefore cannot currently participate in access authorization
-as authenticated acquired storage.
+identity. Established Allocation data now retains an acquisition-origin identity separately
+from the consumed establishment permission, with matching direct and summary
+transfer. This is provenance metadata only: it grants no physical range,
+initialization, owner liveness or access authority. `allocation_slot` still
+returns lifetime dependencies without complete physical membership evidence.
+Ordinary raw references therefore cannot currently participate in access
+authorization as authenticated acquired storage.
 
 A candidate reuses the acquisition origin identity while separating two facts:
 linear establishment authorization and persistent membership of a checked range.

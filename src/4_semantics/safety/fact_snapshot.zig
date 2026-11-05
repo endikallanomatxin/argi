@@ -69,13 +69,17 @@ test "fact snapshots own shared values and projection buffers" {
         defer transient.deinit();
         const paths = try transient.allocator().dupe(facts.Projection, &.{.{ .field = 3 }});
         const child = try transient.allocator().create(facts.ValueFacts);
-        child.* = .{ .referenced_place = .{ .root = @enumFromInt(7), .projections = paths } };
+        child.* = .{
+            .referenced_place = .{ .root = @enumFromInt(7), .projections = paths },
+            .acquisition_origins = try transient.allocator().dupe(facts.StorageCapabilityId, &.{@enumFromInt(4)}),
+        };
         const fields = try transient.allocator().dupe(facts.FieldFacts, &.{ .{ .index = 0, .value = child }, .{ .index = 1, .value = child } });
         result = try copy.value(facts.ValueFacts, .{ .fields = fields });
         try std.testing.expect(result.fields.ptr != fields.ptr);
         try std.testing.expect(result.fields[0].value != child);
     }
     try std.testing.expect(result.fields[0].value == result.fields[1].value);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{@enumFromInt(4)}, result.fields[0].value.acquisition_origins);
     try std.testing.expectEqual(@as(u32, 3), result.fields[0].value.referenced_place.?.projections[0].field);
 }
 

@@ -195,6 +195,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
+    if (!std.mem.eql(facts.FreshEffectSource, a.fresh_acquisition_origins, b.fresh_acquisition_origins)) return false;
+    if (a.input_acquisition_origins.len != b.input_acquisition_origins.len) return false;
+    for (a.input_acquisition_origins, b.input_acquisition_origins) |left, right| if (!inputPathEql(left, right)) return false;
     if (!domainsEql(a.input_domains, b.input_domains)) return false;
     if (a.domain_values.len != b.domain_values.len) return false;
     if (a.domain_values.ptr != b.domain_values.ptr) for (a.domain_values, b.domain_values) |x, y| {

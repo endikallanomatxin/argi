@@ -210,15 +210,21 @@ pub const State = struct {
         };
     }
 
-    pub fn establishCapability(self: *State) !facts.StorageCapabilityId {
+    /// Reserve an acquisition origin without creating establishment permission.
+    pub fn reserveCapabilityIdentity(self: *State) !facts.StorageCapabilityId {
         const index = if (self.tracker.namespace) |namespace| namespace.next_capability_id else self.storage_capabilities.items.len;
         if (index >= std.math.maxInt(u32)) return error.SafetyCapabilityIdentityLimit;
         try self.storage_capabilities.ensureTotalCapacity(index + 1);
         while (self.storage_capabilities.items.len <= index)
             self.storage_capabilities.appendAssumeCapacity(.absent);
-        self.storage_capabilities.items[index] = .available;
         if (self.tracker.namespace) |namespace| namespace.next_capability_id += 1;
         return @enumFromInt(index);
+    }
+
+    pub fn establishCapability(self: *State) !facts.StorageCapabilityId {
+        const id = try self.reserveCapabilityIdentity();
+        self.storage_capabilities.items[@intFromEnum(id)] = .available;
+        return id;
     }
 
     pub fn capabilityState(self: *const State, id: facts.StorageCapabilityId) StorageCapabilityState {

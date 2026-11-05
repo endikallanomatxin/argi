@@ -158,6 +158,9 @@ pub const ValueFacts = struct {
     integer_address: bool = false,
     foreign_storage: bool = false,
     storage_capabilities: []const StorageCapabilityId = &.{},
+    /// Acquisition identity only: no establishment permission, initializedness,
+    /// physical range, owner liveness or access authority follows from this fact.
+    acquisition_origins: []const StorageCapabilityId = &.{},
     referenced_place: ?Place = null,
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
@@ -181,6 +184,7 @@ pub const ValueFacts = struct {
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
+            .acquisition_origins = self.acquisition_origins,
             .referenced_place = self.referenced_place,
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
@@ -206,6 +210,7 @@ pub const ValueFacts = struct {
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
+            .acquisition_origins = self.acquisition_origins,
             .choice_selectors = self.choice_selectors,
             .choice_observations = self.choice_observations,
         };

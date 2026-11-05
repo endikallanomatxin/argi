@@ -932,7 +932,7 @@ fn samePath(a: facts.InputPath, b: facts.InputPath) bool {
 fn hasExactReferent(actual: facts.ValueEffect, expected: facts.InputPath) bool {
     if (actual.input_place_values.len != 0 or actual.fields.len != 0 or actual.variants.len != 0 or
         actual.fresh_cleanup_obligation or actual.fresh_dependencies.len != 0 or actual.fresh_owned_roots.len != 0 or
-        actual.fresh_storage_capabilities.len != 0 or actual.unavailable_fresh_storage.len != 0 or
+        actual.fresh_storage_capabilities.len != 0 or actual.fresh_acquisition_origins.len != 0 or actual.input_acquisition_origins.len != 0 or actual.unavailable_fresh_storage.len != 0 or
         actual.integer_address or actual.foreign_storage or actual.input_storage_capabilities.len != 0) return false;
     var established = false;
     for (actual.input_places) |path| {
@@ -972,7 +972,7 @@ fn retainedPathAllowed(contract: Contract, storage: facts.InputPath, path: facts
 }
 
 fn retainedValueAllowed(contract: Contract, storage: facts.InputPath, value: facts.ValueEffect) bool {
-    if (value.fresh_cleanup_obligation or value.fresh_dependencies.len != 0 or value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or value.unavailable_fresh_storage.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0) return false;
+    if (value.fresh_cleanup_obligation or value.fresh_dependencies.len != 0 or value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or value.fresh_acquisition_origins.len != 0 or value.input_acquisition_origins.len != 0 or value.unavailable_fresh_storage.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0) return false;
     for (value.input_dependencies) |dependency| if (!retainedPathAllowed(contract, storage, dependency.path)) return false;
     for ([_][]const facts.InputPath{ value.input_places, value.input_generation_dependencies, value.input_receiver_values, value.input_place_values, value.input_owned_roots, value.input_storage_capabilities, value.opaque_generation_dependencies, value.opaque_storage_dependencies }) |paths| {
         for (paths) |path| if (!retainedPathAllowed(contract, storage, path)) return false;
@@ -1094,11 +1094,11 @@ fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
 
 fn emptyValue(value: facts.ValueEffect) bool {
     if (value.fresh_cleanup_obligation or value.explicit_dependency or value.input_dependencies.len != 0 or
-        value.input_storage_capabilities.len != 0 or value.input_places.len != 0 or
+        value.input_storage_capabilities.len != 0 or value.input_acquisition_origins.len != 0 or value.input_places.len != 0 or
         value.input_generation_dependencies.len != 0 or value.input_captured_storages.len != 0 or value.input_receiver_values.len != 0 or value.input_place_values.len != 0 or
         value.input_owned_roots.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0 or value.opaque_generation_dependencies.len != 0 or
         value.opaque_storage_dependencies.len != 0 or value.fresh_dependencies.len != 0 or
-        value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or
+        value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or value.fresh_acquisition_origins.len != 0 or
         value.unavailable_fresh_storage.len != 0 or value.integer_address or value.foreign_storage) return false;
     for (value.fields) |field| if (!emptyValue(field.value.*)) return false;
     for (value.variants) |variant| if (!emptyValue(variant.value.*)) return false;
