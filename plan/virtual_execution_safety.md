@@ -488,7 +488,6 @@ Do not broaden task payload eligibility or remove conservative opaque-retention
 checks until these rules can justify the new cases without names specific to a
 library abstraction.
 
-
 ## Layout-aware overlap
 
 Access authority must follow physical overlap without merging logical storage
@@ -576,7 +575,6 @@ This extension would not by itself express every new result-region postcondition
 or make an unknown native address an owned region. Keep those requirements
 separate and reuse the same selectors when an actual gate case needs them.
 
-
 ## Minimal unknown-call reproduction
 
 After the associated-region migration, a compile-only probe still accepts an
@@ -612,7 +610,6 @@ provenance to a returned address or close unknown-call authorization. Those
 remain prerequisites for general owner transfer. No runtime strategy or new
 compiler primitive is introduced by this consolidation.
 
-
 ## Callback access contracts
 
 CFunctionPointer signatures now accept the existing native access-only where
@@ -634,3 +631,25 @@ TODO: directly invoking callback parameters or borrowed callback fields inside
 implementation-owned anonymous operation bodies can fail materialization with
 NoMatchingGenericFunction. Ordinary helpers work and preserve the same effects;
 keep this separate callable-resolution diagnostic issue from access authorization.
+
+## Authorization integration checkpoint
+
+Unknown may-access summaries must eventually reject calls while incompatible
+caller-storage loans are pending, before applying completion postconditions.
+The attempted integration also rejects positive borrowed `await` cases: the
+native result address currently carries lifetime evidence without authenticated
+physical access provenance. Keep those positive tests enabled. Do not exempt
+`await`, reinterpret `depends_on` or `from_storage` as physical containment, or
+let a completion postcondition retroactively authorize earlier accesses.
+
+A compositional Executor submission bound additionally needs delegated region
+projections. `writes(self)` covers the provider representation, not state behind
+a captured Virtual. A future nested projection must retain the selected region,
+reads needed to locate its provider, and observations that reject stale evidence
+after handle retargeting. Existing summary substitution, equality, cloning and
+contract validation must all preserve these obligations before enabling it.
+
+The integration experiment is not part of the implemented safety guarantees.
+The next implementation checkpoint should close these representation gaps as
+one validated change, including borrowed await and forwarding executors, rather
+than publishing the unknown-access gate with known positive regressions.

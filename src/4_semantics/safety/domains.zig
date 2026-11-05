@@ -36,7 +36,6 @@ pub const InvalidMapping = enum {
     duplicate_domain,
     empty_domain,
     wrong_receiver,
-    receiver_slot,
     overlapping_domains,
 };
 
@@ -53,7 +52,6 @@ pub fn validate(mappings: []const Mapping, receiver_index: u32) ?InvalidMapping 
         for (mappings[0..index]) |previous| if (previous.domain == mapping.domain) return .duplicate_domain;
         for (mapping.paths) |path| {
             if (path.input_index != receiver_index) return .wrong_receiver;
-            if (path.projections.len == 0) return .receiver_slot;
             for (mappings[0..index]) |previous| {
                 for (previous.paths) |other| if (overlaps(path, other)) return .overlapping_domains;
             }
@@ -109,7 +107,7 @@ test "safety domains reject empty duplicate and unrelated mappings" {
     const path = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
     try std.testing.expectEqual(.empty_domain, validate(&.{.{ .domain = @enumFromInt(0), .paths = &.{} }}, 0).?);
     try std.testing.expectEqual(.wrong_receiver, validate(&.{.{ .domain = @enumFromInt(0), .paths = &.{path} }}, 1).?);
-    try std.testing.expectEqual(.receiver_slot, validate(&.{.{ .domain = @enumFromInt(0), .paths = &.{.{ .input_index = 0 }} }}, 0).?);
+    try std.testing.expect(validate(&.{.{ .domain = @enumFromInt(0), .paths = &.{.{ .input_index = 0 }} }}, 0) == null);
     try std.testing.expectEqual(.duplicate_domain, validate(&.{
         .{ .domain = @enumFromInt(0), .paths = &.{path} },
         .{ .domain = @enumFromInt(0), .paths = &.{path} },
@@ -135,4 +133,16 @@ test "safety domains reject aliases hidden behind distinct reference fields" {
         .{ .domain = @enumFromInt(0), .generations = &.{a} },
         .{ .domain = @enumFromInt(0), .generations = &.{b} },
     }).?);
+}
+
+test "receiver root overlaps subfields in another region" {
+    const root = facts.InputPath{ .input_index = 0 };
+    const field = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
+    try std.testing.expectEqual(.overlapping_domains, validate(&.{
+        .{ .domain = @enumFromInt(0), .paths = &.{root} },
+        .{ .domain = @enumFromInt(1), .paths = &.{field} },
+    }, 0).?);
+    try std.testing.expect(validate(&.{
+        .{ .domain = @enumFromInt(0), .paths = &.{ root, field } },
+    }, 0) == null);
 }

@@ -588,6 +588,10 @@ with multiple participants do not yet support region members. Region is a
 requirement form, not an ordinary runtime type; region(...) is a symbolic
 projection initializer, not an executable function. Its self names the
 participant instance, and grouped paths preserve separate storage identities.
+`region(self)` selects the participant's own representation. It overlaps any
+structural subfield mapped into another region; grouping overlapping paths in
+one region remains valid. The root projection does not include the targets of
+stored references or grant authority over them. An empty `region()` is invalid.
 The implementation initializer selects physical fields even if a field shares
 the region member name. Operation where clauses retain their safety meaning.
 Virtual inputs retain the declared domains even before any concrete handle is

@@ -11,7 +11,6 @@ fn verifyDomainMappings(graph: *const graph_mod.ModuleSemanticGraph, mappings: [
         try require(verify.stringFits(mapping.name, graph.strings.items));
         try require(mapping.paths.len != 0);
         for (mapping.paths) |path| {
-            try require(path.fields.len != 0);
             for (path.fields) |field| try require(verify.stringFits(field, graph.strings.items));
         }
     }

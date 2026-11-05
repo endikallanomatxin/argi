@@ -325,9 +325,8 @@ const Context = struct {
             defer names.deinit(self.allocator);
             self.lowerDomainPath(field.value, &names) catch |err| {
                 if (err != error.InvalidStorageDomainMapping) return err;
-                try self.conformanceError(field.value, "region projections must select fields from symbolic self");
+                try self.conformanceError(field.value, "region projections must select symbolic self or its fields");
             };
-            if (names.items.len == 0) try self.conformanceError(argument, "region projections require a nonempty path from symbolic self");
             try paths.ensureUnusedCapacity(self.allocator, 1);
             paths.appendAssumeCapacity(.{ .fields = try names.toOwnedSlice(self.allocator) });
         }

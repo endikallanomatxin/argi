@@ -85,7 +85,8 @@ This groups locations without merging their storage or validity roots. It grants
 no read/write authority, ownership, initialization, acquisition or disjointness.
 Definition of the schema reads no runtime values; using it may require checked
 reads of intermediate references to locate the selected storage. Preserve the
-current nonempty, privacy, overlap and traversal checks in the syntax migration.
+current nonempty grouping, privacy, overlap and traversal checks in the syntax
+migration.
 Nested role selectors remain separately tracked work; this syntax change does
 not make `self.base.state` valid automatically.
 
@@ -238,3 +239,18 @@ Before enabling the latter, also validate identical concrete participant types,
 aliased readonly arguments, incompatible concurrent access, and projections rooted
 in the wrong participant. No new trusted primitive, synchronization guarantee,
 dynamic descriptor or ordered-effect representation is part of this proposal.
+
+## Receiver representation projection
+
+`region(self)` selects the participant instance's representation. It is the root
+case of the same field-path projection, not a recursive union of everything the
+instance references. A mapping still requires at least one projection; `region()`
+is invalid. A root mapping overlaps every structural subfield mapping in another
+region, while overlapping paths within one region remain permitted.
+
+This supports providers whose abstract state is their own representation without
+adding artificial marker fields. It does not authorize accesses to captured
+referents, provide synchronization, or establish transferability. Delegating a
+region through a captured Virtual remains separate work: its selected data,
+receiver reads, and observations of retargetable handles must all survive
+summary transport before such composition is enabled.
