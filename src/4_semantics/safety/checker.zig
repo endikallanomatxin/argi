@@ -273,7 +273,7 @@ pub const SafetyChecker = struct {
         defer self.active_summaries = null;
         try self.collectExecutionAliasObligations(&engine, &inference);
         try inference.resumeInference();
-        try self.validateIsolatedAccessEffects(&engine);
+        try self.validateCallbackAccessEffects(&inference);
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
         self.stats.summary_evaluations = inference.evaluations;
         self.stats.summary_reused = inference.cache_reused.count();
@@ -318,11 +318,12 @@ pub const SafetyChecker = struct {
         }
     }
 
-    /// A callback can run in a different execution domain. Until explicit
-    /// authority transfer exists, no mutable module storage is authorized there.
-    /// Inspect converged summaries so wrappers, recursion and selected cleanup
-    /// cannot hide a global access behind otherwise plain argument types.
-    fn validateIsolatedAccessEffects(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
+    /// Check the selected body before its identity is erased into a callback.
+    /// Access bounds use the same converged summaries as native functions and
+    /// virtual contracts. Isolation additionally forbids mutable module storage
+    /// without cross-execution authority, including through helpers and cleanup.
+    fn validateCallbackAccessEffects(self: *SafetyChecker, inference: *summary_infer.Infer) !void {
+        const engine = inference.engine;
         for (self.graph.nodes.items, 0..) |node, raw| {
             if (node.content != .function_address) continue;
             if (self.unit) |unit| if (!unit.containsNode(@enumFromInt(raw))) continue;
@@ -334,7 +335,22 @@ pub const SafetyChecker = struct {
             if (engine.summaries.get(target)) |summary| if (summary.storage_observation_conflicts.len != 0) {
                 try self.report(node.source, "callback cannot hide caller-side storage alias obligations", .{});
             };
-            if (!self.graph.function(definition.function_id orelse continue).flags.is_isolated_callback) continue;
+            const prototype = definition.function_id orelse continue;
+            if (self.graph.function(prototype).declared_access != null) {
+                switch (try inference.declaredFunctionAccess(prototype)) {
+                    .failure => |message| try self.report(node.source, "invalid callback access contract: {s}", .{message}),
+                    .known => |accesses| {
+                        const summary = engine.summaryFor(target) orelse {
+                            try self.report(node.source, "cannot establish callback access bounds without an inferred body summary", .{});
+                            continue;
+                        };
+                        if (@import("contracts.zig").checkAccessBounds(.{ .outputs = &.{}, .bounded_access = true, .access_bounds = accesses }, summary)) |failure| {
+                            try self.report(node.source, "callback body violates its declared access bounds: {s}", .{failure.description()});
+                        }
+                    },
+                }
+            }
+            if (!self.graph.function(prototype).flags.is_isolated_callback) continue;
             try self.validateBorrowedExecutionLifetimes(engine, target, node.source);
             const summary = engine.summaries.get(target) orelse continue;
             for (summary.global_accesses) |access| {

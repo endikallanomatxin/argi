@@ -545,3 +545,21 @@ test "associated regions remain static requirements rather than type parameters"
     try std.testing.expectEqualStrings("region", tree.tokenTextFromSource(source, call.callee_token));
     try std.testing.expectEqual(@as(usize, 2), tree.structValueLiteral(call.input).?.fields.len);
 }
+
+test "callback signatures retain native access contract syntax" {
+    var tree = try parseTestSource("callback_access.rg",
+        \\Pure(.value: Int32) -> (.result: Int32): CFunctionPointer where { no_access() }
+        \\Unknown(.value: Int32) -> (.result: Int32): CFunctionPointer where {}
+    );
+    defer tree.deinit(std.testing.allocator);
+    for (tree.roots) |root| {
+        const declaration = tree.functionDeclaration(root).?;
+        try std.testing.expect(declaration.c_function_pointer);
+        try std.testing.expect(declaration.body == null);
+        try std.testing.expect(tree.codeBlock(declaration.safety_contract.?) != null);
+    }
+    const bounded = tree.functionDeclaration(tree.roots[0]).?;
+    try std.testing.expectEqual(@as(usize, 1), tree.codeBlock(bounded.safety_contract.?).?.statements.len);
+    const unknown = tree.functionDeclaration(tree.roots[1]).?;
+    try std.testing.expectEqual(@as(usize, 0), tree.codeBlock(unknown.safety_contract.?).?.statements.len);
+}

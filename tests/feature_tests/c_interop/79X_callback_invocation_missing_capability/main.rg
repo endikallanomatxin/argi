@@ -1,4 +1,4 @@
-Comparator(.left: CInt, .right: CInt) -> (.result: CInt): CFunctionPointer
+Comparator(.left: CInt, .right: CInt) -> (.result: CInt): CFunctionPointer where { no_access() }
 
 compare(.left: CInt, .right: CInt) -> (.result: CInt): CFunction := { result = left - right }
 

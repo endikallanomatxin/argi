@@ -1582,7 +1582,7 @@ test "compile-time entries retain nominal output signatures" {
 
 test "native access recipes survive canonical module caching without syntax" {
     const a = std.testing.allocator;
-    const source = "Pair: CStruct = (.first: Int32, .second: Int32)\nnative_read(.pair: &Pair) -> (.value: Int32): CFunction(.symbol = \"native_read\") where { reads(pair.first) }\n";
+    const source = "Pair: CStruct = (.first: Int32, .second: Int32)\nnative_read(.pair: &Pair) -> (.value: Int32): CFunction(.symbol = \"native_read\") where { reads(pair.first) }\nPure(.value: Int32) -> (.result: Int32): CFunctionPointer where { no_access() }\nUnbounded(.value: Int32) -> (.result: Int32): CFunctionPointer where {}\n";
     var tree = try parseSource(a, source, @enumFromInt(0));
     defer tree.deinit(a);
     var module = try module_semantizer.build(a, "native_bounds", &.{.{ .path = "native_bounds/main.rg", .tree = &tree, .source = source }});
@@ -1600,4 +1600,10 @@ test "native access recipes survive canonical module caching without syntax" {
     try std.testing.expectEqual(@as(u32, 0), bounds[0].input_index);
     try std.testing.expect(!bounds[0].write);
     try std.testing.expectEqualStrings("first", decoded.text(bounds[0].fields[0]));
+    try std.testing.expectEqual(@as(usize, 3), decoded.functions.items.len);
+    const callback = decoded.functions.items[1];
+    try std.testing.expect(callback.flags.is_c_function_pointer);
+    try std.testing.expectEqual(@as(usize, 0), callback.declared_access.?.len);
+    try std.testing.expect(decoded.functions.items[2].flags.is_c_function_pointer);
+    try std.testing.expect(decoded.functions.items[2].declared_access == null);
 }

@@ -611,3 +611,26 @@ This reduces the audited native surface; it does not grant access-region
 provenance to a returned address or close unknown-call authorization. Those
 remain prerequisites for general owner transfer. No runtime strategy or new
 compiler primitive is introduced by this consolidation.
+
+
+## Callback access contracts
+
+CFunctionPointer signatures now accept the existing native access-only where
+clauses. They reuse declared-access metadata, resolution, summary substitution
+and body-bound checking, without new runtime representation or safety vocabulary.
+The selected Argi callback body is checked against the destination signature
+before erasing its function identity. Calls use the prototype's published
+footprint, never the body that happened to construct one handle. Missing and
+empty clauses stay unknown, including when the callback is forwarded through
+ordinary functions or virtual operations. Imported callback values rely on their
+audited foreign signature and retain the existing FFI and lifetime restrictions.
+
+This affects parsing and semantics only. Tests cover pure scalar callbacks,
+global and transitive unknown effects, default unknown signatures and erased
+forwarding, alongside the existing native callback ABI tests.
+It does not certify cross-execution transfer, completion or native buffer identity.
+
+TODO: directly invoking callback parameters or borrowed callback fields inside
+implementation-owned anonymous operation bodies can fail materialization with
+NoMatchingGenericFunction. Ordinary helpers work and preserve the same effects;
+keep this separate callable-resolution diagnostic issue from access authorization.

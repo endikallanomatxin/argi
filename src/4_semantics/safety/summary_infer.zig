@@ -4676,7 +4676,6 @@ pub const Infer = struct {
             .struct_field_store => |write| try self.recordPointeeAccess(function, write.struct_ptr, .{ .field = write.field_index }, .write),
             .array_store => |write| try self.recordPointeeAccess(function, write.array_ptr, if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index, .write),
             .function_call => |call| {
-                if (call.callee_value != null) sink.unknown = true;
                 if (self.engine.summaryFor(call.callee)) |summary| {
                     try self.composeAccesses(function, summary, call.input, null);
                 } else sink.unknown = true;

@@ -1,6 +1,6 @@
-Narrow(.value: CSignedChar) -> (.result: CShort): CFunctionPointer
+Narrow(.value: CSignedChar) -> (.result: CShort): CFunctionPointer where { no_access() }
 
-Floating(.left: CDouble, .right: CFloat) -> (.result: CDouble): CFunctionPointer
+Floating(.left: CDouble, .right: CFloat) -> (.result: CDouble): CFunctionPointer where { no_access() }
 
 Notify(.value: CInt) -> (): CFunctionPointer
 

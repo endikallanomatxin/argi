@@ -2089,6 +2089,13 @@ pub const Syntaxer = struct {
                     }
                     self.skipNewLinesAndComments();
                     const options = if (self.tokenIs(.open_parenthesis)) syn.OptionalNodeIndex.init(try self.parseCollectionLiteral(true)) else syn.OptionalNodeIndex.none;
+                    self.skipNewLinesAndComments();
+                    const safety = if (self.currentIdentifierEquals("where")) blk: {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                        break :blk syn.OptionalNodeIndex.init(try self.parseSafetyContract());
+                    } else syn.OptionalNodeIndex.none;
+                    self.skipNewLinesAndComments();
                     if (self.tokenIs(.colon)) {
                         try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer declares a type, without a body", .{});
                         return SyntaxerError.ExpectedStructField;
@@ -2099,6 +2106,7 @@ pub const Syntaxer = struct {
                         .body = .none,
                         .c_options = options,
                         .c_abi = 1,
+                        .safety_contract = safety,
                     });
                 }
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
