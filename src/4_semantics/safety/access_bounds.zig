@@ -38,6 +38,46 @@ pub fn mappingProjections(a: std.mem.Allocator, graph: *const g.GlobalSemanticGr
     return projections.toOwnedSlice(a);
 }
 
+pub fn storageType(graph: *const g.GlobalSemanticGraph, storage: @import("place.zig").PlaceFor(g.GlobalBindingId)) ?g.GlobalTypeId {
+    if (@intFromEnum(storage.root) >= graph.bindings.items.len or graph.isBindingTypeUnresolved(storage.root)) return null;
+    var ty = graph.binding(storage.root).ty;
+    for (storage.projections) |projection| switch (projection) {
+        .field => |index| {
+            if (graph.semanticType(ty) == .pointer) ty = graph.semanticType(ty).pointer.child;
+            if (types.arrayElement(graph, ty)) |element| {
+                ty = element;
+                continue;
+            }
+            const fields = types.fields(graph, ty) orelse return null;
+            if (index >= fields.len) return null;
+            ty = graph.fields.items[fields.start + index].ty;
+        },
+        .variant => |index| {
+            const variants = types.variants(graph, ty) orelse return null;
+            if (index >= variants.len) return null;
+            ty = graph.variants.items[variants.start + index].payload_type orelse return null;
+        },
+        .static_index, .dynamic_index => ty = types.arrayElement(graph, ty) orelse return null,
+        .dereference => ty = if (graph.semanticType(ty) == .pointer) graph.semanticType(ty).pointer.child else return null,
+    };
+    return ty;
+}
+
+/// Distinct logical places need not occupy disjoint storage. In particular,
+/// union alternatives overlap even though their field identities stay distinct.
+pub fn storageMayOverlap(graph: *const g.GlobalSemanticGraph, left: @import("place.zig").PlaceFor(g.GlobalBindingId), right: @TypeOf(left)) bool {
+    if (left.mayOverlap(right)) return true;
+    if (left.root != right.root) return false;
+    const common = @min(left.projections.len, right.projections.len);
+    for (left.projections[0..common], right.projections[0..common], 0..) |a, b, index| {
+        if (a.eql(b)) continue;
+        if (a != .field or b != .field) return false;
+        const container = storageType(graph, .{ .root = left.root, .projections = left.projections[0..index] }) orelse return true;
+        return types.isCUnion(graph, container);
+    }
+    return false;
+}
+
 pub fn selectedType(graph: *const g.GlobalSemanticGraph, function: g.Function, path: facts.InputPath) !struct { ty: g.GlobalTypeId, external: bool, mutable: bool } {
     if (path.input_index >= function.input.len) return error.InvalidAccessRegion;
     var ty = graph.fields.items[function.input.start + path.input_index].ty;
@@ -73,7 +113,8 @@ pub fn selectedType(graph: *const g.GlobalSemanticGraph, function: g.Function, p
 }
 
 /// A reference-valued mapping denotes its referent; selecting it also reads
-/// the reference slot. It does not include further reachable reference targets.
+/// the reference slot. Virtual mappings denote only their erased receiver.
+/// Neither form includes further reachable references or named captured regions.
 pub fn region(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, function: g.Function, path: facts.InputPath, mode: facts.AccessMode) ![]const facts.InputAccess {
     const selected = try selectedType(graph, function, path);
     const ty = graph.semanticType(selected.ty);
@@ -83,6 +124,16 @@ pub fn region(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, functio
         if (selected.external) try accesses.append(a, .{ .target = path, .mode = .read });
         var target = path;
         target.projections = try std.mem.concat(a, Projection, &.{ path.projections, &.{.dereference} });
+        try accesses.append(a, .{ .target = target, .mode = mode });
+        return accesses.toOwnedSlice(a);
+    }
+    if (ty == .virtual) {
+        var accesses: std.ArrayList(facts.InputAccess) = .empty;
+        // Locating the handle reads its slot. The operation's authority belongs
+        // to the erased receiver, which can differ from that slot's storage.
+        if (selected.external) try accesses.append(a, .{ .target = path, .mode = .read });
+        var target = path;
+        target.storage_domain = receiver_domain;
         try accesses.append(a, .{ .target = target, .mode = mode });
         return accesses.toOwnedSlice(a);
     }
@@ -195,4 +246,34 @@ pub fn description(err: anyerror) []const u8 {
         error.InvalidAccessDomainReceiver => "access domains must select the participant receiver",
         else => "access domain has no valid concrete storage mapping",
     };
+}
+
+test "storage overlap respects union layout without merging field identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: schema.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 }, .layout = .c_union } },
+        .{ .structural = .{ .fields = .{ .start = 2, .len = 1 } } },
+    });
+    for ([_]g.GlobalTypeId{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(2) }) |ty|
+        try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = ty, .source = source });
+    for ([_]g.GlobalTypeId{ @enumFromInt(1), @enumFromInt(2), @enumFromInt(3) }) |ty|
+        try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = ty, .mutability = .variable });
+    const P = @import("place.zig").PlaceFor(g.GlobalBindingId);
+    const record_first: P = .{ .root = @enumFromInt(0), .projections = &.{.{ .field = 0 }} };
+    const record_second: P = .{ .root = @enumFromInt(0), .projections = &.{.{ .field = 1 }} };
+    const union_first: P = .{ .root = @enumFromInt(1), .projections = record_first.projections };
+    const union_second: P = .{ .root = @enumFromInt(1), .projections = record_second.projections };
+    try std.testing.expect(!storageMayOverlap(&graph, record_first, record_second));
+    try std.testing.expect(!union_first.eql(union_second));
+    try std.testing.expect(storageMayOverlap(&graph, union_first, union_second));
+    try std.testing.expect(storageMayOverlap(&graph, union_second, union_first));
+    try std.testing.expect(!storageMayOverlap(&graph, record_first, union_first));
+    try std.testing.expect(storageMayOverlap(&graph, .{ .root = @enumFromInt(2), .projections = &.{ .{ .field = 0 }, .{ .field = 0 } } }, .{ .root = @enumFromInt(2), .projections = &.{ .{ .field = 0 }, .{ .field = 1 } } }));
 }

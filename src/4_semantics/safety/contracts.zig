@@ -49,6 +49,16 @@ pub const Contract = struct {
     pub const Outcome = struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, effects: *const Contract };
 };
 
+pub fn accessFromDeclaration(allocator: std.mem.Allocator, bound: @import("../primitives/schema.zig").MethodSafetyContract.AccessBound) !facts.InputAccess {
+    if (bound.fields.len != 0) return error.UnresolvedAccessContractPath;
+    const projections = try allocator.alloc(@import("place.zig").Projection, bound.projections.len);
+    for (bound.projections, projections) |source, *target| target.* = switch (source) {
+        .field => |index| .{ .field = index },
+        .dereference => .dereference,
+    };
+    return .{ .target = .{ .input_index = bound.input_index, .projections = projections, .storage_domain = bound.domain_index }, .mode = if (bound.write) .write else .read };
+}
+
 pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) anyerror!Contract {
     if (declaration.general_conditions) {
         var common = declaration;
@@ -136,15 +146,8 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.completed_executions, completed) |input, *path| path.* = .{ .input_index = input };
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, completed, &conditional);
     const access_bounds = try allocator.alloc(facts.InputAccess, declaration.access_bounds.len);
-    for (declaration.access_bounds, access_bounds) |bound, *access| {
-        if (bound.fields.len != 0) return error.UnresolvedAccessContractPath;
-        const projections = try allocator.alloc(@import("place.zig").Projection, bound.projections.len);
-        for (bound.projections, projections) |source, *target| target.* = switch (source) {
-            .field => |index| .{ .field = index },
-            .dereference => .dereference,
-        };
-        access.* = .{ .target = .{ .input_index = bound.input_index, .projections = projections, .storage_domain = bound.domain_index }, .mode = if (bound.write) .write else .read };
-    }
+    for (declaration.access_bounds, access_bounds) |bound, *access| access.* = try accessFromDeclaration(allocator, bound);
+
     return .{ .bounded_access = declaration.bounded_access, .access_bounds = access_bounds, .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .completed_executions = completed, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
@@ -529,7 +532,7 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
     if (checkAccessBounds(contract, summary)) |failure| return failure;
     if (summary.storage_observation_conflicts.len != 0) return .{
         .kind = .unsupported_alias_obligation,
-        .input = summary.storage_observation_conflicts[0].consumed,
+        .input = summary.storage_observation_conflicts[0].incompatible,
     };
     if (contract.general_conditions) return checkGeneralContract(allocator, contract, summary);
     for (contract.relocations) |relocation| {
@@ -660,13 +663,16 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
     return checkGuardedRelations(allocator, contract.guarded_effects, summary);
 }
 
-fn checkAccessBounds(contract: Contract, summary: facts.SafetySummary) ?Failure {
+pub fn checkAccessBounds(contract: Contract, summary: facts.SafetySummary) ?Failure {
     if (!contract.bounded_access) return null;
     if (summary.unknown_access or summary.global_accesses.len != 0) return .{ .kind = .unknown_access };
     for (summary.input_accesses) |access| {
         var permitted = false;
         for (contract.access_bounds) |bound| {
-            if (bound.target.input_index != access.target.input_index or access.target.storage_domain != null) continue;
+            if (bound.target.input_index != access.target.input_index or bound.target.storage_domain != access.target.storage_domain) continue;
+            // Erased region identities are selected after the complete handle
+            // path. A bound on one handle cannot cover a nested handle's region.
+            if (access.target.storage_domain != null and bound.target.projections.len != access.target.projections.len) continue;
             if (access.mode == .write and bound.mode != .write) continue;
             if (bound.target.projections.len > access.target.projections.len) continue;
             var prefix = true;
@@ -1131,7 +1137,7 @@ test "safety contracts do not turn invalidation into ownership consumption" {
     for (states) |state| try std.testing.expectEqual(.unsupported_post_state, (try check(std.testing.allocator, contract, .{ .input_post_states = &.{state} })).?.kind);
     try std.testing.expectEqual(.unsupported_capability_effect, (try check(std.testing.allocator, contract, .{ .storage_capability_uses = &.{.{ .target = path }} })).?.kind);
     try std.testing.expectEqual(.unsupported_alias_obligation, (try check(std.testing.allocator, contract, .{
-        .storage_observation_conflicts = &.{.{ .consumed = path, .observed = .{ .input_index = 1 } }},
+        .storage_observation_conflicts = &.{.{ .incompatible = path, .observed = .{ .input_index = 1 } }},
     })).?.kind);
 }
 
@@ -1693,7 +1699,7 @@ test "selected consumption only permits owned storage empties on that outcome" {
 test "static contract checks preserve guarantees while callers retain alias obligations" {
     const path = facts.InputPath{ .input_index = 0 };
     const contract: Contract = .{ .outputs = &.{} };
-    const summary: facts.SafetySummary = .{ .outputs = &.{}, .storage_observation_conflicts = &.{.{ .consumed = path, .observed = .{ .input_index = 1 } }} };
+    const summary: facts.SafetySummary = .{ .outputs = &.{}, .storage_observation_conflicts = &.{.{ .incompatible = path, .observed = .{ .input_index = 1 } }} };
     try std.testing.expect((try checkStatic(std.testing.allocator, contract, summary)) == null);
     try std.testing.expectEqual(.unsupported_alias_obligation, (try check(std.testing.allocator, contract, summary)).?.kind);
     var effectful = summary;
@@ -1865,4 +1871,18 @@ test "access bounds cover direct subobjects without following stored references"
     const merged = try mergeContracts(a, read, .{ .outputs = &.{} });
     try std.testing.expect(merged.bounded_access);
     try std.testing.expectEqual(@as(usize, 1), merged.access_bounds.len);
+}
+
+test "erased access bounds require the same region and complete handle path" {
+    const selected: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 1 }}, .storage_domain = 7 };
+    const bounded: Contract = .{ .outputs = &.{}, .bounded_access = true, .access_bounds = &.{.{ .target = selected, .mode = .write }} };
+    try std.testing.expect(checkAccessBounds(bounded, .{ .input_accesses = &.{.{ .target = selected, .mode = .read }} }) == null);
+    for ([_]facts.InputPath{
+        .{ .input_index = 0, .projections = selected.projections },
+        .{ .input_index = 0, .projections = selected.projections, .storage_domain = 8 },
+        .{ .input_index = 0, .projections = &.{ .{ .field = 1 }, .{ .field = 2 } }, .storage_domain = 7 },
+        .{ .input_index = 0, .projections = &.{.{ .field = 2 }}, .storage_domain = 7 },
+    }) |other| {
+        try std.testing.expectEqual(Failure.Kind.undeclared_access, checkAccessBounds(bounded, .{ .input_accesses = &.{.{ .target = other, .mode = .read }} }).?.kind);
+    }
 }

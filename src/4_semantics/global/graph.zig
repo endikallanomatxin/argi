@@ -562,6 +562,9 @@ pub const GlobalSemanticGraph = struct {
                 else => false,
             }) try @field(result, field.name).appendSlice(allocator, @field(self, field.name).items);
         }
+        for (result.functions.items) |*record| if (record.declared_access) |bounds| {
+            record.declared_access = try primitives.copyAccessBounds(try result.safetyAllocator(allocator), bounds);
+        };
         for (result.virtual_registries.items) |*registry| if (registry.safety_contract) |*contract| {
             contract.outcomes = try copySafetyOutcomes(try result.safetyAllocator(allocator), contract.outcomes);
         };
@@ -1864,6 +1867,9 @@ fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
     });
     try source.types.append(a, .{ .builtin = .Int32 });
     try source.virtual_registries.append(a, .{ .receiver_input_index = 0, .safety_contract = .{ .output_count = 1, .outcomes = outcomes, .source = location } });
+    const access = try arena.alloc(primitives.MethodSafetyContract.AccessBound, 1);
+    access[0] = .{ .input_index = 0, .fields = try arena.dupe(primitives.StringRange, &.{.{ .start = 3, .len = 4 }}) };
+    try source.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .declared_access = access });
     var transaction = source.beginTransaction(a);
     defer transaction.deinit();
     try source.completeVirtualSignature(a, @enumFromInt(0), .{ .output_count = 1, .outcomes = outcomes, .source = location }, 1, @enumFromInt(0));
@@ -1871,6 +1877,7 @@ fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
     var copy = try source.clone(allocator);
     defer copy.deinit(allocator);
     source.deinit(a);
+    try std.testing.expectEqual(@as(u32, 3), copy.functions.items[0].declared_access.?[0].fields[0].start);
     try std.testing.expectEqual(@as(u32, 3), copy.contract_safety_conformances.items[0].contract.outcomes[0].parent_variants[0]);
     try std.testing.expectEqual(@as(u32, 3), copy.construction.virtual_completions.items[0].previous.safety_contract.?.outcomes[0].parent_variants[0]);
     try std.testing.expectEqual(@as(u32, 5), copy.contract_safety_conformances.items[0].domains[0].paths[0].fields[1]);

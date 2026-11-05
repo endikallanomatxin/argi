@@ -267,6 +267,7 @@ pub const FunctionDeclaration = struct {
     c_function_pointer: bool = false,
     c_options: ?NodeIndex = null,
     c_abi: bool = false,
+    safety_contract: ?NodeIndex = null,
 };
 pub const TestDeclaration = struct { function: FunctionDeclaration };
 pub const FunctionName = union(enum) {
@@ -570,6 +571,7 @@ pub const FileSyntaxTree = struct {
             .is_once = extra.is_once != 0,
             .c_options = extra.c_options.unwrap(),
             .c_abi = extra.c_abi != 0,
+            .safety_contract = extra.safety_contract.unwrap(),
             .c_function_pointer = tree.tag(node) == .c_function_pointer_declaration,
         };
     }

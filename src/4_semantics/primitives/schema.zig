@@ -237,12 +237,10 @@ pub const MethodSafetyContract = struct {
     /// Frees independently allocated declaration metadata. Arena-backed GlobalSG
     /// proofs are released with their arena instead of through this method.
     pub fn deinit(self: MethodSafetyContract, allocator: std.mem.Allocator) void {
-        for (self.access_bounds) |bound| {
-            allocator.free(bound.fields);
-            allocator.free(bound.projections);
-        }
+        freeAccessBounds(allocator, self.access_bounds);
         for (self.outcomes) |outcome| outcome.deinit(allocator);
         inline for (@typeInfo(MethodSafetyContract).@"struct".fields) |field| {
+            if (comptime std.mem.eql(u8, field.name, "access_bounds")) continue;
             if (@typeInfo(field.type) == .pointer) allocator.free(@field(self, field.name));
         }
     }
@@ -428,6 +426,46 @@ pub fn GenericArgument(comptime Ids: type) type {
     };
 }
 
+pub fn freeAccessBounds(allocator: std.mem.Allocator, bounds: []const MethodSafetyContract.AccessBound) void {
+    for (bounds) |bound| {
+        allocator.free(bound.fields);
+        allocator.free(bound.projections);
+    }
+    allocator.free(bounds);
+}
+
+pub fn copyAccessBounds(allocator: std.mem.Allocator, bounds: []const MethodSafetyContract.AccessBound) ![]const MethodSafetyContract.AccessBound {
+    const copy = try allocator.dupe(MethodSafetyContract.AccessBound, bounds);
+    var initialized: usize = 0;
+    errdefer {
+        for (copy[0..initialized]) |bound| {
+            allocator.free(bound.fields);
+            allocator.free(bound.projections);
+        }
+        allocator.free(copy);
+    }
+    for (copy) |*bound| {
+        const fields = try allocator.dupe(StringRange, bound.fields);
+        errdefer allocator.free(fields);
+        bound.projections = try allocator.dupe(MethodSafetyContract.AccessProjection, bound.projections);
+        bound.fields = fields;
+        initialized += 1;
+    }
+    return copy;
+}
+
+pub fn accessBoundsEql(left: ?[]const MethodSafetyContract.AccessBound, right: ?[]const MethodSafetyContract.AccessBound) bool {
+    const a = left orelse return right == null;
+    const b = right orelse return false;
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (x.input_index != y.input_index or x.write != y.write or x.domain_index != y.domain_index or x.fields.len != y.fields.len or x.projections.len != y.projections.len) return false;
+        for (x.fields, y.fields) |field, other| if (!std.meta.eql(field, other)) return false;
+        for (x.projections, y.projections) |projection, other| if (!std.meta.eql(projection, other)) return false;
+    }
+    return true;
+}
+
 pub fn Function(comptime Ids: type) type {
     return struct {
         declaration: Ids.DeclId,
@@ -440,6 +478,9 @@ pub fn Function(comptime Ids: type) type {
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         inferred_error_reasons: ?Ids.TypeId = null,
         foreign_symbol: ?StringRange = null,
+        /// Null retains unknown access; an empty declared list means no_access.
+        /// Names are immutable declaration recipes, resolved against the signature.
+        declared_access: ?[]const MethodSafetyContract.AccessBound = null,
         safety_primitive: SafetyPrimitive = .none,
         flags: FunctionFlags = .{},
     };

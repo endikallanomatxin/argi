@@ -93,6 +93,7 @@ pub const Store = struct {
         errdefer proof.arena.deinit();
         var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = proof.arena.allocator(), .scratch = engine.allocator };
         defer copy.deinit();
+        proof.identity = try copy.value(Identity, proof.identity);
         proof.dependencies = try copy.value([]const Dependency, dependencies.items);
         proof.virtuals = try copy.value([]const VirtualDependency, virtuals.items);
         proof.annotations = try annotations.clone(proof.arena.allocator());
@@ -167,6 +168,16 @@ fn publicationFailures(allocator: std.mem.Allocator) !void {
     defer merged.deinit(allocator);
     try merged.merge(allocator, &proof.annotations);
     try std.testing.expect(merged.initializes(@enumFromInt(7)));
+    // A newly discovered concurrent alias precondition invalidates earlier
+    // caller proofs even when function bodies and lifetimes are unchanged.
+    engine.summaries.getPtr(@enumFromInt(1)).?.* = .{ .storage_observation_conflicts = &.{.{
+        .incompatible = .{ .input_index = 0 },
+        .observed = .{ .input_index = 1 },
+        .kind = .concurrent_access,
+    }} };
+    try std.testing.expect(store.lookup(@enumFromInt(0), &engine) == null);
+    engine.summaries.getPtr(@enumFromInt(1)).?.* = .{};
+    try std.testing.expect(store.lookup(@enumFromInt(0), &engine) != null);
     // A callee's converged effects are hypotheses even when body IDs match.
     engine.summaries.getPtr(@enumFromInt(1)).?.* = .{ .required_live_inputs = &.{.{ .input_index = 0 }} };
     try std.testing.expect(store.lookup(@enumFromInt(0), &engine) == null);

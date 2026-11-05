@@ -59,6 +59,55 @@ pub fn lowerDiagnosed(
     return ctx.lowerDeclarations();
 }
 
+/// Reuse the contract grammar for audited native declarations and checked C bodies.
+/// Access clauses do not grant lifetime, ownership or synchronization evidence.
+pub fn lowerNativeAccess(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph, files: []const graph_mod.FileInput, file_index: u32, declaration: syn.FunctionDeclaration, diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics) !?[]const primitives.MethodSafetyContract.AccessBound {
+    const node = declaration.safety_contract orelse return null;
+    const tree = files[file_index].tree;
+    const source = files[file_index].source;
+    var ctx = Context{
+        .allocator = allocator,
+        .graph = graph,
+        .files = files,
+        .writer = writer_mod.Writer.init(allocator, graph),
+        .parameters = std.array_list.Managed(ParameterBinding).init(allocator),
+        .bindings = std.array_list.Managed(BindingName).init(allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+        .diagnostics = diagnostics,
+    };
+    defer ctx.parameters.deinit();
+    defer ctx.bindings.deinit();
+    const block = tree.codeBlock(node) orelse {
+        try ctx.contractError(node, "native access contracts require a clause block");
+        unreachable;
+    };
+    for (block.statements) |statement| {
+        const clause = if (tree.tag(statement) == .expression_statement) tree.data(statement).node else statement;
+        const call = tree.functionCall(clause) orelse {
+            try ctx.contractError(statement, "native access contracts support only reads, writes and no_access");
+            unreachable;
+        };
+        const name = tree.tokenTextFromSource(source, call.callee_token);
+        if (!std.mem.eql(u8, name, "reads") and !std.mem.eql(u8, name, "writes") and !std.mem.eql(u8, name, "no_access")) {
+            try ctx.contractError(statement, "native access contracts support only reads, writes and no_access");
+            unreachable;
+        }
+    }
+    var contract = (try ctx.lowerMethodSafetyContract(.{
+        .name_token = declaration.name_token,
+        .input = declaration.input,
+        .output = declaration.output,
+        .safety_contract = node,
+    }, &.{})).?;
+    defer contract.deinit(allocator);
+    if (!contract.bounded_access) return null;
+    const bounds = contract.access_bounds;
+    contract.access_bounds = &.{};
+    return bounds;
+}
+
 pub const EntryCaptureSource = struct {
     pub const Value = union(enum) { value: entities.ModuleNodeId, owner: ?entities.ModuleFunctionId };
     context: *anyopaque,

@@ -76,6 +76,7 @@ pub const Infer = struct {
     observation_conflict_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
     extra_capture_observations: std.array_list.Managed(facts.InputPath),
     extra_capture_conflicts: std.array_list.Managed(facts.StorageObservationConflict),
+    body_alias_conflicts: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, []const facts.StorageObservationConflict) = .empty,
     collecting_capture_sources: bool = false,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
@@ -155,6 +156,38 @@ pub const Infer = struct {
         self.domain_invalidations.deinit();
         self.extra_capture_observations.deinit();
         self.extra_capture_conflicts.deinit();
+        self.body_alias_conflicts.deinit(self.allocator);
+    }
+
+    pub const DeclaredAccess = union(enum) { known: []const facts.InputAccess, failure: []const u8 };
+
+    pub fn declaredFunctionAccess(self: *Infer, id: graph_mod.GlobalFunctionId) !DeclaredAccess {
+        const function = self.graph.function(id);
+        const bounds = function.declared_access orelse return error.MissingDeclaredAccess;
+        const module = self.graph.moduleForDeclaration(function.declaration) orelse return .{ .failure = "native access contract has no owning module" };
+        var accesses: std.ArrayList(facts.InputAccess) = .empty;
+        for (bounds) |bound| {
+            const resolved = try @import("../global/access_contracts.zig").resolveGlobal(self.allocator, self.graph, @intFromEnum(module), function.input, bound);
+            switch (resolved) {
+                .failure => |message| return .{ .failure = message },
+                .bound => |selected| {
+                    const access = try contracts.accessFromDeclaration(self.allocator, selected);
+                    const path = access.target;
+                    if (function.body == null) for (path.projections) |projection| {
+                        if (projection == .dereference)
+                            return .{ .failure = "native access bounds cannot follow stored references; pass a direct reference instead" };
+                    };
+                    if (selected.write) {
+                        const ty = (try @import("access_bounds.zig").selectedType(self.graph, function, path)).ty;
+                        const kind = self.graph.semanticType(ty);
+                        if (self.typeContainsPointer(ty) or (kind == .builtin and kind.builtin == .Any))
+                            return .{ .failure = "native write bounds require reference-free storage; they cannot establish new reference provenance" };
+                    }
+                    try accesses.append(self.allocator, access);
+                },
+            }
+        }
+        return .{ .known = try accesses.toOwnedSlice(self.allocator) };
     }
 
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
@@ -187,13 +220,43 @@ pub const Infer = struct {
                 }
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
             }
-            if (function.body == null or function.safety_primitive != .none)
-                self.engine.summaries.getPtr(id).?.unknown_access = true;
+            if (function.body == null or function.safety_primitive != .none) {
+                const summary = self.engine.summaries.getPtr(id).?;
+                summary.unknown_access = true;
+                summary.input_accesses = &.{};
+                summary.required_live_inputs = &.{};
+            }
+            if (function.safety_primitive != .none) {
+                if (primitive_transfer.memoryAccesses(function.safety_primitive)) |accesses| {
+                    const summary = self.engine.summaries.getPtr(id).?;
+                    const inputs = try self.allocator.alloc(facts.InputAccess, accesses.len);
+                    for (accesses, inputs) |access, *target| target.* = .{
+                        .target = .{ .input_index = access.input },
+                        .mode = if (access.write) .write else .read,
+                    };
+                    summary.input_accesses = inputs;
+                    summary.unknown_access = false;
+                }
+            }
+            if (function.body == null and function.declared_access != null) {
+                switch (try self.declaredFunctionAccess(id)) {
+                    .known => |accesses| {
+                        const summary = self.engine.summaries.getPtr(id).?;
+                        summary.input_accesses = accesses;
+                        summary.unknown_access = false;
+                        var required = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                        for (accesses) |access| try appendInputPath(&required, .{ .input_index = access.target.input_index });
+                        summary.required_live_inputs = try required.toOwnedSlice();
+                    },
+                    .failure => {}, // Remains unknown; Safety reports the declaration.
+                }
+            }
             if (function.flags.has_foreign_capability) {
                 // Authorization must remain live even for imports whose other
                 // storage effects are unknown. Callers compose this requirement
                 // through the same summary dependency paths as dereferences.
-                self.engine.summaries.getPtr(id).?.required_live_inputs = try self.allocator.dupe(facts.InputPath, &.{.{ .input_index = function.input.len - 1, .projections = &.{} }});
+                const summary = self.engine.summaries.getPtr(id).?;
+                summary.required_live_inputs = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.required_live_inputs, &.{.{ .input_index = function.input.len - 1 }} });
             }
             if (function.safety_primitive == .trusted_opaque_drop) {
                 self.engine.summaries.getPtr(id).?.required_opaque_inputs = try self.oneInputPath(0, &.{});
@@ -225,6 +288,10 @@ pub const Infer = struct {
         defer self.allocator.free(order);
         if (self.cache) |cache| self.cache_reused = try cache.restore(self.engine, &self.requested_selectors);
         for (order) |function| if (!self.cache_reused.contains(function)) try self.engine.seed(&.{function});
+        try self.resumeInference();
+    }
+
+    pub fn resumeInference(self: *Infer) !void {
         while (self.engine.nextDirty()) |function| {
             try self.cancellation.check();
             _ = self.cache_reused.remove(function);
@@ -237,6 +304,41 @@ pub const Infer = struct {
             try self.engine.endInference();
             if (try self.engine.updateSummary(function, next)) self.summary_changes += 1;
         }
+    }
+
+    pub fn addBodyAliasConflicts(self: *Infer, function: graph_mod.GlobalFunctionId, conflicts: []const facts.StorageObservationConflict) !void {
+        if (conflicts.len == 0) return;
+        const stored = try self.storage_allocator.dupe(facts.StorageObservationConflict, conflicts);
+        try self.body_alias_conflicts.put(self.allocator, function, stored);
+        const summary = self.engine.summaries.get(function) orelse return error.MissingSafetySummary;
+        const next = try self.withAliasConflicts(summary, stored, self.storage_allocator);
+        if (try self.engine.updateSummary(function, next)) {
+            _ = self.cache_reused.remove(function);
+            self.summary_changes += 1;
+        }
+    }
+
+    fn withAliasConflicts(self: *Infer, summary: facts.SafetySummary, conflicts: []const facts.StorageObservationConflict, allocator: std.mem.Allocator) anyerror!facts.SafetySummary {
+        if (conflicts.len == 0) return summary;
+        var result = summary;
+        var joined: std.ArrayList(facts.StorageObservationConflict) = .empty;
+        try joined.appendSlice(allocator, summary.storage_observation_conflicts);
+        for (conflicts) |conflict| {
+            const found = for (joined.items) |previous| {
+                if (previous.kind == conflict.kind and previous.captures_reachable == conflict.captures_reachable and
+                    self.inputPathEqual(previous.incompatible, conflict.incompatible) and self.inputPathEqual(previous.observed, conflict.observed)) break true;
+            } else false;
+            if (!found) try joined.append(allocator, conflict);
+        }
+        result.storage_observation_conflicts = try joined.toOwnedSlice(allocator);
+        const guards = try allocator.dupe(facts.GuardedSafetyEffects, summary.guarded_effects);
+        for (guards) |*guard| {
+            const effects = try allocator.create(facts.SafetySummary);
+            effects.* = try self.withAliasConflicts(guard.effects.*, conflicts, allocator);
+            guard.effects = effects;
+        }
+        result.guarded_effects = guards;
+        return result;
     }
 
     pub fn virtualSummary(
@@ -808,6 +910,7 @@ pub const Infer = struct {
         defer observations.deinit();
         var observation_conflicts = std.array_list.Managed(facts.StorageObservationConflict).init(self.allocator);
         defer observation_conflicts.deinit();
+        if (self.body_alias_conflicts.get(function_id)) |conflicts| try observation_conflicts.appendSlice(conflicts);
         self.observation_sink = &observations;
         self.observation_conflict_sink = &observation_conflicts;
         defer self.observation_sink = null;
@@ -1049,6 +1152,7 @@ pub const Infer = struct {
         summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
         if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
         try self.mergeCaptureObligations(&summary);
+        if (self.body_alias_conflicts.get(function_id)) |body_conflicts| summary = try self.withAliasConflicts(summary, body_conflicts, self.allocator);
         return summary;
     }
 
@@ -2472,7 +2576,7 @@ pub const Infer = struct {
     fn recordStorageObservationConflict(self: *Infer, conflict: facts.StorageObservationConflict) !void {
         const sink = self.observation_conflict_sink orelse return;
         for (sink.items) |previous| {
-            if (previous.captures_reachable == conflict.captures_reachable and self.inputPathEqual(previous.consumed, conflict.consumed) and self.inputPathEqual(previous.observed, conflict.observed)) return;
+            if (previous.kind == conflict.kind and previous.captures_reachable == conflict.captures_reachable and self.inputPathEqual(previous.incompatible, conflict.incompatible) and self.inputPathEqual(previous.observed, conflict.observed)) return;
         }
         try sink.append(conflict);
     }
@@ -2485,7 +2589,7 @@ pub const Infer = struct {
             // Distinct reference leaves can alias even inside one Args input.
             if (sameInputStorageAccess(state.target, path)) continue;
             if (!state.ends_previous_roots and !state.refreshes_storage_generation and state.initializedness == .initialized) continue;
-            try self.recordStorageObservationConflict(.{ .consumed = state.target, .observed = path });
+            try self.recordStorageObservationConflict(.{ .incompatible = state.target, .observed = path });
         }
     }
 
@@ -2939,9 +3043,9 @@ pub const Infer = struct {
                     try self.recordInputStorageObservation(function_id, observed, states.items);
             }
             for (summary.storage_observation_conflicts) |conflict| {
-                const consumed = try self.substituteRequiredInputPath(function_id, conflict.consumed, arguments, override);
+                const consumed = try self.substituteRequiredInputPath(function_id, conflict.incompatible, arguments, override);
                 const observed = try self.substituteRequiredInputPath(function_id, conflict.observed, arguments, override);
-                for (consumed) |left| for (observed) |right| try self.recordStorageObservationConflict(.{ .consumed = left, .observed = right, .captures_reachable = conflict.captures_reachable });
+                for (consumed) |left| for (observed) |right| try self.recordStorageObservationConflict(.{ .incompatible = left, .observed = right, .kind = conflict.kind, .captures_reachable = conflict.captures_reachable });
             }
         }
         for (summary.invalidated_domains) |domain| {
@@ -4607,8 +4711,12 @@ pub const Infer = struct {
     }
 
     fn recordPointeeAccess(self: *Infer, function: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId, projection: ?facts.Projection, mode: facts.AccessMode) !void {
+        return self.recordPointeeAccessPath(function, pointer, if (projection) |child| &.{child} else &.{}, mode);
+    }
+
+    fn recordPointeeAccessPath(self: *Infer, function: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId, projections: []const facts.Projection, mode: facts.AccessMode) anyerror!void {
         var paths = try self.inferPointeePaths(function, pointer);
-        if (projection) |child| paths = try self.projectInputPaths(paths, child);
+        for (projections) |child| paths = try self.projectInputPaths(paths, child);
         const signature = self.graph.function(function);
         for (paths) |path| {
             if (path.input_index >= signature.input.len) continue;
@@ -4621,16 +4729,32 @@ pub const Infer = struct {
         // Local addresses do not escape into the caller's effect set. Global
         // addresses do, including aliases whose initializers retain the address.
         const targets = try self.localAddressTargets(pointer);
-        for (targets) |target| try self.recordAddressedGlobal(target, mode);
+        for (targets) |target| try self.recordAddressedAccess(function, target, projections, mode);
         if (paths.len == 0 and targets.len == 0) self.access_sink.?.unknown = true;
     }
 
-    fn recordAddressedGlobal(self: *Infer, node: graph_mod.GlobalNodeId, mode: facts.AccessMode) anyerror!void {
+    // Preserve the complete selected subobject when an addressed expression
+    // reaches a caller referent. Only module effects collapse to whole bindings.
+    fn recordAddressedAccess(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, projections: []const facts.Projection, mode: facts.AccessMode) anyerror!void {
         switch (self.graph.node(node).content) {
             .binding_use => |binding| try self.recordGlobalAccess(binding, mode),
-            .struct_field_access => |field| try self.recordAddressedGlobal(field.value, mode),
-            .choice_payload_access => |field| try self.recordAddressedGlobal(field.value, mode),
-            .dereference, .array_index => self.access_sink.?.unknown = true,
+            .struct_field_access => |field| try self.recordAddressedAccess(function, field.value, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.{ .field = field.field_index }}, projections }), mode),
+            .choice_payload_access => |field| {
+                const ty = self.graph.node(field.value).ty orelse {
+                    self.access_sink.?.unknown = true;
+                    return;
+                };
+                const index = self.variantIndex(ty, field.variant) orelse {
+                    self.access_sink.?.unknown = true;
+                    return;
+                };
+                try self.recordAddressedAccess(function, field.value, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.{ .variant = index }}, projections }), mode);
+            },
+            .dereference => |read| try self.recordPointeeAccessPath(function, read.pointer, projections, mode),
+            .array_index => |read| {
+                const index: facts.Projection = if (self.staticIndex(read.index)) |index| .{ .static_index = index } else .dynamic_index;
+                try self.recordPointeeAccessPath(function, read.array_ptr, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{index}, projections }), mode);
+            },
             else => {},
         }
     }
@@ -4681,7 +4805,7 @@ pub const Infer = struct {
             }
             const argument = arguments[access.target.input_index].value;
             const targets = try self.localAddressTargets(argument);
-            for (targets) |target| try self.recordAddressedGlobal(target, access.mode);
+            for (targets) |target| try self.recordAddressedAccess(function, target, &.{}, access.mode);
             // By-value local copies can contain references whose targets are
             // unknown here. Preserve uncertainty instead of treating them as
             // private merely because their lifetime has no input dependency.
@@ -5297,7 +5421,7 @@ pub const Infer = struct {
         try conflicts.appendSlice(summary.storage_observation_conflicts);
         for (self.extra_capture_conflicts.items) |conflict| {
             var found = false;
-            for (conflicts.items) |existing| if (existing.captures_reachable == conflict.captures_reachable and self.inputPathEqual(existing.consumed, conflict.consumed) and self.inputPathEqual(existing.observed, conflict.observed)) {
+            for (conflicts.items) |existing| if (existing.kind == conflict.kind and existing.captures_reachable == conflict.captures_reachable and self.inputPathEqual(existing.incompatible, conflict.incompatible) and self.inputPathEqual(existing.observed, conflict.observed)) {
                 found = true;
                 break;
             };
@@ -5317,8 +5441,8 @@ pub const Infer = struct {
     }
 
     fn recordCaptureWriteConflict(self: *Infer, observed: facts.InputPath, written: facts.InputPath) !void {
-        const conflict: facts.StorageObservationConflict = .{ .consumed = written, .observed = observed, .captures_reachable = true };
-        for (self.extra_capture_conflicts.items) |existing| if (existing.captures_reachable and self.inputPathEqual(existing.consumed, written) and self.inputPathEqual(existing.observed, observed)) return;
+        const conflict: facts.StorageObservationConflict = .{ .incompatible = written, .observed = observed, .captures_reachable = true };
+        for (self.extra_capture_conflicts.items) |existing| if (existing.captures_reachable and self.inputPathEqual(existing.incompatible, written) and self.inputPathEqual(existing.observed, observed)) return;
         try self.extra_capture_conflicts.append(conflict);
     }
 
@@ -7343,7 +7467,7 @@ test "storage observation conflicts preserve order and ended generations after r
     var post = facts.PlacePostState{ .target = consumed, .initializedness = .deinitialized, .ends_previous_roots = true };
     try infer.recordStorageObservation(observed, &.{post});
     try std.testing.expectEqual(@as(usize, 1), conflicts.items.len);
-    try std.testing.expect(infer.inputPathEqual(consumed, conflicts.items[0].consumed));
+    try std.testing.expect(infer.inputPathEqual(consumed, conflicts.items[0].incompatible));
     try std.testing.expect(infer.inputPathEqual(observed, conflicts.items[0].observed));
     post.initializedness = .initialized;
     post.initialization = .definite;
@@ -8053,4 +8177,30 @@ test "opaque retention preserves receipts and prevents false completion" {
     );
     try std.testing.expectEqual(@as(usize, 1), completions.len);
     try std.testing.expect(summaries.inputPathEql(unrelated, completions[0]));
+}
+
+test "temporal alias preconditions survive guarded summary selection" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const branch: facts.SafetySummary = .{};
+    const initial: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = .{}, .effects = &branch }} };
+    const pair: facts.StorageObservationConflict = .{
+        .incompatible = .{ .input_index = 0 },
+        .observed = .{ .input_index = 1, .projections = &.{.{ .field = 2 }} },
+        .kind = .concurrent_access,
+    };
+    const bounded = try infer.withAliasConflicts(initial, &.{pair}, a);
+    try std.testing.expectEqual(@as(usize, 1), bounded.storage_observation_conflicts.len);
+    const guarded = bounded.guarded_effects[0].effects.storage_observation_conflicts;
+    try std.testing.expectEqual(@as(usize, 1), guarded.len);
+    try std.testing.expectEqual(pair.kind, guarded[0].kind);
+    try std.testing.expect(summaries.inputPathEql(pair.observed, guarded[0].observed));
+    try std.testing.expectEqual(@as(usize, 0), initial.guarded_effects[0].effects.storage_observation_conflicts.len);
 }

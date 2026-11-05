@@ -168,7 +168,17 @@ feature first.
 
 - Foreign imports (`CFunction` and `ExternFunction`) have a checked logical
   `.ffi` input of the bundled core `ForeignFunctionInterface` type. Codegen
-  excludes that input from the C ABI. Keep capability dependencies in ordinary
+  excludes that input from the C ABI. Native declarations can state access-only
+  where clauses, reusing reads/writes/no_access. Imports are audited assumptions;
+  Argi C bodies must prove the bound. Missing/empty clauses stay unknown. Resolve
+  recipes against completed input types and check direct calls as well as
+  summaries. Bounds retain referent liveness through wrappers. Imports currently
+  require direct reference regions or structural subfields, rejecting traversal
+  through stored references. Declared writes cannot clobber reference-bearing or
+  erased storage.
+  Preserve declaration metadata through relocation, cloning, caching and proof
+  keys; it grants no ownership, initialization, provenance or execution guarantee.
+  Keep capability dependencies in ordinary
   call resolution and safety summaries; C-ABI bodies cannot grow implicit
   capability parameters. Pure bounded byte copies use Argi view operations,
   while direct calls to libc `memcpy` still require `ffi`.
@@ -349,12 +359,41 @@ feature first.
   observers establish permission to transfer Argi values/references across threads.
   Native concurrent probes must join all workers before releasing their cells.
 
+- Storage overlap must consult the container layout: CUnion alternatives overlap
+  even when their logical field identities differ. Preserve distinct Places and
+  cleanup identities; use the shared typed overlap query for authority and alias
+  checks rather than assuming all sibling fields are disjoint.
+
+- Distinct symbolic input identities never prove disjoint concurrent access.
+  Preserve entry-relative reference-leaf paths, including copied record fields
+  and projected pointees. The temporal body visitor derives conditional alias
+  obligations for execution-producing bodies; the summary fixed point propagates
+  them before final body checks, virtual conformance checks or cache publication.
+  They must survive guarded summary selection and cannot disappear at erasure.
+  The collection pass publishes neither body proofs nor codegen annotations.
+
+- A mapped Virtual access region denotes its erased receiver, separately from
+  reading its handle slot. Contract checking requires the same region identity
+  and complete handle path. It grants no access to sibling handles or additional
+  named regions captured by the delegated virtual. Preserve this distinction
+  through factory summaries and caller-side authorization.
+
+- Primitive memory footprints live in the shared primitive registry, separately
+  from ownership transitions. Direct calls and inferred wrappers must preserve
+  their access requirements. Metadata-only transitions do not dereference their
+  anchors; moves require authority over affected slots. Unknown raw-address and
+  latent cleanup effects must not become empty access sets.
+
 - Access effects in SafetySummary are independent of lifetime requirements and
   final post-values. Preserve read/write effects through ordinary calls and
   selected structural cleanup, including earlier reference targets after alias
   reassignment. Unknown foreign/virtual effects and unresolved alias flow must
   remain unknown rather than become an empty effect set. Summary equality and
-  cached publications include this dimension. Contract reads/writes/no_access
+  cached publications include this dimension. Check a call's may-access effects
+  against entry authority before applying its completion postconditions; final
+  completion never retroactively authorizes an earlier access. Without ordered
+  evidence, helpers combining completion and conflicting access stay rejected.
+  Contract reads/writes/no_access
   clauses opt into checked bounds on direct reference storage and subobjects;
   stored reference targets require explicit field paths on known input types.
   Resolve these paths before erasure into canonical summary projections and check

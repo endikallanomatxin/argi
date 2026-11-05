@@ -342,6 +342,13 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
 fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticGraph, module: *const module_sg.ModuleSemanticGraph, o: Offsets) !void {
     for (module.functions.items, 0..) |_, index| {
         const value = try module_views.functionView(module, @enumFromInt(@as(u32, @intCast(index))));
+        const declared_access = if (value.declared_access) |bounds| blk: {
+            const copied = try primitives.copyAccessBounds(try result.safetyAllocator(allocator), bounds);
+            for (@constCast(copied)) |*bound| for (@constCast(bound.fields)) |*field| {
+                field.* = try relocateString(module, field.*, o.string_base);
+            };
+            break :blk copied;
+        } else null;
         try result.functions.append(allocator, .{
             .declaration = globalDecl(o, value.declaration),
             .input = relocateEntityRange(global_sg.GlobalFieldId, o.field_base, value.input),
@@ -353,6 +360,7 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .output_bindings = relocatePoolRange(global_sg.GlobalBindingId, o.binding_ref_base, value.output_bindings),
             .inferred_error_reasons = if (value.inferred_error_reasons) |id| globalType(o, id) else null,
             .foreign_symbol = if (value.foreign_symbol) |name| try relocateString(module, name, o.string_base) else null,
+            .declared_access = declared_access,
             .safety_primitive = value.safety_primitive,
             .flags = value.flags,
         });

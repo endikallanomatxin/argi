@@ -79,7 +79,7 @@ static void argi_task_aligned_free(void *buffer) {
 #endif
 }
 
-uintptr_t _argi_task_create_buffers(argi_task_buffer_start start, uintptr_t input, uintptr_t input_size, uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment) {
+uintptr_t _argi_task_create_buffers(argi_task_buffer_start start, const void *input, uintptr_t input_size, uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment) {
     if (!start || (input_size && !input) || !input_alignment || !output_alignment ||
         (input_alignment & (input_alignment - 1)) || (output_alignment & (output_alignment - 1))) return 0;
     struct argi_task *task = calloc(1, sizeof(*task));
@@ -92,7 +92,7 @@ uintptr_t _argi_task_create_buffers(argi_task_buffer_start start, uintptr_t inpu
     if (!task->input) goto failed_buffers;
     task->output = argi_task_aligned_buffer(output_size, output_alignment);
     if (!task->output) goto failed_buffers;
-    if (input_size) memcpy(task->input, (const void *)input, input_size);
+    if (input_size) memcpy(task->input, input, input_size);
     if (output_size) memset(task->output, 0, output_size);
     task->thread = _argi_thread_create(argi_task_entry, task);
     if (!task->thread) goto failed_buffers;

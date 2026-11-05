@@ -261,6 +261,50 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     };
 }
 
+/// Ordinary memory touched by the primitive itself, independently of ownership
+/// and validity transitions. Null preserves unknown/latent accesses. Empty means
+/// no access through arguments; argument evaluation still has its own effects.
+pub const MemoryAccess = struct { input: u32, write: bool = false };
+
+pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAccess {
+    return switch (primitive) {
+        .float_math,
+        .allocation_metadata_layout,
+        .establish_inherited_reference,
+        .establish_inherited_storage,
+        .reference_offset,
+        .mutable_reference_offset,
+        .reinterpret_reference,
+        .mutable_reinterpret_reference,
+        .read_reference,
+        .establish_allocation,
+        .acquisition_subaddress,
+        .restrict_reference,
+        .depend_on,
+        .execution_lend,
+        .execution_input,
+        .trusted_opaque_mark_empty,
+        => &.{},
+        .execution_complete, .trusted_opaque_move => &.{.{ .input = 0, .write = true }},
+        .trusted_opaque_move_in, .trusted_opaque_move_out => &.{.{ .input = 1, .write = true }},
+        .relocate, .trusted_opaque_relocate => &.{
+            .{ .input = 0, .write = true },
+            .{ .input = 1, .write = true },
+        },
+        // Allocation companions and selected cleanup may touch captured or
+        // opaque resources beyond their direct input slots. Raw storage ABI
+        // operations also lack a language storage identity for their addresses.
+        .none,
+        .prepare_allocation_metadata,
+        .establish_allocation_slot,
+        .trusted_opaque_drop,
+        .native_allocated_storage,
+        .raw_allocated_storage,
+        .raw_released_storage,
+        => null,
+    };
+}
+
 /// Allocation establishment publishes one fresh storage root and borrows its
 /// anchor and virtual deallocator. Both interpreters use this field mapping;
 /// raw byte ownership must not erase the deallocator's receiver lifetime.

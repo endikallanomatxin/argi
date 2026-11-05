@@ -323,9 +323,142 @@ statements is semantically safe only with a proven ordering; a conservative
 implementation may reject both until it has that evidence. Neither case requires
 any dynamic conformance machinery to expose the problem.
 
-These are safety gaps, not supported concurrent programs or performance tests.
-Close them through general access authorization and transition rules, while
-specifying the native boundary, before widening the payload or runtime subset.
+The completion-order gap is now closed conservatively: summary may-access
+bounds are checked against entry authority before final completion is applied.
+Regression cases 73X and 74X reject both orderings while the loan is pending;
+case 75 verifies completion in a previous call restores entry authority. No
+transition-relative effect representation has been introduced. Keep that simple
+rule until a useful case justifies more precise ordering evidence.
+
+The unknown erased-call case remains an authorization gap. Close it through
+general access rules and a specified native boundary before widening the payload
+or runtime subset. These probes are not supported concurrent programs or
+performance tests.
+
+## Conditional alias obligations across execution-producing helpers
+
+A build-only probe found that distinct symbolic input identities were treated as
+independent when a helper started a worker through one input and accessed the
+same storage through another. Caller aliasing made the accepted program racy;
+it was not executed.
+
+The temporal checker now derives conditional alias obligations using the same
+body visitor and execution identities as ordinary safety checking. Only bodies
+that can reach the general lending primitive need this collection step. Reference
+leaves retain entry-relative source paths; projected unknown pointees derive
+their coordinates from those roots. The existing summary alias relation carries
+the resulting concurrent-access obligations through the fixed point, including
+wrappers and guarded effects, before final checking and cache publication. This
+is not a second temporal interpreter. Collection publishes no body proof or
+codegen annotations.
+
+Cases 96X–106 cover caller aliasing, disjoint inputs, shared reads, completion
+before access, independent completion of multiple receipts, copied record
+references, union overlap and rejection at virtual erasure. The same obligation cannot be hidden by a callback signature. The
+unknown erased-call gap remains separate and open.
+
+## Next boundary: unknown calls
+
+CFunction declarations now accept `reads`, `writes` and `no_access` through
+`where` and the existing contract parser and summary coordinates. Argi bodies
+are checked; imports retain their explicit FFI permission and audited assumptions.
+The metadata grants no lifecycle transitions or output validity. Native write
+bounds reject reference-bearing or erased selected storage until reference
+clobbering has a sound representation. Imports currently require direct reference
+regions or structural subfields; stored-reference traversal remains rejected until
+its liveness requirements can be instantiated without guessing pointee identity.
+This is a static boundary with no runtime
+table change; it does not yet close unbounded erased calls.
+
+Prefer reuse of existing access clauses over new flags or executor-specific
+exceptions. An audited foreign declaration needs an explicit bound; its FFI
+permission alone does not prove absence of interference. Such a bound is an
+assumption about native code, unlike a bound checked against an Argi body. Keep
+that distinction explicit and do not grant ownership, reference validity or
+synchronization merely by declaring an access bound.
+
+The native task-buffer adapter now receives its source as &Any instead of an
+integer address and declares its synchronous read. Its C signature uses const
+void*. Join and destruction declare no ordinary access to caller storage; they
+operate on private runtime buffers, while the worker's accesses remain attached
+to the execution receipt. These audited bounds do not certify completion by
+themselves. The checked adapter still guarantees buffer sizes, callback pairing,
+exactly-once ownership and completion before reclaiming storage.
+
+The shared primitive registry now separates ordinary memory accesses from
+ownership transitions. Reference construction and metadata-only transitions
+have closed empty access sets; moving representations requires write authority
+over the consumed and initialized slots. Both direct primitive calls and inferred
+wrappers preserve these requirements. Allocation companion effects, raw-address
+operations and latent cleanup remain unknown rather than claiming a closed set.
+Regression cases 79X–82X and 86X reject direct and wrapped primitive access to
+pending loans, 83 permits reference projection under no_access while a writer
+is pending, and 84X–85X check that move and latent
+cleanup requirements cannot disappear behind virtual bounds.
+
+Before closing an executor interface's bound, check delegation through captured
+virtual capabilities. A bound on the receiver's ordinary fields does not authorize
+all captured referents. Any general rule for selecting a nested virtual's regions
+must agree between conformance checking and call-site authorization; recognizing
+an executor implementation or just inspecting its method table is insufficient.
+
+## Delegated virtual receivers
+
+A named access mapping to a Virtual field denotes that value's erased receiver,
+while locating the handle requires a read of its slot. Verification and caller
+instantiation use the same receiver-domain coordinate. A contract bound must
+match both the region identity and the complete handle path; a bound on handle
+bytes or on a sibling field grants no access to the erased receiver.
+
+This composes existing receiver bounds through a wrapper without expanding the
+runtime representation or inspecting the selected implementation. Tests 87–93
+cover exclusive access, shared reading, factory returns and rejection of sibling
+handles, handle-only bounds and unmentioned captured domains. A mapping to a
+virtual receiver does not include that virtual's named captured regions. Exact
+selection and transport of those regions remains necessary before closing a
+general delegated executor bound.
+
+Addressed input subobjects retain their complete projection when collecting
+accesses; following their address neither invents an unknown access nor widens a
+field write to its whole parent. Global alternatives remain separately tracked.
+Tests 94 and 95X cover an independent sibling loan and a possible global alias.
+
+## Symbolic captured domains
+
+A domain of an unknown virtual value needs an interned symbolic storage identity,
+keyed by the observed handle and its generation. It is not an embedded byte
+projection, an acquired reference or a disjointness proof. Copies preserve the
+identity; replacing the handle observes another incarnation. Named regions keep
+their own generations so invalidating one does not automatically consume the
+handle or another region.
+
+All consumers must preserve symbolic targets alongside concrete Places: access,
+caller alias obligations, lifetime capture, invalidation and evidence forwarding.
+An operation requiring a concrete opaque storage identity must reject missing
+evidence, never silently discard its symbolic obligations. Conditional generation
+proofs must either represent the symbolic transition or retain a conservative
+invalidation until that representation exists.
+
+The checker now interns captured-domain observations in the same symbolic-storage
+namespace as projected input observations, using a distinct selector. Opaque
+storage provenance and conditional generation proofs can name either a concrete
+Place or a symbolic identity. Neither representation grants a data address,
+reference validity or acquisition evidence. Domain containment deliberately does
+not make a captured region part of the handle's embedded storage.
+
+Regressions cover nested virtual inputs by value and by reference, aliased versus
+independent concurrent arguments, stale views after domain invalidation, and
+continued use of an independent domain (concurrency 107–110 and polymorphism
+351–354X). Conditional failure preserves the matching current generation; success
+does not revive an earlier view. Existing generic opaque put/take wrappers
+exercise retention and extraction without fabricated pointee Places. Captured
+hidden referents remain dependencies even after their container is emptied;
+returning a borrowed container cannot hide a local referent. Function-exit
+validation also checks caller-relative opaque domains without requiring an output
+value (ownership 404X); a helper cannot leave a local borrow hidden in its caller's
+collection. This does
+not enable owning task payloads, execution affinity, arbitrary symbolic capture
+traversals or correlated heterogeneous cleanup requirements.
 
 ## Decisions required before implementation
 
@@ -344,3 +477,30 @@ specifying the native boundary, before widening the payload or runtime subset.
 Do not broaden task payload eligibility or remove conservative opaque-retention
 checks until these rules can justify the new cases without names specific to a
 library abstraction.
+
+
+## Layout-aware overlap
+
+Access authority must follow physical overlap without merging logical storage
+identities. Distinct record fields can be independent, but CUnion alternatives
+occupy overlapping storage. The shared overlap query now consults the selected
+container layout, including nested unions, for both pending loans and ownership
+alias checks. Unknown layouts remain conservative. Regression cases 76X–78X
+and C interop 158X reject overlapping ordinary writes, second task loans and
+bounded native writes; the native access fixture retains a positive independent
+record-field case.
+
+## Next checkpoint: unknown call authorization
+
+The unknown erased-call authorization gap remains open. An experiment rejected
+all summaries with `unknown_access` while any execution retained a storage loan.
+It also rejected valid `await` paths: native result-buffer references currently
+carry lifetime evidence without an authenticated access-region identity. Task
+submission also needs a verified synchronous footprint through the request's
+reference fields. That experiment is not enabled in this checkpoint.
+
+Before enforcing the rule, represent those accesses using general opaque storage
+and provenance rules. Do not infer containment from a lifetime anchor or exempt
+`Future`/`Executor` by name. Native imports retain their audited FFI assumptions;
+Argi implementations must prove their bounds. A completion postcondition alone
+cannot authorize unknown accesses that may occur earlier in the call.

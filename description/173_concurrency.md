@@ -48,10 +48,19 @@ for the missing completion protocol.
 Possible cleanup on an error path does not certify completion on a path that
 retains the receipt. Completed futures and tasks without borrowed inputs may
 still be stored in collections. The model does not promise general
-data-race freedom or exclusive mutable references. Known caller-side gaps remain
-for unbounded erased calls and accesses inside wrappers that complete an execution:
-a final completion guarantee must not authorize earlier accesses. These cases can
-currently compile; see the [confirmed design probes](../plan/virtual_execution_safety.md#implementation-map-and-confirmed-gaps).
+data-race freedom or exclusive mutable references. Helpers that start tasks may
+have inferred nonaliasing preconditions: a local access can be valid when its
+argument is disjoint from a task's loan, and invalid when those inputs alias.
+These obligations propagate through wrappers and reference fields and are
+checked at each caller. Completing the helper's own task before accessing the
+referent removes that conflict. Erasure cannot hide an undeclared obligation.
+
+Summarized may-access effects
+are checked against entry authority before applying final completion guarantees.
+Without an ordering proof, a helper that both completes a task and accesses its
+loaned storage is conservatively rejected; completing in a separate earlier call
+restores authority for subsequent calls. Unbounded erased calls still have a
+known caller-side authorization gap; see the [design investigation](../plan/virtual_execution_safety.md#implementation-map-and-confirmed-gaps).
 Atomic cells synchronize their own native operations without authorizing unrelated
 value transfer.
 
@@ -134,6 +143,11 @@ than duplicating it. A provider taking responsibility for a request must move it
 into a lexical owner before a fallible start. Futures reject receipts for a
 different typed worker with `executor_mismatch`. A foreign holder may invoke a callback repeatedly, so a
 callback's reachable body cannot consume a `once` function.
+
+A named access mapping to a `Virtual` field selects its erased receiver, while
+reading the handle itself remains a separate access. Such a mapping does not
+include the virtual's other named captured regions. The checker preserves this
+distinction through delegation and functions returning virtual handles.
 
 ## Implementation boundary
 

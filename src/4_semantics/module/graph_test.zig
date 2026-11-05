@@ -1579,3 +1579,25 @@ test "compile-time entries retain nominal output signatures" {
     }
     try std.testing.expectEqual(@as(usize, 3), entries);
 }
+
+test "native access recipes survive canonical module caching without syntax" {
+    const a = std.testing.allocator;
+    const source = "Pair: CStruct = (.first: Int32, .second: Int32)\nnative_read(.pair: &Pair) -> (.value: Int32): CFunction(.symbol = \"native_read\") where { reads(pair.first) }\n";
+    var tree = try parseSource(a, source, @enumFromInt(0));
+    defer tree.deinit(a);
+    var module = try module_semantizer.build(a, "native_bounds", &.{.{ .path = "native_bounds/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(a);
+    const codec = @import("../../0_commands/module_cache_codec.zig");
+    const fingerprint: [32]u8 = @splat(17);
+    const encoded = try codec.encode(a, &module.graph, fingerprint);
+    defer a.free(encoded);
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var decoded = try codec.decode(arena.allocator(), encoded, fingerprint);
+    defer decoded.deinit(arena.allocator());
+    const bounds = decoded.functions.items[0].declared_access.?;
+    try std.testing.expectEqual(@as(usize, 1), bounds.len);
+    try std.testing.expectEqual(@as(u32, 0), bounds[0].input_index);
+    try std.testing.expect(!bounds[0].write);
+    try std.testing.expectEqualStrings("first", decoded.text(bounds[0].fields[0]));
+}

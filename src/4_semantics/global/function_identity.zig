@@ -13,6 +13,12 @@ pub const FunctionIdentity = struct {
     }
 
     pub fn matches(self: FunctionIdentity, graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) bool {
-        return @intFromEnum(id) < graph.functions.items.len and std.meta.eql(self, read(graph, id));
+        if (@intFromEnum(id) >= graph.functions.items.len) return false;
+        var previous = self;
+        var current = read(graph, id);
+        if (!@import("../primitives/schema.zig").accessBoundsEql(previous.function.declared_access, current.function.declared_access)) return false;
+        previous.function.declared_access = null;
+        current.function.declared_access = null;
+        return std.meta.eql(previous, current);
     }
 };

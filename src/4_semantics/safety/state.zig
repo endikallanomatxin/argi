@@ -30,7 +30,7 @@ pub const StorageGeneration = struct {
     needs_current_generation: bool = false,
 };
 pub const OpaqueStorage = struct {
-    storage: facts.Place,
+    storage: facts.StorageIdentity,
     hidden_dependencies: []const facts.ValidityRootId,
     outcome_guard: u64 = 0,
     // Identity only: a moved owner's slot can disappear before output
@@ -46,6 +46,9 @@ pub const SymbolicPointeeState = struct {
     identity: facts.SymbolicPointeeId,
     ty: ?graph_mod.GlobalTypeId = null,
     initializedness: value_state.Initializedness,
+    // Entry-relative source for deferred caller alias obligations, not a proof
+    // of disjointness. Projected observations derive their path from this root.
+    input_path: ?facts.InputPath = null,
     // Unknown referents keep storage validity separate from the current
     // value incarnation. Neither identity asserts disjointness of inputs.
     backing: ?facts.ValidityRootId = null,
@@ -68,6 +71,8 @@ pub const SymbolicStoredValue = struct {
     value: facts.ValueFacts,
     definite: bool = true,
 };
+
+pub const SymbolicObservation = struct { identity: facts.SymbolicPointeeId, generation: facts.ValidityRootId };
 
 pub const State = struct {
     tracker: facts.Tracker,
@@ -474,7 +479,7 @@ pub const State = struct {
         return result;
     }
 
-    pub fn mergeOpaqueStorage(self: *State, storage: facts.Place, dependencies: []const facts.ValidityRootId, owners: []const facts.ValidityRootId) !void {
+    pub fn mergeOpaqueStorage(self: *State, storage: facts.StorageIdentity, dependencies: []const facts.ValidityRootId, owners: []const facts.ValidityRootId) !void {
         const existing = for (self.opaque_storages.items) |*entry| {
             if (entry.storage.eql(storage)) break entry;
         } else @as(?*OpaqueStorage, null);
@@ -488,7 +493,7 @@ pub const State = struct {
         if (existing) |entry| entry.* = next else self.opaque_storages.appendAssumeCapacity(next);
     }
 
-    pub fn mergeOpaqueOwnerRoots(self: *State, storage: facts.Place, roots: []const facts.ValidityRootId) !void {
+    pub fn mergeOpaqueOwnerRoots(self: *State, storage: facts.StorageIdentity, roots: []const facts.ValidityRootId) !void {
         if (roots.len == 0) return;
         for (self.opaque_storages.items) |*entry| {
             if (!entry.storage.eql(storage)) continue;
@@ -497,7 +502,7 @@ pub const State = struct {
         }
     }
 
-    pub fn markOpaqueStorageEmpty(self: *State, storage: facts.Place) void {
+    pub fn markOpaqueStorageEmpty(self: *State, storage: facts.StorageIdentity) void {
         for (self.opaque_storages.items) |*entry| {
             if (!entry.storage.eql(storage)) continue;
             entry.hidden_dependencies = &.{};
@@ -533,14 +538,22 @@ pub const State = struct {
 
     /// Observe a projected unknown referent using branch-shared identities.
     /// The caller supplies its checked type; this state owns no type graph.
-    pub fn projectSymbolicStorage(self: *State, parent: SymbolicPointeeState, projection: facts.Projection, child_type: ?graph_mod.GlobalTypeId) !?struct { identity: facts.SymbolicPointeeId, generation: facts.ValidityRootId } {
+    pub fn projectSymbolicStorage(self: *State, parent: SymbolicPointeeState, projection: facts.Projection, child_type: ?graph_mod.GlobalTypeId) !?SymbolicObservation {
+        return self.observeSymbolicStorage(parent, .{ .projection = projection }, child_type);
+    }
+
+    pub fn projectSymbolicDomain(self: *State, parent: SymbolicPointeeState, domain: u32) !?SymbolicObservation {
+        return self.observeSymbolicStorage(parent, .{ .domain = domain }, null);
+    }
+
+    fn observeSymbolicStorage(self: *State, parent: SymbolicPointeeState, selector: facts.SymbolicStorageSelector, child_type: ?graph_mod.GlobalTypeId) !?SymbolicObservation {
         const namespace = self.tracker.namespace orelse return null;
         const parent_generation = parent.generation orelse return null;
         var identity: ?facts.SymbolicPointeeId = null;
         var initial: ?facts.ValidityRootId = null;
         var backing: ?facts.ValidityRootId = null;
         for (namespace.projected_storage.items) |entry| {
-            if (entry.parent == parent.identity and entry.parent_generation == parent_generation and entry.projection.eql(projection)) {
+            if (entry.parent == parent.identity and entry.parent_generation == parent_generation and entry.selector.eql(selector)) {
                 identity = entry.identity;
                 initial = entry.generation;
                 backing = entry.backing;
@@ -552,7 +565,7 @@ pub const State = struct {
             const following = try std.math.add(u32, next, 1);
             identity = @enumFromInt(next);
             for (namespace.projected_storage.items) |entry| {
-                if (entry.parent_generation == parent_generation and entry.projection.eql(projection)) {
+                if (entry.parent_generation == parent_generation and entry.selector.eql(selector)) {
                     backing = entry.backing;
                     break;
                 }
@@ -568,7 +581,7 @@ pub const State = struct {
             namespace.projected_storage.appendAssumeCapacity(.{
                 .parent = parent.identity,
                 .parent_generation = parent_generation,
-                .projection = projection,
+                .selector = selector,
                 .identity = identity.?,
                 .backing = backing.?,
                 .generation = initial.?,
@@ -625,6 +638,26 @@ pub const State = struct {
     }
 
     /// Observe the current incarnation without reviving historical aliases.
+    pub fn domainGenerationIsCurrent(self: *const State, storage: facts.StorageIdentity, generation: facts.ValidityRootId) bool {
+        return switch (storage) {
+            .place => |place| for (self.storage_generations.items) |entry| {
+                if (entry.storage.eql(place)) break entry.generation == generation and !entry.needs_current_generation;
+            } else false,
+            .symbolic => |identity| for (self.symbolic_pointees.items) |entry| {
+                if (entry.identity == identity) break entry.generation == generation;
+            } else false,
+        };
+    }
+
+    pub fn domainGeneration(self: *State, storage: facts.StorageIdentity) !facts.ValidityRootId {
+        return switch (storage) {
+            .place => |place| self.storageGeneration(place),
+            .symbolic => |identity| for (self.symbolic_pointees.items) |entry| {
+                if (entry.identity == identity) break entry.generation orelse return error.MissingVirtualStorageDomain;
+            } else error.MissingVirtualStorageDomain,
+        };
+    }
+
     pub fn storageGeneration(self: *State, storage: facts.Place) !facts.ValidityRootId {
         for (self.storage_generations.items) |*entry| if (entry.storage.eql(storage)) {
             // Both paths may leave an initialized Place with different
@@ -726,6 +759,13 @@ pub const State = struct {
         self.places.shrinkRetainingCapacity(kept);
     }
 
+    pub fn storageContains(self: *const State, container: facts.StorageIdentity, target: facts.StorageIdentity) bool {
+        return switch (container) {
+            .place => |place| target == .place and place.isPrefixOf(target.place),
+            .symbolic => |identity| target == .symbolic and self.symbolicStorageContains(identity, target.symbolic),
+        };
+    }
+
     pub fn symbolicStorageContains(self: *const State, container: facts.SymbolicPointeeId, target: facts.SymbolicPointeeId) bool {
         var identity = target;
         if (identity == container) return true;
@@ -733,7 +773,7 @@ pub const State = struct {
         while (true) {
             identity = for (namespace.projected_storage.items) |entry| {
                 if (entry.identity == identity) {
-                    if (entry.projection == .dereference) return false;
+                    if (!entry.selector.embedded()) return false;
                     break entry.parent;
                 }
             } else return false;
@@ -744,7 +784,7 @@ pub const State = struct {
     fn symbolicProjectionIndex(self: *const State, identity: facts.SymbolicPointeeId) ?usize {
         const namespace = self.tracker.namespace orelse return null;
         for (namespace.projected_storage.items, 0..) |entry, index|
-            if (entry.identity == identity and entry.projection != .dereference) return index;
+            if (entry.identity == identity and entry.selector.embedded()) return index;
         return null;
     }
 
@@ -778,8 +818,8 @@ pub const State = struct {
             const first = namespace.projected_storage.items[a_index];
             const second = namespace.projected_storage.items[b_index];
             if (first.parent == second.parent and first.parent_generation == second.parent_generation) {
-                if (first.projection == .dynamic_index or second.projection == .dynamic_index) return true;
-                return first.projection.eql(second.projection);
+                if (first.selector.projection == .dynamic_index or second.selector.projection == .dynamic_index) return true;
+                return first.selector.eql(second.selector);
             }
             a = first.parent;
             b = second.parent;
@@ -966,7 +1006,7 @@ fn cloneAllocationFailures(allocator: std.mem.Allocator) !void {
     try state.storage_capabilities.append(.available);
     try state.storage_generations.append(.{ .storage = storage, .generation = root });
     try state.lexical_storage_generations.append(root);
-    try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
+    try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{} });
     try state.setActiveVariant(storage, 2);
     try state.setRejectedVariant(storage, 3);
     try state.setTemporaryActiveVariant(@enumFromInt(0), 2);
@@ -997,11 +1037,11 @@ test "Safety opaque merges publish both root sets together and reuse unchanged f
             var state = State.init(a);
             defer state.deinit();
             const storage: facts.Place = .{ .root = @enumFromInt(0) };
-            if (existing) try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{root0}, .owner_roots = &.{root2}, .outcome_guard = 9 });
+            if (existing) try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{root0}, .owner_roots = &.{root2}, .outcome_guard = 9 });
             var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = failure_index });
             state.opaque_storages.allocator = failing.allocator();
             state.tracker.allocator = failing.allocator();
-            const merged = state.mergeOpaqueStorage(storage, &.{ root0, root1, root1 }, &.{ root2, root3, root3 });
+            const merged = state.mergeOpaqueStorage(.{ .place = storage }, &.{ root0, root1, root1 }, &.{ root2, root3, root3 });
             state.opaque_storages.allocator = a;
             state.tracker.allocator = a;
             if (merged) |_| {
@@ -1011,13 +1051,13 @@ test "Safety opaque merges publish both root sets together and reuse unchanged f
                 var unavailable = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
                 state.opaque_storages.allocator = unavailable.allocator();
                 state.tracker.allocator = unavailable.allocator();
-                try state.mergeOpaqueStorage(storage, &.{ root1, root0 }, &.{ root3, root2 });
-                try state.mergeOpaqueOwnerRoots(storage, &.{root3});
+                try state.mergeOpaqueStorage(.{ .place = storage }, &.{ root1, root0 }, &.{ root3, root2 });
+                try state.mergeOpaqueOwnerRoots(.{ .place = storage }, &.{root3});
                 state.opaque_storages.allocator = a;
                 state.tracker.allocator = a;
                 try std.testing.expectEqual(domain.hidden_dependencies.ptr, state.opaque_storages.items[0].hidden_dependencies.ptr);
                 try std.testing.expectEqual(domain.owner_roots.ptr, state.opaque_storages.items[0].owner_roots.ptr);
-                state.markOpaqueStorageEmpty(storage);
+                state.markOpaqueStorageEmpty(.{ .place = storage });
                 try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
                 try std.testing.expectEqualSlices(facts.ValidityRootId, domain.owner_roots, state.opaque_storages.items[0].owner_roots);
                 completed = true;
@@ -1149,7 +1189,7 @@ test "Safety branch tables release independently of shared proof facts" {
                 defer state.deinit();
                 state.tracker.namespace = &namespace;
                 const generation = try state.storageGeneration(storage);
-                try state.mergeOpaqueStorage(storage, &.{generation}, &.{generation});
+                try state.mergeOpaqueStorage(.{ .place = storage }, &.{generation}, &.{generation});
                 break :original try state.cloneWithAllocators(fact_allocator, table_allocator);
             };
             defer branch.deinit();
@@ -1157,7 +1197,7 @@ test "Safety branch tables release independently of shared proof facts" {
             try std.testing.expect(branch.tracker.isAlive(generation));
             try std.testing.expectEqual(generation, branch.opaque_storages.items[0].hidden_dependencies[0]);
             const other = try branch.storageGeneration(.{ .root = @enumFromInt(1) });
-            try branch.mergeOpaqueOwnerRoots(storage, &.{other});
+            try branch.mergeOpaqueOwnerRoots(.{ .place = storage }, &.{other});
             try std.testing.expectEqual(@as(usize, 2), branch.opaque_storages.items[0].owner_roots.len);
             try std.testing.expectEqual(@as(usize, 2), namespace.initial_storage.items.len);
         }
@@ -1284,8 +1324,8 @@ test "Safety symbolic strong writes retire slots but preserve dereferenced stora
     const sibling: facts.SymbolicPointeeId = @enumFromInt(3);
     const root: facts.ValidityRootId = @enumFromInt(0);
     try namespace.projected_storage.appendSlice(std.testing.allocator, &.{
-        .{ .parent = parent, .parent_generation = root, .projection = .{ .field = 0 }, .identity = field, .backing = root, .generation = root },
-        .{ .parent = field, .parent_generation = root, .projection = .dereference, .identity = referent, .backing = root, .generation = root },
+        .{ .parent = parent, .parent_generation = root, .selector = .{ .projection = .{ .field = 0 } }, .identity = field, .backing = root, .generation = root },
+        .{ .parent = field, .parent_generation = root, .selector = .{ .projection = .dereference }, .identity = referent, .backing = root, .generation = root },
     });
     for ([_]facts.SymbolicPointeeId{ parent, field, referent, sibling }) |identity|
         try state.setSymbolicValue(.{ .identity = identity, .value = .{ .known_choice_variant = 1 } }, false, true);
@@ -1371,7 +1411,7 @@ test "Safety symbolic overlap compares unequal-depth paths at their common ances
     };
     for (edges, 1..) |edge, identity| try namespace.projected_storage.append(allocator, .{
         .parent = @enumFromInt(edge.parent),
-        .projection = edge.field,
+        .selector = .{ .projection = edge.field },
         .parent_generation = generation,
         .identity = @enumFromInt(identity),
         .backing = generation,
@@ -1379,7 +1419,7 @@ test "Safety symbolic overlap compares unequal-depth paths at their common ances
     });
     try namespace.projected_storage.append(allocator, .{
         .parent = @enumFromInt(0),
-        .projection = .{ .field = 1 },
+        .selector = .{ .projection = .{ .field = 1 } },
         .parent_generation = @enumFromInt(1),
         .identity = @enumFromInt(13),
         .backing = generation,
@@ -1434,4 +1474,39 @@ fn executionReceiptAllocation(allocator: std.mem.Allocator) !void {
 
 test "execution receipt allocation commits its identity only after success" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, executionReceiptAllocation, .{});
+}
+
+test "virtual captured domains have stable identities distinct from handle bytes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = State.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const generation = try state.tracker.establish(.fresh);
+    const parent: SymbolicPointeeState = .{ .identity = @enumFromInt(0), .initializedness = .initialized, .generation = generation };
+    try state.symbolic_pointees.append(parent);
+    const first = (try state.projectSymbolicDomain(parent, 0)).?;
+    const second = (try state.projectSymbolicDomain(parent, 1)).?;
+    const field = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    try std.testing.expect(first.identity != second.identity and first.identity != field.identity);
+    try std.testing.expect(!state.symbolicStorageContains(parent.identity, first.identity));
+    try std.testing.expect(state.symbolicStorageContains(parent.identity, field.identity));
+    try std.testing.expectEqual(first.identity, (try state.projectSymbolicDomain(parent, 0)).?.identity);
+    var branch = try state.clone(a);
+    defer branch.deinit();
+    try std.testing.expectEqual(first.identity, (try branch.projectSymbolicDomain(parent, 0)).?.identity);
+    var replacement = parent;
+    replacement.generation = try state.tracker.establish(.fresh);
+    const later = (try state.projectSymbolicDomain(replacement, 0)).?;
+    try std.testing.expect(later.identity != first.identity);
+    try std.testing.expect(state.domainGenerationIsCurrent(.{ .symbolic = first.identity }, first.generation));
+    try state.mergeOpaqueStorage(.{ .symbolic = first.identity }, &.{generation}, &.{});
+    try state.mergeOpaqueStorage(.{ .symbolic = second.identity }, &.{generation}, &.{});
+    state.markOpaqueStorageEmpty(.{ .symbolic = first.identity });
+    try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{generation}, state.opaque_storages.items[1].hidden_dependencies);
 }

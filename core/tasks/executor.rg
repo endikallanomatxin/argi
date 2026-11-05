@@ -28,17 +28,20 @@ Executor#(.Provider: Type): Contract = (
     }
 )
 
+-- Audited native footprints describe synchronous access to Argi storage. The
+-- initial copy reads the source buffer; join and destroy touch only private
+-- runtime storage. Worker access remains governed by the execution receipt.
 _task_create(
-    .entry: _TaskEntry, .input: UIntNative, .input_size: UIntNative,
+    .entry: _TaskEntry, .input: &Any, .input_size: UIntNative,
     .output_size: UIntNative, .input_alignment: UIntNative, .output_alignment: UIntNative
-) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_create_buffers")
+) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_create_buffers") where { reads(input) }
 
 _task_join(.handle: UIntNative, .size: UIntNative) -> (.address: UIntNative): CFunction(
     .symbol = "_argi_task_join_result"
-)
+) where { no_access() }
 _task_destroy(.handle: UIntNative) -> (.status: CInt): CFunction(
     .symbol = "_argi_task_destroy"
-)
+) where { no_access() }
 
 ThreadedExecutor := (._ffi: $&ForeignFunctionInterface)
 ThreadedExecutorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
@@ -71,7 +74,7 @@ implement Executor#(ThreadedExecutor) (
         assume ffi := self&._ffi
         handle ::= _task_create(
             .entry = pending._entry,
-            .input = [pending._input | convert#(.to: UIntNative)(_)],
+            .input = pending._input,
             .input_size = pending._input_size, .output_size = pending._output_size,
             .input_alignment = pending._input_alignment,
             .output_alignment = pending._output_alignment

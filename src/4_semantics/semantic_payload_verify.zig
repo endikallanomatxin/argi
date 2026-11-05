@@ -127,6 +127,14 @@ pub fn function(comptime Ids: type, value: primitives.Function(Ids), bounds: Bou
     try require(verify.rangeFits(value.output_bindings, bounds.binding_refs));
     try require(verify.optionalIdFits(value.inferred_error_reasons, bounds.types));
     if (value.foreign_symbol) |name| try require(verify.stringFits(name, bounds.strings));
+    if (value.declared_access) |accesses| {
+        try require(value.flags.is_c_abi and !value.flags.is_c_function_pointer);
+        for (accesses) |access| {
+            try require(access.input_index < value.input.len and access.domain_index == null);
+            try require(access.projections.len == 0);
+            for (access.fields) |name| try require(verify.stringFits(name, bounds.strings));
+        }
+    }
 }
 
 pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bounds) !void {

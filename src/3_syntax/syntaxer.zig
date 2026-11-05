@@ -2108,6 +2108,12 @@ pub const Syntaxer = struct {
                         return SyntaxerError.ExpectedStructField;
                     }
                     self.skipNewLinesAndComments();
+                    const safety = if (self.currentIdentifierEquals("where")) blk: {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                        break :blk syn.OptionalNodeIndex.init(try self.parseSafetyContract());
+                    } else syn.OptionalNodeIndex.none;
+                    self.skipNewLinesAndComments();
                     const body: syn.OptionalNodeIndex = if (self.tokenIs(.colon)) blk: {
                         self.advanceOne();
                         if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
@@ -2121,6 +2127,7 @@ pub const Syntaxer = struct {
                         .body = body,
                         .c_options = options,
                         .c_abi = 1,
+                        .safety_contract = safety,
                     });
                 }
             },

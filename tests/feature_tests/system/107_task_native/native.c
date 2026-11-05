@@ -37,12 +37,12 @@ static void destroy_task(void *context) {
 int32_t argi_task_probe(void) {
     if (_argi_task_create(NULL, 0, 0, 0)) return 1;
     int original = 21;
-    if (_argi_task_create_buffers(NULL, (uintptr_t)&original, sizeof(original), sizeof(original), 64, 64)) abort();
-    if (_argi_task_create_buffers(buffers, (uintptr_t)&original, sizeof(original), sizeof(original), 3, 64)) abort();
-    if (_argi_task_create_buffers(buffers, (uintptr_t)&original, sizeof(original), sizeof(original), 64, 0)) abort();
+    if (_argi_task_create_buffers(NULL, &original, sizeof(original), sizeof(original), 64, 64)) abort();
+    if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 3, 64)) abort();
+    if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 0)) abort();
     if (_argi_task_create_buffers(buffers, 0, sizeof(original), sizeof(original), 64, 64)) abort();
-    if (_argi_task_create_buffers(buffers, (uintptr_t)&original, UINTPTR_MAX, sizeof(original), 64, 64)) abort();
-    uintptr_t buffer_task = _argi_task_create_buffers(buffers, (uintptr_t)&original, sizeof(original), sizeof(original), 64, 64);
+    if (_argi_task_create_buffers(buffers, &original, UINTPTR_MAX, sizeof(original), 64, 64)) abort();
+    uintptr_t buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 64);
     if (!buffer_task) abort();
     original = 0;
     int buffer_result = 0;
@@ -50,7 +50,7 @@ int32_t argi_task_probe(void) {
     if (_argi_task_join_result(buffer_task, sizeof(buffer_result))) abort();
     if (_argi_task_destroy(buffer_task)) abort();
     original = 21;
-    buffer_task = _argi_task_create_buffers(buffers, (uintptr_t)&original, sizeof(original), sizeof(original), 64, 64);
+    buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 64);
     if (!buffer_task) abort();
     if (_argi_task_join_result(buffer_task, sizeof(original) - 1)) abort();
     uintptr_t result_address = _argi_task_join_result(buffer_task, sizeof(original));

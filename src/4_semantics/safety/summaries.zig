@@ -159,7 +159,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.storage_observations.len != b.storage_observations.len or a.storage_observation_conflicts.len != b.storage_observation_conflicts.len) return false;
     for (a.storage_observations, b.storage_observations) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.storage_observation_conflicts, b.storage_observation_conflicts) |left, right|
-        if (left.captures_reachable != right.captures_reachable or !inputPathEql(left.consumed, right.consumed) or !inputPathEql(left.observed, right.observed)) return false;
+        if (left.kind != right.kind or left.captures_reachable != right.captures_reachable or !inputPathEql(left.incompatible, right.incompatible) or !inputPathEql(left.observed, right.observed)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -330,10 +330,13 @@ test "summary equality retains ordered storage observations and caller alias obl
     const observed = facts.SafetySummary{ .storage_observations = &.{second} };
     try std.testing.expect(!summaryEql(.{}, observed));
     var constrained = observed;
-    constrained.storage_observation_conflicts = &.{.{ .consumed = first, .observed = second }};
+    constrained.storage_observation_conflicts = &.{.{ .incompatible = first, .observed = second }};
     try std.testing.expect(!summaryEql(observed, constrained));
+    var concurrent = constrained;
+    concurrent.storage_observation_conflicts = &.{.{ .incompatible = first, .observed = second, .kind = .concurrent_access }};
+    try std.testing.expect(!summaryEql(constrained, concurrent));
     var reversed = constrained;
-    reversed.storage_observation_conflicts = &.{.{ .consumed = second, .observed = first }};
+    reversed.storage_observation_conflicts = &.{.{ .incompatible = second, .observed = first }};
     try std.testing.expect(!summaryEql(constrained, reversed));
     try std.testing.expect(summaryEql(constrained, constrained));
 }

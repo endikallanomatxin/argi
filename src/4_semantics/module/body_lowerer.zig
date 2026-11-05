@@ -181,6 +181,8 @@ const Context = struct {
             const foreign = if (!declaration.c_function_pointer and declaration.c_options != null) try self.lowerForeignOptions(declaration.c_options.?) else ForeignOptions{};
             if (foreign.exported and declaration.body == null)
                 return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
+            const inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output);
+            const declared_access = try @import("parameterized/lowerer.zig").lowerNativeAccess(self.allocator, self.graph, self.files, self.file_index, declaration, self.diagnostics);
             const previous = self.graph.functions.items[@intFromEnum(function_id)];
             self.graph.functions.items[@intFromEnum(function_id)] = .{
                 .declaration = previous.declaration,
@@ -190,6 +192,7 @@ const Context = struct {
                 .output_type = previous.output_type,
                 .body = body,
                 .foreign_symbol = foreign.symbol,
+                .declared_access = declared_access,
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
@@ -201,7 +204,7 @@ const Context = struct {
                     .is_c_function_pointer = declaration.c_function_pointer,
                     .is_isolated_callback = isolated,
                     .is_c_export = foreign.exported,
-                    .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
+                    .uses_inferred_error_reasons = inferred_error_reasons,
                 },
             };
             self.popScope();

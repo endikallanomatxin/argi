@@ -26,6 +26,7 @@ pub const Entry = struct {
         errdefer entry.arena.deinit();
         var copy: @import("fact_snapshot.zig").Copy = .{ .allocator = entry.arena.allocator(), .scratch = scratch };
         defer copy.deinit();
+        entry.key = try copy.value(Key, entry.key);
         entry.summary = try copy.value(facts.SafetySummary, summary);
         entry.selectors = try copy.value([]const Selector, selectors);
         entry.dependencies = try copy.value([]const Dependency, dependencies);
@@ -274,6 +275,11 @@ test "summary cache restores dependency closures and invalidates selector SCCs" 
     try engine.addDependency(@enumFromInt(0), @enumFromInt(1));
     try engine.addDependency(@enumFromInt(1), @enumFromInt(2));
     try engine.addDependency(@enumFromInt(2), @enumFromInt(1));
+    engine.summaries.getPtr(@enumFromInt(2)).?.storage_observation_conflicts = &.{.{
+        .incompatible = .{ .input_index = 0 },
+        .observed = .{ .input_index = 1, .projections = &.{.{ .field = 2 }} },
+        .kind = .concurrent_access,
+    }};
     var demands = std.AutoHashMap(g.GlobalFunctionId, []const Selector).init(a);
     defer demands.deinit();
     var reused: std.AutoHashMapUnmanaged(g.GlobalFunctionId, void) = .empty;
@@ -291,6 +297,10 @@ test "summary cache restores dependency closures and invalidates selector SCCs" 
     var imported = try store.restore(&restored, &demands);
     defer imported.deinit(a);
     try std.testing.expectEqual(@as(usize, 3), imported.count());
+    const conflicts = restored.summaries.get(@enumFromInt(2)).?.storage_observation_conflicts;
+    try std.testing.expectEqual(@as(usize, 1), conflicts.len);
+    try std.testing.expectEqual(.concurrent_access, conflicts[0].kind);
+    try std.testing.expectEqual(@as(u32, 2), conflicts[0].observed.projections[0].field);
     try std.testing.expectEqual(@as(usize, 2), restored.dependents.get(@enumFromInt(1)).?.items.len);
     try demands.put(@enumFromInt(2), &.{.{ .output_index = 0, .parent_variants = &.{1}, .variant_index = 0 }});
     var invalidated = try store.restore(&restored, &demands);
@@ -392,4 +402,21 @@ test "summary cache rejects inference against another graph with identical IDs" 
     defer inference.deinit();
     inference.cache = &store;
     try std.testing.expectError(error.ForeignSafetySummaryCache, inference.inferSafetySummariesFixedPoint());
+}
+
+test "native access declaration keys own their bounds and invalidate on changes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph = try fixtureGraph(a);
+    defer graph.deinit(a);
+    const bounds = try a.alloc(@import("../primitives/schema.zig").MethodSafetyContract.AccessBound, 1);
+    bounds[0] = .{ .input_index = 0 };
+    graph.functions.items[0].declared_access = bounds;
+    const entry = try Entry.create(a, a, &graph, @enumFromInt(0), 1, .{}, &.{}, &.{}, &.{});
+    defer entry.deinit(a);
+    try std.testing.expect(entry.key.matches(&graph, @enumFromInt(0)));
+    bounds[0].write = true;
+    try std.testing.expect(!entry.key.matches(&graph, @enumFromInt(0)));
+    try std.testing.expect(!entry.key.function.declared_access.?[0].write);
 }

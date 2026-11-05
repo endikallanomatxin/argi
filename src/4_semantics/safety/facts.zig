@@ -58,13 +58,36 @@ pub const GuardedSafetyEffects = base.GuardedSafetyEffects;
 pub const OutcomePostStates = base.OutcomePostStates;
 pub const OpaqueStorageEffect = base.OpaqueStorageEffect;
 
+/// Identity for retained storage obligations, independent of a data address.
+/// Symbolic identities grant neither a concrete Place nor an acquisition proof.
+pub const StorageIdentity = union(enum) {
+    place: Place,
+    symbolic: SymbolicPointeeId,
+
+    pub fn eql(self: StorageIdentity, other: StorageIdentity) bool {
+        if (std.meta.activeTag(self) != std.meta.activeTag(other)) return false;
+        return switch (self) {
+            .place => |place| place.eql(other.place),
+            .symbolic => |symbolic| symbolic == other.symbolic,
+        };
+    }
+
+    pub fn isPrefixOf(self: StorageIdentity, other: StorageIdentity) bool {
+        if (std.meta.activeTag(self) != std.meta.activeTag(other)) return false;
+        return switch (self) {
+            .place => |place| place.isPrefixOf(other.place),
+            .symbolic => |symbolic| symbolic == other.symbolic,
+        };
+    }
+};
+
 pub const OpaqueProvenance = struct {
-    storage: Place,
+    storage: StorageIdentity,
     generation: ValidityRootId,
 };
 
 pub const GenerationOutcome = struct {
-    storage: Place,
+    storage: StorageIdentity,
     generation: ValidityRootId,
     guard: u64,
     invalidates: bool,
@@ -249,6 +272,25 @@ pub const PlaceFacts = struct {
     value: ValueFacts = .{},
 };
 
+/// Symbolic observations distinguish embedded storage from an erased resource.
+/// A domain is not a byte projection or a subobject of its handle.
+pub const SymbolicStorageSelector = union(enum) {
+    projection: Projection,
+    domain: u32,
+
+    pub fn eql(self: SymbolicStorageSelector, other: SymbolicStorageSelector) bool {
+        if (std.meta.activeTag(self) != std.meta.activeTag(other)) return false;
+        return switch (self) {
+            .projection => |projection| projection.eql(other.projection),
+            .domain => |domain| domain == other.domain,
+        };
+    }
+
+    pub fn embedded(self: SymbolicStorageSelector) bool {
+        return self == .projection and self.projection != .dereference;
+    }
+};
+
 pub const Tracker = struct {
     /// Cloned branch states share identities, never reuse another branch's ID.
     pub const RootNamespace = struct {
@@ -259,7 +301,7 @@ pub const Tracker = struct {
         projected_storage: std.ArrayList(struct {
             parent: SymbolicPointeeId,
             parent_generation: ValidityRootId,
-            projection: Projection,
+            selector: SymbolicStorageSelector,
             identity: SymbolicPointeeId,
             backing: ValidityRootId,
             generation: ValidityRootId,
@@ -374,7 +416,7 @@ test "scalar opaque reads discard container lifetime facts" {
         .foreign_storage = true,
         .storage_capabilities = &.{capability},
         .referenced_place = .{ .root = binding },
-        .opaque_provenance = &.{.{ .storage = .{ .root = binding }, .generation = root }},
+        .opaque_provenance = &.{.{ .storage = .{ .place = .{ .root = binding } }, .generation = root }},
         .virtual_methods = &.{method},
     };
 
@@ -420,7 +462,7 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     try original.projected_storage.append(a, .{
         .parent = @enumFromInt(0),
         .parent_generation = @enumFromInt(1),
-        .projection = .{ .field = 0 },
+        .selector = .{ .projection = .{ .field = 0 } },
         .identity = @enumFromInt(3),
         .backing = @enumFromInt(0),
         .generation = @enumFromInt(1),
@@ -432,10 +474,10 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     tracker.namespace = &candidate;
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(try tracker.establish(.fresh)));
     candidate.initial_storage.items[0].root = @enumFromInt(2);
-    candidate.projected_storage.items[0].projection = .{ .variant = 2 };
+    candidate.projected_storage.items[0].selector = .{ .projection = .{ .variant = 2 } };
     candidate.next_symbolic_id = 5;
     candidate.next_capability_id = 8;
-    try std.testing.expect(original.projected_storage.items[0].projection.eql(.{ .field = 0 }));
+    try std.testing.expect(original.projected_storage.items[0].selector.eql(.{ .projection = .{ .field = 0 } }));
     try std.testing.expectEqual(@as(u32, 4), original.next_symbolic_id);
     try std.testing.expectEqual(@as(u32, 7), original.next_capability_id);
     try std.testing.expectEqual(@as(u32, 2), original.next_id);

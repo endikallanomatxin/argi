@@ -1,0 +1,12 @@
+read := (.value: &Int32) -> (.result: Int32) { result = value& }
+work := (.read_value: &Int32, .write_value: &Int32, .executor: Virtual#(Executor)) -> () {
+    future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = read_value), .executor = executor))
+    _ = write_value&
+    _ = unwrap_or_abort(.value = await($&future))
+}
+main := (.system: System) -> () {
+    provider ::= ThreadedExecutor(.ffi = system.ffi)
+    executor ::= to_virtual#(Executor)($&provider)
+    value :: Int32 = 42
+    work(.read_value = &value, .write_value = &value, .executor = executor)
+}

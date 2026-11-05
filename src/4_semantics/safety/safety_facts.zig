@@ -176,7 +176,8 @@ pub const StorageCapabilityConflict = struct {
 /// Ordered observations and captures must not alias an incompatible mutation.
 /// Coordinates are caller-relative; distinct inputs do not prove disjointness.
 pub const StorageObservationConflict = struct {
-    consumed: InputPath,
+    incompatible: InputPath,
+    kind: enum { lifetime, concurrent_access } = .lifetime,
     observed: InputPath,
     /// Compare captured reachable storage, including initializer sources,
     /// rather than only the receiver's lexical envelope.

@@ -91,6 +91,7 @@ pub const ModuleSemanticGraph = struct {
         self.declarations.deinit(allocator);
         self.symbols.deinit(allocator);
         self.symbol_declarations.deinit(allocator);
+        for (self.functions.items) |function| if (function.declared_access) |bounds| primitives.freeAccessBounds(allocator, bounds);
         self.functions.deinit(allocator);
         self.strings.deinit(allocator);
         self.type_references.deinit(allocator);
