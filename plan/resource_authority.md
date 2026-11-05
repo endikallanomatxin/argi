@@ -368,7 +368,45 @@ These primary sources motivate parts of the proposal; none proves Argi sound:
   illustrates local mutable aliasing with restricted sharing/transfer. Its
   reference-capability discipline should not be presented as Argi's semantics.
 
-Mezzo's affine/duplicable permissions, Verona's region isolation, Koka's effect
-inference and protocol logics remain useful further investigations. Their specific
-rules must be checked against original papers before adopting them; assembling
-familiar names is not a substitute for defining Argi's own transition system.
+## Complexity boundary informed by other systems
+
+[Mezzo's retrospective](https://drops.dagstuhl.de/storage/00lipics/lipics-vol032-snapl2015/LIPIcs.SNAPL.2015.221/LIPIcs.SNAPL.2015.221.pdf)
+reports practical inference difficulties despite a regular permission model,
+including heuristic search, annotation requirements and problematic diagnostics.
+Its authors deliberately limited static disciplines and used dynamic ownership
+checks for some difficult sharing patterns. This is a warning about inference
+cost, not evidence that Argi should adopt Mezzo's mutable-alias restrictions.
+
+[Verona's region-capability model](https://arxiv.org/pdf/2309.02983) organizes
+objects into isolated region forests and localizes mutation to an active region.
+Its structural confinement is stronger than Argi's ordinary reference model.
+We can learn from its explicit boundaries without assuming its region-local
+results apply to arbitrary Argi aliases or allocator dependencies.
+
+[Koka's effect inference](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/koka-effects-2013.pdf)
+shows a modular type-and-effect design with inferred row-polymorphic effects.
+An effect row does not identify Argi's per-instance physical regions or encode
+receipt-specific authority transitions. Adopt compositional inference as a goal,
+not a second general algebraic-effect system to solve concurrency.
+
+These comparisons motivate the following limits for the proposed checker:
+
+- Infer structural routes, finite region alternatives, selected cleanup and
+  monotone requirements over a bounded vocabulary. Specify widening or a
+  conservative fallback before introducing a new recursive summary dimension.
+- Keep interface guarantees explicit and reusable. An erased call uses those
+  guarantees; it must not rediscover a convenient concrete implementation.
+- Do not infer arbitrary separation-logic entailments, synthesize protocol
+  invariants, or search ownership graphs for an unspecified cleanup policy.
+- Prefer a common verified interface guarantee or a precise missing-evidence
+  diagnostic when heterogeneous values lose their instance relations. A dynamic
+  refinement can be designed later for a demonstrated use case.
+- Exercise real surface programs alongside model traces: parallel readers,
+  owner transfer with external cleanup, protected access and heterogeneous
+  extraction. Record necessary annotations and reject new abstractions that
+  require ordinary callers to manipulate proof bookkeeping everywhere.
+
+These are design constraints, not established termination or complexity bounds.
+A new semantic fact must have specified substitution, join, erasure and failure
+rules before entering the implementation; a passing isolated regression does not
+justify adding an independent permission mechanism.
