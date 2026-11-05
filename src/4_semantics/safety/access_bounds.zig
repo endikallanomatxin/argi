@@ -163,7 +163,20 @@ pub fn resolveContract(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph
                 for (projections, 0..) |projection, index| if (projection == .dereference) {
                     try accesses.append(a, .{ .target = .{ .input_index = receiver.?, .projections = projections[0 .. index + 1] }, .mode = .read });
                 };
-                try accesses.appendSlice(a, try region(a, graph, function, .{ .input_index = receiver.?, .projections = projections }, access.mode));
+                if (path.nested_domain) |nested| {
+                    var target = facts.InputPath{ .input_index = receiver.?, .projections = projections };
+                    const selected = try selectedType(graph, function, target);
+                    if (graph.semanticType(selected.ty) == .pointer) {
+                        target.projections = try std.mem.concat(a, Projection, &.{ projections, &.{.dereference} });
+                    }
+                    if (graph.semanticType((try selectedType(graph, function, target)).ty) != .virtual) return error.InvalidAccessRegion;
+                    try accesses.append(a, .{ .target = target, .mode = .read });
+                    // Named operations may read the inner receiver to locate
+                    // their region. They do not acquire its write authority.
+                    try accesses.append(a, .{ .target = .{ .input_index = target.input_index, .projections = target.projections, .storage_domain = receiver_domain }, .mode = .read });
+                    target.storage_domain = nested;
+                    try accesses.append(a, .{ .target = target, .mode = access.mode });
+                } else try accesses.appendSlice(a, try region(a, graph, function, .{ .input_index = receiver.?, .projections = projections }, access.mode));
             }
         };
         if (!found) return error.MissingAccessDomain;

@@ -424,9 +424,24 @@ pub const Resolver = struct {
                 var ty = concrete;
                 var fields: std.ArrayList(u32) = .empty;
                 defer fields.deinit(self.allocator);
-                for (path.fields) |name| {
+                var nested_domain: ?u32 = null;
+                for (path.fields, 0..) |name, position| {
                     if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
                     const field_name = self.modules[module_index].text(name);
+                    if (self.graph.semanticType(ty) == .virtual) {
+                        if (position + 1 != path.fields.len) return self.domainFailure(source, "a nested associated region must be the terminal projection");
+                        const use = self.contractUse(self.graph.semanticType(ty).virtual) orelse return self.domainFailure(source, "nested region requires a known virtual contract");
+                        const inner = self.findContractDefinition(use.declaration) orelse return self.domainFailure(source, "nested region requires a known virtual contract");
+                        if (std.mem.startsWith(u8, field_name, "_") and
+                            !self.graph.sameModuleNamespace(@enumFromInt(inner.module_index), @enumFromInt(module_index)) and
+                            !(self.modules[module_index].is_bundled_core and self.modules[inner.module_index].is_bundled_core))
+                            return self.domainFailure(source, "nested region mappings cannot access private regions of another module");
+                        for (inner.definition.domains, 0..) |region_member, region_index| {
+                            if (std.mem.eql(u8, self.modules[inner.module_index].text(region_member.name), field_name)) nested_domain = @intCast(region_index);
+                        }
+                        if (nested_domain == null) return self.domainFailure(source, "nested projection names an unknown associated region");
+                        break;
+                    }
                     if (std.mem.startsWith(u8, field_name, "_")) {
                         if (global_types.nominalTypeOwner(self.graph, ty)) |owner| {
                             if (!self.graph.sameModuleNamespace(owner, @enumFromInt(module_index)) and !(self.modules[module_index].is_bundled_core and self.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
@@ -444,7 +459,7 @@ pub const Resolver = struct {
                     }
                     try fields.append(self.allocator, selected orelse return self.domainFailure(source, "storage domain mapping selects an unknown concrete field"));
                 }
-                try paths.append(self.allocator, .{ .fields = try arena.dupe(u32, fields.items) });
+                try paths.append(self.allocator, .{ .fields = try arena.dupe(u32, fields.items), .nested_domain = nested_domain });
             }
             try result.append(self.allocator, .{ .domain_index = index, .paths = try arena.dupe(primitives.StorageDomainMapping.Path, paths.items) });
         }
@@ -458,7 +473,7 @@ pub const Resolver = struct {
             for (mapping.paths, paths) |path, *resolved| {
                 const projections = try scratch.alloc(@import("../safety/place.zig").Projection, path.fields.len);
                 for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
-                resolved.* = .{ .input_index = 0, .projections = projections };
+                resolved.* = .{ .input_index = 0, .projections = projections, .storage_domain = path.nested_domain };
             }
             try symbolic.append(scratch, .{ .domain = @enumFromInt(mapping.domain_index), .paths = paths });
         }

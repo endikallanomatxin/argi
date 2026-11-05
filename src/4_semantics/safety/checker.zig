@@ -591,9 +591,9 @@ pub const SafetyChecker = struct {
         const contracts = @import("contracts.zig");
         var contract = try contracts.fromDeclaration(self.allocator, declared);
         if (!try self.resolveContractOpaqueStorage(&contract, domains, method, source)) return;
-        for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, domains);
-        for (contract.guarded_effects) |guarded| for (@constCast(guarded.effects.outputs)) |*output| try self.resolveContractDomains(output, domains);
-        try self.resolveContractInvalidations(&contract, domains);
+        for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, domains, method);
+        for (contract.guarded_effects) |guarded| for (@constCast(guarded.effects.outputs)) |*output| try self.resolveContractDomains(output, domains, method);
+        try self.resolveContractInvalidations(&contract, domains, method);
         const function = self.graph.function(method);
         @import("access_bounds.zig").resolveContract(self.allocator, self.graph, function, &contract, domains, receiver) catch |err| {
             if (err == error.OutOfMemory) return err;
@@ -686,20 +686,38 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn resolveContractInvalidations(self: *SafetyChecker, contract: *@import("contracts.zig").Contract, mappings: []const primitives.StorageDomainMapping) anyerror!void {
+    fn nestedMappingPath(self: *SafetyChecker, method: graph_mod.GlobalFunctionId, input: u32, path: primitives.StorageDomainMapping.Path) !facts.InputPath {
+        const function = self.graph.function(method);
+        const input_type = self.graph.semanticType(self.graph.fields.items[function.input.start + input].ty);
+        if (input_type != .pointer) return error.InvalidAccessDomainReceiver;
+        const access = @import("access_bounds.zig");
+        var result = facts.InputPath{ .input_index = input, .projections = try access.mappingProjections(self.allocator, self.graph, input_type.pointer.child, path.fields) };
+        if (self.graph.semanticType((try access.selectedType(self.graph, function, result)).ty) == .pointer)
+            result.projections = try std.mem.concat(self.allocator, facts.Projection, &.{ result.projections, &.{.dereference} });
+        return result;
+    }
+
+    fn resolveContractInvalidations(self: *SafetyChecker, contract: *@import("contracts.zig").Contract, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId) anyerror!void {
         var invalidates: std.ArrayList(facts.InputPath) = .empty;
         try invalidates.appendSlice(self.allocator, contract.invalidates);
+        var nested_domains: std.ArrayList(facts.InputDomain) = .empty;
+        try nested_domains.appendSlice(self.allocator, contract.invalidated_domains);
         for (contract.invalidated_domains) |domain| for (mappings) |mapping| {
             if (mapping.domain_index != domain.domain_index) continue;
             for (mapping.paths) |path| {
+                if (path.nested_domain) |nested| {
+                    try nested_domains.append(self.allocator, .{ .path = try self.nestedMappingPath(method, domain.path.input_index, path), .domain_index = nested });
+                    continue;
+                }
                 const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
                 for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
                 try invalidates.append(self.allocator, .{ .input_index = domain.path.input_index, .projections = projections });
             }
         };
         contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
-        for (contract.outcomes) |outcome| try self.resolveContractInvalidations(@constCast(outcome.effects), mappings);
-        for (contract.guarded_effects) |guarded| try self.resolveContractInvalidations(@constCast(guarded.effects), mappings);
+        contract.invalidated_domains = try nested_domains.toOwnedSlice(self.allocator);
+        for (contract.outcomes) |outcome| try self.resolveContractInvalidations(@constCast(outcome.effects), mappings, method);
+        for (contract.guarded_effects) |guarded| try self.resolveContractInvalidations(@constCast(guarded.effects), mappings, method);
     }
 
     fn resolveOpaqueContractPath(self: *SafetyChecker, path: facts.InputPath, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) !?facts.InputPath {
@@ -725,7 +743,7 @@ pub const SafetyChecker = struct {
             }
             const projections = try self.allocator.alloc(facts.Projection, fields.len);
             for (fields, projections) |field, *projection| projection.* = .{ .field = field };
-            return .{ .input_index = path.input_index, .projections = projections };
+            return .{ .input_index = path.input_index, .projections = projections, .storage_domain = mapping.paths[0].nested_domain };
         };
         try self.report(source, "opaque storage effect has no concrete domain mapping", .{});
         return null;
@@ -746,19 +764,26 @@ pub const SafetyChecker = struct {
         return true;
     }
 
-    fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, domains: []const primitives.StorageDomainMapping) anyerror!void {
+    fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, domains: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId) anyerror!void {
         var paths: std.ArrayList(facts.InputPath) = .empty;
         try paths.appendSlice(self.allocator, output.dependencies);
+        var nested_domains: std.ArrayList(facts.InputDomain) = .empty;
+        try nested_domains.appendSlice(self.allocator, output.domains);
         for (output.domains) |domain| for (domains) |mapping| {
             if (mapping.domain_index != domain.domain_index) continue;
             for (mapping.paths) |path| {
+                if (path.nested_domain) |nested| {
+                    try nested_domains.append(self.allocator, .{ .path = try self.nestedMappingPath(method, domain.path.input_index, path), .domain_index = nested });
+                    continue;
+                }
                 const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
                 for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
                 try paths.append(self.allocator, .{ .input_index = domain.path.input_index, .projections = projections });
             }
         };
         output.dependencies = try paths.toOwnedSlice(self.allocator);
-        for (output.outcomes) |outcome| try self.resolveContractDomains(@constCast(outcome.value), domains);
+        output.domains = try nested_domains.toOwnedSlice(self.allocator);
+        for (output.outcomes) |outcome| try self.resolveContractDomains(@constCast(outcome.value), domains, method);
     }
 
     fn provesDirectContractTransfer(self: *SafetyChecker, function: graph_mod.Function, transfer: primitives.MethodSafetyContract.Dependency) !bool {
@@ -1402,6 +1427,8 @@ pub const SafetyChecker = struct {
                     for (virtualize.domains) |mapping| {
                         var storages: std.ArrayList(facts.Place) = .empty;
                         var traversals: std.ArrayList(facts.RegionTraversal) = .empty;
+                        var symbolic: std.ArrayList(facts.SymbolicPointeeId) = .empty;
+                        var required_reads = std.array_list.Managed(StorageIdentity).init(self.allocator);
                         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                         defer dependencies.deinit();
                         var visited = std.array_list.Managed(facts.Place).init(self.allocator);
@@ -1432,13 +1459,78 @@ pub const SafetyChecker = struct {
                                 storage = try self.project(storage, .{ .field = field });
                                 ty = self.fieldTypeAt(ty, field) orelse return error.InvalidDomainMapping;
                             }
-                            try storages.append(self.allocator, storage);
-                            try self.captureContractStorage(function, virtualize.source, state, storage, ty, &dependencies, &visited);
+                            if (path.nested_domain) |nested_index| {
+                                while (self.graph.semanticType(ty) == .pointer) {
+                                    const pointer: facts.ValueFacts = self.valueAtPlace(state, storage) orelse .{};
+                                    const target = pointer.referenced_place orelse {
+                                        try self.report(virtualize.source, "nested region projection requires an identifiable handle reference", .{});
+                                        break :blk facts.ValueFacts{};
+                                    };
+                                    try traversals.append(self.allocator, .{ .slot = storage, .target = target });
+                                    try appendDependencyFact(&traversal_dependencies, .{ .root = try state.storageGeneration(storage) });
+                                    try traversal_dependencies.appendSlice(pointer.dependencies);
+                                    storage = target;
+                                    ty = self.graph.semanticType(ty).pointer.child;
+                                }
+                                var handle: facts.ValueFacts = self.valueAtPlace(state, storage) orelse .{};
+                                if (handle.domains.len == 0 and value.symbolic_pointees.len == 1) {
+                                    var projected = value;
+                                    projected.referenced_place = null;
+                                    var projected_type = virtualize.concrete_type;
+                                    for (path.fields) |field| {
+                                        while (self.graph.semanticType(projected_type) == .pointer) {
+                                            projected = try self.readSymbolicValue(state, projected, projected_type);
+                                            projected_type = self.graph.semanticType(projected_type).pointer.child;
+                                        }
+                                        projected = try self.projectSymbolicReference(projected, field, state) orelse return error.MissingVirtualStorageDomain;
+                                        projected_type = self.fieldTypeAt(projected_type, field) orelse return error.InvalidDomainMapping;
+                                    }
+                                    while (self.graph.semanticType(projected_type) == .pointer) {
+                                        projected = try self.readSymbolicValue(state, projected, projected_type);
+                                        projected_type = self.graph.semanticType(projected_type).pointer.child;
+                                    }
+                                    handle = try self.readSymbolicValue(state, projected, projected_type);
+                                    try state.setPlace(storage, .initialized, handle);
+                                }
+                                const selected = self.domainFacts(handle, nested_index, state) catch |err| {
+                                    if (err != error.MissingVirtualStorageDomain) return err;
+                                    try self.report(virtualize.source, "nested associated region has no retained storage identity", .{});
+                                    break :blk facts.ValueFacts{};
+                                };
+                                // The outer schema follows this handle observation,
+                                // not whichever handle might later replace its slot.
+                                try appendDependencyFact(&traversal_dependencies, .{ .root = try state.storageGeneration(storage) });
+                                try traversal_dependencies.appendSlice(handle.dependencies);
+                                if (handle.referenced_place) |target| try traversals.append(self.allocator, .{ .slot = storage, .target = target });
+                                for (selected.traversals) |traversal| try traversals.append(self.allocator, traversal);
+                                for (selected.required_reads) |required| try appendStorageIdentity(&required_reads, required);
+                                const receiver_domain = try self.domainFacts(handle, @import("access_bounds.zig").receiver_domain, state);
+                                for (receiver_domain.storages) |target| try appendStorageIdentity(&required_reads, .{ .place = target });
+                                for (receiver_domain.symbolic_pointees) |identity| try appendStorageIdentity(&required_reads, .{ .symbolic = identity });
+                                for (receiver_domain.required_reads) |required| try appendStorageIdentity(&required_reads, required);
+                                for (selected.storages) |target| {
+                                    try storages.append(self.allocator, target);
+                                    const target_type = self.domainStorageType(target) orelse return error.InvalidDomainMapping;
+                                    try self.captureContractStorage(function, virtualize.source, state, target, target_type, &dependencies, &visited);
+                                }
+                                for (selected.symbolic_pointees) |identity| {
+                                    if (std.mem.indexOfScalar(facts.SymbolicPointeeId, symbolic.items, identity) == null) try symbolic.append(self.allocator, identity);
+                                }
+                            } else {
+                                try storages.append(self.allocator, storage);
+                                try self.captureContractStorage(function, virtualize.source, state, storage, ty, &dependencies, &visited);
+                            }
                         }
-                        const roots = try self.allocator.alloc(facts.ValidityRootId, visited.items.len);
-                        for (visited.items, roots) |storage, *root| root.* = try state.storageGeneration(storage);
+                        var root_list: std.ArrayList(facts.ValidityRootId) = .empty;
+                        defer root_list.deinit(self.allocator);
+                        for (visited.items) |storage| try root_list.append(self.allocator, try state.storageGeneration(storage));
+                        for (symbolic.items) |identity| {
+                            const entry = state.initialProjectedPointee(identity) orelse continue;
+                            if (entry.generation) |generation| try root_list.append(self.allocator, generation);
+                        }
+                        const roots = try self.allocator.dupe(facts.ValidityRootId, root_list.items);
                         try captured.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .generations = roots });
-                        try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator), .traversals = try traversals.toOwnedSlice(self.allocator) });
+                        try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator), .symbolic_pointees = try symbolic.toOwnedSlice(self.allocator), .required_reads = try required_reads.toOwnedSlice(), .traversals = try traversals.toOwnedSlice(self.allocator) });
                     }
                     if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Contract storage domains share a storage generation and cannot be invalidated independently", .{});
                     value.domains = try domains.toOwnedSlice(self.allocator);
@@ -2378,6 +2470,8 @@ pub const SafetyChecker = struct {
             const first = if (conflict.incompatible.input_index < ids.len) self.graph.text(self.graph.value_fields.items[@intFromEnum(ids[conflict.incompatible.input_index])].name) else "implicit input";
             const second = if (conflict.observed.input_index < ids.len) self.graph.text(self.graph.value_fields.items[@intFromEnum(ids[conflict.observed.input_index])].name) else "implicit input";
             try self.report(source, "concurrent access conflicts through aliased function inputs '{s}' and '{s}'", .{ first, second });
+        } else if (conflict.kind == .capture_update) {
+            try self.report(source, "virtual capture observes storage that may be changed through an aliased input", .{});
         } else try self.report(source, "function observes storage after an aliased participant has consumed its value", .{});
     }
 
@@ -3320,6 +3414,13 @@ pub const SafetyChecker = struct {
                 if (self.valueAtPlace(state, storage)) |stored| {
                     try self.requireMappedOpaqueContentsLive(source, stored, state);
                     if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
+                    for (stored.domains) |domain| for (domain.required_reads) |required| switch (required) {
+                        .place => |target| {
+                            try self.requirePlaceInitialized(@enumFromInt(0), source, target, state.initializednessAtPlace(target), state);
+                            if (self.valueAtPlace(state, target)) |contents| try self.requireLive(@enumFromInt(0), source, try self.reconstructPlaceValue(state, target, contents), state);
+                        },
+                        .symbolic => {}, // The selected symbolic input's validity remains in its dependencies.
+                    };
                     for (stored.domains) |domain| for (domain.storages) |target| {
                         const generation = try state.storageGeneration(target);
                         if (state.tracker.roots.items[@intFromEnum(generation)].state != .alive)
@@ -4002,6 +4103,10 @@ pub const SafetyChecker = struct {
                     if (err != error.MissingVirtualStorageDomain) return err;
                     try self.report(source, "cannot establish captured access region identity: evidence is missing or an intermediate reference changed", .{});
                     continue;
+                };
+                for (selected.required_reads) |required| switch (required) {
+                    .place => |storage| try self.requireExecutionAccess(source, storage, null, .read, state),
+                    .symbolic => |identity| try self.requireExecutionAccess(source, null, identity, .read, state),
                 };
                 const storages = self.checkedDomainStorage(selected, state) catch |err| {
                     if (err != error.MissingVirtualStorageDomain) return err;
@@ -4917,58 +5022,21 @@ pub const SafetyChecker = struct {
             // lifetime capture effects above establish that separate evidence.
             var domains: std.ArrayList(facts.DomainFacts) = .empty;
             for (effect.domain_values) |domain| {
-                var storages = std.array_list.Managed(facts.Place).init(self.allocator);
-                var receiver_pointees = std.array_list.Managed(facts.SymbolicPointeeId).init(self.allocator);
-                var traversals = std.array_list.Managed(facts.RegionTraversal).init(self.allocator);
-                for (domain.value.input_generation_dependencies) |path| {
-                    if (path.input_index >= arguments.len) continue;
-                    if (domain.domain_index == @import("access_bounds.zig").receiver_domain and path.projections.len == 0) {
-                        for (arguments[path.input_index].symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
-                    }
-                    var explicit_dereference = false;
-                    for (path.projections) |projection| if (projection == .dereference) {
-                        explicit_dereference = true;
-                        break;
-                    };
-                    if (explicit_dereference) {
-                        for (path.projections, 0..) |projection, index| if (projection == .dereference) {
-                            var prefix = path;
-                            prefix.projections = path.projections[0..index];
-                            const slot = try self.resolveSummaryInputPath(prefix, &.{}, arguments, state) orelse continue;
-                            prefix.projections = path.projections[0 .. index + 1];
-                            const target = try self.resolveSummaryInputPath(prefix, &.{}, arguments, state) orelse continue;
-                            try appendRegionTraversal(&traversals, .{ .slot = slot, .target = target });
-                        };
-                        if (try self.resolveSummaryInputPath(path, &.{}, arguments, state)) |target| try appendPlaceFact(&storages, target);
-                        continue;
-                    }
-                    var storage = arguments[path.input_index].referenced_place orelse continue;
-                    for (path.projections) |projection| {
-                        if (self.valueAtPlace(state, storage)) |stored| {
-                            if (stored.referenced_place) |referent| storage = referent;
-                        }
-                        storage = try self.project(storage, projection);
-                    }
-                    try appendPlaceFact(&storages, storage);
+                var value = try self.instantiateRegionEffect(domain.domain_index, domain.value.*, arguments, state, false);
+                if (domain.required_reads) |selectors| {
+                    const reads = try self.instantiateRegionEffect(domain.domain_index, selectors.*, arguments, state, true);
+                    var required = std.array_list.Managed(StorageIdentity).init(self.allocator);
+                    try required.appendSlice(value.required_reads);
+                    for (reads.storages) |storage| try appendStorageIdentity(&required, .{ .place = storage });
+                    for (reads.symbolic_pointees) |identity| try appendStorageIdentity(&required, .{ .symbolic = identity });
+                    for (reads.required_reads) |storage| try appendStorageIdentity(&required, storage);
+                    value.required_reads = try required.toOwnedSlice();
+                    var traversals = std.array_list.Managed(facts.RegionTraversal).init(self.allocator);
+                    try traversals.appendSlice(value.traversals);
+                    for (reads.traversals) |traversal| try appendRegionTraversal(&traversals, traversal);
+                    value.traversals = try traversals.toOwnedSlice();
                 }
-                for (domain.value.input_domains) |input| {
-                    if (input.path.input_index >= arguments.len) continue;
-                    const value = if (input.path.projections.len == 0) arguments[input.path.input_index] else try self.load_summary_input_value(input.path, arguments, state);
-                    // Forwarding region evidence does not access its storage.
-                    // Validate traversal identities when that evidence is used.
-                    if (self.domainFacts(value, input.domain_index, state)) |selected| {
-                        for (selected.storages) |storage| try appendPlaceFact(&storages, storage);
-                        for (selected.traversals) |traversal| try appendRegionTraversal(&traversals, traversal);
-                        for (selected.symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
-                    } else |err| {
-                        if (err != error.MissingVirtualStorageDomain) return err;
-                        for (try self.domainStorage(value, input.domain_index, state)) |storage| try appendPlaceFact(&storages, storage);
-                    }
-                    if (domain.domain_index == @import("access_bounds.zig").receiver_domain) {
-                        for (try self.receiverDomainPointees(value, state)) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
-                    }
-                }
-                try domains.append(self.allocator, .{ .domain_index = domain.domain_index, .storages = try storages.toOwnedSlice(), .symbolic_pointees = try receiver_pointees.toOwnedSlice(), .traversals = try traversals.toOwnedSlice() });
+                try domains.append(self.allocator, value);
             }
             result.domains = try domains.toOwnedSlice(self.allocator);
         }
@@ -5094,6 +5162,70 @@ pub const SafetyChecker = struct {
         if (referenced_place) |target| result.referenced_place = target;
         try self.attachAbsentFreshExecutions(effect, &result, state);
         return result;
+    }
+
+    fn instantiateRegionEffect(self: *SafetyChecker, domain_index: u32, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState, observe_handles: bool) !facts.DomainFacts {
+        var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+        var receiver_pointees = std.array_list.Managed(facts.SymbolicPointeeId).init(self.allocator);
+        var traversals = std.array_list.Managed(facts.RegionTraversal).init(self.allocator);
+        var required_reads = std.array_list.Managed(StorageIdentity).init(self.allocator);
+        for (effect.input_generation_dependencies) |path| {
+            if (path.input_index >= arguments.len) continue;
+            if (domain_index == @import("access_bounds.zig").receiver_domain and path.projections.len == 0) {
+                for (arguments[path.input_index].symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
+            }
+            var explicit_dereference = false;
+            for (path.projections) |projection| if (projection == .dereference) {
+                explicit_dereference = true;
+                break;
+            };
+            if (explicit_dereference) {
+                for (path.projections, 0..) |projection, index| if (projection == .dereference) {
+                    var prefix = path;
+                    prefix.projections = path.projections[0..index];
+                    const slot = try self.resolveSummaryInputPath(prefix, &.{}, arguments, state) orelse continue;
+                    prefix.projections = path.projections[0 .. index + 1];
+                    const target = try self.resolveSummaryInputPath(prefix, &.{}, arguments, state) orelse continue;
+                    try appendRegionTraversal(&traversals, .{ .slot = slot, .target = target });
+                };
+                if (try self.resolveSummaryInputPath(path, &.{}, arguments, state)) |target| try appendPlaceFact(&storages, target);
+                continue;
+            }
+            var storage = arguments[path.input_index].referenced_place orelse continue;
+            for (path.projections) |projection| {
+                if (self.valueAtPlace(state, storage)) |stored| {
+                    if (stored.referenced_place) |referent| storage = referent;
+                }
+                storage = try self.project(storage, projection);
+            }
+            try appendPlaceFact(&storages, storage);
+        }
+        for (effect.input_domains) |input| {
+            if (input.path.input_index >= arguments.len) continue;
+            const value = if (input.path.projections.len == 0) arguments[input.path.input_index] else try self.load_summary_input_value(input.path, arguments, state);
+            if (observe_handles and input.domain_index == @import("access_bounds.zig").receiver_domain) {
+                if (try self.resolveSummaryInputPath(input.path, &.{}, arguments, state)) |slot| {
+                    if (self.domainStorageType(slot)) |ty| if (self.graph.semanticType(ty) == .virtual) {
+                        if (value.referenced_place) |target| try appendRegionTraversal(&traversals, .{ .slot = slot, .target = target });
+                    };
+                }
+            }
+            // Forwarding region evidence does not access its storage.
+            // Validate traversal identities when that evidence is used.
+            if (self.domainFacts(value, input.domain_index, state)) |selected| {
+                for (selected.storages) |storage| try appendPlaceFact(&storages, storage);
+                for (selected.traversals) |traversal| try appendRegionTraversal(&traversals, traversal);
+                for (selected.required_reads) |required| try appendStorageIdentity(&required_reads, required);
+                for (selected.symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
+            } else |err| {
+                if (err != error.MissingVirtualStorageDomain) return err;
+                for (try self.domainStorage(value, input.domain_index, state)) |storage| try appendPlaceFact(&storages, storage);
+            }
+            if (domain_index == @import("access_bounds.zig").receiver_domain) {
+                for (try self.receiverDomainPointees(value, state)) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, receiver_pointees.items, identity) == null) try receiver_pointees.append(identity);
+            }
+        }
+        return .{ .domain_index = domain_index, .storages = try storages.toOwnedSlice(), .symbolic_pointees = try receiver_pointees.toOwnedSlice(), .traversals = try traversals.toOwnedSlice(), .required_reads = try required_reads.toOwnedSlice() };
     }
 
     fn freshEffectContains(effect: facts.ValueEffect, source: facts.FreshEffectSource) bool {
@@ -8933,6 +9065,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.domains.len != right.domains.len) return false;
     for (left.domains, right.domains) |a, b| {
         if (a.domain_index != b.domain_index or a.storages.len != b.storages.len or !std.mem.eql(facts.SymbolicPointeeId, a.symbolic_pointees, b.symbolic_pointees)) return false;
+        if (a.required_reads.len != b.required_reads.len) return false;
+        for (a.required_reads, b.required_reads) |x, y| if (!x.eql(y)) return false;
         if (a.traversals.len != b.traversals.len) return false;
         for (a.traversals, b.traversals) |x, y| if (!x.eql(y)) return false;
         for (a.storages, b.storages) |x, y| if (!x.eql(y)) return false;
@@ -10622,6 +10756,10 @@ fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFact
             try traversals.appendSlice(existing.traversals);
             for (domain.traversals) |traversal| try appendRegionTraversal(&traversals, traversal);
             existing.traversals = try traversals.toOwnedSlice();
+            var required_reads = std.array_list.Managed(facts.StorageIdentity).init(allocator);
+            try required_reads.appendSlice(existing.required_reads);
+            for (domain.required_reads) |required| try appendStorageIdentity(&required_reads, required);
+            existing.required_reads = try required_reads.toOwnedSlice();
             var pointees = std.array_list.Managed(facts.SymbolicPointeeId).init(allocator);
             try pointees.appendSlice(existing.symbolic_pointees);
             for (domain.symbolic_pointees) |identity| if (std.mem.indexOfScalar(facts.SymbolicPointeeId, pointees.items, identity) == null) try pointees.append(identity);

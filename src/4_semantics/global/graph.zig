@@ -1854,7 +1854,7 @@ fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
     outcomes[0] = .{ .variant = .{ .start = 0, .len = 0 }, .parent_variants = try arena.dupe(u32, &.{3}), .source = location };
     const domains = try arena.alloc(primitives.StorageDomainMapping, 1);
     const paths = try arena.alloc(primitives.StorageDomainMapping.Path, 1);
-    paths[0] = .{ .fields = try arena.dupe(u32, &.{ 2, 5 }) };
+    paths[0] = .{ .fields = try arena.dupe(u32, &.{ 2, 5 }), .nested_domain = 3 };
     domains[0] = .{ .domain_index = 1, .paths = paths };
     try source.virtualizes.append(a, .{ .value = @enumFromInt(0), .concrete_type = @enumFromInt(0), .contract_decl = @enumFromInt(0), .virtual_type = @enumFromInt(0), .methods = .{ .start = 0, .len = 0 }, .safety_methods = .{ .start = 0, .len = 0 }, .source = location, .domains = domains });
     try source.contract_safety_conformances.append(a, .{
@@ -1882,6 +1882,8 @@ fn cloneSafetySelectors(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(u32, 3), copy.construction.virtual_completions.items[0].previous.safety_contract.?.outcomes[0].parent_variants[0]);
     try std.testing.expectEqual(@as(u32, 5), copy.contract_safety_conformances.items[0].domains[0].paths[0].fields[1]);
     try std.testing.expectEqual(@as(u32, 5), copy.virtualizes.items[0].domains[0].paths[0].fields[1]);
+    try std.testing.expectEqual(@as(?u32, 3), copy.virtualizes.items[0].domains[0].paths[0].nested_domain);
+    try std.testing.expectEqual(@as(?u32, 3), copy.contract_safety_conformances.items[0].domains[0].paths[0].nested_domain);
 }
 
 test "semantic graph safety selectors survive source destruction and failed cloning" {

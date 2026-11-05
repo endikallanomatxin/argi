@@ -230,6 +230,9 @@ pub const DomainFacts = struct {
     domain_index: u32,
     storages: []const Place,
     traversals: []const RegionTraversal = &.{},
+    /// Read authority needed to locate a projected region, independently of
+    /// the operation's authority over the selected payload storage.
+    required_reads: []const StorageIdentity = &.{},
     /// The internal receiver region can retain an unknown caller referent
     /// without inventing a concrete Place. Named lifetime domains still use
     /// materialized storage until symbolic domain projections are represented.

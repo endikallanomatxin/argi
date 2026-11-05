@@ -181,6 +181,11 @@ fn filterEffect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSema
         const value = try allocator.create(facts.ValueEffect);
         value.* = try filterEffect(allocator, graph, function, domain.value.*);
         domain.value = value;
+        if (domain.required_reads) |reads| {
+            const filtered = try allocator.create(facts.ValueEffect);
+            filtered.* = try filterEffect(allocator, graph, function, reads.*);
+            domain.required_reads = filtered;
+        }
     }
     result.domain_values = domains;
     const executions = try allocator.dupe(facts.FreshExecution, effect.fresh_executions);
@@ -239,7 +244,10 @@ fn checkEffectOrigins(allowed: contracts.Output, actual: facts.ValueEffect, outp
     }
     if (actual.fresh_executions.len != 0) return .{ .kind = .missing_execution_transfer, .output_index = output_index };
     for (actual.fields) |field| if (checkEffectOrigins(allowed, field.value.*, output_index)) |failure| return failure;
-    for (actual.domain_values) |domain| if (checkEffectOrigins(allowed, domain.value.*, output_index)) |failure| return failure;
+    for (actual.domain_values) |domain| {
+        if (checkEffectOrigins(allowed, domain.value.*, output_index)) |failure| return failure;
+        if (domain.required_reads) |reads| if (checkEffectOrigins(allowed, reads.*, output_index)) |failure| return failure;
+    }
     for (actual.variants) |variant| {
         var selected = allowed;
         for (allowed.outcomes) |outcome| if (outcome.variant_index == variant.index) {

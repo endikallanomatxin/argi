@@ -199,6 +199,9 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.domain_values.len != b.domain_values.len) return false;
     if (a.domain_values.ptr != b.domain_values.ptr) for (a.domain_values, b.domain_values) |x, y| {
         if (x.domain_index != y.domain_index or (x.value != y.value and !valueEffectEql(x.value.*, y.value.*))) return false;
+        if (x.required_reads) |reads| {
+            if (y.required_reads == null or !valueEffectEql(reads.*, y.required_reads.?.*)) return false;
+        } else if (y.required_reads != null) return false;
     };
     if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
         a.explicit_dependency != b.explicit_dependency or
@@ -570,4 +573,14 @@ test "execution receipt and completion effects participate in equality" {
     try std.testing.expect(!summaryEql(.{ .completed_executions = &.{.{ .input_index = 0 }} }, .{}));
     const outcome = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{}, .completed_executions = &.{.{ .input_index = 1 }} };
     try std.testing.expectEqual(@as(usize, 1), (facts.SafetySummary{}).outcomeEffects(outcome).completed_executions.len);
+}
+
+test "region locating reads participate in summary equality" {
+    const payload: facts.ValueEffect = .{ .input_domains = &.{.{ .path = .{ .input_index = 0 }, .domain_index = 1 }} };
+    const reads: facts.ValueEffect = .{ .input_domains = &.{.{ .path = .{ .input_index = 0 }, .domain_index = 2 }} };
+    const plain: facts.ValueEffect = .{ .domain_values = &.{.{ .domain_index = 0, .value = &payload }} };
+    const located: facts.ValueEffect = .{ .domain_values = &.{.{ .domain_index = 0, .value = &payload, .required_reads = &reads }} };
+    try std.testing.expect(!valueEffectEql(plain, located));
+    try std.testing.expect(!valueEffectEql(located, plain));
+    try std.testing.expect(valueEffectEql(located, located));
 }

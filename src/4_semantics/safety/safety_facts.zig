@@ -71,7 +71,12 @@ pub const OutputFieldEffect = struct {
     index: u32,
     value: *const ValueEffect,
 };
-pub const OutputDomainEffect = struct { domain_index: u32, value: *const ValueEffect };
+pub const OutputDomainEffect = struct {
+    domain_index: u32,
+    value: *const ValueEffect,
+    /// Caller-relative selectors for storage read while locating this region.
+    required_reads: ?*const ValueEffect = null,
+};
 
 /// Stable compiler-owned identity for a fresh runtime fact produced while
 /// evaluating a summarized expression.
@@ -177,7 +182,7 @@ pub const StorageCapabilityConflict = struct {
 /// Coordinates are caller-relative; distinct inputs do not prove disjointness.
 pub const StorageObservationConflict = struct {
     incompatible: InputPath,
-    kind: enum { lifetime, concurrent_access } = .lifetime,
+    kind: enum { lifetime, concurrent_access, capture_update } = .lifetime,
     observed: InputPath,
     /// Compare captured reachable storage, including initializer sources,
     /// rather than only the receiver's lexical envelope.

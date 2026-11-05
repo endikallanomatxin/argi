@@ -87,8 +87,8 @@ Definition of the schema reads no runtime values; using it may require checked
 reads of intermediate references to locate the selected storage. Preserve the
 current nonempty grouping, privacy, overlap and traversal checks in the syntax
 migration.
-Nested role selectors remain separately tracked work; this syntax change does
-not make `self.base.state` valid automatically.
+Nested selectors require the additional static evidence described below; the
+unary syntax migration alone did not enable them.
 
 ## Multiple participants
 
@@ -209,48 +209,29 @@ types, values, operations and projections need consistent lookup and validation;
 they do not need an identical physical representation or a new runtime system.
 Do not encode a projection as a fake ordinary type or callable implementation.
 
-## Migration and validation
+## Remaining validation
 
-First migrate unary declarations and implementations without expanding safety:
+Before enabling multiple-participant regions, validate identical concrete
+participant types, aliased readonly arguments, incompatible concurrent access,
+and projections rooted in the wrong participant. Preserve the declaration's
+participant identity through specialization; equal substituted types must not
+collapse roles. This needs no new trusted primitive, dynamic descriptor or
+ordered-effect representation.
 
-```argi
--- Before
-domain state
-implement Counter#(Provider) (.set = set_counter) where { state(self._counter) }
+Unary member syntax, receiver-root projections and delegated selectors are
+specified in description/135_contracts.md. Their implementation is the baseline
+for this remaining work, not a pending migration.
 
--- Current unary syntax
-.state: Region#(T)
-implement Counter#(Provider) (.state = region(self._counter), .set = set_counter)
-```
+## Remaining delegation integration
 
-The snippets abbreviate the enclosing contract. Replace the old spelling with a
-clear migration diagnostic rather than permanently maintaining two member models.
-Update core, more, fixtures, documentation, editor behavior and serialized metadata
-together. Keep region initializers out of executable member materialization.
+Terminal Virtual region selectors are implemented; their language semantics are
+documented in description/135_contracts.md. The remaining concurrency work must
+use their locating reads and handle observations when bounding Executor
+submission, and must independently close native result provenance. Delegation
+alone grants no synchronization or thread-transfer guarantee.
 
-Validate A/B/C, grouped mappings, generic implementations, private fields, renamed
-operation inputs, unknown/duplicate/missing members and use of Region as a runtime
-type or function. Preserve the existing positive and negative access, lifetime,
-alias, capture-generation, opaque-storage and Virtual tests and LLVM layout.
-Classify the unary migration and the multiple-participant extension separately so
-failures cannot be hidden by weakening requirements.
-
-Before enabling the latter, also validate identical concrete participant types,
-aliased readonly arguments, incompatible concurrent access, and projections rooted
-in the wrong participant. No new trusted primitive, synchronization guarantee,
-dynamic descriptor or ordered-effect representation is part of this proposal.
-
-## Receiver representation projection
-
-`region(self)` selects the participant instance's representation. It is the root
-case of the same field-path projection, not a recursive union of everything the
-instance references. A mapping still requires at least one projection; `region()`
-is invalid. A root mapping overlaps every structural subfield mapping in another
-region, while overlapping paths within one region remain permitted.
-
-This supports providers whose abstract state is their own representation without
-adding artificial marker fields. It does not authorize accesses to captured
-referents, provide synchronization, or establish transferability. Delegating a
-region through a captured Virtual remains separate work: its selected data,
-receiver reads, and observations of retargetable handles must all survive
-summary transport before such composition is enabled.
+Keep factories that may retarget aliased handles conservative until an ordered
+provenance representation justifies accepting them. Existing caller-side alias
+obligations suffice for independent destination updates; they are not a reason
+to introduce an ordered-effect graph now. Multiple-participant regions and
+relational guarantees on returned virtuals remain separate design work.

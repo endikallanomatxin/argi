@@ -642,12 +642,13 @@ physical access provenance. Keep those positive tests enabled. Do not exempt
 `await`, reinterpret `depends_on` or `from_storage` as physical containment, or
 let a completion postcondition retroactively authorize earlier accesses.
 
-A compositional Executor submission bound additionally needs delegated region
-projections. `writes(self)` covers the provider representation, not state behind
-a captured Virtual. A future nested projection must retain the selected region,
-reads needed to locate its provider, and observations that reject stale evidence
-after handle retargeting. Existing summary substitution, equality, cloning and
-contract validation must all preserve these obligations before enabling it.
+A compositional Executor submission bound needs delegated region projections:
+`writes(self)` covers the provider representation, not state behind a captured
+Virtual. The delegated projection implementation now retains selected storage,
+locating reads and retargeting observations through summaries, equality, cloning
+and contract validation. See contract_members.md. Executor bounds still require
+integration alongside the native result provenance fix; delegated projections
+alone do not authorize unbounded calls or acquire cross-thread capabilities.
 
 The integration experiment is not part of the implemented safety guarantees.
 The next implementation checkpoint should close these representation gaps as

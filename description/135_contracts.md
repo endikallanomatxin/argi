@@ -594,8 +594,35 @@ one region remains valid. The root projection does not include the targets of
 stored references or grant authority over them. An empty `region()` is invalid.
 The implementation initializer selects physical fields even if a field shares
 the region member name. Operation where clauses retain their safety meaning.
+A Virtual field may end a path with one of its associated regions, as in
+`.state = region(self.base.state)`. This delegates only the named region.
+Operations additionally retain read requirements on the delegated provider;
+those locating reads do not grant write access to its representation. Replacing
+the captured handle invalidates the observation used by the projection.
 Virtual inputs retain the declared domains even before any concrete handle is
 constructed; checking an interface does not depend on available implementations.
+
+### Delegated associated regions
+
+A mapping such as `.state = region(self.base.state)` resolves the terminal
+member against the static contract of `base`. The complete handle path and the
+region's identity remain separate. The projection carries its selected storage,
+read requirements for locating delegated providers, and observations of the
+handles and intermediate references used to reach it.
+
+An operation checks the locating reads independently of its requested access to
+the selected storage. A write through a delegated region therefore does not
+acquire write authority over the delegate's representation or its sibling
+regions. The read requirements survive further delegation and ordinary function
+summaries. Copying or forwarding a handle does not itself access that storage.
+The mapping contributes no vtable field or runtime check.
+
+Replacing a captured handle invalidates its observation. A function that both
+captures a handle and may change aliased storage conservatively exports a
+caller-side alias obligation. Its final handle value does not establish what
+was captured earlier. Passing independent source and destination storage can
+satisfy that obligation. An erased contract or callback cannot hide an alias
+obligation that its published guarantees do not represent.
 
 A unary virtual interface may bind associated types and constants. Every
 associated element must be fixed in the interface; the concrete selected

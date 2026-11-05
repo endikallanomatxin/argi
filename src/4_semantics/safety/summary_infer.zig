@@ -4767,6 +4767,22 @@ pub const Infer = struct {
         }
     }
 
+    fn recordRegionLocatingReads(self: *Infer, effect: facts.ValueEffect) !void {
+        const sink = self.access_sink.?;
+        for (effect.input_generation_dependencies) |path| try sink.addInput(path, .read);
+        for (effect.input_domains) |domain| {
+            var path = domain.path;
+            path.storage_domain = domain.domain_index;
+            try sink.addInput(path, .read);
+        }
+        // Region selectors carry no ownership or value reconstruction. A new
+        // effect form must be handled explicitly before it can authorize access.
+        var remaining = effect;
+        remaining.input_generation_dependencies = &.{};
+        remaining.input_domains = &.{};
+        if (!facts.isEmptyValue(remaining)) sink.unknown = true;
+    }
+
     fn composeAccesses(self: *Infer, function: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, input: graph_mod.GlobalNodeId, override: ?SymbolicInputOverride) !void {
         const previous = self.reading_access_targets;
         self.reading_access_targets = true;
@@ -4780,6 +4796,14 @@ pub const Infer = struct {
         };
         for (summary.input_accesses) |access| {
             if (access.target.storage_domain) |domain| {
+                if (access.target.input_index < arguments.len) {
+                    const argument = arguments[access.target.input_index].value;
+                    var value = (try self.localPointeeEffect(function, argument)) orelse try self.inferExpression(function, argument);
+                    for (access.target.projections) |projection| value = try self.projectValueEffect(value, projection);
+                    for (value.domain_values) |mapped| if (mapped.domain_index == domain) {
+                        if (mapped.required_reads) |reads| try self.recordRegionLocatingReads(reads.*);
+                    };
+                }
                 const paths = try self.substituteRequiredInputPath(function, access.target, arguments, override);
                 if (paths.len == 0) sink.unknown = true;
                 for (paths) |path| {
@@ -5513,7 +5537,10 @@ pub const Infer = struct {
         for (effect.input_domains) |domain| try appendInputPath(sources, domain.path);
         for (effect.fields) |field| if (!try self.captureEffectSources(field.value.*, sources, depth + 1)) return false;
         for (effect.variants) |variant| if (!try self.captureEffectSources(variant.value.*, sources, depth + 1)) return false;
-        for (effect.domain_values) |domain| if (!try self.captureEffectSources(domain.value.*, sources, depth + 1)) return false;
+        for (effect.domain_values) |domain| {
+            if (!try self.captureEffectSources(domain.value.*, sources, depth + 1)) return false;
+            if (domain.required_reads) |reads| if (!try self.captureEffectSources(reads.*, sources, depth + 1)) return false;
+        }
         return true;
     }
 
@@ -5569,6 +5596,11 @@ pub const Infer = struct {
                 const value = try self.allocator.create(facts.ValueEffect);
                 value.* = try self.captureCallPhases(function, call, domain.value.*, may_promote_entry);
                 domain.value = value;
+                if (domain.required_reads) |reads| {
+                    const mapped_reads = try self.allocator.create(facts.ValueEffect);
+                    mapped_reads.* = try self.captureCallPhases(function, call, reads.*, may_promote_entry);
+                    domain.required_reads = mapped_reads;
+                }
             }
             result.domain_values = domains;
         }
@@ -5885,11 +5917,15 @@ pub const Infer = struct {
         if (virtualize.domains.len != 0) {
             const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, virtualize.domains.len + 1);
             domain_values[virtualize.domains.len] = result.domain_values[0];
+            var observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+            try observations.appendSlice(result.input_generation_dependencies);
             for (virtualize.domains, domain_values[0..virtualize.domains.len]) |mapping, *domain| {
                 var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                var nested_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+                var receiver_reads = std.array_list.Managed(facts.InputDomain).init(self.allocator);
                 for (receiver_paths) |receiver| for (mapping.paths) |path| {
                     var projections = receiver.projections;
-                    if (@import("access_bounds.zig").usesDomain(self.graph, virtualize.safety_methods, mapping.domain_index)) {
+                    if (path.nested_domain != null or @import("access_bounds.zig").usesDomain(self.graph, virtualize.safety_methods, mapping.domain_index)) {
                         const selected = try @import("access_bounds.zig").mappingProjections(self.allocator, self.graph, virtualize.concrete_type, path.fields);
                         for (selected) |projection| projections = try self.appendProjection(projections, projection);
                     } else {
@@ -5897,13 +5933,39 @@ pub const Infer = struct {
                             projections = try self.appendProjection(projections, .{ .field = field });
                         }
                     }
-                    try appendInputPath(&paths, .{ .input_index = receiver.input_index, .projections = projections });
+                    if (path.nested_domain) |nested| {
+                        var target = facts.InputPath{ .input_index = receiver.input_index, .projections = projections };
+                        if (self.graph.semanticType((try @import("access_bounds.zig").selectedType(self.graph, self.graph.function(function_id), target)).ty) == .pointer)
+                            target.projections = try self.appendProjection(target.projections, .dereference);
+                        try nested_domains.append(.{ .path = target, .domain_index = nested });
+                        try appendDomain(&receiver_reads, .{ .path = target, .domain_index = @import("access_bounds.zig").receiver_domain });
+                        try appendInputPath(&observations, target);
+                        // Without ordered provenance, a factory that may
+                        // retarget this slot cannot publish its final value as
+                        // capture-time evidence. Preserve caller alias checks.
+                        if (self.engine.summaryFor(function_id)) |summary| for (summary.input_accesses) |access| {
+                            if (access.mode != .write) continue;
+                            const conflict: facts.StorageObservationConflict = .{ .incompatible = access.target, .observed = target, .kind = .capture_update };
+                            var found = false;
+                            for (self.extra_capture_conflicts.items) |previous| if (!previous.captures_reachable and previous.kind == .capture_update and self.inputPathEqual(previous.incompatible, conflict.incompatible) and self.inputPathEqual(previous.observed, target)) {
+                                found = true;
+                                break;
+                            };
+                            if (!found) try self.extra_capture_conflicts.append(conflict);
+                        };
+                    } else try appendInputPath(&paths, .{ .input_index = receiver.input_index, .projections = projections });
                 };
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = .{ .input_generation_dependencies = try paths.toOwnedSlice() };
+                value.* = .{ .input_generation_dependencies = try paths.toOwnedSlice(), .input_domains = try nested_domains.toOwnedSlice() };
                 domain.* = .{ .domain_index = mapping.domain_index, .value = value };
+                if (receiver_reads.items.len != 0) {
+                    const reads = try self.allocator.create(facts.ValueEffect);
+                    reads.* = .{ .input_domains = try receiver_reads.toOwnedSlice() };
+                    domain.required_reads = reads;
+                }
             }
             result.domain_values = domain_values;
+            result.input_generation_dependencies = try observations.toOwnedSlice();
             return result;
         }
         // A receiver without named domains captures its reachable storage.
@@ -6385,6 +6447,21 @@ pub const Infer = struct {
             const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.substituteOutputInContext(function_id, domain.value.*, arguments, override, context);
             mapped.* = .{ .domain_index = domain.domain_index, .value = value };
+            if (domain.required_reads) |reads| {
+                const substituted = try self.allocator.create(facts.ValueEffect);
+                substituted.* = try self.substituteOutputInContext(function_id, reads.*, arguments, override, context);
+                mapped.required_reads = substituted;
+            }
+            // Folding a known domain also transports its locating reads. These
+            // effects are already relative to this caller, unlike the selector.
+            for (domain.value.input_domains) |selector| {
+                if (selector.path.input_index >= arguments.len) continue;
+                var selected = (try context.pointee(selector.path.input_index)) orelse try context.effect(selector.path.input_index);
+                for (selector.path.projections) |projection| selected = try self.projectValueEffect(selected, projection);
+                for (selected.domain_values) |inner| if (inner.domain_index == selector.domain_index) {
+                    mapped.required_reads = try self.mergeRegionReads(mapped.required_reads, inner.required_reads);
+                };
+            }
         }
         result.domain_values = domain_values;
 
@@ -6559,7 +6636,10 @@ pub const Infer = struct {
             "input_owned_roots",        "opaque_generation_dependencies", "opaque_storage_dependencies",
         }) |field| if (@field(effect, field).len != 0) return true;
         for (effect.fresh_executions) |execution| if (requiresOutputSubstitution(execution.inputs.*)) return true;
-        for (effect.domain_values) |domain| if (requiresOutputSubstitution(domain.value.*)) return true;
+        for (effect.domain_values) |domain| {
+            if (requiresOutputSubstitution(domain.value.*)) return true;
+            if (domain.required_reads) |reads| if (requiresOutputSubstitution(reads.*)) return true;
+        }
         for (effect.fields) |field| if (requiresOutputSubstitution(field.value.*)) return true;
         for (effect.variants) |variant| if (requiresOutputSubstitution(variant.value.*)) return true;
         return false;
@@ -6641,6 +6721,15 @@ pub const Infer = struct {
         return result;
     }
 
+    fn mergeRegionReads(self: *Infer, left: ?*const facts.ValueEffect, right: ?*const facts.ValueEffect) anyerror!?*const facts.ValueEffect {
+        const a = left orelse return right;
+        const b = right orelse return left;
+        if (a == b or summaries.valueEffectEql(a.*, b.*)) return left;
+        const merged = try self.allocator.create(facts.ValueEffect);
+        merged.* = try self.mergeValueEffects(a.*, b.*);
+        return merged;
+    }
+
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
         // Effect union is idempotent. Keep immutable facts shared on stable
         // branches and fixed-point reevaluations instead of rebuilding them.
@@ -6656,6 +6745,7 @@ pub const Infer = struct {
                 const value = try self.allocator.create(facts.ValueEffect);
                 value.* = try self.mergeValueEffects(existing.value.*, domain.value.*);
                 existing.value = value;
+                existing.required_reads = try self.mergeRegionReads(existing.required_reads, domain.required_reads);
                 found = true;
                 break;
             };

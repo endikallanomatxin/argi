@@ -907,6 +907,7 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     }
     for (actual.domain_values) |domain| {
         if (checkValue(allowed, domain.value.*)) |failure| return failure;
+        if (domain.required_reads) |reads| if (checkValue(allowed, reads.*)) |failure| return failure;
     }
     // Fresh roots have no input provenance. Their ownership/liveness relation
     // is checked by ordinary safety, not turned into a dependency on the receiver.

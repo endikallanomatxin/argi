@@ -295,7 +295,7 @@ pub const MethodSafetyContract = struct {
 pub const StorageDomainMapping = struct {
     domain_index: u32,
     paths: []const Path,
-    pub const Path = struct { fields: []const u32 };
+    pub const Path = struct { fields: []const u32, nested_domain: ?u32 = null };
 };
 
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
