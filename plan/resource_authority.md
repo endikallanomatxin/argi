@@ -1,259 +1,297 @@
 # Resource authority: proposed semantic core
 
-Design specification for the concurrency safety work, not a claim about current
-compiler guarantees. This is the common model for the
-[0.5 development gate](0.5.md). [Concurrency research](concurrency.md) and
-[virtual execution safety](virtual_execution_safety.md) provide examples and
-implementation investigations; they do not add independent permission systems.
+Working proposal, not a closed formal system or a claim of compiler soundness.
+The target is safe sequential memory/resource management and ordinary-memory
+race freedom under audited native assumptions. Mutable aliases remain permitted
+within one execution. References identify routes; authority controls when an
+execution may use them; ownership is unique cleanup responsibility, not another
+access mode. Deadlock freedom, termination and correctness of arbitrary atomic
+algorithms are outside this guarantee.
 
-## Guarantee and limits
+This is the semantic reference for [the development gates](0.5.md).
+[Concurrency research](concurrency.md), [virtual execution investigations](virtual_execution_safety.md)
+and [contract projections](contract_members.md) use the same model. They must not
+introduce independent permission systems. The compiler still has known
+unknown-call authorization and native-buffer provenance gaps. Existing checked
+loans and delegated projections do not close those gaps.
 
-The target is freedom from ordinary-memory data races in safe code, assuming
-audited native primitives satisfy their contracts. It does not imply deadlock
-freedom, logical atomicity, cancellation progress or correctness of arbitrary
-atomic algorithms. The current compiler does not yet establish this guarantee:
-unknown call authorization and native buffer provenance remain known gaps.
+## Resource Machine: candidate operational core
 
-Sequential mutable aliasing remains valid. The user should normally need
-ownership, references and protected access; abstract regions and operation bounds
-belong mainly at library boundaries. Rejection is preferable to inventing evidence.
+The provisional name Region-Based Execution Authority describes the intended
+semantics, not a new user-visible feature or a separate checker. Write the logical
+state as `Sigma = (V, A, O, K)`: validity, authority, cleanup responsibility and
+pending obligations. Physical memory, current execution and possible concurrency
+are parameters of the machine, not facts inferred from permission names.
 
-## State and identities
+Storage has an allocation identity `a` and an extent `[lo, hi)`. An observation
+also carries an incarnation `g`, initialization and provenance. Keep physical
+overlap separate from observation validity: two accesses to overlapping bytes
+conflict even if their recorded generations differ. A stale generation makes an
+access invalid; it never proves disjointness. Zero-sized values may still carry
+logical ownership/cleanup obligations although their byte intervals are empty.
+C unions, interior views and dynamically indexed storage need explicit overlap
+rules; unresolved overlap is possible overlap.
 
-The semantic state contains four kinds of facts:
+A Region member denotes a set of storage observations. Distinct members are not
+fundamentally disjoint. The current implementation's rejection of overlapping
+named domains is a conservative restriction supporting independent invalidation,
+not a theorem derived from their names. Do not relax it until alias-aware
+invalidation and every consumer of domain independence are accounted for.
+Lifetime dependency edges do not add the dependency's bytes to this set.
 
-| Fact | Meaning |
-| --- | --- |
-| Resource `(s, g)` | Storage identity `s`, observed generation `g`, initialization and validity dependencies |
-| Authority `A(e, r)` | What logical execution domain `e` may do to access region `r` |
-| Responsibility `O(v, h)` | Holder `h` must eventually transfer or clean up owner `v` |
-| Obligation `L(k, e, r, g, m)` | Pending protocol instance `k` retains mode `m` over a specific observation |
+A reference supplies a checked route and type-level mutability, not an independent
+authority token. Reading requires valid provenance, live backing storage, an
+initialized selected value and compatible read authority. Writing additionally
+requires reference mutability, write authority and the existing initialization
+or replacement/cleanup protocol. Invalidating storage requires compatible
+invalidation authority even if its destructor has no ordinary writes.
 
-Ownership is a unique responsibility, not a third memory access mode. An owner
-may remain responsible for destruction while temporarily lacking write authority.
-A holder can be an execution or an owning container carrying its obligations.
-Execution domains are logical identities; neither a physical thread nor an
-executor's nominal type identifies one.
+Represent authority abstractly as conserved grants over overlapping storage:
+exclusive ordinary access, shared reading, or authority held by a protection
+protocol. Several aliases in one execution use the same grant. Copying a handle
+cannot split or create grants. Permissions must remain compatible across all
+potentially overlapping executions, including runtime workers currently paused.
+An executor identity proves neither serialization nor physical thread affinity.
 
-An access region is storage selected by checked provenance, an abstract contract
-mapping or a certified storage operation. It is not the transitive closure of
-lifetime dependencies. Distinct identities alone do not prove disjointness.
-Overlap follows known layout and alias facts; unresolved alternatives may overlap.
-Separate allocations can share an allocator dependency without sharing payload
-authority. A new generation never makes an old observation valid again.
+Candidate transitions, independent of library names:
 
-## Operation requirements
+| Transition | Preconditions | Conserved result |
+| --- | --- | --- |
+| Copy reference | Valid route and permitted value read | Same target observation; no new authority or responsibility |
+| Lend read | Authority may be split for reading; no incompatible writer | Exact loan record; incompatible writes suspended; compatible readers retained |
+| Lend write | Exclusive transferable access authority | Destination grant; lender's incompatible access suspended |
+| Move owner locally | Available owner and valid move | One new holder of the same responsibility and attached obligations |
+| Transfer owner | Local move plus destination operation/cleanup compatibility and valid authority distribution | Responsibility and designated grants move together; external dependencies remain explicit |
+| Complete | Matching live protocol instance, actual quiescence and required publication | Discharge only that instance; recompute authority from remaining grants and loans |
+| Destroy/replace | Unique applicable cleanup responsibility, live operands, no outstanding use, authorized cleanup footprint | Consume responsibility and invalidate only selected observations; preserve external obligations |
+| Protect | Available authority, checked encapsulation and compatible existing loans | Authority held by protocol; old aliases cannot bypass it |
+| Acquire/release | Certified protocol step and matching acquisition identity | Scoped grant, then revocation of derived access and publication before reuse |
 
-Use one description for a function, selected cleanup, virtual method or certified
-protocol step:
+A loan records its source authority and restoration policy. Completing one reader
+must not manufacture write authority if the original grant was readonly, another
+reader remains, authority was transferred, or the storage has ended. Repeated,
+wrong-instance and stale-generation completion cannot duplicate grants. An
+observation of completion is not by itself permission to reclaim storage.
+
+Protected authority needs an acquisition identity distinct from storage generation.
+Release ends guard-derived permission without destroying the protected value.
+Whether preexisting aliases can be used by the acquiring execution is an open
+policy: the smallest initial rule should require access through guard-derived
+routes. Cross-thread unlock and task migration must respect operation affinity.
+Atomic access to protocol state grants no access to unrelated ordinary memory.
+
+## Functions as resource transformers
+
+A candidate specification is `{P} f {Q_outcome}` with a may-access footprint `M`.
+It describes safe returning executions and preservation through all intermediate
+steps, not termination or eventual cleanup. Divergence, abort and native failure
+must have explicit boundaries; an affine permission system alone cannot prove
+that every allocated resource is eventually released.
+
+For a contract implementation, require `P_public => P_impl`,
+`Q_impl => Q_public`, and `M_impl <= M_public`, after substituting instance-region
+bindings. Include latent cleanup and execution requirements. A public contract
+must not erase an inferred alias precondition it cannot express. The frame rule
+requires compatible, untouched framed resources and stable invariants; it cannot
+frame arbitrary aliasing state around an unknown footprint.
+
+`reads`/`writes` bound possible access; they neither grant authority nor prove
+synchronization. Unknown is top, never an empty set. Every call form and selected
+cleanup must discharge the same requirements. While loans are pending, an unknown
+footprint needs a verified confinement bound or conservative rejection. Ordinary
+sequential acceptance does not establish concurrent authorization.
+
+A pre/post pair plus unordered may-access effects does not by itself distinguish
+`complete(k); write(r)` from `write(r); complete(k)`. A future bounded transformer
+must retain enough evidence to establish that every path reaching the access has
+completed the matching obligation. The relation between `k` and `r` must be
+substitutable at callers. Completing another task, a conditional unsuccessful
+join, or merely requesting cancellation is insufficient.
+
+Investigate a finite domain of authority-changing transitions and access
+requirements conditioned on certified earlier transitions. Do not commit to its
+representation yet. Join control-flow conservatively; recursive summaries need a
+finite abstraction/widening with monotonic convergence. Successful straight-line
+examples are insufficient if branching, failure or recursion loses obligations.
+Keep the existing entry-authority check as fallback whenever such evidence is
+missing. This is a research gate, not permission to apply all completion
+postconditions before a call's accesses.
+
+## Native storage and publication evidence
+
+Keep four independent claims: an address, acquired physical extent/alignment,
+initialized typed contents, and authorized access. A fifth claim, quiescence with
+publication, is needed before restoring a worker's borrowed authority. Neither
+`ffi`, a `no_access` declaration nor a live anchor creates these claims.
+
+The native task buffer is a witness case for a general acquired-storage protocol,
+not justification for a TaskBuffer compiler primitive. Compare Argi-owned stable
+buffers borrowed by the adapter with native-owned buffers returning authenticated
+acquisition/containment receipts. Specify establishment, initialization,
+publication, failure and release in either design. Receipts must bind the actual
+allocation and observation; integers or asserted where clauses cannot forge them.
+The worker's callback validity and exactly-once output initialization are separate
+proof obligations from join's publication guarantee.
+
+## Evaluation and unresolved design obligations
+
+This proposal is coherent as a direction, but not yet a complete formal model.
+`(V, A, O, K)` is an organization of facts, not a proof that their interaction is
+sound. The difficult missing definitions are:
+
+- A permission algebra over partial overlap, shared loans and restoration from
+  restricted source grants, including partition/recombine and unions.
+- How acquisition-scoped authority is tied to usable routes without changing
+  permissive sequential aliasing or allowing old aliases to bypass protection.
+- A finite, compositional representation of latent cleanup, execution affinity,
+  result-region relations and authority-changing function summaries.
+- Operational rules and a simulation from compiler facts to machine states,
+  including opaque storage, joins, exceptional exits and native assumptions.
+
+Prefer the smallest rules explaining a case over a new clause for its library.
+Reuse existing summaries; a new universal runtime token or a parallel effect
+system is not implied. Two-pointer Virtual remains the default representation,
+not a proof that arbitrary erased instance information can always be recovered.
+Exact identities, conservative alternatives and verified common interface
+guarantees are different evidence levels. Missing evidence remains unknown.
+
+A proposed preservation claim is `Safe(Sigma) and Sigma --op--> Sigma'` implies
+`Safe(Sigma')`, conditioned on valid audited primitive implementations. Establish
+spatial/temporal validity, compatible authority, unique cleanup responsibility,
+conservation of outstanding obligations and protected-access protocol integrity.
+Ordinary-memory race freedom would follow only after covering the operational
+semantics and proving the static checker sound with respect to it. No such proof
+currently exists. Tests or a finite model search can find counterexamples; neither
+establishes that theorem for unrestricted programs. Native race instrumentation
+also does not prove absence of bugs.
+
+Before implementing more concurrency, write the small transition system and
+work through adversarial traces: two readers completed separately; initially
+readonly authority; wrong receipt; write before/after join; failed join;
+retargeted capture; overlapping union fields; aliases predating protection;
+guard escape; moved owners with external cleanup; heterogeneous extraction; and
+failure cleanup while workers remain live. Use a bounded executable model to
+check conservation and erasure monotonicity, then consider Lean/Rocq once the
+rules stabilize. Do not start by verifying the entire compiler.
+
+## Contracts, instance relations and erasure
+
+Use one operation description for static calls, selected cleanup, virtual methods
+and certified native steps:
 
 ```text
 Req(op) = (Access, Execution, Obligations, Transitions)
 ```
 
-- `Access` bounds every ordinary read/write that may occur, including global,
-  indirect and hidden accesses. Unknown is an unbounded requirement, not empty.
-- `Execution` states destination, affinity and synchronization prerequisites.
-- `Obligations` states retained dependencies, authority and cleanup responsibility,
-  including requirements of operations that remain permitted on a stored value.
-- `Transitions` states verified postconditions: moves, invalidation, retention,
-  completion, publication and responsibility discharge, potentially by outcome.
+Access bounds ordinary memory effects, including indirect and global effects.
+Execution requirements include affinity and certified synchronization.
+Obligations retain dependencies, grants and responsibility, including latent
+cleanup requirements. Transitions describe moves, invalidation, retention,
+completion and publication, potentially conditional on outcomes.
 
-A destructor's requirements remain latent in its owner. Reading a payload does
-not execute that destructor. Sharing a readonly string therefore need not require
-concurrent deallocation, but its owner must remain unable to destroy the borrowed
-bytes. Moving the string does not authorize its destructor on another thread.
-
-`reads` and `writes` currently describe ordinary memory access. A synchronized
-logical update is not an ordinary write exempted by a flag: its implementation
-must obtain the required authority through a certified protocol. Affinity and
-publication cannot be inferred from the existence of an access bound.
-
-## Authorization and conservation rules
-
-1. **Access.** Every observation must be initialized and live, and the execution
-   must satisfy the operation's access and execution requirements. For potentially
-   concurrent `e` and `f`, overlapping regions permit shared reading, but
-   `W(e, r)` excludes ordinary `R(f, r)` and `W(f, r)`. Aliases inside `e` use the
-   same authority. Destroying or replacing borrowed storage requires compatible
-   authority over every affected observation.
-2. **Lend.** A read loan freezes incompatible writes; an exclusive loan suspends
-   incompatible reads and writes in the lender. Its exact protocol identity,
-   region, generation, mode and validity dependencies remain pending. Ending a
-   root or replacing a generation cannot bypass that obligation.
-3. **Move and retain.** Ordinary moves transfer responsibility and its attached
-   facts; they do not authorize cross-domain use. Owning storage must preserve all
-   hidden obligations on every path, including failure and cleanup. Erasure,
-   forwarding and extraction cannot strengthen authority or drop requirements.
-4. **Transfer.** A handoff must distribute authority without incompatible outside
-   access and establish that every operation permitted in the destination has
-   usable resources. Cleanup can remain elsewhere only under an explicit retained
-   responsibility. A type's shape alone establishes neither condition.
-5. **Complete.** Restoration requires evidence for that exact outstanding protocol
-   instance, actual completion and memory publication. It discharges only matching
-   obligations; another worker's loan stays pending. It never recreates a consumed
-   owner, renews an old alias or revives an invalid generation.
-6. **Synchronize.** A protected region is inaccessible to ordinary aliases outside
-   its protocol. Successful acquisition supplies scoped authority; release revokes
-   derived access before publishing writes and returning authority. Runtime
-   exclusion and publication must be provided by audited primitives. Serialization
-   needs an explicit protocol guarantee, not merely a shared executor.
-
-Linearity prevents duplication of responsibilities; matching storage, generation
-and protocol identities prevents discharging the wrong responsibility. Both are
-necessary. Forgetting or discarding an observer is not evidence of completion.
-
-## Composition and erasure
-
-Calls substitute actual storage identities into the same requirement description.
-Composing effects must distinguish a copied argument's local slots from referents
-reached through its reference fields. Virtual methods publish requirements over
-abstract regions; each instance binds those regions without revealing its type.
-Implementations must satisfy the published bound, including cleanup and callbacks.
-
-Conservative may-access effects require authority at call entry; postconditions
-apply afterward. This deliberately rejects some helpers that complete a loan and
-then access its storage. Splitting completion and use into separate calls remains
-valid. A general ordered-effect graph is outside this design gate.
-
-Moves, joins and opaque extraction preserve guarantees common to all possible
-values and requirements from every possible value. Correlated alternatives may
-be retained when already represented; otherwise the result is conservative.
-Do not reconstruct missing facts from the implementation selected at runtime.
-
-For heterogeneous strings with unknown deallocators, either preserve sufficient
-contextual evidence, store values certified against a common contract, or reject
-the operation. Dynamic conformance acquisition is a possible later extension.
-`Virtual` remains two pointers; no descriptor or implicit runtime check is proposed.
-
-## Contract relations and instance bindings
-
-A contract quantifies over abstract resource roles. A value occurrence has a
-semantic binding `B(value, contract, role)` to an access-region expression and its
-observation evidence. This binding is analysis state, not a proposed runtime map.
-Equal role names or local numeric domain indices in different occurrences do not
-identify the same storage. A binding may conservatively describe alternatives;
-missing identity is unknown, never an empty region.
-
-The implementation must prove its access, execution and obligation requirements
-fit the public preconditions, and every published postcondition holds on all
-applicable returning paths. Erased callers use that public description together
-with instance bindings, without consulting the concrete implementation summary.
-
-Keep the following relations independent:
+A region member is a static role whose instance binding is
+`B(value, contract, role) = storage observations`. Equal member names or numeric
+indices in different contracts or occurrences do not identify the same storage.
+Missing identity is unknown, not an empty region. Region mappings grant neither
+ownership nor access. A wrapper's representation, its delegated receiver and the
+selected captured region are distinct. Locating reads and observations of
+retargetable handles must survive summary substitution and erasure.
 
 | Relation | Establishes | Does not establish |
 | --- | --- | --- |
-| Validity dependency | An observation needs a root to remain live | Target identity, containment or authority |
-| Reference target | Which storage an existing reference designates | Ownership or cross-domain permission |
-| Region binding | Which resources an abstract role denotes | Compatibility of accesses or synchronization |
-| Acquisition | Unique establishment evidence for physical storage | Initialization of an arbitrary value |
-| Protocol identity | Which retained obligation a transition matches | Actual completion or publication by itself |
+| Lifetime dependency | Required root remains live | Physical containment, target identity or authority |
+| Reference target | Storage designated by an existing reference | Ownership or cross-domain permission |
+| Region binding | Storage observations denoted by an abstract role | Disjointness, access permission or synchronization |
+| Acquisition | Authenticated physical extent/establishment evidence | Initialized arbitrary typed contents |
+| Protocol identity | Exact obligation/acquisition being matched | Completion or publication by identity alone |
 
-Returned values need post-relations when their consumers require them. For
-example, a factory forwarding a counter may establish:
+Factories require result-to-input or fresh-resource relations when consumers need
+them. `depends_on(result, source)` cannot establish
+`B(result, C, role) = B(source, C, role)`. Existing `transfers` preserves whole-value
+facts and `refers_to` preserves an existing reference target; reuse them when
+sufficient rather than adding a new clause. Neither grants cross-domain access.
+Final binding values cannot substitute for capture-time observations.
 
-```text
-B(result, Counter, state) = B(source, Counter, state)
-```
+Calls must distinguish local copies of argument fields from referents reached
+through reference fields. Moves preserve obligations; unions retain requirements
+from every possible value and guarantees common to all alternatives. Heterogeneous
+extraction needs exact identity, sufficiently conservative alternatives, or a
+verified common interface guarantee. Otherwise reject. Dynamic evidence is a
+possible explicit extension, not a descriptor added automatically to every Virtual.
+The two-pointer handle remains the default, not an axiom requiring impossible
+static recovery of arbitrary runtime selections.
 
-This is semantic notation, not new Argi syntax. `depends_on(result, source)` alone
-cannot establish this equality: another live counter could have a different
-state. A returned reference into an opaque buffer has the same problem even
-without Virtual. Projections or partitions need their own checked containment
-relation; equality must not be guessed from shared lifetime dependencies.
+Reading borrowed String bytes does not invoke its deallocator. Ownership transfer
+must nevertheless account for that latent operation: exclusive provider handoff,
+a certified shared protocol, or retained cleanup delegation. A shared allocator
+lifetime does not merge independent payload regions. General owners must preserve
+responsibility, dependencies and permitted operations through storage and errors.
 
-Calls substitute these relations through the same summaries as ordinary outputs.
-Moves and handle copies preserve their occurrence relationships. If a captured
-reference is retargeted, its old mapping must be updated by a proven transition
-or cease to authorize calls through that capture. Relations distinguish entry
-from proven post-call observations; a final binding value alone does not prove
-when a capture was taken. Storage and generation evidence must stay correlated.
+## Implementation correspondence and acceptance gates
 
-Whole-value forwarding already has a useful stronger relation: the existing
-`transfers(result, source)` contract preserves the complete moved value, including
-its instance bindings. This does not transfer cross-domain authority. Likewise,
-`refers_to` preserves an existing reference's target. Prefer those established
-relations when they suffice; a new region clause is justified only for a case they
-cannot describe, such as constructing a new capability with selected result-role
-bindings. The generic transfer tests cover nested virtuals, compatible reads and
-incompatible writes; lifetime-only publication and a different transferred input
-remain rejected. Heterogeneous extraction likewise preserves common verified
-contract guarantees without recovering arbitrary per-element region identities.
+Reuse existing representations rather than designing a second checker:
 
-Concrete factories may infer such relations. Existing `ValueEffect.domain_values`,
-`input_domains`, `input_places` and `DomainFacts` are starting points, not proof
-that public contracts already express every required relation. The current
-contract-output builder's lifetime facts must not be reinterpreted as result
-region bindings. An erased factory must publish a sufficient relation; knowledge
-of a convenient selected implementation is not a substitute. A collection transports its guaranteed relations and obligations,
-not arbitrary per-element precision. Dynamic extraction needs a common verified
-guarantee, retained alternatives sufficient for authorization, or rejection.
-
-Consequently, a wrapper's own representation and its captured provider are
-separate regions. `writes(self)` cannot authorize the delegate's resources.
-A closed forwarding contract must state the relevant binding or requirement;
-blanket recursive access to all lifetime dependencies is not an alternative.
-
-## Native evidence boundary
-
-A native primitive's contract must identify its resources, preconditions,
-transitions, synchronization and failure/cleanup behavior. FFI permission does
-not itself prove containment, transfer or synchronization. A lifetime anchor does
-not prove that an arbitrary address belongs to an owned access region.
-
-An acquisition receipt can certify physical storage without certifying initialized
-values. A borrow needs region membership and a responsible owner without acquiring
-that ownership. These statements must remain distinct when resolving native task
-buffers. No new trusted operation should be introduced without an audited source
-of evidence and an explanation of why existing operations cannot express it.
-
-## Minimal implementation gate
-
-The following must use the same rules, including through generic helpers and
-virtual contracts:
-
-| Case | Required evidence |
+| Existing representation | Unresolved requirement |
 | --- | --- |
-| Shared readonly references | Compatible reader authority; owner cannot invalidate their observations |
-| Owner with a known local destructor | Unique responsibility and destination authority, with cleanup exactly once |
-| Owner retaining an external reference | The above plus preserved dependency and access obligations |
-| Owner retaining a virtual deallocator | The selected cleanup's abstract requirements survive erasure |
-| Factory returning a virtual capability | Published result-to-input or fresh-resource bindings suffice for its consumers |
-| Mutex and guard | Isolated protected storage, acquired scoped authority, revoked derived references and publication |
-| Unknown or heterogeneous requirement | Explicit verified refinement or conservative rejection |
+| `SafetySummary.input_accesses`, globals, unknown effects | Uniform authorization of every call/cleanup form; unknown is never empty |
+| Owned roots, dependencies and opaque provenance | General transport of latent cleanup and execution requirements |
+| `InputPath`, `ValueEffect`, `DomainFacts` | Instance/result relations through substitution, joins and heterogeneous storage |
+| Execution receipts and completion outcomes | Exact discharge and authenticated publication without reviving generations |
+| Acquisition receipts | Physical membership distinct from lifetime, initialization and authority |
 
-These cases have the same authority flow:
+Current may-access summaries check authority at entry and apply postconditions
+later. Preserve that safe fallback; do not apply completion early simply because
+it appears in a postcondition. A bounded completion-conditioned summary is a
+candidate precision improvement, not implemented permission to reorder effects.
+For each access it could retain certified preceding receipt observations, while
+keeping the full footprint for conformance checking. Joins intersect preceding
+guarantees and union requirements. A replaced receipt slot or retargeted reference
+must not silently change which obligation or storage those conditions denote.
+General lending, ownership and acquisition transitions need separate validation
+before extending this completion-only candidate.
 
-- **Shared payload:** the owner lends reading of its bytes, retains cleanup
-  responsibility, and cannot invalidate them. The deallocator is kept live but
-  is not invoked. Completing one reader does not discharge another reader's loan.
-- **Transferred owner:** the handoff moves responsibility and payload authority;
-  the selected destructor still requires authority over its actual provider.
-  That provider must be exclusively handed off, usable through a certified shared
-  protocol, or covered by a retained cleanup delegation. A lifetime edge alone
-  selects none of these alternatives.
-- **Protected payload:** construction confines the value's authority to protected
-  storage; acquisition lends it to a guard's execution. Interior mutable aliases
-  share that authority. Release ends guard-derived access and publishes writes
-  before the protocol can grant another execution access.
+The [executable experiment](../tools/RESOURCE_AUTHORITY_MODEL.md) is a bounded
+counterexample tool. Its explicit-path reference and finite summary comparison
+are not compiler code or a proof. Keep research results beside the tool; keep
+remaining design obligations here. Before expanding functionality, explain these
+cases with the same rules, also through generics, Virtual, storage and errors:
 
-Before broadening payload eligibility, cover each applicable transfer's success,
-failure, discard, alias and lifetime cases. Before claiming the full guarantee,
-close unknown virtual/indirect/native access authorization. Reject missing evidence
-without adding a library-specific exception. General channels, advanced
-cancellation, pools and green threads are later work, not simultaneous 0.5 gates.
+- Compatible readers with independent completion; no write restoration from an
+  initially readonly grant, wrong receipt or outstanding nested obligation.
+- Owner transfer with local cleanup, then an external dependency, then a virtual
+  deallocator; cleanup and failure preserve one responsible holder.
+- Protected storage with aliases predating protection; guard-derived permission
+  ends on release and stays ended after reacquisition.
+- Heterogeneous extraction and returned capabilities retain sufficient relations
+  or reject conservatively, never infer authority from lifetime.
+- Unknown ordinary/virtual/callback/native effects cannot bypass pending loans;
+  valid borrowed await and forwarding executors remain supported.
 
-Existing representations provide the implementation starting point:
+Native protocols also need instrumentation and interleaving tests. ThreadSanitizer
+can find races but does not prove a protocol correct. A mechanized preservation
+proof and a compiler-to-model simulation remain research obligations. Scheduling,
+green threads, general channels and advanced cancellation should not grow while
+these foundations lack an agreed account. Release order belongs in 0.5.md.
 
-| Requirement | Existing representation | Still missing |
-| --- | --- | --- |
-| Access | `SafetySummary.input_accesses`, `global_accesses`, `unknown_access` | Complete authorization of unknown effects and native buffer provenance |
-| Execution | Isolated callback checks and explicit FFI dependencies | General affinity, transfer and synchronized-operation requirements |
-| Obligations | Owned roots, dependencies, opaque provenance and execution receipts | Common transport of latent operation requirements through arbitrary owners |
-| Transitions | Input post-states, invalidated domains, opaque transfer effects and completion paths | General protected access and certified publication protocols |
+## Research basis and limits of the analogy
 
-One semantic model does not require one universal runtime token or a new record
-on every reference. Extend or consolidate these existing representations only as
-a concrete gate case requires. This document prescribes neither new syntax nor a
-second summary system.
+These primary sources motivate parts of the proposal; none proves Argi sound:
+
+- [Bornat et al., Permission Accounting in Separation Logic](https://flint.cs.yale.edu/cs428/doc/permission.pdf)
+  develops fractional and counting approaches to read sharing. Use conservation
+  and compatibility as a basis, without making each ordinary alias exclusive.
+- [Iris](https://iris-project.org/) and [RustBelt](https://plv.mpi-sws.org/rustbelt/)
+  demonstrate resource/invariant reasoning and semantic justification of unsafe
+  library abstractions. They are proof frameworks and results for their models,
+  not an inference algorithm to embed wholesale in Argi.
+- [Swift SE-0414](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0414-region-based-isolation.md)
+  provides a concrete precedent for contextual transfer based on connected values.
+  Its isolation regions are not automatically Argi's physical access regions.
+- [Pony reference capabilities](https://tutorial.ponylang.org/capabilities/reference-capabilities.html)
+  illustrates local mutable aliasing with restricted sharing/transfer. Its
+  reference-capability discipline should not be presented as Argi's semantics.
+
+Mezzo's affine/duplicable permissions, Verona's region isolation, Koka's effect
+inference and protocol logics remain useful further investigations. Their specific
+rules must be checked against original papers before adopting them; assembling
+familiar names is not a substitute for defining Argi's own transition system.

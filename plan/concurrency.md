@@ -409,6 +409,23 @@ Extend these with nested aggregates, unknown aliases, opaque storage, wrappers,
 failed submission, discarded results and cancellation. A useful design must make
 these outcomes follow from common rules rather than per-abstraction exceptions.
 
+## Formal-model work before further runtime expansion
+
+Use [the Resource Machine proposal](resource_authority.md#resource-machine-candidate-operational-core)
+as the common semantic reference. It is deliberately incomplete: permission
+restoration, overlapping regions, acquisition-scoped access and compositional
+resource transformers still need precise definitions and adversarial traces.
+Existing native loans and delegated region projections are implementation
+examples, not evidence that these general problems are solved. Development order
+and acceptance gates belong in [the roadmap](0.5.md).
+
+Do not add another permission system for tasks, mutexes or allocators. A candidate
+rule must preserve validity, authority, unique responsibility and obligations
+through the same calls, joins and erasure operations. If it only explains the
+positive example, challenge it before extending the checker. Research references
+and their limits are collected in the semantic proposal rather than treated as
+proofs of Argi's model.
+
 ## References for further investigation
 
 These are design references, not a decision to adopt their full models:
