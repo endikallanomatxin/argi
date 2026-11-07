@@ -69,7 +69,8 @@ pub const StorageSelector = union(enum) {
 
 /// Exact caller-relative route. Conversion to the legacy flat InputPath is
 /// partial; unsupported routes retain their identity here without granting
-/// authority or inventing a different representable path.
+/// authority or inventing a different representable path. Preserving a route
+/// is not a typing judgment: an abstract region has no implied record layout.
 pub const InputRoute = struct {
     input_index: u32,
     selectors: []const StorageSelector = &.{},

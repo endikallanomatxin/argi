@@ -414,6 +414,43 @@ sequences of up to three selectors from two fields, dereference and two domains.
 This is a migration foundation: opaque-content selectors, summary substitution
 and cache publication of complete routes are not implemented yet.
 
+#### Typed interpretation of routes
+
+An exact selector sequence is not necessarily a well-typed query. Resolution
+must distinguish a value, typed storage for a value, and an abstract set of
+storage regions. In particular, `Region#(Provider)` identifies the participant
+used to obtain the region; it does not assign Provider's record layout to the
+region's contents. A mapping can group differently typed locations.
+
+| Selection | Required interpretation | Result; separate obligations |
+| --- | --- | --- |
+| Input | Evaluated argument and declared type | Value facts or the argument's typed referent, following existing parameter conventions |
+| Structural field/index | A checked record/array value or typed storage | Corresponding value/storage projection; no new disjointness beyond checked layout |
+| Dereference | A valid reference to T | Typed storage for T; observing its value still requires initialization and read authority |
+| Associated region | A value with verified contract evidence | Its instance's abstract storage set; not a value of the provider type |
+| Opaque contents query | An identified opaque owner/domain and complete stored type | Conservative retained value observations; not ownership, occupancy or permission to read bytes |
+
+A field after an abstract region is not justified merely because InputRoute can
+preserve that sequence. It needs an independently checked typed storage view or
+value query; otherwise resolution stays unknown/rejected. Similarly, selecting
+another associated region requires a value carrying the appropriate contract,
+not just an earlier region identity. Do not restore acceptance by assuming all
+regions are provider-shaped.
+
+For the collection case, the intended logical value recipe is the input owner's
+Allocation projection, a typed opaque-contents query for Holder, its `code` value
+projection, and Code's associated region. This queries retained value relations;
+the physical slot read remains a distinct access obligation. Resolving the recipe
+does not itself certify that an indexed element exists or is initialized. A
+`no_access` method can omit accesses to its captures, never the preceding handle
+load. Unknown-input containers still need this relation in their summaries;
+seeding fresh region identities at extraction would not establish it.
+
+This distinction rules out interpreting arbitrary exact routes by repeatedly
+loading graph fields. The next implementation must carry typed contents facts
+and their caller-relative query together, while existing flat routes retain
+their current semantics. No new runtime evidence is implied by the route syntax.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and
