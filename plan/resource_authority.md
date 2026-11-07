@@ -348,6 +348,32 @@ reclamation or reuse must also satisfy the corresponding access requirements.
 This is a conservation rule for the existing validity/authority dimensions, not
 a new permission category or a special rule for tasks.
 
+### Opaque contents preserve value relations separately from slot regions
+
+The compiler's current opaque state retains lifetime dependencies and owner-root
+associations, not the complete value relations stored there. Consequently,
+recovering a valid reference to an element does not yet recover the associated
+regions of a Virtual inside that element. The positive 143 regression exposes
+this after completion, independently of the unknown physical-read gate in 121.
+
+The next candidate is one conservative reference-value abstraction per complete
+stored type and opaque domain, reusing existing structural projections and named
+region facts. Insertions join possible target observations; they never inherit
+the container's creation frame. A read borrows the joined value facts without
+transferring element ownership or acquisition permission. Emptying, overwriting
+or moving storage must preserve the existing generation/ownership rules rather
+than simply retaining historical facts as if they were current.
+
+The bounded opaque-capture experiment checks 1,944 member-region joins against
+their exact alternatives. It needs no per-element history or new authority
+algebra. It does not solve the implementation: unknown-input container reads
+still need a caller-relative value relation in summaries, complete stored-type
+keys must survive specialization, and borrowed observations must retain their
+traversal/generation checks. A physical slot observation and the captured regions
+of its contents remain distinct. Never reconstruct either from lifetime roots.
+Keep missing contents evidence conservative; the experiment supplies its inputs
+explicitly and does not establish them for arbitrary opaque storage.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and

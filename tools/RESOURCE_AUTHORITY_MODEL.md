@@ -147,6 +147,38 @@ protected guards or multiple-input tasks. Physical addresses are deliberately
 restricted to the existing two-byte authority domain. These are bounded checks
 of the connection, not proof of the compiler's physical-provenance abstraction.
 
+### Typed captured values behind opaque storage
+
+`CapturedValue` and `OpaqueContents` test the missing value relation separately
+from physical slot access. Each value supplies associated-member region
+observations. The opaque abstraction joins these observations by complete stored
+type and member position, without retaining individual insertion histories or
+concrete Virtual implementations. Repeated insertion is idempotent. An unknown
+element selection checks every possible region of the requested member.
+
+The 1,944 combinations compare this join with checking the two original values
+independently, over overlapping regions and both loan/access modes. Acceptance
+agrees in this bounded fragment. Additional contrasts cover insertion of a later
+conflicting capture into an old container, different associated members, absent
+type/member evidence and incompatible generations. A copied old handle keeps its
+own observations; a new unknown selection must include the inserted alternative.
+Adding values of a different complete stored type does not alter that selection.
+The type key is the erased value's full static type, not its hidden provider.
+
+This is an append-only abstraction of captured reference facts, not a model of
+collection occupancy or ownership. Selection does not grant ownership or prove
+that an element exists. The experiment supplies authenticated observations and
+does not reconstruct them from hidden lifetime roots. It does not authorize the
+physical read of a slot, model removal/retargeting, or infer a function summary
+for a read from an unknown caller-supplied container. Those are separate compiler
+obligations; the positive 143 compiler case still fails.
+
+The candidate production representation should therefore reuse existing typed
+value/projection facts and conservative joins, not preserve all runtime elements
+or add a separate Virtual permission system. It must additionally handle emptying,
+borrowing versus ownership extraction, generation invalidation and summary
+substitution before these finite checks justify an implementation.
+
 ### Resource-transformer reference cases
 
 The same experiment includes a finite reference interpreter for access,

@@ -250,6 +250,94 @@ class AuthenticatedExtent:
 
 
 @dataclass(frozen=True)
+class CapturedValue:
+    # The tag is the complete stored type, not its concrete Virtual provider.
+    # Regions are associated-member observations, not the containing slot.
+    tag: int
+    regions: tuple[StorageObservation, ...]
+
+    def join(self, other):
+        if self.tag != other.tag or len(self.regions) != len(other.regions):
+            raise Denied("incompatible stored value interfaces")
+        return CapturedValue(self.tag, tuple(a.erase_with(b)
+                                            for a, b in zip(self.regions, other.regions)))
+
+    def call(self, state, execution, member, mode):
+        if not 0 <= member < len(self.regions):
+            raise Denied("missing associated region is not an empty footprint")
+        self.regions[member].access(state, execution, mode)
+
+
+@dataclass(frozen=True)
+class OpaqueContents:
+    # One joined reference value per complete stored type, not one entry per
+    # insertion. No ownership, occupancy, extraction or slot reconstruction.
+    values: tuple[CapturedValue, ...] = ()
+
+    def insert(self, value):
+        for i, previous in enumerate(self.values):
+            if previous.tag == value.tag:
+                return OpaqueContents(self.values[:i] + (previous.join(value),) + self.values[i + 1:])
+        return OpaqueContents(self.values + (value,))
+
+    def select_unknown(self, tag):
+        for value in self.values:
+            if value.tag == tag:
+                return value
+        raise Denied("no value evidence for the requested stored type")
+
+
+def opaque_capture_experiments():
+    observations = tuple(StorageObservation((r,), 0) for r in REGIONS)
+    values = tuple(CapturedValue(0, members) for members in product(observations, repeat=2))
+    checked = 0
+    for first, inserted, region, loan_mode, mode, member in product(
+            values, values, REGIONS, (READ, WRITE), (READ, WRITE), range(2)):
+        state = State().lend(0, 1, region, loan_mode)
+        contents = OpaqueContents().insert(first).insert(inserted)
+        abstract = contents.select_unknown(0)
+        exact_accepts = True
+        for alternative in (first, inserted):
+            try:
+                alternative.call(state, 0, member, mode)
+            except Denied:
+                exact_accepts = False
+        try:
+            abstract.call(state, 0, member, mode)
+        except Denied:
+            assert not exact_accepts
+        else:
+            assert exact_accepts
+        checked += 1
+
+    old = CapturedValue(0, (observations[1],))
+    later = CapturedValue(0, (observations[0],))
+    contents = OpaqueContents().insert(old)
+    copied = contents.select_unknown(0)
+    pending = State().lend(0, 1, (0,), WRITE)
+    copied.call(pending, 0, 0, READ)
+    contents = contents.insert(later)
+    assert contents == contents.insert(old).insert(later)
+    assert contents == OpaqueContents().insert(later).insert(old)
+    denied(lambda: contents.select_unknown(0).call(pending, 0, 0, READ))
+    # A copied old handle does not become a selection of newly inserted values.
+    copied.call(pending, 0, 0, READ)
+    contents.select_unknown(0).call(pending.complete(0), 0, 0, READ)
+    # Associated names retain distinct footprints; neither covers its sibling.
+    distinct = CapturedValue(0, (observations[0], observations[1]))
+    denied(lambda: distinct.call(pending, 0, 0, READ))
+    distinct.call(pending, 0, 1, WRITE)
+    denied(lambda: CapturedValue(0, ()).call(State(), 0, 0, READ))
+    denied(lambda: OpaqueContents().select_unknown(0))
+    denied(lambda: contents.select_unknown(1))
+    assert contents.insert(CapturedValue(1, (observations[2],))).select_unknown(0) == contents.select_unknown(0)
+    # Losing a generation is not an admissible union of valid alternatives.
+    stale = CapturedValue(0, (StorageObservation(((0,),), 1),))
+    denied(lambda: old.join(stale))
+    return checked
+
+
+@dataclass(frozen=True)
 class PhysicalAllocation:
     identity: int
     address: int
@@ -1026,6 +1114,7 @@ def explore_interactions(depth=3):
 
 
 if __name__ == "__main__":
+    opaque_captures_checked = opaque_capture_experiments()
     physical_loans_checked = physical_loan_experiments()
     physical_checked = physical_heap_experiments()
     frames_checked = sealed_storage_frame_experiments()
@@ -1045,6 +1134,7 @@ if __name__ == "__main__":
     print(f"Sealed storage frames: {frames_checked} conservative erasure checks and late-capture adversarial cases passed")
     print(f"Physical backing: {physical_checked} overlap checks and release/reuse adversarial cases passed")
     print(f"Physical loans: {physical_loans_checked} authority/lifetime combinations checked")
+    print(f"Opaque captures: {opaque_captures_checked} typed member-region joins checked")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")
