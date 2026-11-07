@@ -335,6 +335,121 @@ class PhysicalHeap:
                                                for a in self.allocations))
 
 
+@dataclass(frozen=True)
+class PhysicalLoans:
+    # Bridge the two existing finite experiments, not a third permission model.
+    # Physical addresses are restricted to State's two byte coordinates here.
+    heap: PhysicalHeap
+    authority: State = State()
+    observations: tuple[PhysicalView, ...] = ()
+
+    def region(self, view):
+        start, end = self.heap.extent(view)
+        if not 0 <= start <= end <= len(self.authority.initial):
+            raise Denied("physical extent outside bounded authority experiment")
+        return tuple(range(start, end))
+
+    def access(self, execution, view, mode):
+        self.authority.access(execution, self.region(view), mode)
+
+    def lend(self, source, target, view, mode):
+        authority = self.authority.lend(source, target, self.region(view), mode)
+        return replace(self, authority=authority, observations=self.observations + (view,))
+
+    def complete(self, receipt, *, quiescent=True, published=True):
+        if not 0 <= receipt < len(self.observations):
+            raise Denied("unknown physical loan receipt")
+        self.heap.extent(self.observations[receipt])
+        return replace(self, authority=self.authority.complete(
+            receipt, quiescent=quiescent, published=published))
+
+    def invalidate_owner(self, owner):
+        # Ending an observation is not freeing its backing or writing its bytes.
+        # A byte footprint alone misses retained zero-sized observations.
+        if any(loan.pending and view.owner == owner
+               for loan, view in zip(self.authority.loans, self.observations)):
+            raise Denied("outstanding loan retains this owner generation")
+        return replace(self, heap=self.heap.invalidate_owner(owner))
+
+    def release(self, execution, backing):
+        if not 0 <= backing < len(self.heap.allocations):
+            raise Denied("unknown physical backing")
+        if any(loan.pending and view.backing == backing
+               for loan, view in zip(self.authority.loans, self.observations)):
+            raise Denied("outstanding observation retains physical backing")
+        allocation = self.heap.allocations[backing]
+        if not 0 <= allocation.address <= allocation.address + allocation.size <= len(self.authority.initial):
+            raise Denied("physical extent outside bounded authority experiment")
+        self.authority.access(execution, tuple(range(allocation.address,
+                                                     allocation.address + allocation.size)), WRITE)
+        # As in PhysicalHeap, matching release responsibility is an assumption;
+        # this bridge adds outstanding-use and authority checks, not ownership.
+        return replace(self, heap=self.heap.release(backing))
+
+    def check(self):
+        self.authority.check()
+        assert len(self.observations) == len(self.authority.loans)
+        for loan, view in zip(self.authority.loans, self.observations):
+            if loan.pending:
+                assert self.region(view) == loan.region
+
+
+def physical_loan_experiments():
+    heap, backing = PhysicalHeap().allocate(0, 2)
+    views = tuple(heap.observe(backing, start, size, owner)
+                  for start in range(3) for size in range(3 - start) for owner in range(2))
+    checked = 0
+    for borrowed, alias, loan_mode, access_mode in product(views, views, (READ, WRITE), (READ, WRITE)):
+        state = PhysicalLoans(heap).lend(0, 1, borrowed, loan_mode)
+        state.check()
+        conflict = heap.overlap(borrowed, alias) and (loan_mode == WRITE or access_mode == WRITE)
+        if conflict:
+            denied(lambda: state.access(0, alias, access_mode))
+        else:
+            state.access(0, alias, access_mode)
+        denied(lambda: state.invalidate_owner(borrowed.owner))
+        denied(lambda: state.release(0, backing))
+        denied(lambda: state.complete(0, published=False))
+        restored = state.complete(0)
+        restored.check()
+        restored.access(0, alias, WRITE)
+        denied(lambda: restored.complete(0))
+        ended = restored.invalidate_owner(borrowed.owner)
+        denied(lambda: ended.access(0, borrowed, READ))
+        released = restored.release(0, backing)
+        denied(lambda: released.access(0, alias, READ))
+        checked += 1
+
+    # Resetting a different descriptor's owner does not recover authority over
+    # the shared bytes. The borrower still uses its own valid observation.
+    borrowed = heap.observe(backing, 0, 1, 0)
+    alias = heap.observe(backing, 0, 1, 1)
+    state = PhysicalLoans(heap).lend(0, 1, borrowed, WRITE).invalidate_owner(1)
+    renewed_alias = state.heap.observe(backing, 0, 1, 1)
+    denied(lambda: state.access(0, renewed_alias, READ))
+    state.access(1, borrowed, WRITE)
+    state.check()
+    # Bypassing the checked reset cannot be repaired by presenting completion.
+    corrupted = replace(state, heap=state.heap.invalidate_owner(0))
+    denied(lambda: corrupted.complete(0))
+
+    # An unrelated backing can be released without completing this loan. Address
+    # reuse there does not revive an observation of the released allocation.
+    split_heap, first = PhysicalHeap().allocate(0, 1)
+    split_heap, second = split_heap.allocate(1, 1)
+    first_view = split_heap.observe(first, 0, 1, 0)
+    second_view = split_heap.observe(second, 0, 1, 1)
+    split = PhysicalLoans(split_heap).lend(0, 1, first_view, WRITE)
+    split = split.release(0, second)
+    reused_heap, reused = split.heap.allocate(1, 1)
+    split = replace(split, heap=reused_heap)
+    split.check()
+    denied(lambda: split.access(0, second_view, READ))
+    split.access(0, reused_heap.observe(reused, 0, 1, 1), WRITE)
+    denied(lambda: split.access(0, first_view, READ))
+    return checked
+
+
 def physical_heap_experiments():
     heap, backing = PhysicalHeap().allocate(100, 4)
     whole = heap.observe(backing, 0, 4, 0)
@@ -911,6 +1026,7 @@ def explore_interactions(depth=3):
 
 
 if __name__ == "__main__":
+    physical_loans_checked = physical_loan_experiments()
     physical_checked = physical_heap_experiments()
     frames_checked = sealed_storage_frame_experiments()
     observations_checked = storage_observation_experiments()
@@ -928,6 +1044,7 @@ if __name__ == "__main__":
     print(f"Storage observations: {observations_checked} erasure checks and physical membership adversarial cases passed")
     print(f"Sealed storage frames: {frames_checked} conservative erasure checks and late-capture adversarial cases passed")
     print(f"Physical backing: {physical_checked} overlap checks and release/reuse adversarial cases passed")
+    print(f"Physical loans: {physical_loans_checked} authority/lifetime combinations checked")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")

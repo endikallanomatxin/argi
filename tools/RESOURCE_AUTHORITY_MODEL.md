@@ -118,6 +118,35 @@ which separates buffer slices, liveness, disjointness and framed modifications.
 Argi does not adopt its general refinement/proof language. These experiments test
 our proposed distinction, not the correctness of Low* or an equivalence with it.
 
+### Connecting physical observations to outstanding loans
+
+`PhysicalLoans` connects the existing physical heap and authority experiments
+without adding another permission algebra. A validated view selects actual byte
+coordinates in the two-byte authority state. Each loan additionally retains the
+view's backing and owner-generation observation. Completion validates that same
+observation before invoking the existing certified-completion transition.
+
+The 576 combinations cover overlapping/disjoint views, distinct owner identities,
+zero-sized selections and read/write modes. Caller conflicts agree with physical
+overlap, regardless of descriptor identity. Pending observations prevent ending
+their owner generation or releasing their backing. Failed publication and repeated
+completion cannot restore authority. Completion restores access but cannot revive
+an invalidated observation. Releasing a different backing remains possible, and
+address reuse there does not revive old views or discharge the original loan.
+
+This exposes a distinction that byte permissions alone cannot encode: a
+zero-sized observation can retain a lifetime obligation despite having no byte
+conflict. Conversely, ending a different logical owner's observations does not
+restore authority over shared physical bytes. Logical invalidation here performs
+no writes or reclamation; an arena reset that also reclaims or reuses bytes must
+authorize those operations separately.
+
+The bridge still assumes matching physical release responsibility and audited
+acquisition. It does not connect arbitrary cleanup graphs, erased frames,
+protected guards or multiple-input tasks. Physical addresses are deliberately
+restricted to the existing two-byte authority domain. These are bounded checks
+of the connection, not proof of the compiler's physical-provenance abstraction.
+
 ### Resource-transformer reference cases
 
 The same experiment includes a finite reference interpreter for access,

@@ -333,6 +333,21 @@ constructors and the existing finite summary coordinates. The physical experimen
 still assumes authorized reset/release, and it does not establish the compiler
 abstraction or close the heterogeneous collection gate.
 
+The `PhysicalLoans` bridge now checks the outstanding-use part of that assumption
+against the existing byte-authority model: 576 bounded view/mode combinations
+retain backing and owner-generation observations until certified completion.
+Ending a different descriptor's generation never restores authority over aliased
+bytes. Releasing unrelated backing is permitted; releasing borrowed backing is
+not. Matching release responsibility remains an assumption of this fragment.
+
+An empty byte selection is not an empty obligation. A pending zero-sized view
+still retains its owner generation and backing even though ordinary byte-access
+checks find no conflict. Keep liveness obligations independently of the physical
+access footprint. Logical invalidation itself need not write bytes, but physical
+reclamation or reuse must also satisfy the corresponding access requirements.
+This is a conservation rule for the existing validity/authority dimensions, not
+a new permission category or a special rule for tasks.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and
