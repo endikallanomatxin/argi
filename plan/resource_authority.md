@@ -9,11 +9,25 @@ access mode. Deadlock freedom, termination and correctness of arbitrary atomic
 algorithms are outside this guarantee.
 
 This is the semantic reference for [the development gates](0.5.md).
+The next bounded design checkpoint is
+[safety across abstraction boundaries](resource_abstraction.md): five invariants,
+permitted information loss, interface requirements and counterexample contrasts.
+It is the compact review surface before further implementation; the investigations
+below supply detail rather than another independent safety model.
 [Concurrency research](concurrency.md), [virtual execution investigations](virtual_execution_safety.md)
 and [contract projections](contract_members.md) use the same model. They must not
 introduce independent permission systems. The compiler still has known
 unknown-call authorization and native-buffer provenance gaps. Existing checked
 loans and delegated projections do not close those gaps.
+
+Captured-observation validity is now checked independently of the search for
+concurrent access targets. Known intermediate-reference changes remain rejected
+even without a pending execution. When no storage loans remain, the authority
+phase no longer requires an exact captured target merely to prove separation;
+the after-completion heterogeneous collection case can use its interface.
+This does not prove physical independence while loans are active or complete
+uniform authorization of unknown calls. See the abstraction checkpoint for the
+positive/negative contrasts and the production Zig tests.
 
 ## Architecture review: lending and certified reclaim
 

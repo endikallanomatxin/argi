@@ -4125,6 +4125,37 @@ pub const SafetyChecker = struct {
         for (storages) |storage| try self.requireExecutionAccess(source, storage, null, mode, state);
     }
 
+    fn validateSummaryCaptureObservations(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        summary: facts.SafetySummary,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !bool {
+        const before = self.diagnostics.list.items.len;
+        for (summary.input_accesses) |access| {
+            const domain = access.target.storage_domain orelse continue;
+            if (access.target.input_index >= arguments.len) continue;
+            const receiver = if (access.target.projections.len == 0)
+                arguments[access.target.input_index]
+            else
+                try self.load_summary_input_value(access.target, arguments, state);
+            const captured = self.domainFacts(receiver, domain, state) catch |err| {
+                if (err != error.MissingVirtualStorageDomain) return err;
+                // An abstract interface can retain validity without an exact
+                // region binding. This is not evidence of independent access;
+                // pending loans still require authorization below.
+                continue;
+            };
+            _ = self.checkedDomainStorage(captured, state) catch |err| {
+                if (err != error.MissingVirtualStorageDomain) return err;
+                try self.report(source, "cannot establish captured access region identity: an intermediate reference changed", .{});
+                continue;
+            };
+        }
+        return self.diagnostics.list.items.len == before;
+    }
+
     fn validateSummaryExecutionAccess(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -4133,6 +4164,15 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !bool {
+        if (!try self.validateSummaryCaptureObservations(source, summary, arguments, state)) return false;
+        // This phase authorizes interference with pending loans, not reference
+        // validity. Sequential calls must not require recovering exact erased
+        // targets merely to establish separation from a nonexistent execution.
+        // Lifetime/initialization requirements are checked independently.
+        const borrowed = for (state.executions.items) |execution| {
+            if (execution.pending and execution.loans.len != 0) break true;
+        } else false;
+        if (!borrowed) return true;
         // May-access effects span the call. A final completion postcondition
         // cannot establish that any particular access happened after it.
         const before = self.diagnostics.list.items.len;
@@ -12520,4 +12560,168 @@ test "opaque retention preserves ended external borrows independently of moved o
     try std.testing.expect(containsRoot(hidden, borrowed));
     try std.testing.expect(containsRoot(hidden, live));
     try std.testing.expect(containsRoot(hidden, live_owned));
+}
+
+test "execution loan retention composes receipt completion and witness validity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (std.meta.tags(facts.AccessMode)) |mode| {
+        for ([_]bool{ false, true }) |shared_witness| {
+            for (0..4) |completed| {
+                var state = SafetyChecker.FunctionState.init(a);
+                defer state.deinit();
+                const payload = try state.tracker.establish(.fresh);
+                const first = try state.tracker.establish(.fresh);
+                const second = if (shared_witness) first else try state.tracker.establish(.fresh);
+                const first_id = try state.establishExecution(&.{.{ .mode = mode, .generations = &.{ payload, first } }});
+                const second_id = try state.establishExecution(&.{.{ .mode = mode, .generations = &.{ payload, second } }});
+                const first_receipt: facts.ValueFacts = .{ .execution_receipts = &.{first_id} };
+                const second_receipt: facts.ValueFacts = .{ .execution_receipts = &.{second_id} };
+                // Use the real caller-relative summary path for the first
+                // receipt, and recursive value transport for the second.
+                if (completed & 1 != 0) try checker.applySummaryEffects(source, .{
+                    .completed_executions = &.{.{
+                        .input_index = 0,
+                        .projections = &.{.{ .field = 0 }},
+                    }},
+                }, &.{}, &.{.{
+                    .fields = &.{.{ .index = 0, .value = &first_receipt }},
+                }}, &state);
+                if (completed & 2 != 0) checker.completeExecutionReceipts(.{
+                    .variants = &.{.{ .index = 0, .value = &second_receipt }},
+                }, &state);
+                try std.testing.expectEqual(completed & 1 == 0, state.executionPending(first_id));
+                try std.testing.expectEqual(completed & 2 == 0, state.executionPending(second_id));
+                const before = diags.list.items.len;
+                const can_end_first = completed & 1 != 0 and (!shared_witness or completed & 2 != 0);
+                try std.testing.expectEqual(can_end_first, try checker.endRoot(source, &state, first));
+                try std.testing.expectEqual(before + @intFromBool(!can_end_first), diags.list.items.len);
+                try std.testing.expectEqual(!can_end_first, state.tracker.isAlive(first));
+                // Ending the witness does not end the payload, and reclaim
+                // cannot revive a witness that has already ended.
+                try std.testing.expect(state.tracker.isAlive(payload));
+                checker.completeExecutionReceipts(first_receipt, &state);
+                checker.completeExecutionReceipts(second_receipt, &state);
+                try std.testing.expectEqual(!can_end_first, state.tracker.isAlive(first));
+                try std.testing.expect(try checker.endRoot(source, &state, payload));
+                try std.testing.expect(!state.tracker.isAlive(payload));
+            }
+        }
+    }
+}
+
+test "execution loan joins require completion on every reachable branch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..4) |left_completed| for (0..4) |right_completed| {
+        var state = SafetyChecker.FunctionState.init(a);
+        defer state.deinit();
+        const witness = try state.tracker.establish(.fresh);
+        const first = try state.establishExecution(&.{.{ .mode = .read, .generations = &.{witness} }});
+        const second = try state.establishExecution(&.{.{ .mode = .read, .generations = &.{witness} }});
+        var left = try state.clone(a);
+        defer left.deinit();
+        var right = try state.clone(a);
+        defer right.deinit();
+        if (left_completed & 1 != 0) left.completeExecution(first);
+        if (left_completed & 2 != 0) left.completeExecution(second);
+        if (right_completed & 1 != 0) right.completeExecution(first);
+        if (right_completed & 2 != 0) right.completeExecution(second);
+        var joined = SafetyChecker.FunctionState.init(a);
+        defer joined.deinit();
+        try checker.joinState(&joined, &left, &right);
+        const common_completion = left_completed & right_completed;
+        try std.testing.expectEqual(common_completion & 1 == 0, joined.executionPending(first));
+        try std.testing.expectEqual(common_completion & 2 == 0, joined.executionPending(second));
+        const before = diags.list.items.len;
+        try std.testing.expectEqual(common_completion == 3, try checker.endRoot(source, &joined, witness));
+        try std.testing.expectEqual(before + @intFromBool(common_completion != 3), diags.list.items.len);
+        try std.testing.expect(state.executionPending(first) and state.executionPending(second));
+        try std.testing.expect(state.tracker.isAlive(witness));
+    };
+}
+
+test "sequential authorization does not require exact erased access targets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const abstract_access: facts.SafetySummary = .{ .input_accesses = &.{.{
+        .target = .{ .input_index = 0, .storage_domain = 0 },
+        .mode = .read,
+    }} };
+    const arguments = [_]facts.ValueFacts{.{}};
+    // This tests concurrent authorization only: a valid abstract handle can
+    // lack an exact target. It does not establish reference validity.
+    try std.testing.expect(try checker.validateSummaryExecutionAccess(source, abstract_access, &.{}, &arguments, &state));
+    _ = try state.establishExecution(&.{});
+    try std.testing.expect(try checker.validateSummaryExecutionAccess(source, abstract_access, &.{}, &arguments, &state));
+    const witness = try state.tracker.establish(.fresh);
+    const id = try state.establishExecution(&.{.{ .mode = .write, .generations = &.{witness} }});
+    try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, abstract_access, &.{}, &arguments, &state));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    state.completeExecution(id);
+    try std.testing.expect(try checker.validateSummaryExecutionAccess(source, abstract_access, &.{}, &arguments, &state));
+    // Completing a loan changes authority, not whether observations are live.
+    try std.testing.expect(try checker.endRoot(source, &state, witness));
+    const stale: facts.ValueFacts = .{ .dependencies = &.{.{ .root = witness }} };
+    try std.testing.expect(valueDependsOnDeadRoot(stale, &state));
+}
+
+test "capture observations remain checked independently of execution authority" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const first: facts.Place = .{ .root = @enumFromInt(1) };
+    const second: facts.Place = .{ .root = @enumFromInt(2) };
+    try state.setPlace(slot, .initialized, .{ .referenced_place = first });
+    const captured: facts.ValueFacts = .{ .domains = &.{.{
+        .domain_index = 0,
+        .storages = &.{first},
+        .traversals = &.{.{ .slot = slot, .target = first }},
+    }} };
+    const summary: facts.SafetySummary = .{ .input_accesses = &.{.{
+        .target = .{ .input_index = 0, .storage_domain = 0 },
+        .mode = .read,
+    }} };
+    try std.testing.expect(try checker.validateSummaryExecutionAccess(source, summary, &.{}, &.{captured}, &state));
+    try state.setPlace(slot, .initialized, .{ .referenced_place = second });
+    // No worker exists. Retargeting still invalidates the capture rather than
+    // turning its old target into an unknown but authorized observation.
+    try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, summary, &.{}, &.{captured}, &state));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }

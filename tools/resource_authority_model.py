@@ -24,6 +24,13 @@ class Loan:
     mode: int
     generation: int
     pending: bool = True
+    acquisition: int | None = None
+
+
+@dataclass(frozen=True)
+class Protection:
+    region: tuple[int, ...]
+    generation: int
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,7 @@ class Acquisition:
     region: tuple[int, ...]
     generation: int
     active: bool = True
+    protocol: int = 0
 
 
 @dataclass(frozen=True)
@@ -52,15 +60,17 @@ class State:
     live: bool = True
     loans: tuple[Loan, ...] = ()
     protected: frozenset[int] = frozenset()
+    protections: tuple[Protection, ...] = ()
     acquisitions: tuple[Acquisition, ...] = ()
 
     def authority(self, execution, byte):
         if not self.live or byte in self.retired:
             return 0
         if byte in self.protected:
-            return WRITE if any(a.active and a.execution == execution and byte in a.region
-                                for a in self.acquisitions) else 0
-        grant = self.initial[byte] if execution == self.residence[byte] else 0
+            grant = WRITE if any(a.active and a.execution == execution and byte in a.region
+                                 for a in self.acquisitions) else 0
+        else:
+            grant = self.initial[byte] if execution == self.residence[byte] else 0
         for loan in self.loans:
             if loan.pending and loan.target == execution and byte in loan.region:
                 grant = max(grant, loan.mode)
@@ -78,22 +88,28 @@ class State:
             if guard is None or not 0 <= guard < len(self.acquisitions):
                 raise Denied("protected storage requires acquisition-derived route")
             acquired = self.acquisitions[guard]
-            if (not acquired.active or acquired.execution != execution or
+            protected_region = set(region) & self.protected
+            derived = any(loan.pending and loan.target == execution and
+                          loan.acquisition == guard and loan.mode >= mode and
+                          protected_region.issubset(loan.region) for loan in self.loans)
+            if (not acquired.active or (acquired.execution != execution and not derived) or
                     acquired.generation != self.generation or
-                    not set(region).issubset(acquired.region)):
+                    not protected_region.issubset(acquired.region)):
                 raise Denied("expired or mismatched acquisition")
         if not self.live or any(self.authority(execution, b) < mode for b in region):
             raise Denied("insufficient authority")
 
-    def lend(self, source, target, region, mode):
+    def lend(self, source, target, region, mode, *, guard=None):
         if source == target or target == 0:
             raise Denied("not a fresh child execution")
         # Execution IDs are never reused. This bounded experiment intentionally
         # excludes tasks with several inputs and dynamic authority merging.
         if any(loan.target == target for loan in self.loans):
             raise Denied("execution identity already used")
-        self.access(source, region, mode)
-        return replace(self, loans=self.loans + (Loan(source, target, region, mode, self.generation),))
+        self.access(source, region, mode, guard=guard)
+        origin = guard if set(region) & self.protected else None
+        return replace(self, loans=self.loans +
+                       (Loan(source, target, region, mode, self.generation, acquisition=origin),))
 
     def complete(self, receipt, *, quiescent=True, published=True):
         if not 0 <= receipt < len(self.loans):
@@ -119,16 +135,33 @@ class State:
         return replace(self, generation=self.generation + 1)
 
     def protect(self, region):
+        if not region:
+            raise Denied("this bounded fragment models nonempty protected payloads only")
         self.access(0, region, WRITE)
-        return replace(self, protected=self.protected | frozenset(region))
+        return replace(self, protected=self.protected | frozenset(region),
+                       protections=self.protections + (Protection(region, self.generation),))
 
-    def acquire(self, execution, region, *, synchronized=True):
+    def acquire(self, execution, region, *, synchronized=True, protocol=None):
         if not synchronized or not set(region).issubset(self.protected):
             raise Denied("no certified protected acquisition")
-        if any(a.active and set(a.region) & set(region) for a in self.acquisitions):
+        candidates = tuple(i for i, p in enumerate(self.protections)
+                           if region and set(region).issubset(p.region))
+        if protocol is None:
+            if len(candidates) != 1:
+                raise Denied("acquisition requires one matching protocol instance")
+            protocol = candidates[0]
+        if protocol not in candidates:
+            raise Denied("protocol does not protect the requested observation")
+        protection = self.protections[protocol]
+        if protection.generation != self.generation or not self.live:
+            raise Denied("stale protocol custody")
+        # The requested view may be smaller, but acquiring this mutex still
+        # excludes its whole payload. Subranges are not independent lock IDs.
+        if any(a.active and a.protocol == protocol for a in self.acquisitions):
             raise Denied("protected authority already acquired")
         return replace(self, acquisitions=self.acquisitions +
-                       (Acquisition(execution, region, self.generation),))
+                       (Acquisition(execution, protection.region, self.generation,
+                                    protocol=protocol),))
 
     def release(self, guard, execution, *, published=True):
         if not 0 <= guard < len(self.acquisitions):
@@ -137,6 +170,8 @@ class State:
         if (not acquired.active or acquired.execution != execution or not published or
                 acquired.generation != self.generation):
             raise Denied("uncertified or mismatched release")
+        if any(loan.pending and loan.acquisition == guard for loan in self.loans):
+            raise Denied("derived execution loan still uses this acquisition")
         return replace(self, acquisitions=tuple(replace(a, active=False) if i == guard else a
                                                for i, a in enumerate(self.acquisitions)))
 
@@ -183,6 +218,12 @@ class State:
                                     for i, o in enumerate(self.owners)))
 
     def check(self):
+        assert self.protected == frozenset(b for p in self.protections for b in p.region)
+        for i, protection in enumerate(self.protections):
+            assert protection.generation == self.generation and self.live
+            assert not set(protection.region) & self.retired
+            assert all(not set(protection.region) & set(other.region)
+                       for other in self.protections[i + 1:])
         for byte in range(2):
             modes = [self.authority(e, byte) for e in range(3)]
             assert sum(mode == WRITE for mode in modes) <= 1
@@ -192,12 +233,27 @@ class State:
         for loan in self.loans:
             if loan.pending:
                 assert self.live and loan.generation == self.generation
-                assert not set(loan.region) & (self.protected | self.retired)
+                assert not set(loan.region) & self.retired
+                if set(loan.region) & self.protected:
+                    assert loan.acquisition is not None
+                    acquired = self.acquisitions[loan.acquisition]
+                    assert acquired.active and acquired.generation == loan.generation
+                    assert (set(loan.region) & self.protected).issubset(acquired.region)
+                    assert acquired.execution == loan.source or any(
+                        parent.pending and parent.target == loan.source and
+                        parent.acquisition == loan.acquisition and parent.mode >= loan.mode and
+                        set(loan.region).issubset(parent.region) for parent in self.loans)
+                else:
+                    assert loan.acquisition is None
         for acquired in self.acquisitions:
+            assert 0 <= acquired.protocol < len(self.protections)
+            assert acquired.region == self.protections[acquired.protocol].region
             if acquired.active:
                 assert self.live and acquired.generation == self.generation
                 assert set(acquired.region).issubset(self.protected)
                 assert not set(acquired.region) & self.retired
+                assert sum(a.active and a.protocol == acquired.protocol
+                           for a in self.acquisitions) == 1
         for i, owner in enumerate(self.owners):
             if not owner.active:
                 continue
@@ -215,11 +271,11 @@ class StorageObservation:
     alternatives: tuple[tuple[int, ...], ...]
     generation: int
 
-    def access(self, state, execution, mode):
+    def access(self, state, execution, mode, *, guard=None):
         if not self.alternatives:
             raise Denied("missing physical membership is not an empty footprint")
         for region in self.alternatives:
-            state.access(execution, region, mode, self.generation)
+            state.access(execution, region, mode, self.generation, guard=guard)
 
     def erase_in_frame(self, live_allocation_bytes):
         # The frame is an oracle for allocation identities already live when
@@ -262,25 +318,43 @@ class CapturedValue:
         return CapturedValue(self.tag, tuple(a.erase_with(b)
                                             for a, b in zip(self.regions, other.regions)))
 
-    def call(self, state, execution, member, mode):
+    def call(self, state, execution, member, mode, *, guard=None):
         if not 0 <= member < len(self.regions):
             raise Denied("missing associated region is not an empty footprint")
-        self.regions[member].access(state, execution, mode)
+        self.regions[member].access(state, execution, mode, guard=guard)
 
 
 @dataclass(frozen=True)
 class OpaqueContents:
     # One joined reference value per complete stored type, not one entry per
     # insertion. No ownership, occupancy, extraction or slot reconstruction.
-    values: tuple[CapturedValue, ...] = ()
+    values: tuple[CapturedValue, ...] | None = None
+
+    @classmethod
+    def empty(cls):
+        # Oracle: an audited transition has established no retained values.
+        # This is not inferred from the age, type or absence of recorded writes.
+        return cls(())
 
     def insert(self, value):
+        if self.values is None:
+            return self
         for i, previous in enumerate(self.values):
             if previous.tag == value.tag:
                 return OpaqueContents(self.values[:i] + (previous.join(value),) + self.values[i + 1:])
         return OpaqueContents(self.values + (value,))
 
+    def join(self, other):
+        if self.values is None or other.values is None:
+            return OpaqueContents()
+        result = self
+        for value in other.values:
+            result = result.insert(value)
+        return result
+
     def select_unknown(self, tag):
+        if self.values is None:
+            raise Denied("unknown contents do not provide complete value observations")
         for value in self.values:
             if value.tag == tag:
                 return value
@@ -312,8 +386,8 @@ def opaque_recipe_experiments():
     right = StorageObservation(((1,),), 0)
     captured_left = CapturedValue(0, (left,))
     captured_right = CapturedValue(0, (right,))
-    arguments = ((right, OpaqueContents().insert(captured_left)),
-                 (right, OpaqueContents().insert(captured_right)))
+    arguments = ((right, OpaqueContents.empty().insert(captured_left)),
+                 (right, OpaqueContents.empty().insert(captured_right)))
     writer = State().lend(0, 1, (0,), WRITE)
     first = CapturedSelection(0, 0)
     # Loading an independent slot succeeds but does not authorize the capture.
@@ -326,7 +400,7 @@ def opaque_recipe_experiments():
     aliased = (arguments[0], arguments[0])
     denied(lambda: second.load(aliased, writer).call(writer, 0, 0, READ))
     # Even a no_access operation still needs authority over the handle slot.
-    blocked_slot = ((left, OpaqueContents().insert(captured_right)),)
+    blocked_slot = ((left, OpaqueContents.empty().insert(captured_right)),)
     denied(lambda: first.load(blocked_slot, writer))
     denied(lambda: CapturedSelection(0, 1).load(arguments, State()))
     denied(lambda: CapturedSelection(2, 0).load(arguments, State()))
@@ -334,7 +408,7 @@ def opaque_recipe_experiments():
     # A returned value is instantiated once. Resolving its recipe again after
     # replacement would silently change the region denoted by the copied value.
     copied = first.load(arguments, State())
-    replaced_arguments = ((right, OpaqueContents().insert(captured_right)), arguments[1])
+    replaced_arguments = ((right, OpaqueContents.empty().insert(captured_right)), arguments[1])
     first.load(replaced_arguments, writer).call(writer, 0, 0, READ)
     denied(lambda: copied.call(writer, 0, 0, READ))
 
@@ -346,7 +420,7 @@ def opaque_capture_experiments():
     for first, inserted, region, loan_mode, mode, member in product(
             values, values, REGIONS, (READ, WRITE), (READ, WRITE), range(2)):
         state = State().lend(0, 1, region, loan_mode)
-        contents = OpaqueContents().insert(first).insert(inserted)
+        contents = OpaqueContents.empty().insert(first).insert(inserted)
         abstract = contents.select_unknown(0)
         exact_accepts = True
         for alternative in (first, inserted):
@@ -364,14 +438,27 @@ def opaque_capture_experiments():
 
     old = CapturedValue(0, (observations[1],))
     later = CapturedValue(0, (observations[0],))
-    contents = OpaqueContents().insert(old)
+    contents = OpaqueContents.empty().insert(old)
     copied = contents.select_unknown(0)
     pending = State().lend(0, 1, (0,), WRITE)
     copied.call(pending, 0, 0, READ)
     contents = contents.insert(later)
     assert contents == contents.insert(old).insert(later)
-    assert contents == OpaqueContents().insert(later).insert(old)
+    assert contents == OpaqueContents.empty().insert(later).insert(old)
     denied(lambda: contents.select_unknown(0).call(pending, 0, 0, READ))
+    # Unknown is distinct from verified empty. A known insertion cannot
+    # certify the remainder of unknown storage or erase an unknown branch.
+    unknown = OpaqueContents()
+    assert unknown.insert(old) == unknown
+    denied(lambda: unknown.select_unknown(0))
+    known = OpaqueContents.empty().insert(old)
+    assert known.join(OpaqueContents.empty()) == known
+    assert known.join(unknown) == unknown.join(known) == unknown
+    assert known.join(known) == known
+    denied(lambda: known.join(unknown).select_unknown(0))
+    # Missing captured facts do not forbid a no_access method when the handle
+    # slot read itself is independently authorized. No member query is needed.
+    StorageObservation(((1,),), 0).access(pending, 0, READ)
     # A copied old handle does not become a selection of newly inserted values.
     copied.call(pending, 0, 0, READ)
     contents.select_unknown(0).call(pending.complete(0), 0, 0, READ)
@@ -380,7 +467,7 @@ def opaque_capture_experiments():
     denied(lambda: distinct.call(pending, 0, 0, READ))
     distinct.call(pending, 0, 1, WRITE)
     denied(lambda: CapturedValue(0, ()).call(State(), 0, 0, READ))
-    denied(lambda: OpaqueContents().select_unknown(0))
+    denied(lambda: OpaqueContents.empty().select_unknown(0))
     denied(lambda: contents.select_unknown(1))
     assert contents.insert(CapturedValue(1, (observations[2],))).select_unknown(0) == contents.select_unknown(0)
     # Losing a generation is not an admissible union of valid alternatives.
@@ -1066,10 +1153,218 @@ def protected_experiments():
     denied(lambda: protected.renew())
     # Different protected regions may be acquired independently, not merely
     # different names for overlapping bytes.
-    split = initial.protect((0, 1)).acquire(1, (0,)).acquire(2, (1,))
+    split = initial.protect((0,)).protect((1,)).acquire(1, (0,)).acquire(2, (1,))
     split.check()
     split.access(1, (0,), WRITE, guard=0)
     split.access(2, (1,), WRITE, guard=1)
+
+
+def protected_lending_experiments():
+    """Use the same loan ledger for entry and acquisition-derived authority."""
+    checked = 0
+    for protected_region, region, mode in product(REGIONS, REGIONS, (READ, WRITE)):
+        if not set(region).issubset(protected_region):
+            continue
+        held = State().protect(protected_region).acquire(0, protected_region)
+        borrowed = held.lend(0, 1, region, mode, guard=0)
+        ordinary = State().lend(0, 1, region, mode)
+        for execution, byte in product(range(3), region):
+            assert borrowed.authority(execution, byte) == ordinary.authority(execution, byte)
+        borrowed.check()
+        borrowed.access(1, region, mode, guard=0)
+        denied(lambda: borrowed.access(1, region, mode))
+        denied(lambda: borrowed.release(0, 0))
+        denied(lambda: borrowed.access(0, region, WRITE, guard=0))
+        if mode == READ:
+            borrowed.access(0, region, READ, guard=0)
+            denied(lambda: borrowed.access(1, region, WRITE, guard=0))
+        else:
+            denied(lambda: borrowed.access(0, region, READ, guard=0))
+        for byte in set(protected_region) - set(region):
+            borrowed.access(0, (byte,), WRITE, guard=0)
+
+        # A child can re-lend the derived route, but cannot manufacture a grant
+        # independent of the original acquisition or finish before descendants.
+        nested = borrowed.lend(1, 2, region, mode, guard=0)
+        ordinary_nested = ordinary.lend(1, 2, region, mode)
+        for execution, byte in product(range(3), region):
+            assert nested.authority(execution, byte) == ordinary_nested.authority(execution, byte)
+        nested.check()
+        nested.access(2, region, mode, guard=0)
+        denied(lambda: nested.complete(0))
+        denied(lambda: nested.release(0, 0))
+        returned_child = nested.complete(1)
+        returned_child.check()
+        returned_child.access(1, region, mode, guard=0)
+        denied(lambda: returned_child.release(0, 0))
+        returned = returned_child.complete(0)
+        returned.check()
+        returned.access(0, region, WRITE, guard=0)
+        released = returned.release(0, 0)
+        released.check()
+        assert released.generation == held.generation
+        denied(lambda: released.access(1, region, mode, guard=0))
+        renewed = released.acquire(0, protected_region)
+        renewed.access(0, region, WRITE, guard=1)
+        denied(lambda: renewed.access(0, region, READ, guard=0))
+        checked += 1
+
+    held = State().protect((0,)).acquire(0, (0,))
+    readers = held.lend(0, 1, (0,), READ, guard=0).lend(0, 2, (0,), READ, guard=0)
+    readers.check()
+    one_left = readers.complete(0)
+    one_left.access(0, (0,), READ, guard=0)
+    denied(lambda: one_left.access(0, (0,), WRITE, guard=0))
+    denied(lambda: one_left.release(0, 0))
+    one_left.complete(1).release(0, 0).check()
+    # Ordinary entry authority does not acquire a dependency on an unrelated
+    # guard merely because the caller also holds that guard.
+    ordinary = held.lend(0, 1, (1,), WRITE, guard=0)
+    assert ordinary.loans[0].acquisition is None
+    ordinary.release(0, 0).check()
+    ordinary.access(1, (1,), WRITE)
+    return checked
+
+
+def authority_source_experiments():
+    """Challenge per-access coverage without proposing production summary IR."""
+    protected = State().protect((0,))
+    assert protected.authority(0, 0) == 0
+
+    def balanced_update(state):
+        guard = len(state.acquisitions)
+        held = state.acquire(0, (0,))
+        held.access(0, (0,), WRITE, guard=guard)
+        return held.release(guard, 0)
+
+    # A logical write needs no payload grant at entry when acquisition provides
+    # it. Unrelated pending loans remain intact across the balanced helper.
+    borrowed = protected.lend(0, 1, (1,), WRITE)
+    returned = balanced_update(balanced_update(borrowed))
+    returned.check()
+    assert returned.authority(0, 0) == 0
+    assert returned.loans == borrowed.loans
+    denied(lambda: returned.access(0, (1,), READ))
+    returned.access(1, (1,), WRITE)
+
+    held = protected.acquire(0, (0,))
+    released = held.release(0, 0)
+    checked = 0
+    for state, active in ((protected, False), (held, True), (released, False)):
+        for mode, guard in product((READ, WRITE), (None, 0)):
+            if active and guard == 0:
+                state.access(0, (0,), mode, guard=guard)
+            else:
+                denied(lambda: state.access(0, (0,), mode, guard=guard))
+            checked += 1
+
+    # Intentionally challenge the unsound summary candidate "some access to R
+    # is guarded, therefore every access to R is mediated". Eight mixed paths
+    # below have the same write footprint and some guarded access, yet fail.
+    false_certificates = 0
+    for length in range(1, 4):
+        for sources in product((None, 0), repeat=length):
+            for source in sources:
+                if source == 0:
+                    held.access(0, (0,), WRITE, guard=source)
+                else:
+                    denied(lambda: held.access(0, (0,), WRITE, guard=source))
+            if any(source == 0 for source in sources) and not all(source == 0 for source in sources):
+                false_certificates += 1
+            checked += 1
+    assert false_certificates == 8
+
+    # Even holding two grants does not make the wrong acquisition-derived route
+    # valid. Region/protocol correspondence must survive wrapper substitution.
+    two = State().protect((0,)).protect((1,)).acquire(0, (0,)).acquire(0, (1,))
+    two.access(0, (0,), WRITE, guard=0)
+    two.access(0, (1,), WRITE, guard=1)
+    denied(lambda: two.access(0, (1,), WRITE, guard=0))
+    denied(lambda: two.access(0, (0,), WRITE, guard=1))
+    return checked, false_certificates
+
+
+def protected_erasure_experiments():
+    """A common acquired envelope can justify access without exact targets."""
+    held = State().protect((0, 1)).acquire(0, (0, 1))
+    envelope = StorageObservation(((0, 1),), held.generation)
+    for mode in (READ, WRITE):
+        envelope.access(held, 0, mode, guard=0)
+    denied(lambda: envelope.access(held, 0, READ))
+    denied(lambda: StorageObservation((), 0).access(held, 0, READ, guard=0))
+    denied(lambda: StorageObservation(((0,),), 1).access(held, 0, READ, guard=0))
+
+    checked = 0
+    for first, second, borrowed, loan_mode, mode in product(
+            REGIONS, REGIONS, REGIONS, (READ, WRITE), (READ, WRITE)):
+        state = held.lend(0, 1, borrowed, loan_mode, guard=0)
+        alternatives = tuple(CapturedValue(0, (StorageObservation((region,), 0),))
+                             for region in (first, second))
+        abstract = alternatives[0].join(alternatives[1])
+        exact_accepts = True
+        for value in alternatives:
+            try:
+                value.call(state, 0, 0, mode, guard=0)
+            except Denied:
+                exact_accepts = False
+        try:
+            abstract.call(state, 0, 0, mode, guard=0)
+        except Denied:
+            assert not exact_accepts
+        else:
+            assert exact_accepts
+        checked += 1
+    # The common protocol envelope does not bypass its own derived loan.
+    reader = held.lend(0, 1, (0,), READ, guard=0)
+    envelope.access(reader, 0, READ, guard=0)
+    denied(lambda: envelope.access(reader, 0, WRITE, guard=0))
+    StorageObservation(((1,),), 0).access(reader, 0, WRITE, guard=0)
+    return checked
+
+
+def protocol_custody_experiments():
+    """One protocol's views never manufacture independently acquirable locks."""
+    checked = 0
+    for protected_region, view in product(REGIONS, REGIONS):
+        if not set(view).issubset(protected_region):
+            continue
+        protected = State().protect(protected_region)
+        held = protected.acquire(1, view, protocol=0)
+        held.check()
+        assert held.acquisitions[0].region == protected_region
+        held.access(1, protected_region, WRITE, guard=0)
+        # Even a disjoint requested view of the same lock must wait.
+        for other in REGIONS:
+            if set(other).issubset(protected_region):
+                denied(lambda: held.acquire(2, other, protocol=0))
+        denied(lambda: protected.acquire(1, view, protocol=1))
+        denied(lambda: protected.protect(view))
+        released = held.release(0, 1)
+        reacquired = released.acquire(2, view, protocol=0)
+        reacquired.check()
+        reacquired.access(2, view, WRITE, guard=1)
+        denied(lambda: reacquired.access(2, view, WRITE, guard=0))
+        checked += 1
+
+    distinct = State().protect((0,)).protect((1,))
+    both = distinct.acquire(1, (0,), protocol=0).acquire(2, (1,), protocol=1)
+    both.check()
+    both.access(1, (0,), WRITE, guard=0)
+    both.access(2, (1,), WRITE, guard=1)
+    denied(lambda: distinct.acquire(1, (1,), protocol=0))
+    denied(lambda: distinct.acquire(1, (0,), protocol=1))
+    denied(lambda: distinct.acquire(1, (0, 1)))
+    only_second = both.release(0, 1)
+    only_second.access(2, (1,), WRITE, guard=1)
+    denied(lambda: only_second.access(1, (0,), WRITE, guard=0))
+    # If protocol identity is erased to alternatives, every alternative must
+    # satisfy the binding, not just whichever free lock is convenient.
+    for candidate in (0, 1):
+        if candidate == 0:
+            distinct.acquire(1, (0,), protocol=candidate).check()
+        else:
+            denied(lambda: distinct.acquire(1, (0,), protocol=candidate))
+    return checked
 
 
 def owner_experiments():
@@ -1115,7 +1410,7 @@ def owner_experiments():
             candidate.handoff(0, 0, 1).check()
 
 
-def explore_interactions(depth=3):
+def explore_interactions(depth=4):
     """Combine transitions under explicit allocation/identity bounds.
 
     Establishment and synchronized acquisition remain audited assumptions.
@@ -1140,6 +1435,11 @@ def explore_interactions(depth=3):
                 if len(state.loans) < 2:
                     for source, target, mode in product(range(3), (1, 2), (READ, WRITE)):
                         actions.append(lambda r=region, a=source, b=target, m=mode: state.lend(a, b, r, m))
+                    for guard, acquired in enumerate(state.acquisitions):
+                        if acquired.active:
+                            for target, mode in product((1, 2), (READ, WRITE)):
+                                actions.append(lambda r=region, g=guard, a=acquired.execution, b=target, m=mode:
+                                               state.lend(a, b, r, m, guard=g))
             for receipt in range(len(state.loans)):
                 actions.append(lambda k=receipt: state.complete(k))
             for guard, acquired in enumerate(state.acquisitions):
@@ -1176,6 +1476,10 @@ if __name__ == "__main__":
     owner_experiments()
     substitution_experiments()
     protected_experiments()
+    protected_loans_checked = protected_lending_experiments()
+    sources_checked, false_certificates = authority_source_experiments()
+    protected_erasure_checked = protected_erasure_experiments()
+    protocol_custody_checked = protocol_custody_experiments()
     compositions = transformer_experiments()
     summaries_checked, summaries_accepted = summary_experiments()
     states, transitions = explore()
@@ -1192,5 +1496,9 @@ if __name__ == "__main__":
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")
-    print(f"Combined transitions: {mixed_states} states, {mixed_transitions} accepted steps at depth three")
-    print("Scope: two bytes, three executions, at most two loans, depth five; not a soundness proof")
+    print(f"Acquisition-derived lending: {protected_loans_checked} region/mode combinations and nested/reader contrasts passed")
+    print(f"Authority sources: {sources_checked} coverage cases; {false_certificates} false region-wide certificates rejected")
+    print(f"Protected abstraction: {protected_erasure_checked} exact/erased coverage comparisons passed")
+    print(f"Protocol custody: {protocol_custody_checked} payload/view combinations and wrong-instance contrasts passed")
+    print(f"Combined transitions: {mixed_states} states, {mixed_transitions} accepted steps at depth four")
+    print("Scope: two bytes, three executions, at most two loans; loan depth five and combined depth four; not a soundness proof")
