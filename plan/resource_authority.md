@@ -291,6 +291,48 @@ ABI or completed soundness argument. It avoids adding an independent proof
 language to every contract while testing whether one reusable storage capability
 can cross the existing abstraction boundaries.
 
+### Physical observation representation: constraints for implementation
+
+The next compiler fact should describe a **view of backing storage**, not turn
+the existing acquisition-origin list into a permission. A view needs possible
+backing identities, a bounded range and the validity observation supporting its
+use. Distinct views may share backing. Physical overlap is checked only after
+validating both observations; authority is checked independently afterward.
+
+The separate physical-heap experiment checks 900 view pairs and adversarial
+release, reuse and reset traces. Its `PhysicalFrame` erasure checks the actual
+validated backing against a set of allocation identities, excludes later fresh
+backing, and retains possible aliases of existing backing. Late insertion into an
+older container requires widening the inserted value's frame. Its allocation oracle supplies nonoverlapping
+live backing. The conclusions to preserve in the production abstraction are:
+
+| Operation | Required fact | Result and limitation |
+| --- | --- | --- |
+| Native acquisition | Audited live extent, size and alignment | A new physical backing identity; no initialized arbitrary contents |
+| Checked subrange | Live parent view and validated bounds | Same possible backing, restricted extent; no physical freshness |
+| Retain in an owner | Verified construction and lifetime relation | Persistent view independent of consumed establishment permission |
+| Copy or move | Valid existing view | Preserve its backing and observation; do not refresh them |
+| Reset owner | No incompatible outstanding use | End its observations; backing may remain live |
+| Release backing | Matching responsibility, no outstanding use | End every view of those bytes; an old descriptor must not survive release |
+| Reacquire a reused address | New audited acquisition | New backing identity; old observations remain invalid |
+| Erase exact origin | Verified descriptor invariant and conservative alternatives | Preserve valid physical membership; do not assert disjointness from existing storage |
+
+A publication frame therefore contains **semantic allocation identities**, not
+numeric addresses, receipt IDs or validity-root creation times. A fresh view of
+old backing cannot refresh that frame. A sealed descriptor's construction must
+also bind its numeric extent to the same logical backing; changing an address
+or size field cannot preserve the proof merely because its owner remains alive.
+This is the concrete invariant to check before making it a type-level guarantee
+that survives a virtual factory signature.
+
+[Low*'s buffer model](https://fstarlang.github.io/lowstar/html/LowStar.html)
+provides a useful precedent for separating reference-backed slices, liveness and
+framed disjointness. It does not justify mapping Argi lifetime dependencies to
+physical regions, or importing a general refinement solver. Prefer checked
+constructors and the existing finite summary coordinates. The physical experiment
+still assumes authorized reset/release, and it does not establish the compiler
+abstraction or close the heterogeneous collection gate.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and

@@ -82,6 +82,42 @@ or lifetime roots. The compiler has not implemented sealed type invariants or
 this frame abstraction. Its cost and its interaction with mutation/opaque storage
 must be justified before adopting it.
 
+### Physical backing, owner observations and address reuse
+
+`PhysicalHeap` adds a separate bounded oracle for allocation identity, byte
+ranges and owner generations. It checks 900 pairs of valid views against explicit
+byte-set overlap. Views with different owners can alias the same backing;
+subviews restrict a parent range instead of creating an independent allocation.
+Resetting an owner invalidates its old views without freeing the backing or
+invalidating views tied to another still-valid owner. Releasing backing invalidates
+all its views, and reacquiring the same address uses a different nonreused identity.
+
+This strengthens the earlier frame experiment's assumptions: a publication frame
+must contain allocation identities, not numeric addresses. Otherwise an old frame
+could accidentally appear to cover newly acquired storage at a reused address.
+The overlap oracle works on addresses only after validating each view's backing
+and owner generation. New view/owner identities supply no disjointness evidence.
+`PhysicalFrame` bounds unknown backing by allocation identities. Its erasure
+operation requires the actual validated view to lie within that frame; overlap
+answers are conservative for all 900 view pairs. Fresh later backing can be
+excluded, but an overlapping alias of existing backing cannot. Publishing a
+later view with an old container's frame is rejected; widening the value's frame
+retains the possible conflict. Validation occurs before checking frame membership,
+so neither an expired view nor newly acquired bytes at an old address inherit an
+old proof.
+
+Allocation is still an oracle that rejects overlapping live backing; the checker
+has not proved that an arbitrary allocator satisfies it. `release` and owner reset
+also assume that outstanding users have already been discharged. This fragment
+does not model concurrent deallocation, physical slot acquisition in the compiler,
+zero-sized object ownership, alignment, abstract factory contracts or weak-memory
+publication. It neither grants authority nor replaces the existing loan experiment.
+
+The representation is informed by [Low*'s buffer and modifies model](https://fstarlang.github.io/lowstar/html/LowStar.html),
+which separates buffer slices, liveness, disjointness and framed modifications.
+Argi does not adopt its general refinement/proof language. These experiments test
+our proposed distinction, not the correctness of Low* or an equivalence with it.
+
 ### Resource-transformer reference cases
 
 The same experiment includes a finite reference interpreter for access,

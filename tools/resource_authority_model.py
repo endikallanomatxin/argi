@@ -249,6 +249,145 @@ class AuthenticatedExtent:
         return StorageObservation((self.bytes[offset:offset + size],), self.generation)
 
 
+@dataclass(frozen=True)
+class PhysicalAllocation:
+    identity: int
+    address: int
+    size: int
+    live: bool = True
+
+
+@dataclass(frozen=True)
+class PhysicalView:
+    backing: int
+    offset: int
+    size: int
+    owner: int
+    generation: int
+
+
+@dataclass(frozen=True)
+class PhysicalFrame:
+    backings: frozenset[int]
+
+    def erase_view(self, heap, view):
+        # A frame bounds possible backing; it is not a substitute for validating
+        # the view's live owner and physical extent before publishing evidence.
+        heap.extent(view)
+        if view.backing not in self.backings:
+            raise Denied("view backing is outside its claimed publication frame")
+        return self
+
+    def may_overlap(self, heap, view):
+        heap.extent(view)
+        return view.size != 0 and view.backing in self.backings
+
+
+@dataclass(frozen=True)
+class PhysicalHeap:
+    # Audited allocation is an oracle here. View identity, allocation identity
+    # and owner-generation identity are deliberately different namespaces.
+    allocations: tuple[PhysicalAllocation, ...] = ()
+    owner_generations: tuple[int, ...] = (0, 0)
+
+    def allocate(self, address, size):
+        if address < 0 or size < 0:
+            raise Denied("invalid physical extent")
+        if any(a.live and max(a.address, address) < min(a.address + a.size, address + size)
+               for a in self.allocations):
+            raise Denied("fresh acquisition overlaps live physical storage")
+        allocation = PhysicalAllocation(len(self.allocations), address, size)
+        return replace(self, allocations=self.allocations + (allocation,)), allocation.identity
+
+    def observe(self, backing, offset, size, owner):
+        if not 0 <= backing < len(self.allocations) or not 0 <= owner < len(self.owner_generations):
+            raise Denied("unknown physical backing or validity owner")
+        a = self.allocations[backing]
+        if not a.live or offset < 0 or size < 0 or offset > a.size or size > a.size - offset:
+            raise Denied("view outside live backing")
+        return PhysicalView(backing, offset, size, owner, self.owner_generations[owner])
+
+    def extent(self, view):
+        current = self.observe(view.backing, view.offset, view.size, view.owner)
+        if current.generation != view.generation:
+            raise Denied("expired owner observation")
+        a = self.allocations[view.backing]
+        return a.address + view.offset, a.address + view.offset + view.size
+
+    def subview(self, view, offset, size):
+        self.extent(view)
+        if offset < 0 or size < 0 or offset > view.size or size > view.size - offset:
+            raise Denied("subview enlarges its authenticated parent")
+        return replace(view, offset=view.offset + offset, size=size)
+
+    def overlap(self, left, right):
+        a, b = self.extent(left), self.extent(right)
+        return max(a[0], b[0]) < min(a[1], b[1])
+
+    def invalidate_owner(self, owner):
+        return replace(self, owner_generations=tuple(g + (i == owner)
+                                                     for i, g in enumerate(self.owner_generations)))
+
+    def release(self, backing):
+        if not 0 <= backing < len(self.allocations) or not self.allocations[backing].live:
+            raise Denied("backing has already been released")
+        return replace(self, allocations=tuple(replace(a, live=False) if a.identity == backing else a
+                                               for a in self.allocations))
+
+
+def physical_heap_experiments():
+    heap, backing = PhysicalHeap().allocate(100, 4)
+    whole = heap.observe(backing, 0, 4, 0)
+    left, right = heap.subview(whole, 0, 2), heap.subview(whole, 2, 2)
+    alias = heap.observe(backing, 0, 2, 1)
+    assert not heap.overlap(left, right)
+    assert heap.overlap(left, alias)  # Different owner roles do not separate bytes.
+    denied(lambda: heap.allocate(101, 1))
+    denied(lambda: heap.subview(left, 1, 2))
+    reset = heap.invalidate_owner(0)
+    denied(lambda: reset.extent(left))
+    assert reset.extent(alias) == (100, 102)  # Backing itself remains live.
+    renewed = reset.observe(backing, 0, 2, 0)
+    assert reset.overlap(renewed, alias)
+    # Reusing an address allocates a new identity, but never revives an old view.
+    released = heap.release(backing)
+    denied(lambda: released.extent(whole))
+    reused, fresh = released.allocate(100, 4)
+    assert fresh != backing
+    denied(lambda: reused.extent(whole))
+    assert reused.extent(reused.observe(fresh, 0, 4, 0)) == (100, 104)
+    # A published frame is a set of live allocation identities, not addresses.
+    old_frame = PhysicalFrame(frozenset(a.identity for a in heap.allocations if a.live))
+    assert fresh not in old_frame.backings
+    old_frame.erase_view(heap, whole)
+    assert old_frame.may_overlap(heap, alias)
+    new_view = reused.observe(fresh, 0, 4, 0)
+    assert not old_frame.may_overlap(reused, new_view)
+    denied(lambda: old_frame.erase_view(reused, new_view))
+    denied(lambda: old_frame.erase_view(reused, whole))
+    extended, later = heap.allocate(200, 2)
+    later_view = extended.observe(later, 0, 2, 0)
+    assert not old_frame.may_overlap(extended, later_view)
+    denied(lambda: old_frame.erase_view(extended, later_view))
+    # Inserting later storage into an old container requires widening the
+    # value's frame. Neither the container's age nor its live owner suffices.
+    widened = PhysicalFrame(old_frame.backings | {later})
+    widened.erase_view(extended, later_view)
+    assert widened.may_overlap(extended, later_view)
+    views = tuple(heap.observe(backing, start, size, owner)
+                  for start in range(5) for size in range(5 - start) for owner in range(2))
+    checked = 0
+    for a, b in product(views, repeat=2):
+        physical_a = set(range(*heap.extent(a)))
+        physical_b = set(range(*heap.extent(b)))
+        assert heap.overlap(a, b) == bool(physical_a & physical_b)
+        old_frame.erase_view(heap, a)
+        if heap.overlap(a, b):
+            assert old_frame.may_overlap(heap, b)
+        checked += 1
+    return checked
+
+
 def storage_observation_experiments():
     extent = AuthenticatedExtent((0, 1), 0)
     left, right = extent.select(0, 1), extent.select(1, 1)
@@ -772,6 +911,7 @@ def explore_interactions(depth=3):
 
 
 if __name__ == "__main__":
+    physical_checked = physical_heap_experiments()
     frames_checked = sealed_storage_frame_experiments()
     observations_checked = storage_observation_experiments()
     adversarial_traces()
@@ -787,6 +927,7 @@ if __name__ == "__main__":
     print(f"Completion summaries: {summaries_checked} cases checked, {summaries_accepted} accepted conservatively")
     print(f"Storage observations: {observations_checked} erasure checks and physical membership adversarial cases passed")
     print(f"Sealed storage frames: {frames_checked} conservative erasure checks and late-capture adversarial cases passed")
+    print(f"Physical backing: {physical_checked} overlap checks and release/reuse adversarial cases passed")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")
