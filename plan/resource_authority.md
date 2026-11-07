@@ -995,3 +995,52 @@ These are design constraints, not established termination or complexity bounds.
 A new semantic fact must have specified substitution, join, erasure and failure
 rules before entering the implementation; a passing isolated regression does not
 justify adding an independent permission mechanism.
+
+### Factory guarantees: transport is not fresh authorization
+
+The next public guarantee must distinguish three operations, rather than treat
+all receipt-shaped outputs as freshly acquired storage:
+
+| Operation | Evidence at the boundary | What the caller may retain |
+|---|---|---|
+| Forward an existing receipt | `transfers` from an identified input | The same authorization identity and its current state |
+| Return a checked view of backing storage | A valid physical observation and containment | The backing relation and restricted bounds, without establishment authorization |
+| Acquire new establishment authorization | A verified acquisition transition | An available authorization whose identity remains correlated with every exported alias |
+
+The first row already has an implementation. The second and third are separate
+remaining obligations. A factory might need both, but a physical observation
+must not silently recreate a consumed establishment permission.
+
+In particular, an `acquires(result)` postcondition would not be justified merely
+by finding a `fresh_storage_capabilities` entry in the implementation summary.
+Before adding such a clause, its verification must account for authorization
+aliases exported in other results, retained provider fields, or input post-state.
+A new caller-local identity for each result could hide their common consumption
+state. Likewise, a helper that requires an input authorization and constructs a
+private receipt does not prove acquisition: it transports the input identity.
+Neither private fields nor a compiler-recognized constructor name repairs that
+missing proof.
+
+Use the following counterexamples as acceptance criteria for any replacement:
+
+1. Copy an acquired address, forward its receipt through a virtual contract,
+   establish storage through the address, then establish through the receipt.
+2. Reverse the two establishment operations.
+3. Export one acquisition through two result fields, then establish both.
+4. Retain an acquisition alias in the provider while returning its receipt, then
+   attempt establishment through both paths.
+5. Return two genuinely independent acquisitions and establish both successfully.
+
+The first two now have compiler regression fixtures, `types/416X` and
+`types/417X`. They test consumption correlation across the existing virtual
+transfer path, not physical containment or the correctness of arbitrary trusted
+integration. The paired positive fixture, `types/418`, establishes two independent
+acquisitions after forwarding their receipts, checking that consumption of one
+does not revoke the other. Cases 3 and 4 remain requirements for a future factory
+guarantee, not claims that a new guarantee has been implemented.
+
+For now, retain whole-receipt `transfers` for transport. Do not introduce a
+fresh-authorization postcondition as a shortcut to the physical observation
+needed by collection access. The immediate design target remains the second
+row: a valid bounded storage observation that can survive erasure without
+claiming disjointness, initialization, ownership or a new establishment right.
