@@ -1,5 +1,5 @@
 test model_equal_length_triangle_faces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     tolerance: Float64 = 0.000001
     faces: [1][3]UIntNative = ((0, 1, 2),)
@@ -16,7 +16,7 @@ test model_equal_length_triangle_faces := (.system: System) -> !() {
 }
 
 test model_any_length_triangle_and_quad := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [5]g.Point#(Float32) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -46,7 +46,7 @@ test model_any_length_triangle_and_quad := (.system: System) -> !() {
 }
 
 test model_rejects_invalid_face_lengths := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     short: [1]UIntNative = (2,)
     excessive: [1]UIntNative = (4,)
@@ -105,7 +105,7 @@ test model_rejects_invalid_face_lengths := (.system: System) -> !() {
 }
 
 test model_lengths_must_consume_all_indices := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     indices: [6]UIntNative = (0, 1, 2, 0, 2, 1)
     lengths: [1]UIntNative = (3,)
@@ -124,7 +124,7 @@ test model_lengths_must_consume_all_indices := (.system: System) -> !() {
 }
 
 test model_equal_length_rejects_short_and_empty_faces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     short: [1][2]UIntNative = ((0, 1),)
     zero: [1][0]UIntNative = ((),)
@@ -165,7 +165,7 @@ test model_equal_length_rejects_short_and_empty_faces := (.system: System) -> !(
 }
 
 test model_equal_length_accepts_runtime_face_view := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     faces: [2][3]UIntNative = (
         (0, 1, 2),
@@ -184,7 +184,7 @@ test model_equal_length_accepts_runtime_face_view := (.system: System) -> !() {
 }
 
 test model_equal_length_preserves_input_validation := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     faces: [1][3]UIntNative = ((0, 1, 3),)
     [

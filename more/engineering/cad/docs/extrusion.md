@@ -12,7 +12,7 @@ m := import("engineering/cad/modeling")
 g := import("engineering/cad/geometry")
 
 -- Inside a function receiving .system: System:
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
 points: [4]g.Point#(Float64) = (
     (.x = 0.0, .y = 0.0, .z = 0.0),
     (.x = 2.0, .y = 0.0, .z = 0.0),

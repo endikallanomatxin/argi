@@ -9,7 +9,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     drive ::= path_with_view(.view = "C:\\file.txt") | unwrap_or_abort(_)

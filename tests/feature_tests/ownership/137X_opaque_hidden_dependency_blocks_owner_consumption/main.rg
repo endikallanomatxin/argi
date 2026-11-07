@@ -7,7 +7,7 @@ Borrowing := (
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    deallocator ::= to_virtual#(.contract: Deallocator)(.value = $&allocator_storage)
+    deallocator ::= Virtual#(.contract: Deallocator)(.value = $&allocator_storage)
 
     target_storage ::= malloc(.size = 1, .ffi = system.ffi)
     target ::= trusted_establish_allocation(

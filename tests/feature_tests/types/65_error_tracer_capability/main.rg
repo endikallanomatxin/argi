@@ -66,7 +66,7 @@ forward := #(.t: Type) (
 
 main := () -> (.status_code: Int32) {
     tracer ::= CountingTracer()
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
     if tracer.count != 2 {
@@ -89,7 +89,7 @@ main := () -> (.status_code: Int32) {
         return
     }
     other ::= CountingTracer()
-    other_virtual ::= to_virtual#(.contract: ErrorTracer)(.value = $&other)
+    other_virtual ::= Virtual#(.contract: ErrorTracer)(.value = $&other)
     assume error_tracer ::= $&other_virtual
     forwarded ::= forward#(.t: Int32)(.value = ~failed)
     if tracer.count != 4 {

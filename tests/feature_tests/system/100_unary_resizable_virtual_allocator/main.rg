@@ -11,8 +11,8 @@ main := () -> (.status_code: Int32 = 0) {
     assume ffi ::= $&ForeignFunctionInterface()
     first ::= CAllocator(.ffi = ffi)
     second ::= CAllocator(.ffi = ffi)
-    first_handle ::= to_virtual#(Allocator)($&first)
-    second_handle ::= to_virtual#(Allocator)($&second)
+    first_handle ::= Virtual#(Allocator)($&first)
+    second_handle ::= Virtual#(Allocator)($&second)
 
     items ::= unwrap_or_abort(DynamicArray#(Int32)(.allocator = first_handle, .capacity = 1))
     append(.items = $&items, .allocator = first_handle, .value = 3)

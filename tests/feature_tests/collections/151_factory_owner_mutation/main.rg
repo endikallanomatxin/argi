@@ -15,7 +15,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     owner ::= unwrap_or_abort(.value = make_owner()).result

@@ -12,7 +12,7 @@ implement Executor#(FailingExecutor) (
 )
 main := () -> () {
     provider: FailingExecutor = (.unused = false)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 1
     match async#(write)(.args = (.value = $&value)) {
         ..ok _ { abort }

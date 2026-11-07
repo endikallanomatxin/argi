@@ -1,7 +1,7 @@
 write := (.value: $&Int32) -> () { value& = 42 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     saved :: ?Future#(Void) = ..none
     index :: Int32 = 0
     while index < 2 {

@@ -3733,6 +3733,14 @@ pub const Resolver = struct {
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
                     if (value.detail == .callee_value) {
                         const callee = try self.instantiateNode(value.detail.callee_value);
+                        if (global_types.typeValue(self.resolver.graph, callee)) |target| {
+                            const semantic = self.resolver.graph.resolvedSemanticType(target) orelse return error.DeferredGenericFunction;
+                            if (semantic == .virtual) {
+                                if (args.len != 0) return error.NoMatchingGenericFunction;
+                                const contracts = self.resolver.nested_call_context orelse return error.DeferredGenericFunction;
+                                break :blk try contracts.makeVirtualConstruction(semantic.virtual, input, self.resolver.sourceFor(self.module_index, value.source)) orelse error.DeferredGenericFunction;
+                            }
+                        }
                         if (global_types.definitionValue(self.resolver.graph, callee)) |definition| {
                             if (self.resolver.graph.familyDefinition(definition.origin).kind == .function) {
                                 const lexical_context = try self.operatorContext(value.assumed_arguments);
@@ -4115,7 +4123,7 @@ pub const Resolver = struct {
                 return (try self.resolver.makeAlignmentOf(input, self.resolver.sourceFor(self.module_index, source))) orelse error.AlignmentOfInputMustBeStruct;
             if (module_path == null and std.mem.eql(u8, name, "is"))
                 return self.resolveChoiceTest(input, source);
-            if (module_path == null and std.mem.eql(u8, name, "to_virtual")) {
+            if (module_path == null and std.mem.eql(u8, name, "Virtual")) {
                 if (self.resolver.nested_call_context) |contracts| {
                     const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name_range, .source = source };
                     if (try contracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments, expected)) |node| {

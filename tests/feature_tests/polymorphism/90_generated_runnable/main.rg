@@ -23,21 +23,21 @@ implement#(.F: Function) Runnable#(Task#(F)) (
 
 main := () -> () {
     task ::= Task#(double)(.args = prepare_args#(double)(.args = (.x = 21)))
-    runnable ::= to_virtual#(Runnable)($&task)
+    runnable ::= Virtual#(Runnable)($&task)
     run(.self = $&runnable)
     match task.output {
         ..some payload { if payload.value != 42 { abort } }
         ..none { abort }
     }
     empty_task ::= Task#(nothing)(.args = ())
-    empty_runnable ::= to_virtual#(Runnable)($&empty_task)
+    empty_runnable ::= Virtual#(Runnable)($&empty_task)
     run(.self = $&empty_runnable)
     match empty_task.output {
         ..some _ {}
         ..none { abort }
     }
     pair_task ::= Task#(pair)(.args = (.x = 41))
-    pair_runnable ::= to_virtual#(Runnable)($&pair_task)
+    pair_runnable ::= Virtual#(Runnable)($&pair_task)
     run(.self = $&pair_runnable)
     match pair_task.output {
         ..some payload {

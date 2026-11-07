@@ -71,11 +71,11 @@ tuple_host := #(.n: Int32) () -> (.result: Int32) {
 allocate_host := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (.value: Int32) {
         tracer :: NoopErrorTracer = (.marker = 0)
-        erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+        erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
 
         allocator_concrete := $&CAllocator(.ffi = system.ffi)
 
-        virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+        virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
         assume allocator := virtual_allocator
         text ::= unwrap_or_abort(.value = String(.length = 3))
@@ -86,11 +86,11 @@ allocate_host := #(.n: Int32) () -> (.result: Int32) {
 abort_host := #(.n: Int32) () -> (.result: Int32) {
     result = #run (.system: System) -> (.value: Int32) {
         tracer :: NoopErrorTracer = (.marker = 0)
-        erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+        erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
 
         allocator_concrete := $&CAllocator(.ffi = system.ffi)
 
-        virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+        virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
         assume allocator := virtual_allocator
         text ::= unwrap_or_abort(.value = String(.length = 3))

@@ -3,7 +3,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= CAllocator(.ffi = ffi)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     map ::= unwrap_or_abort(
         .value = HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(

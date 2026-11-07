@@ -36,7 +36,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         status_code = 4
     }
     refusing ::= RefusingAllocator()
-    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
+    refusing_virtual ::= Virtual#(Allocator)($&refusing)
     match exists(.self = system.file_system, .path = text, .allocator = refusing_virtual) {
         ..ok _ { status_code = 5 }
         ..error error { if error.reason != ..out_of_memory { status_code = 6 } }

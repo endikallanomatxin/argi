@@ -77,9 +77,9 @@ serve_stream := #(
     }
     request :: Request = (
         .head                = head
-        ._reader             = to_virtual#(.contract: BlockReader)(.value = $&buffered)
-        ._writer             = to_virtual#(.contract: BlockWriter)(.value = writer)
-        ._flusher            = to_virtual#(.contract: Writer)(.value = writer)
+        ._reader             = Virtual#(.contract: BlockReader)(.value = $&buffered)
+        ._writer             = Virtual#(.contract: BlockWriter)(.value = writer)
+        ._flusher            = Virtual#(.contract: Writer)(.value = writer)
         ._body               = _body_state(.head = &head, .limits = limits)
         ._body_failure       = ..none
         ._response_started   = false

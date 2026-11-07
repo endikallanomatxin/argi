@@ -8,7 +8,7 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
 
 escape := () -> !!Void = ..ok Void() {
     tracer ::= NoopErrorTracer()
-    virtual_tracer ::= to_virtual#(ErrorTracer)($&tracer)
+    virtual_tracer ::= Virtual#(ErrorTracer)($&tracer)
     assume error_tracer ::= $&virtual_tracer
 
     fail()!! "context"

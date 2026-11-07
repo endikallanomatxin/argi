@@ -4,5 +4,5 @@ implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () {})
 
 main := () -> () {
     value ::= Owner(42)
-    erased ::= to_virtual#(Deinit)($&value)
+    erased ::= Virtual#(Deinit)($&value)
 }

@@ -3,7 +3,7 @@ test named_optional_view_return := (.system: System, .error_tracer: $&Virtual#(E
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
 
     path :: Path = unwrap_or_abort(

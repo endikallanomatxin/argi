@@ -16,7 +16,7 @@ main := (.system: System) -> () {
     text ::= unwrap_or_abort(.value = format(.value = "Aé"))
     before ::= capacity(&text).count
     refusing ::= Refusing()
-    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
+    refusing_virtual ::= Virtual#(Allocator)($&refusing)
     byte :: UIntNative = 128
     while byte < 256 {
         invalid ::= unwrap_or_abort(.value = byte | convert#(.to: UInt8)(_))

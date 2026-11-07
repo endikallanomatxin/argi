@@ -77,6 +77,9 @@ pub const Resolver = struct {
             break :blk self.core.declarationTypeValue(declaration_id) orelse return null;
         };
 
+        if (self.graph.resolvedSemanticType(ty)) |semantic| if (semantic == .virtual)
+            return self.contracts.?.makeVirtualConstruction(semantic.virtual, input, source);
+
         if (c_abi.isFunctionPointer(self.graph, ty)) {
             const semantic = self.graph.resolvedSemanticType(ty) orelse return null;
             if (semantic != .nominal) return null;
@@ -361,6 +364,13 @@ pub const Resolver = struct {
             };
             break :blk self.core.declarationTypeValue(declaration_id) orelse return .deferred;
         };
+        if (self.graph.resolvedSemanticType(ty)) |semantic| if (semantic == .virtual) {
+            const source: primitives.SourceRef = .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset };
+            const node = try self.contracts.?.makeVirtualConstruction(semantic.virtual, input, source) orelse return .deferred;
+            try self.graph.setNode(self.core.allocator, globalizer.globalNode(o, value.node), node);
+            return .resolved;
+        };
+
         if (c_abi.isFunctionPointer(self.graph, ty)) {
             const semantic = self.graph.resolvedSemanticType(ty) orelse return .deferred;
             if (semantic != .nominal) return .deferred;

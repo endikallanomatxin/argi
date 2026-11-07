@@ -5,7 +5,7 @@ write := (.items: $&[2]Int32) -> () {
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     items :: [2]Int32 = (1, 2)
     first ::= unwrap_or_abort(.value = async#(read)(.args = (.items = &items)))
     if unwrap_or_abort(.value = await($&first)) != 3 { abort }

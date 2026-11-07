@@ -32,14 +32,14 @@ consume_float := (.input: &Virtual#(Fixed#(.n = 2, .item: Float64))) -> (
 wrap := #(.t: Type: Fixed#(.n = 1, .item: Int32)) (.value: &t) -> (
     .result : Virtual#(Fixed#(.n = 1, .item: Int32))
 ) {
-    result = to_virtual#(.contract: Fixed#(.n = 1, .item: Int32))(.value = value)
+    result = Virtual#(.contract: Fixed#(.n = 1, .item: Int32))(.value = value)
 }
 
 main := () -> (.status_code: Int32 = 0) {
     integer :: Integer = (.value = 17)
     floating :: Floating = (.value = 2.5)
     left ::= wrap(.value = &integer).result
-    right :: Virtual#(Fixed#(.n = 2, .item: Float64)) = to_virtual(
+    right :: Virtual#(Fixed#(.n = 2, .item: Float64)) = Virtual(
         .value = &floating
     )
     if consume_integer(.input = &left).value != 17 { abort }

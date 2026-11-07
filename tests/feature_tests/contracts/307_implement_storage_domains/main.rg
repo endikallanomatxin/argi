@@ -45,11 +45,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     implementation ::= Slot(unwrap_or_abort(allocate#(Allocation)($&allocator)))
-    slot ::= to_virtual#(SlotProtocol)($&implementation)
+    slot ::= Virtual#(SlotProtocol)($&implementation)
     payload ::= unwrap_or_abort(allocate#(UInt8)($&allocator))
     unsafe_allocation.trusted_allocation_byte_rw($&payload, 0).reference&= 42
 

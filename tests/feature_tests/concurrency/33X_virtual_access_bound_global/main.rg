@@ -8,6 +8,6 @@ implement PureValue#(Provider) (
 )
 main := () -> () {
     provider: Provider = (.marker = 0)
-    pure ::= to_virtual#(PureValue)(&provider)
+    pure ::= Virtual#(PureValue)(&provider)
     _ = PureValue#().get(.self = &pure)
 }

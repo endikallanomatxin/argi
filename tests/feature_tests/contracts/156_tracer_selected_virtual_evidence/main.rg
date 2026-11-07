@@ -21,7 +21,7 @@ main := () -> (.status_code: Int32 = 0) {
         Counter
     ).add_context($&tracer, .location = error_location_id(), .context = "first")
     if tracer.count != 1 { abort }
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     add_context_text(.context = "second")
     if tracer.count != 2 { abort }

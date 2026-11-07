@@ -19,7 +19,7 @@ _impl_rewrite_Rewriting := (.self: $&Rewriting, .reference: $&UInt8) -> () {
 }
 
 register_keeping := (.value: $&Keeping) -> () {
-    _ ::= to_virtual#(.contract: Rewriter)(.value = value)
+    _ ::= Virtual#(.contract: Rewriter)(.value = value)
 }
 
 main := (.system: System) -> (.status_code: Int32) {
@@ -46,7 +46,7 @@ main := (.system: System) -> (.status_code: Int32) {
                             .allocation = $&old, .offset = 0
                         ).reference
                     )
-                    virtual ::= to_virtual#(.contract: Rewriter)(.value = $&value)
+                    virtual ::= Virtual#(.contract: Rewriter)(.value = $&value)
                     rewrite(
                         .self      = $&virtual
                         .reference = unsafe_allocation.trusted_allocation_byte_rw(

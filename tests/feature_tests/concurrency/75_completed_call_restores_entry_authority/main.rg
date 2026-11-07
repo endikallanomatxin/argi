@@ -5,7 +5,7 @@ finish := (.future: $&Future#(Int32)) -> () {
 write := (.value: $&Int32) -> () { value& = 7 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 42
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
     finish(.future = $&future)

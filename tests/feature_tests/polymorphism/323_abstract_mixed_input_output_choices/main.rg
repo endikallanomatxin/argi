@@ -34,7 +34,7 @@ _impl_choose_Manager := (.self: &Manager, .mode: Selection, .left: &Int32, .righ
 
 main := () -> () {
     manager ::= Manager(0)
-    splitter ::= to_virtual#(Splitter)(&manager)
+    splitter ::= Virtual#(Splitter)(&manager)
     live: Int32 = 42
     values: ChoiceResult
 

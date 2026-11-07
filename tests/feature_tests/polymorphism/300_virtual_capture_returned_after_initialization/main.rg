@@ -6,7 +6,7 @@ implement Source#(Box) (.read = read_box)
 read_box := (.self: &Box) -> (.result: Int32) { result = self&.value }
 initialize := (.box: $&Box) -> (.result: Virtual#(Source)) {
     box& = Box(42)
-    result = to_virtual#(Source)(box)
+    result = Virtual#(Source)(box)
 }
 main := () -> (.status_code: Int32 = 0) {
     box :: Box

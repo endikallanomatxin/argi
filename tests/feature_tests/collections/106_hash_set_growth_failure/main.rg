@@ -9,7 +9,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator :: RecordingAllocator = (.ffi = system.ffi)
 
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     set ::= unwrap_or_abort(
         .value = HashSet#(.key: UIntNative, .policy: StandardHashPolicy)(
             .policy = StandardHashPolicy(), .allocator = allocator_virtual
@@ -53,7 +53,7 @@ implement Allocator#(RecordingAllocator) (
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

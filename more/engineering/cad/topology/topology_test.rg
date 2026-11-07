@@ -1,7 +1,7 @@
 -- Deliberately use a different order for face records and loop storage.
 -- Three triangular rings, one face with two loops, and no geometry.
 test model_topology_without_geometry := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
 
     edges ::= DynamicArray#(Edge)()!
     halfedges ::= DynamicArray#(HalfEdge)()!

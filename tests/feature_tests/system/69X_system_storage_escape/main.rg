@@ -30,7 +30,7 @@ initialize_storage := (.storage: $&EntryStorage) -> () {
 escape_system := () -> (.system: System) {
     storage :: EntryStorage
     initialize_storage(.storage = $&storage)
-    page_virtual ::= to_virtual#(Allocator)($&storage.page_allocator)
+    page_virtual ::= Virtual#(Allocator)($&storage.page_allocator)
     system = (
         .ffi            = $&storage.ffi
         .memory         = $&storage.memory

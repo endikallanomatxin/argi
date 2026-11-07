@@ -19,7 +19,7 @@ main := (.error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
     ErrorTracer#().add_context(.self = $&tracer, .location = location, .context = context)
     ErrorTracer#().add_context(.self = $&tracer, .location = location, .context = context)
     writer ::= ProbeWriter()
-    virtual_writer ::= to_virtual#(Writer)($&writer)
+    virtual_writer ::= Virtual#(Writer)($&writer)
     unwrap_or_abort(
         .value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer)
     )

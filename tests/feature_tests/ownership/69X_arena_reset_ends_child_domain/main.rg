@@ -3,7 +3,7 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    allocator_storage_virtual ::= to_virtual#(Allocator)($&allocator_storage)
+    allocator_storage_virtual ::= Virtual#(Allocator)($&allocator_storage)
     arena :: ArenaAllocator
     initialized ::= ArenaAllocator(.allocator = allocator_storage_virtual, .block_size = 32)
     match initialized {

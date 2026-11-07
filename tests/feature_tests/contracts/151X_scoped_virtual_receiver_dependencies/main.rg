@@ -13,6 +13,6 @@ main := () -> () {
     first: Int32 = 1
     second: Int32 = 2
     cell ::= Cell(.reference = &first)
-    erased ::= to_virtual#(.contract: Storage)(.value = $&cell)
+    erased ::= Virtual#(.contract: Storage)(.value = $&cell)
     Storage#().replace($&erased, .value = &second)
 }

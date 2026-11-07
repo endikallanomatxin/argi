@@ -4,7 +4,7 @@
     assume ffi ::= $&ffi_storage
     memory_storage ::= Memory()
     page_allocator_storage ::= PageAllocator(.memory = $&memory_storage)
-    page_allocator_handle :: Virtual#(Allocator) = to_virtual($&page_allocator_storage)
+    page_allocator_handle :: Virtual#(Allocator) = Virtual($&page_allocator_storage)
 
     terminal_storage ::= Terminal()
     terminal ::= $&terminal_storage

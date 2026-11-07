@@ -53,5 +53,5 @@ transfer_owned := (
 
 main := () -> () {
     manager ::= Manager(0)
-    mover ::= to_virtual#(Mover)(&manager)
+    mover ::= Virtual#(Mover)(&manager)
 }

@@ -19,6 +19,6 @@ implement ForwardCounter#(Forwarder) (
 main := () -> () {
     value :: Int32 = 7
     state: CounterState = (.value = $&value)
-    forwarder: Forwarder = (.base = to_virtual#(Counter)($&state))
-    counter ::= to_virtual#(ForwardCounter)($&forwarder)
+    forwarder: Forwarder = (.base = Virtual#(Counter)($&state))
+    counter ::= Virtual#(ForwardCounter)($&forwarder)
 }

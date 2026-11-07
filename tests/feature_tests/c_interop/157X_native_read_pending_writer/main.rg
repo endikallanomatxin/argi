@@ -5,7 +5,7 @@ read_wrapper := (.value: &Int32, .ffi: $&ForeignFunctionInterface) -> (.result: 
 write := (.value: $&Int32) -> (.result: Int32) { value& = value& + 1 result = value& }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 7
     future ::= unwrap_or_abort(.value = async#(write)(.args = (.value = $&value)))
     _ = read_wrapper(.value = &value, .ffi = system.ffi)

@@ -11,5 +11,5 @@ implement Counter#(Cell) (
 )
 main := () -> () {
     cell ::= Cell(7)
-    counter ::= to_virtual#(Counter)(&cell)
+    counter ::= Virtual#(Counter)(&cell)
 }

@@ -1,7 +1,7 @@
 write := (.value: $&Int32) -> () { value& = 42 }
 main := (.system: System) -> () {
     provider ::= InlineExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 0
     alias ::= $&value
     future ::= unwrap_or_abort(.value = async#(write)(.args = (.value = $&value)))

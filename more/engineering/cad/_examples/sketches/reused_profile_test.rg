@@ -1,7 +1,7 @@
 -- Declare a spacer cross-section once and reuse its dimensions and opening
 -- on two work frames. Each extrusion owns a separate closed model.
 test usage_reuse_profile_on_work_frames := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     sketch ::= s.SketchBuilder#(.Scalar: Float64)()!
     outline ::= sketch | s.rectangle($&_, .width = 4.0, .height = 3.0)!
     opening ::= sketch | s.rectangle($&_, .width = 1.0, .height = 1.0)!

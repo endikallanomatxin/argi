@@ -15,5 +15,5 @@ _take := (.self: &Implementation, .storage: &Allocation, .input: ?Int32) -> (.re
 
 main := () -> () {
     implementation ::= Implementation()
-    _ ::= to_virtual#(Extractor)(&implementation)
+    _ ::= Virtual#(Extractor)(&implementation)
 }

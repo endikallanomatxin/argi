@@ -15,6 +15,6 @@ main := (.system: System) -> () {
     assume ffi := system.ffi
     callback ::= Unknown(.function = twice)
     provider :: Int32 = 0
-    runner ::= to_virtual#(Runner)(&provider)
+    runner ::= Virtual#(Runner)(&provider)
     _ = Runner#().run(&runner, callback, 21, ffi)
 }

@@ -13,7 +13,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     local :: Int32 = 7

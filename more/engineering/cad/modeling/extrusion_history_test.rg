@@ -1,5 +1,5 @@
 test extrusion_history_tracks_oblique_caps_and_every_wall := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [8]g.Point#(Float64) = (
         (-3.0, -2.0, 0.0),
         (3.0, -2.0, 0.0),
@@ -106,7 +106,7 @@ _extrusion_history_without_source := (.allocator: Virtual#(Allocator)) -> (
 }
 
 test extrusion_history_owns_disconnected_float32_images := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     extrusion ::= _extrusion_history_without_source(.allocator = allocator)!
     testing.expect(t.entity_counts(&extrusion.model).faces == 10)!
     region :: UIntNative = 0

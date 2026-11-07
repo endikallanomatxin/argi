@@ -21,5 +21,5 @@ implement Observer#(Manager) (
 
 main := () -> () {
     manager ::= Manager()
-    observer ::= to_virtual#(Observer)(&manager)
+    observer ::= Virtual#(Observer)(&manager)
 }

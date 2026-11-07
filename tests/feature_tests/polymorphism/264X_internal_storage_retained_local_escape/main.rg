@@ -51,7 +51,7 @@ escape := (.allocator: $&GeneralPurposeAllocator) -> (.result: Slot) {
 
     drops :: Int32 = 0
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
-    slot ::= to_virtual#(SlotProtocol)($&implementation)
+    slot ::= Virtual#(SlotProtocol)($&implementation)
     forward_put($&slot, Tracked($&drops))
     result = ~implementation
 }
@@ -60,7 +60,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     result ::= escape(allocator_concrete)

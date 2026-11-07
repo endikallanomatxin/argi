@@ -52,7 +52,7 @@ failure reasons. Constructors use virtual allocator fields in their Args records
 Convert once at the capability boundary and use ordinary lexical assumptions:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
 items ::= DynamicArray#(Int32)(.capacity = 16)!
 push($&items, .value = 42)!
 ```
@@ -254,7 +254,7 @@ implicit default allocator. `GeneralPurposeAllocator` receives a backing
 allocator. A program selects its allocator, for example:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(.allocator = system.page_allocator))
 ```
 
 Allocators compose: a `PageAllocator` may back a

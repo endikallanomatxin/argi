@@ -8,7 +8,7 @@ implement Update#(Provider) (
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     provider: Provider = (.first = 0, .second = 7)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &provider.second)))
     Update#(Provider).set(.self = $&provider)

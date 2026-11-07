@@ -92,7 +92,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     match write_all(.self = $&sink, .buffer = view(.self = &input)) {
         ..ok _ { abort } ..error _ {}
     }
-    virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
+    virtual ::= Virtual#(.contract: BlockReader)(.value = $&source)
     match read_exact(.self = $&virtual, .buffer = view(.self = $&scratch)) {
         ..ok _ { abort } ..error _ {}
     }

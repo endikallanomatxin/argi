@@ -8,7 +8,7 @@ implement ReadOnly#(Provider) (
 )
 main := () -> () {
     provider: Provider = (.marker = 0)
-    reader ::= to_virtual#(ReadOnly)(&provider)
+    reader ::= Virtual#(ReadOnly)(&provider)
     value :: Int32 = 0
     ReadOnly#().apply(.self = &reader, .value = $&value)
 }

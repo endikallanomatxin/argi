@@ -10,5 +10,5 @@ implement Establish#(Provider) (
 )
 main := () -> () {
     provider ::= Provider(0)
-    erased ::= to_virtual#(Establish)(&provider)
+    erased ::= Virtual#(Establish)(&provider)
 }

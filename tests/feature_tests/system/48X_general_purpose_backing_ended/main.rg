@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     backing ::= BackingAllocator(.page = system.page_allocator)
 
-    backing_virtual ::= to_virtual#(Allocator)($&backing)
+    backing_virtual ::= Virtual#(Allocator)($&backing)
     allocator ::= GeneralPurposeAllocator(.allocator = backing_virtual)
     deinit(.self = $&backing)
     result ::= allocate_bytes(.self = $&allocator, .size = 8)

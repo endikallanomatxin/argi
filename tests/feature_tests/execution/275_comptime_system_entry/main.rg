@@ -1,11 +1,11 @@
 answer ::= #run (.system: System) -> (.value: Int32) {
     tracer :: NoopErrorTracer = (.marker = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
 
     assume writer ::= $&system.terminal&.stdout
     assume ffi ::= system.ffi
     allocator_concrete := $&CAllocator(.ffi = ffi)
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     text ::= unwrap_or_abort(.value = String(.length = 5))
     page :: PageAllocator = PageAllocator(.memory = system.memory)

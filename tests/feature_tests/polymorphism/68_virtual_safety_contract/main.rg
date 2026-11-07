@@ -20,7 +20,7 @@ read_source := (.source: &Virtual#(Source)) -> (.value: Int32) {
 main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(42)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
 
     if read_source(&source) != 42 {
         status_code = 1

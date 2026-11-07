@@ -17,9 +17,9 @@ implement Factory#(Holder) (
 main := () -> () {
     value :: Int32 = 7
     provider: Provider = (._counter = $&value)
-    counter ::= to_virtual#(CounterAccess)(&provider)
+    counter ::= Virtual#(CounterAccess)(&provider)
     holder: Holder = (.counter = counter)
-    factory ::= to_virtual#(Factory)(&holder)
+    factory ::= Virtual#(Factory)(&holder)
     returned ::= Factory#().make(.self = &factory)
     _ = CounterAccess#().get(.self = &returned)
 }

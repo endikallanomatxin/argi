@@ -27,7 +27,7 @@ implement ErrorTracer#(ProbeTracer) (
 
 main := () -> (.status_code: Int32) {
     tracer ::= ProbeTracer()
-    handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    handle ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&handle
     allocator ::= FailingAllocator()
     allocated ::= allocate#(.t: UInt8)(.self = $&allocator, .count = 2)

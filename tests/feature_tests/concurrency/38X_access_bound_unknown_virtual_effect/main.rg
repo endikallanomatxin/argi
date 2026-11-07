@@ -10,12 +10,12 @@ implement UnknownRead#(Provider) (
 )
 implement PureRead#(Provider) (
     .get = (.self: &Provider) -> (.result: Int32) {
-        unknown ::= to_virtual#(UnknownRead)(self)
+        unknown ::= Virtual#(UnknownRead)(self)
         result = UnknownRead#().get(.self = &unknown)
     }
 )
 main := () -> () {
     provider: Provider = (.marker = 0)
-    pure ::= to_virtual#(PureRead)(&provider)
+    pure ::= Virtual#(PureRead)(&provider)
     _ = PureRead#().get(.self = &pure)
 }

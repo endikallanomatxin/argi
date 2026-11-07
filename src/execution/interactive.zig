@@ -798,7 +798,7 @@ test "interactive virtual values retain their creation unit across submissions" 
     try session.submit("Box := (.value: Int32)");
     try session.submit("read_box := (.source: &Box) -> (.result: Int32) { result = source&.value }");
     try session.submit("implement Readable#(Box) (.read = read_box)");
-    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
+    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= Virtual#(.contract: Readable)(.value = &box)");
     const first = (try session.submitInput("Readable#().read(&erased).result")).?;
     try std.testing.expectEqual(@as(i128, 42), first.value.runtime.integer);
     try session.submitStatements("box.value = 7");
@@ -815,10 +815,10 @@ test "interactive virtual calls can enter older and newer code units" {
     try session.submit("Relay#(.Source: Type): Contract = (.relay: (.source: &Source, .target: &Virtual#(Readable)) -> (.result: Int32) where {})");
     try session.submit("RelayState: Type = ()");
     try session.submit("implement Relay#(RelayState) (.relay = (.source: &RelayState, .target: &Virtual#(Readable)) -> (.result: Int32) { result = Readable#().read(target).result })");
-    try session.submitStatements("relay_state :: RelayState = ()\nrelay_handle ::= to_virtual#(.contract: Relay)(.value = &relay_state)");
+    try session.submitStatements("relay_state :: RelayState = ()\nrelay_handle ::= Virtual#(.contract: Relay)(.value = &relay_state)");
     try session.submit("Box := (.value: Int32)");
     try session.submit("implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })");
-    try session.submitStatements("box :: Box = (.value = 42)\nreader_handle ::= to_virtual#(.contract: Readable)(.value = &box)");
+    try session.submitStatements("box :: Box = (.value = 42)\nreader_handle ::= Virtual#(.contract: Readable)(.value = &box)");
     const result = (try session.submitInput("Relay#().relay(&relay_handle, &reader_handle).result")).?;
     try std.testing.expectEqual(@as(i128, 42), result.value.runtime.integer);
     try session.close();
@@ -1540,7 +1540,7 @@ test "interactive virtual methods link host calls against their retained code un
     };
     session.runtime.context.host_bindings = &bindings;
     try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) where {})\nBox: Type = ()\nimplement Readable#(Box) (.read = (.source: &Box, .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { first ::= host_increment(.value = 40, .ffi = ffi)\nresult = host_increment(.value = first, .ffi = ffi) })");
-    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nbox :: Box = ()\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
+    try session.submitStatements("capability :: ForeignFunctionInterface = ()\nassume ffi ::= $&capability\nbox :: Box = ()\nerased ::= Virtual#(.contract: Readable)(.value = &box)");
     try session.submitDefinitions("invoke := (.handle: &Virtual#(Readable), .ffi: $&ForeignFunctionInterface) -> (.result: Int32) { unused ::= host_identity(.value = 7, .ffi = ffi)\nresult = Readable#().read(handle, .ffi = ffi).result }");
     try std.testing.expectEqual(@as(u64, 42), (try session.submitInput("invoke(.handle = &erased, .ffi = ffi)")).?.value.runtime.integer);
     try std.testing.expectEqual(@as(usize, 2), state.calls);

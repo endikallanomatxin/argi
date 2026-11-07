@@ -12,7 +12,7 @@ main := () -> (.status_code: Int32 = 0) {
     reader ::= ByteReader(.bytes = view(&bytes))
     if read_count($&reader, .buffer = view($&scratch)).count != 1 { abort }
     if scratch[0] != 42 { abort }
-    erased ::= to_virtual#(.contract: BlockReader)(.value = $&reader)
+    erased ::= Virtual#(.contract: BlockReader)(.value = $&reader)
     if read_count($&erased, .buffer = view($&scratch)).count != 1 { abort }
     if scratch[0] != 7 { abort }
 }

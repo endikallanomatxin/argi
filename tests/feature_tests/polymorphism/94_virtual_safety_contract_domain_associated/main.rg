@@ -32,7 +32,7 @@ reset_source := (.source: $&Virtual#(Source#(Int32))) -> () {
 main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(41, 9)
-    source ::= to_virtual#(Source#(Int32))($&cell)
+    source ::= Virtual#(Source#(Int32))($&cell)
     before ::= borrow(&source)
     if before&!= 41 { status_code = 1 }
     reset_source($&source)

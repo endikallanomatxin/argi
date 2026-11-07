@@ -8,11 +8,11 @@ test "virtual handles can be converted again to the same contract" {
         \\read_box := (.self: &Box) -> (.value: Int32) { value = self&.value }
         \\implement Counter#(Box) (.read = read_box)
         \\wrap := #(.T: Type: Counter) (.value: &T) -> (.result: Virtual#(Counter)) {
-        \\    result = to_virtual#(Counter)(value)
+        \\    result = Virtual#(Counter)(value)
         \\}
         \\main := () -> () {
         \\    box :: Box = (.value = 7)
-        \\    first ::= to_virtual#(Counter)(&box)
+        \\    first ::= Virtual#(Counter)(&box)
         \\    second ::= wrap(&first).result
         \\    value ::= Counter#().read(&second).value
         \\}
@@ -28,8 +28,8 @@ test "virtual handles cannot be converted to a different contract" {
         \\implement A#(Box) (.read = read_box)
         \\main := () -> () {
         \\    box :: Box = (.value = 7)
-        \\    first ::= to_virtual#(A)(&box)
-        \\    second ::= to_virtual#(B)(&first)
+        \\    first ::= Virtual#(A)(&box)
+        \\    second ::= Virtual#(B)(&first)
         \\}
     , null, "no selected conformance", false);
 }
@@ -43,8 +43,8 @@ test "virtual handle reconversion preserves mutable receiver requirements" {
         \\)
         \\main := () -> () {
         \\    box :: Box = (.value = 7)
-        \\    first ::= to_virtual#(Counter)($&box)
-        \\    second ::= to_virtual#(Counter)(&first)
+        \\    first ::= Virtual#(Counter)($&box)
+        \\    second ::= Virtual#(Counter)(&first)
         \\}
     , null, "a mutable participant receiver requires a mutable concrete reference", false);
 }
@@ -106,7 +106,7 @@ test "type rules: 315X_virtual_generic_contract_operation" {
         \\
         \\main := () -> () {
         \\    owner: Owner = (.flag = true)
-        \\    handle ::= to_virtual#(.contract: Readable)(.value = &owner)
+        \\    handle ::= Virtual#(.contract: Readable)(.value = &owner)
         \\}
     ,
         null,
@@ -627,7 +627,7 @@ test "type rules: types/72X_virtual_inference_missing_context" {
         \\
         \\main := () -> (.status_code: Int32) {
         \\    probe ::= Probe()
-        \\    handle ::= to_virtual($&probe)
+        \\    handle ::= Virtual($&probe)
         \\    status_code = 0
         \\}
     ,
@@ -775,8 +775,8 @@ test "type rules: polymorphism/106X_virtual_safety_contract_domain_result_unknow
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(41)
         \\    relay_cell ::= RelayCell(0)
-        \\    relay ::= to_virtual#(Relay)(&relay_cell)
-        \\    source ::= to_virtual#(Source)($&cell)
+        \\    relay ::= Virtual#(Relay)(&relay_cell)
+        \\    source ::= Virtual#(Source)($&cell)
         \\    forwarded ::= forward_again(&relay, ~source)
         \\    old ::= get(&forwarded)
         \\    if old&!= 41 { status_code = 1 }
@@ -835,7 +835,7 @@ test "type rules: polymorphism/110X_virtual_safety_contract_missing" {
         \\
         \\main := () -> () {
         \\    cell ::= Cell(42)
-        \\    source ::= to_virtual#(Source)(&cell)
+        \\    source ::= Virtual#(Source)(&cell)
         \\}
     ,
         null,
@@ -1024,7 +1024,7 @@ test "type rules: polymorphism/249X_opaque_storage_erased_receiver" {
         \\
         \\main := () -> () {
         \\    cell ::= Cell()
-        \\    _ ::= to_virtual#(Drain)($&cell)
+        \\    _ ::= Virtual#(Drain)($&cell)
         \\}
     ,
         null,
@@ -1080,7 +1080,7 @@ test "type rules: polymorphism/267X_internal_storage_readonly_receiver" {
         \\
         \\main := () -> () {
         \\    storage ::= Storage(1)
-        \\    value ::= to_virtual#(Protocol)(&storage)
+        \\    value ::= Virtual#(Protocol)(&storage)
         \\}
     ,
         null,
@@ -1156,7 +1156,7 @@ test "type rules: polymorphism/43X_virtual_multiple_self_receivers" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: A)(.value = $&box)
+        \\    handle ::= Virtual#(.contract: A)(.value = $&box)
         \\}
     ,
         null,
@@ -1180,7 +1180,7 @@ test "type rules: polymorphism/44X_virtual_self_result" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: A)(.value = $&box)
+        \\    handle ::= Virtual#(.contract: A)(.value = $&box)
         \\}
     ,
         null,
@@ -1202,7 +1202,7 @@ test "type rules: polymorphism/45X_virtual_self_by_value" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: A)(.value = $&box)
+        \\    handle ::= Virtual#(.contract: A)(.value = $&box)
         \\}
     ,
         null,
@@ -1228,7 +1228,7 @@ test "type rules: polymorphism/46X_virtual_nested_self_input" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: A)(.value = $&box)
+        \\    handle ::= Virtual#(.contract: A)(.value = $&box)
         \\}
     ,
         null,
@@ -1250,7 +1250,7 @@ test "type rules: polymorphism/47X_virtual_missing_receiver" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: A)(.value = $&box)
+        \\    handle ::= Virtual#(.contract: A)(.value = $&box)
         \\}
     ,
         null,
@@ -1270,7 +1270,7 @@ test "type rules: polymorphism/48X_virtual_associated_parameters" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: A#(.item: Float32))(.value = $&box)
+        \\    handle ::= Virtual#(.contract: A#(.item: Float32))(.value = $&box)
         \\}
     ,
         null,
@@ -1293,7 +1293,7 @@ test "type rules: polymorphism/50X_virtual_readonly_mutable_contract" {
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 7)
         \\    readonly ::= &box
-        \\    handle ::= to_virtual#(.contract: Counter)(.value = readonly)
+        \\    handle ::= Virtual#(.contract: Counter)(.value = readonly)
         \\    bump(.self = $&handle)
         \\}
     ,
@@ -1315,7 +1315,7 @@ test "type rules: polymorphism/51X_virtual_readonly_generic_conversion" {
         \\_impl_bump_Box := (.self: $&Box) -> () { self&.value = self&.value + 1 }
         \\
         \\wrap := #(.t: Type: Counter) (.value: &t) -> (.result: Virtual#(Counter)) {
-        \\    result = to_virtual#(.contract: Counter)(.value = value)
+        \\    result = Virtual#(.contract: Counter)(.value = value)
         \\}
         \\
         \\main := () -> (.status_code: Int32 = 0) {
@@ -1341,7 +1341,7 @@ test "type rules: polymorphism/53X_virtual_bound_value_mismatch" {
         \\
         \\main := () -> () {
         \\    box :: Box = (.value = 7)
-        \\    handle ::= to_virtual#(.contract: Fixed#(.n = 2))(.value = &box)
+        \\    handle ::= Virtual#(.contract: Fixed#(.n = 2))(.value = &box)
         \\}
     ,
         null,
@@ -1438,7 +1438,7 @@ test "type rules: polymorphism/80X_virtual_safety_contract_referent_type" {
         \\
         \\main := () -> () {
         \\    cell ::= Cell(0)
-        \\    handle ::= to_virtual#(Forwarder)(&cell)
+        \\    handle ::= Virtual#(Forwarder)(&cell)
         \\}
     ,
         null,
@@ -1467,7 +1467,7 @@ test "type rules: polymorphism/81X_virtual_safety_contract_referent_mutability" 
         \\
         \\main := () -> () {
         \\    cell ::= Cell(0)
-        \\    handle ::= to_virtual#(Forwarder)(&cell)
+        \\    handle ::= Virtual#(Forwarder)(&cell)
         \\}
     ,
         null,
@@ -1499,7 +1499,7 @@ test "type rules: polymorphism/84X_virtual_safety_contract_invalidate_readonly" 
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(0)
         \\    target :: Int32 = 41
-        \\    editor ::= to_virtual#(Editor)(&cell)
+        \\    editor ::= Virtual#(Editor)(&cell)
         \\    apply_edit(&editor, $&target)
         \\
         \\    if target != 42 {
@@ -1528,7 +1528,7 @@ test "type rules: polymorphism/85X_virtual_safety_contract_invalidate_self" {
         \\
         \\main := () -> () {
         \\    cell ::= Cell(0)
-        \\    editor ::= to_virtual#(Editor)($&cell)
+        \\    editor ::= Virtual#(Editor)($&cell)
         \\}
     ,
         null,
@@ -1572,7 +1572,7 @@ test "type rules: polymorphism/89X_virtual_safety_contract_domain_overlap" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(41, 9)
-        \\    source ::= to_virtual#(Source)($&cell)
+        \\    source ::= Virtual#(Source)($&cell)
         \\    before ::= borrow(&source)
         \\    if before&!= 41 { status_code = 1 }
         \\    reset_source($&source)
@@ -1617,7 +1617,7 @@ test "type rules: polymorphism/90X_virtual_safety_contract_domain_missing" {
         \\
         \\main := () -> (.status_code: Int32 = 0) {
         \\    cell ::= Cell(41, 9)
-        \\    source ::= to_virtual#(Source)($&cell)
+        \\    source ::= Virtual#(Source)($&cell)
         \\    before ::= borrow(&source)
         \\    if before&!= 41 { status_code = 1 }
         \\    reset_source($&source)
@@ -1714,4 +1714,71 @@ test "type rules: types/286X_positional_type_unknown" {
         "unknown generic argument",
         false,
     );
+}
+
+test "Virtual construction rejects extra runtime arguments" {
+    try checkSource("virtual_extra_arguments",
+        \\Readable#(.T: Type): Contract = ()
+        \\Cell := (.value: Int32)
+        \\implement Readable#(Cell) ()
+        \\main := () -> () {
+        \\    cell ::= Cell(.value = 42)
+        \\    handle ::= Virtual#(Readable)(.value = &cell, .extra = 1)
+        \\}
+    , null, "Virtual construction requires one reference argument", false);
+}
+
+test "Virtual construction rejects values instead of references" {
+    try checkSource("virtual_value_argument",
+        \\Readable#(.T: Type): Contract = ()
+        \\Cell := (.value: Int32)
+        \\implement Readable#(Cell) ()
+        \\main := () -> () {
+        \\    cell ::= Cell(.value = 42)
+        \\    handle ::= Virtual#(Readable)(cell)
+        \\}
+    , null, "Virtual construction requires a reference", false);
+}
+
+test "legacy to_virtual calls are rejected" {
+    try checkSource("legacy_to_virtual",
+        \\Readable#(.T: Type): Contract = ()
+        \\Cell := (.value: Int32)
+        \\implement Readable#(Cell) ()
+        \\main := () -> () {
+        \\    cell ::= Cell(.value = 42)
+        \\    handle ::= to_virtual#(Readable)(&cell)
+        \\}
+    , null, "to_virtual has been replaced by Virtual#(Contract)(reference)", false);
+}
+
+test "Virtual construction through a generic type parameter" {
+    try checkSource("virtual_type_parameter",
+        \\Readable#(.T: Type): Contract = ()
+        \\Cell := (.value: Int32)
+        \\implement Readable#(Cell) ()
+        \\wrap := #(.Handle: Type) (.source: &Cell) -> (.result: Handle) {
+        \\    result = Handle(source)
+        \\}
+        \\main := () -> () {
+        \\    cell ::= Cell(.value = 42)
+        \\    handle ::= wrap#(Virtual#(Readable))(&cell)
+        \\}
+    , null, null, true);
+}
+
+
+test "Virtual type parameters reject additional specialization arguments" {
+    try checkSource("virtual_type_parameter_arguments",
+        \\Readable#(.T: Type): Contract = ()
+        \\Cell := (.value: Int32)
+        \\implement Readable#(Cell) ()
+        \\wrap := #(.Handle: Type) (.source: &Cell) -> (.result: Handle) {
+        \\    result = Handle#(Int32)(source)
+        \\}
+        \\main := () -> () {
+        \\    cell ::= Cell(.value = 42)
+        \\    handle ::= wrap#(Virtual#(Readable))(&cell)
+        \\}
+    , null, "no generic function named 'wrap' accepts arguments", false);
 }

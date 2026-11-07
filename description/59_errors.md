@@ -200,7 +200,7 @@ Compile-time entry bodies create their own local noop tracer instead of borrowin
 the program's mutable global storage:
 
 ```rg
-assume error_tracer ::= NoopErrorTracer() | to_virtual#(ErrorTracer)($&_) | $&_
+assume error_tracer ::= NoopErrorTracer() | Virtual#(ErrorTracer)($&_) | $&_
 ```
 
 This capability selects the tracer when a traced error is created or a plain
@@ -212,14 +212,14 @@ input keeps that storage in the caller instead, even under a different local
 ```rg
 assume error_tracer ::= FixedSizeErrorTracer(
     .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-) | to_virtual#(ErrorTracer)($&_) | $&_
+) | Virtual#(ErrorTracer)($&_) | $&_
 
 run()
 ```
 
-The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
+The positional comptime argument of `Virtual#(ErrorTracer)` selects the
 contract. Alternatively, a declared `$&Virtual#(ErrorTracer)`
-capability type permits `to_virtual($&_)` through contextual inference. The
+capability type permits `Virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
 

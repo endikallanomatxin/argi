@@ -1,7 +1,7 @@
 escape := () -> (.result: $&Virtual#(ErrorTracer)) {
 
     tracer ::= NoopErrorTracer()
-    virtual_tracer ::= to_virtual#(ErrorTracer)($&tracer)
+    virtual_tracer ::= Virtual#(ErrorTracer)($&tracer)
     result = $&virtual_tracer
 }
 

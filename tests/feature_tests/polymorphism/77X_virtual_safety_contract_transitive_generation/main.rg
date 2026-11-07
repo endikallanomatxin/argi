@@ -29,7 +29,7 @@ main := () -> () {
 
     state ::= State(Resource(42))
     cell ::= Cell(&state)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
     deinit($&state.resource)
     read_source(&source)
 }

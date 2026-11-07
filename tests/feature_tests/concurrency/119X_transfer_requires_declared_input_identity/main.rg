@@ -23,12 +23,12 @@ implement Relay#(RelayProvider) (
 )
 main := () -> () {
     relay_provider ::= RelayProvider(0)
-    relay ::= to_virtual#(Relay)(&relay_provider)
+    relay ::= Virtual#(Relay)(&relay_provider)
     first :: Int32 = 7
     second :: Int32 = 9
     first_provider: CounterProvider = (.value = $&first)
     second_provider: CounterProvider = (.value = $&second)
-    first_counter ::= to_virtual#(Counter)(&first_provider)
-    second_counter ::= to_virtual#(Counter)(&second_provider)
+    first_counter ::= Virtual#(Counter)(&first_provider)
+    second_counter ::= Virtual#(Counter)(&second_provider)
     _ = Relay#().forward(&relay, ~first_counter, ~second_counter)
 }

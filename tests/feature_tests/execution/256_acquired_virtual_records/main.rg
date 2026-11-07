@@ -26,7 +26,7 @@ main := () -> (.status_code: Int32) {
     slot ::= trusted_establish_allocation_slot#(.t: Holder)(
         .allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)
     ).reference
-    slot&= Holder(.counter = to_virtual#(.contract: Counting)(.value = $&counter), .tag = 1)
+    slot&= Holder(.counter = Virtual#(.contract: Counting)(.value = $&counter), .tag = 1)
     slot&.tag = 2
     Counting#().bump(.self = $&slot&.counter, .amount = 35)
     if slot&.tag != 2 { abort }

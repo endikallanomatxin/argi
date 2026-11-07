@@ -10,15 +10,15 @@ implement Counter#(Cell) (
 
 -- The copy retains the concrete receiver, not the intermediate handle's slot.
 forward := (.cell: $&Cell) -> (.result: Virtual#(Counter)) {
-    intermediate ::= to_virtual#(Counter)(cell)
-    result = to_virtual#(Counter)($&intermediate)
+    intermediate ::= Virtual#(Counter)(cell)
+    result = Virtual#(Counter)($&intermediate)
 }
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     handle ::= forward($&cell)
     bump($&handle)
-    repeated ::= to_virtual#(Counter)($&handle)
+    repeated ::= Virtual#(Counter)($&handle)
     bump($&repeated)
     if cell.value != 2 { abort }
 }

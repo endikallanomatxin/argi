@@ -19,8 +19,8 @@ implement Readable#(Floating) (.Item: Type = Float64, .Count: Int = 2, .read = _
 main := (.system: System) -> (.status_code: Int32 = 0) {
     integer ::= Integer(17)
     floating ::= Floating(2.5)
-    left ::= to_virtual#(.contract: Readable#(.Item: Int32, .Count = 1))(.value = &integer)
-    right ::= to_virtual#(.contract: Readable#(.Count = 2, .Item: Float64))(.value = &floating)
+    left ::= Virtual#(.contract: Readable#(.Item: Int32, .Count = 1))(.value = &integer)
+    right ::= Virtual#(.contract: Readable#(.Count = 2, .Item: Float64))(.value = &floating)
     if read(.self = &left) != 17 { status_code = 1 }
     if read(.self = &right) != 2.5 { status_code = 2 }
 }

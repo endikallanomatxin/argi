@@ -2,7 +2,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
-    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
         .value = $&allocator
     )
     storage ::= unwrap_or_abort(

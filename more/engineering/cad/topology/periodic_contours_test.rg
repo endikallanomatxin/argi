@@ -240,7 +240,7 @@ _test_pcurve_interval := #(.Scalar: Type: Float) (
 }
 
 test model_partitioned_cylinder_preserves_geometry_and_incidence := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _partitioned_oblique_cylinder#(.Scalar: Float64)(.allocator = allocator)!
     reference ::= _oblique_cylinder#(.Scalar: Float64)(.allocator = allocator)!
     counts ::= entity_counts(&model)
@@ -312,7 +312,7 @@ test model_partitioned_cylinder_preserves_geometry_and_incidence := (.system: Sy
 }
 
 test model_partitioned_cylinder_float32_and_all_arc_certificates := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _partitioned_oblique_cylinder#(.Scalar: Float32)(.allocator = allocator)!
     testing.expect(is_closed(&model).ok and entity_counts(&model).vertices == 4)!
     rotated ::= [
@@ -330,7 +330,7 @@ test model_partitioned_cylinder_float32_and_all_arc_certificates := (.system: Sy
 }
 
 test model_periodic_contour_rejects_gaps_overlap_and_multiple_turns := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     uses ::= DynamicArray#(_ResolvedTrim#(Float64))(.capacity = 2)!
     pcurve: PCurve#(Float64) = ..ellipse(
         .center = (.u = 0.0, .v = 0.0)

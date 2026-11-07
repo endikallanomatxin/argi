@@ -569,7 +569,7 @@ test "frontend module cache preserves explicit unary contract participants" {
         \\    other ::= Cell(7)
         \\    source ::= Cell(42)
         \\    if consume(&other, &source)& != 42 { abort }
-        \\    handle ::= to_virtual#(.contract: Readable#(.Other: Cell))(.value = &source)
+        \\    handle ::= Virtual#(.contract: Readable#(.Other: Cell))(.value = &source)
         \\    if read(&other, &handle)& != 42 { abort }
         \\}
         \\

@@ -3,7 +3,7 @@
 CustomTracer := (.marker: UInt8 = 0)
 
 custom_tracer_storage :: CustomTracer = (.marker = 0)
-custom_tracer_virtual :: Virtual#(ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
+custom_tracer_virtual :: Virtual#(ErrorTracer) = Virtual#(.contract: ErrorTracer)(
     .value = $&custom_tracer_storage
 )
 

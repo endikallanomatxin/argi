@@ -22,7 +22,7 @@ read_erased := #(.Stream: Type: Reader#(Stream)) (
 main := () -> () {
 
     input ::= Input()
-    erased ::= to_virtual#(.contract: Reader)(.value = $&input)
+    erased ::= Virtual#(.contract: Reader)(.value = $&input)
     bytes: [2]UInt8 = (0, 0)
     match read_erased(.self = $&erased, .buffer = view($&bytes)) {
         ..error _ { abort }

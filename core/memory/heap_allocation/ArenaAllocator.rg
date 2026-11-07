@@ -171,7 +171,7 @@ implement Allocator#(ArenaAllocator) (
         }
 
         address ::= self&._block_head + aligned_offset
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation :: Allocation = (

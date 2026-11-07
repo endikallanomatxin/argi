@@ -9,7 +9,7 @@ fail := () -> (.result: Errable#(Int32, (..expected))) {
 
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     first ::= unwrap_or_abort(.value = async#(pair)(.args = (.x = 41)))
     second ::= unwrap_or_abort(.value = async#(nothing)(.args = ()))
     third ::= unwrap_or_abort(.value = async#(fail)(.args = ()))

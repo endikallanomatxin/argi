@@ -10,9 +10,9 @@ implement Forward#(Provider) (
 )
 main := (.system: System) -> () {
     provider ::= Provider(0)
-    forwarder ::= to_virtual#(Forward)(&provider)
+    forwarder ::= Virtual#(Forward)(&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     first ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 8, .alignment = 8, .ffi = system.ffi))
     second ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 8, .alignment = 8, .ffi = system.ffi))
     first_address ::= acquired_storage_address(.storage = &first)

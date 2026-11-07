@@ -60,14 +60,14 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     drops :: Int32 = 0
 
     {
         implementation ::= Slot(Inner(unwrap_or_abort(allocate#(Tracked)($&allocator))))
-        slot ::= to_virtual#(SlotProtocol)($&implementation)
+        slot ::= Virtual#(SlotProtocol)($&implementation)
         forward_put($&slot, Tracked($&drops))
         extracted ::= forward_take($&slot)
         deinit($&implementation.inner.storage)

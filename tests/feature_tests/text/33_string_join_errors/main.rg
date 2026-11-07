@@ -4,7 +4,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     allocator :: FailingAllocator = (.attempts = 0)
 
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     parts: [2]StringView = ("a", "b")
     match join(.parts = view(.self = &parts), .separator = ",", .allocator = allocator_virtual) {
         ..ok _ { abort }

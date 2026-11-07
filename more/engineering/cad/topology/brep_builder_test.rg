@@ -54,7 +54,7 @@ _brep_hemisphere := #(.Scalar: Type: Float) (
 }
 
 test model_brep_hemisphere_shared_circle := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= [
         _brep_hemisphere#(.Scalar: Float64)(
             .allocator = allocator
@@ -125,7 +125,7 @@ test model_brep_hemisphere_shared_circle := (.system: System) -> !() {
 }
 
 test model_brep_hemisphere_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= [
         _brep_hemisphere#(.Scalar: Float32)(
             .allocator = allocator
@@ -137,7 +137,7 @@ test model_brep_hemisphere_float32 := (.system: System) -> !() {
 }
 
 test model_brep_hemisphere_complementary_region := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _brep_hemisphere#(.Scalar: Float64)(.allocator = allocator, .north = false)!
     testing.expect(is_closed(&model).ok)!
     [
@@ -162,7 +162,7 @@ test model_brep_hemisphere_complementary_region := (.system: System) -> !() {
 }
 
 test model_brep_trim_rejection_preserves_builder := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= BrepBuilder#(Float64)()!
     basis ::= [
         g.frame#(Float64)(.origin = (0.0, 0.0, 0.0), .axis = (0.0, 0.0, 1.0))!

@@ -12,7 +12,7 @@ _impl_read_Box := (.self: &Box, .other: &Virtual#(A)) -> (.value: Int32) {
 
 main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.contract: A)(.value = &box)
+    handle ::= Virtual#(.contract: A)(.value = &box)
     value ::= read(.self = &handle, .other = &handle)
     if value != 7 { status_code = 1 }
 }

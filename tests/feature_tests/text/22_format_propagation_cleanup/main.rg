@@ -19,12 +19,12 @@ implement Init#(FailFirstAllocator, FailFirstAllocatorInitArgs) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     backing ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    backing_virtual ::= to_virtual#(Allocator)($&backing)
+    backing_virtual ::= Virtual#(Allocator)($&backing)
     out ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = backing_virtual, .capacity = 1)
     )
     failing ::= FailFirstAllocator(.ffi = system.ffi)
-    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failing_virtual ::= Virtual#(Allocator)($&failing)
     formatted ::= format_into(.out = $&out, .value = -105, .allocator = failing_virtual)
     if is(.value = formatted, .variant = ..ok) { status_code = 1 }
     if failing.allocations != 1 or failing.deallocations != 0 { status_code = 2 }
@@ -43,7 +43,7 @@ implement Allocator#(FailFirstAllocator) (
             return
         }
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

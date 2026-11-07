@@ -13,5 +13,5 @@ _impl_get_Cell := (.self: &Cell, .other: &Int32) -> (.value: &Int32) {
 
 main := () -> () {
     cell ::= Cell(42)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
 }

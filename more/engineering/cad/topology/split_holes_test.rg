@@ -1,5 +1,5 @@
 test model_split_retains_hole := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     source ::= [
         from_planar_faces(
@@ -70,7 +70,7 @@ _split_two_holes := #(.Scalar: Type: Float) () -> (
 }
 
 test model_split_distributes_holes_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _split_two_holes#(Float32)()
     source ::= [
         from_planar_faces(
@@ -138,7 +138,7 @@ test model_split_distributes_holes_float32 := (.system: System) -> !() {
 }
 
 test model_split_reversing_cut_reassigns_hole := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     source ::= [
         from_planar_faces(
@@ -166,7 +166,7 @@ test model_split_reversing_cut_reassigns_hole := (.system: System) -> !() {
 }
 
 test model_split_rejects_hole_crossings_and_contacts := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     source ::= [
         from_planar_faces(
@@ -225,7 +225,7 @@ test model_split_rejects_hole_crossings_and_contacts := (.system: System) -> !()
 }
 
 test model_split_concave_face_retains_hole := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [10]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (4.0, 0.0, 0.0),

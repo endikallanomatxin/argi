@@ -2,7 +2,7 @@ make := #(.t: Type) (.system: System) -> (.result: t) {
 
     allocator_concrete := $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     text ::= unwrap_or_abort(.value = string_with_capacity(.capacity = 8))
@@ -13,7 +13,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(.allocator = system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     text ::= unwrap_or_abort(.value = string_with_capacity(.capacity = 8))

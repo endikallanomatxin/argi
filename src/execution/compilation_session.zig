@@ -892,7 +892,7 @@ test "virtual signature completion is stable across repeated unit preparation" {
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
-        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    erased ::= Virtual#(.contract: Readable)(.value = &box)
         \\    status_code = Readable#().read(&erased).result
         \\}
     , &diagnostics);
@@ -1014,7 +1014,7 @@ test "semantic storage domain metadata is released with its graph owner" {
         \\)
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
-        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    erased ::= Virtual#(.contract: Readable)(.value = &box)
         \\    status_code = Readable#().read(&erased).result
         \\}
     , &diagnostics);

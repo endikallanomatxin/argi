@@ -3385,8 +3385,13 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            if (reference.module_path == null and reference.generic_arguments == null and reference.computed_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
-                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the contract parameter of 'to_virtual'; provide a Virtual result type or '#(.contract: ContractName)'", .{});
+            if (reference.module_path == null and std.mem.eql(u8, name, "to_virtual")) {
+                try diagnostics.add(location, .semantic, "to_virtual has been replaced by Virtual#(Contract)(reference)", .{});
+                return true;
+            }
+
+            if (reference.module_path == null and reference.generic_arguments == null and reference.computed_arguments == null and std.mem.eql(u8, name, "Virtual") and call.expected_type == null) {
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the contract parameter of 'Virtual'; provide a Virtual result type or '#(.contract: ContractName)'", .{});
                 return true;
             }
 

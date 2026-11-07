@@ -24,7 +24,7 @@ _impl_choose_Manager := (.self: &Manager, .mode: Selection, .left: &Int32, .righ
 
 main := () -> () {
     manager ::= Manager(0)
-    selector ::= to_virtual#(Selector)(&manager)
+    selector ::= Virtual#(Selector)(&manager)
     live: Int32 = 42
     chosen: &Int32
 

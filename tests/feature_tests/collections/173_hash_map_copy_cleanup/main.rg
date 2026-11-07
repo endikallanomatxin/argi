@@ -16,7 +16,7 @@ implement Allocator#(SweepAllocator) (
         }
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         self&.live = self&.live + 1
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(.value = self)
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(.value = self)
         allocation ::= trusted_establish_allocation(
             .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )
@@ -35,7 +35,7 @@ implement Deallocator#(SweepAllocator) (
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator := to_virtual#(Allocator)($&allocator_storage)
+    assume allocator := Virtual#(Allocator)($&allocator_storage)
     source ::= unwrap_or_abort(HashMap#(.key: String, .value: String, .policy: StandardHashPolicy)(
         .policy = StandardHashPolicy()
     ))
@@ -51,7 +51,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     saw_success ::= false
     while fail_at <= 32 {
         failing ::= SweepAllocator(.ffi = system.ffi, .fail_at = fail_at)
-        failing_virtual ::= to_virtual#(Allocator)($&failing)
+        failing_virtual ::= Virtual#(Allocator)($&failing)
         outcome ::= copy(.self = &source, .allocator = failing_virtual)
         match outcome {
             ..ok ~map {

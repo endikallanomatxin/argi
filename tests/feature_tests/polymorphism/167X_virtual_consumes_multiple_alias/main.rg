@@ -29,7 +29,7 @@ release_owned := (.releaser: &Virtual#(Releaser), .first: $&Resource, .second: $
 
 main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
-    releaser ::= to_virtual#(Releaser)(&manager)
+    releaser ::= Virtual#(Releaser)(&manager)
 
     if true {
         first ::= Resource(42)

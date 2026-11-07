@@ -4,7 +4,7 @@ counter :: Int32 = base + 1
 exercise := (.counter: $&Int32) -> (.result: Int32) {
     trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()
     tracer ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     add_context(.context = "first context")
     add_context(.context = "ñ context")

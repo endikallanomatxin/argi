@@ -22,7 +22,7 @@ consume := (.input: &Virtual#(Readable#(.item: Int32))) -> (.value: &Int32) {
 
 main := () -> () {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.contract: Readable#(.item: Int32))(.value = &box)
+    handle ::= Virtual#(.contract: Readable#(.item: Int32))(.value = &box)
     reference ::= consume(.input = &handle).value
     deinit(.self = $&box)
     observed ::= reference&

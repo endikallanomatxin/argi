@@ -60,7 +60,7 @@ _check_periodic_closed := #(.Scalar: Type: Float) (.model: &Model#(Scalar), .i: 
 }
 
 test model_periodic_closed_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float32)().value
     sphere: g.Surface#(Float32) = ..sphere(.frame = basis, .radius = 2.0)
     torus: g.Surface#(Float32) = ..torus(
@@ -75,7 +75,7 @@ test model_periodic_closed_float32 := (.system: System) -> !() {
 }
 
 test model_periodic_closed_float64 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float64)().value
     sphere: g.Surface#(Float64) = ..sphere(.frame = basis, .radius = 2.0)
     torus: g.Surface#(Float64) = ..torus(
@@ -211,7 +211,7 @@ _check_periodic_cylinder := #(.Scalar: Type: Float) (.model: &Model#(Scalar), .c
 }
 
 test model_periodic_cylinders_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float32)().value
     support: g.Surface#(Float32) = ..cylinder(
         .frame  = basis
@@ -224,7 +224,7 @@ test model_periodic_cylinders_float32 := (.system: System) -> !() {
 }
 
 test model_periodic_cylinders_float64 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float64)().value
     support: g.Surface#(Float64) = ..cylinder(
         .frame  = basis
@@ -237,7 +237,7 @@ test model_periodic_cylinders_float64 := (.system: System) -> !() {
 }
 
 test model_periodic_rejects_invalid_supports := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float64)().value
     support :: g.Surface#(Float64) = ..sphere(.frame = basis, .radius = 0.0)
     [
@@ -286,7 +286,7 @@ test model_periodic_rejects_invalid_supports := (.system: System) -> !() {
 }
 
 test model_periodic_query_errors := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float64)().value
     sphere: g.Surface#(Float64) = ..sphere(.frame = basis, .radius = 2.0)
     ball ::= from_periodic_surface(.surface = sphere)!
@@ -342,7 +342,7 @@ _make_periodic := #(.Scalar: Type: Float) (
 }
 
 test model_periodic_generic_composition := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float32)().value
     support: g.Surface#(Float32) = ..sphere(.frame = basis, .radius = 2.0)
     model ::= _make_periodic(.surface = support, .allocator = allocator)!
@@ -350,7 +350,7 @@ test model_periodic_generic_composition := (.system: System) -> !() {
 }
 
 test model_periodic_nonfinite_and_range := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= _periodic_frame#(Float64)().value
     nan ::= sqrt#(Float64)(.value = -1.0).result
     support :: g.Surface#(Float64) = ..sphere(.frame = basis, .radius = nan)
@@ -387,7 +387,7 @@ test model_periodic_nonfinite_and_range := (.system: System) -> !() {
 }
 
 test model_linear_curve_orientation := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     model ::= [
         from_any_length_faces(
@@ -419,7 +419,7 @@ test model_linear_curve_orientation := (.system: System) -> !() {
 }
 
 test model_periodic_rotated_cylinder_and_ownership := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     basis ::= [
         g.frame#(Float64)(.origin = (3.0, 4.0, -2.0), .axis = (2.0, -3.0, 4.0))!
     ]

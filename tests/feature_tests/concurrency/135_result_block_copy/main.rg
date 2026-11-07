@@ -14,7 +14,7 @@ empty := () -> () {}
 
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(large)(.args = (.seed = 42)))
     value ::= unwrap_or_abort(.value = await($&future))
     if value.marker != 99 { abort }

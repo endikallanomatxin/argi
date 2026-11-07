@@ -21,7 +21,7 @@ implement Deinit#(Owner) (
 
 escape := (.allocator: $&PageAllocator) -> (.result: Owner) {
 
-    page_virtual ::= to_virtual#(Allocator)(allocator)
+    page_virtual ::= Virtual#(Allocator)(allocator)
     storage ::= GeneralPurposeAllocator(.allocator = page_virtual)
     result = ~unwrap_or_abort(Owner(.allocator = $&storage))
 }

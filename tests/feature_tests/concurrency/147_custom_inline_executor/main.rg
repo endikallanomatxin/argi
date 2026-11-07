@@ -10,7 +10,7 @@ implement Executor#(LocalExecutor) (
 compute := (.x: Int32) -> (.result: Int32) { result = x * 2 }
 main := (.system: System) -> () {
     provider: LocalExecutor = (.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(compute)(.args = (.x = 21)))
     if unwrap_or_abort(.value = await($&future)) != 42 { abort }
 }

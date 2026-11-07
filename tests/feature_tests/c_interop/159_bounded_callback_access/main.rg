@@ -41,9 +41,9 @@ main := (.system: System) -> () {
     box ::= Box(callback)
     if callback(.value = 21) != 42 { abort }
     if apply(.callback = box.callback, .value = 21) != 42 { abort }
-    slot_runner ::= to_virtual#(SlotRunner)(&box)
+    slot_runner ::= Virtual#(SlotRunner)(&box)
     if SlotRunner#().run_slot(&slot_runner, .value = 21) != 42 { abort }
     provider :: Int32 = 0
-    runner ::= to_virtual#(Runner)(&provider)
+    runner ::= Virtual#(Runner)(&provider)
     if Runner#().run(&runner, .callback = callback, .value = 21) != 42 { abort }
 }

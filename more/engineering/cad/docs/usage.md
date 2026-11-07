@@ -41,7 +41,7 @@ Scalar precision, the common face length and allocator type are inferred from
 the arguments. Compile-time parameters need not be repeated at the call site:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
 faces: [4][3]UIntNative = (
     (0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)
 )

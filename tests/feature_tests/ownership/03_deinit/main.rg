@@ -51,7 +51,7 @@ main := (.system: System) -> (.status_code: Int32) {
     assume ffi := system.ffi
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     counter :: Int32 = 0
     status_code = 9

@@ -8,7 +8,7 @@ main := (.system: System) -> (.status_code: Int32) {
     size :: UIntNative = 14
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     allocated ::= allocate_bytes(.self = $&allocator_storage, .size = size)
     match allocated {

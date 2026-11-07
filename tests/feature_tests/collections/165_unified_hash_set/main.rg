@@ -36,7 +36,7 @@ main := () -> (.status_code: Int32 = 1) {
 
     allocator_storage ::= CAllocator(.ffi = ffi)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     simple ::= unwrap_or_abort(.value = HashSet#(.key: Int32)())
     unwrap_or_abort(.value = insert($&simple, .key = 3))
@@ -64,7 +64,7 @@ main := () -> (.status_code: Int32 = 1) {
     }
     if drops != 2 { abort }
     refusal ::= Refusal()
-    refusal_virtual ::= to_virtual#(Allocator)($&refusal)
+    refusal_virtual ::= Virtual#(Allocator)($&refusal)
     match insert(
         $&custom
         .key       = Key(.first = Tracked(.id = 9), .second = Tracked(.id = 90))

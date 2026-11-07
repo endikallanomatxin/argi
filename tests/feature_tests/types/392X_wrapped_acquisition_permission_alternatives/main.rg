@@ -18,9 +18,9 @@ wrapped := (.flag: Bool, .first: Box, .second: Box) -> (.result: AcquiredStorage
 }
 main := (.system: System) -> () {
     provider ::= Provider(system.ffi)
-    factory ::= to_virtual#(Acquire)(&provider)
+    factory ::= Virtual#(Acquire)(&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     first ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 8, .alignment = 8, .ffi = system.ffi))
     second ::= Acquire#().acquire(&factory)
     acquired ::= wrapped(.flag = false, .first = Box(.receipt = ~first), .second = Box(.receipt = ~second))

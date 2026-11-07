@@ -4,7 +4,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     allocator :: FailingAllocator = (.attempts = 0)
 
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     match RingBuffer#(.t: Int32)(.capacity = 0, .allocator = allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..invalid_capacity { abort } }

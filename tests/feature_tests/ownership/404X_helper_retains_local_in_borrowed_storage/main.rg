@@ -7,7 +7,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))

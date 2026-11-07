@@ -14,6 +14,6 @@ read_holder := (.holder: Holder) -> (.result: Int32) {
 main := () -> () {
     value :: Int32 = 42
     provider: Provider = (.value = &value)
-    holder: Holder = (.counter = to_virtual#(Counter)(&provider))
+    holder: Holder = (.counter = Virtual#(Counter)(&provider))
     if read_holder(.holder = holder) != 42 { abort }
 }

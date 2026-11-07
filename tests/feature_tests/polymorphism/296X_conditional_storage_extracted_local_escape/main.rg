@@ -62,7 +62,7 @@ static_take := #(.SlotType: Type: SlotProtocol#(SlotType)) (.slot: $&SlotType, .
 extract := (.allocator: $&GeneralPurposeAllocator) -> (.value: Tracked) {
 
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
-    slot ::= to_virtual#(SlotProtocol)($&implementation)
+    slot ::= Virtual#(SlotProtocol)($&implementation)
     drops :: Int32 = 0
 
     put($&slot, Tracked($&drops))
@@ -77,7 +77,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     _ ::= extract(allocator_concrete)

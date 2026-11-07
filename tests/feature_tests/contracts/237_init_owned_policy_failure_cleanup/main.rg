@@ -55,7 +55,7 @@ successful := (.allocator: Virtual#(Allocator)) -> () {
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     failing ::= FailAllocator()
-    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failing_virtual ::= Virtual#(Allocator)($&failing)
     failed(failing_virtual)
     if drops != 1 { abort }
     successful(system.page_allocator)

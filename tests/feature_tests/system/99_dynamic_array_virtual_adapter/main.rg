@@ -34,12 +34,12 @@ exercise := (.allocator: Virtual#(Allocator)) -> () {
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     allocator ::= GeneralPurposeAllocator(system.page_allocator)
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     exercise(allocator_virtual)
     if has_live_allocations(&allocator).has_live { abort }
 
     arena ::= unwrap_or_abort(ArenaAllocator(.allocator = allocator_virtual, .block_size = 64))
-    arena_virtual ::= to_virtual#(Allocator)($&arena)
+    arena_virtual ::= Virtual#(Allocator)($&arena)
     exercise(arena_virtual)
     deinit($&arena)
     if has_live_allocations(&allocator).has_live { abort }

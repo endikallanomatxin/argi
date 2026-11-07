@@ -13,7 +13,7 @@ implement Allocator#(ShortAllocator) (
 main := (.system: System) -> () {
     backing ::= CAllocator(.ffi = system.ffi)
     provider ::= ShortAllocator($&backing)
-    allocator ::= to_virtual#(Allocator)($&provider)
+    allocator ::= Virtual#(Allocator)($&provider)
     text: StringView = "abc"
     string ::= unwrap_or_abort(.value = copy_c_string(.self = text, .allocator = allocator))
 }

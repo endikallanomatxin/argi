@@ -84,6 +84,10 @@ feature first.
 
 - Keep CLI help aligned with the tool's current capabilities.
 
+- Construct borrowed virtual handles with `Virtual#(Contract)(reference)`.
+  Aliases of virtual types use the same checked construction path; do not
+  reintroduce a separate public conversion function.
+
 - When validating the compiler locally, prefer:
   `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test -j16 -Dtest-jobs=16`
 

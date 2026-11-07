@@ -8,7 +8,7 @@ implement CounterAccess#(Provider) (
     .state = region(self._holder.counter),
     .set = (.self: &Provider) -> () {})
 perform := (.provider: &Provider) -> () {
-    counter ::= to_virtual#(CounterAccess)(provider)
+    counter ::= Virtual#(CounterAccess)(provider)
     CounterAccess#().set(.self = &counter)
 }
 main := () -> () {

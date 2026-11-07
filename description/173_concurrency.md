@@ -118,7 +118,7 @@ double := (.x: Int32) -> (.result: Int32) { result = x * 2 }
 
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(double)(.args = (.x = 21)))
     result ::= unwrap_or_abort(.value = await($&future))
     if result != 42 { abort }

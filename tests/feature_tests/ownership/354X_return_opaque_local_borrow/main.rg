@@ -13,6 +13,6 @@ escape := (.allocator: Virtual#(Allocator)) -> (
 main := (.system: System) -> () {
 
     allocator ::= GeneralPurposeAllocator(system.page_allocator)
-    handle ::= to_virtual#(Allocator)($&allocator)
+    handle ::= Virtual#(Allocator)($&allocator)
     escaped ::= escape(handle)
 }

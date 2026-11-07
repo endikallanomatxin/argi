@@ -1,5 +1,5 @@
 test model_loop_halfedges_order_and_exhaustion := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _triangle()
     faces: [1][3]UIntNative = ((2, 0, 1),)
     model ::= [
@@ -44,7 +44,7 @@ test model_loop_halfedges_order_and_exhaustion := (.system: System) -> !() {
 }
 
 test model_loop_halfedges_quad_and_invalid_id := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [4]g.Point#(Float32) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

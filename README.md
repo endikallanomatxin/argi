@@ -67,7 +67,7 @@ A dynamic collection using an explicitly supplied allocator:
 ```argi
 main := (.system: System) -> () {
     assume writer ::= $&system.terminal&.stdout
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
 
     numbers ::= DynamicArray#(Int32)()!!!
 

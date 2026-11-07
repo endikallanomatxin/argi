@@ -56,21 +56,21 @@ _set_box := (.self: $&Box, .value: Int32) -> ()  {
 
 main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 42)
-    shape :: Virtual#(Shape) = to_virtual(.value = $&box)
+    shape :: Virtual#(Shape) = Virtual(.value = $&box)
     set_value(.self = $&shape, .value = 43)
     value ::= get_value(.self = &shape)
     if value != 43 { status_code = 1 }
 }
 ```
 
-`to_virtual` accepts a reference to a concrete object with an explicit
-`implement` declaration providing the required operations. Its contract
+Constructing `Virtual#(Contract)` accepts a reference to a concrete object with
+an explicit `implement` declaration providing the required operations. Its contract
 argument can be inferred from an expected virtual result type. Without that
 context, select the contract explicitly:
 
 ```rg
-shape ::= to_virtual#(.contract: Shape)(.value = $&box)
-compact ::= to_virtual#(Shape)($&box)
+shape ::= Virtual#(.contract: Shape)(.value = $&box)
+compact ::= Virtual#(Shape)($&box)
 ```
 
 A contract containing any `$&Participant` receiver requires a mutable concrete
@@ -79,7 +79,8 @@ grant permission to mutate that `T`. A contract whose receivers are all
 read-only accepts either `&T` or `$&T`; use a read-only contract when exposing
 a read-only capability.
 
-A named `.value` argument or a single positional reference is accepted.
+A named `.value` argument or a single positional reference is accepted. Type
+aliases of `Virtual#(Contract)` support the same construction and checks.
 Positional comptime type arguments omit the argument name. The concrete
 object's implemented contracts and the destination binding's name do not
 select a target contract: one concrete type can implement several contracts.
@@ -89,10 +90,11 @@ copies its handle, retaining the selected operations, receiver and lifetime
 dependencies. It does not introduce another dispatch layer. The same receiver
 mutability requirements apply; this does not convert between different contracts.
 
-A pipe can borrow the result with `&_` or `$&_`:
+Like other borrowing constructors, `Virtual` can borrow a temporary for the
+enclosing scope. A pipe can also borrow the result with `&_` or `$&_`:
 
 ```rg
-assume tracer ::= NoopErrorTracer() | to_virtual#(ErrorTracer)($&_) | $&_
+assume tracer ::= NoopErrorTracer() | Virtual#(ErrorTracer)($&_) | $&_
 ```
 
 The concrete temporary and virtual wrapper remain alive for the enclosing
@@ -101,7 +103,7 @@ The concrete temporary and virtual wrapper remain alive for the enclosing
 The same pattern supplies a virtual allocator to ordinary collection APIs:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
 array ::= DynamicArray#(Int32)(.capacity = 16)!
 ```
 

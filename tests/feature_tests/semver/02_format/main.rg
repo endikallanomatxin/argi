@@ -20,7 +20,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator ::= RecordingAllocator(.ffi = system.ffi)
 
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     version ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha+001")).result
     output ::= unwrap_or_abort(
         .value = format(.value = &version, .allocator = allocator_virtual)
@@ -113,7 +113,7 @@ implement Allocator#(RecordingAllocator) (
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

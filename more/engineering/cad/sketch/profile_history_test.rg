@@ -20,7 +20,7 @@ _selection_world_sample := #(.Scalar: Type: Float) (
 test sketch_profile_history_composes_through_reordered_and_reversed_contours := (
     .system : System
 ) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= SketchBuilder#(.Scalar: Float64)(.plane = ..xz)!
     first ::= [builder | rectangle($&_, .center = (-2.0, 0.0), .width = 1.0, .height = 1.0)!]
     exterior ::= builder | rectangle($&_, .width = 8.0, .height = 6.0)!
@@ -95,7 +95,7 @@ test sketch_profile_history_composes_through_reordered_and_reversed_contours := 
 test sketch_profile_history_rejects_other_drawing_and_preserves_plain_selection := (
     .system : System
 ) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= SketchBuilder#(.Scalar: Float32)()!
     exterior ::= builder | rectangle($&_, .width = 4.0, .height = 3.0)!
     hole ::= builder | circle($&_, .diameter = 0.5)!

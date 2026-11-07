@@ -22,7 +22,7 @@ read_counter := (.counter: $&Virtual#(Counter)) -> (.value: Int32) {
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(41)
-    counter ::= to_virtual#(Counter)($&cell)
+    counter ::= Virtual#(Counter)($&cell)
 
     if read_counter($&counter) != 42 {
         status_code = 1

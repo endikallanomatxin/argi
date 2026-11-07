@@ -26,7 +26,7 @@ Bundle := (.first: Resource, .second: Resource)
 
 main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
-    releaser ::= to_virtual#(Releaser)(&manager)
+    releaser ::= Virtual#(Releaser)(&manager)
 
     if true {
         bundle ::= Bundle(Resource(42), Resource(43))

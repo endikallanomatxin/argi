@@ -12,7 +12,7 @@ implement Executor#(CountingExecutor) (
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     provider: CountingExecutor = (.base = ThreadedExecutor(.ffi = system.ffi), .submissions = 0)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 42
     first ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
     second ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))

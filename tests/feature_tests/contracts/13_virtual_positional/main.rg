@@ -16,6 +16,6 @@ consume := (.source: &Virtual#(Readable#(Int32))) -> (.value: Int32) {
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(42)
-    handle ::= to_virtual#(Readable#(Int32))(&cell)
+    handle ::= Virtual#(Readable#(Int32))(&cell)
     if consume(&handle).value != 42 { abort }
 }

@@ -6,7 +6,7 @@
 -- Dimensions use one consistent model unit. This produces an analytic planar profile;
 -- curved extrusion is not implemented yet.
 test usage_sketch_bearing_plate := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     width: Float64 = 80.0
     height: Float64 = 40.0
     corner_radius: Float64 = 4.0

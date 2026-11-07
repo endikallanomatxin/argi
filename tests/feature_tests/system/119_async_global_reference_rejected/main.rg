@@ -6,7 +6,7 @@ main := (.system: System) -> () {
     local :: Int32 = 0
     remember(.value = $&local)
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(work)(.args = ()))
     _ = future
 }

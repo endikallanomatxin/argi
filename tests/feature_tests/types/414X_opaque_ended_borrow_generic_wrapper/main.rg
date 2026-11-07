@@ -7,7 +7,7 @@ implement Deinit#(Box) (
 )
 main := (.system: System) -> () {
     allocator_provider ::= CAllocator(.ffi = system.ffi)
-    assume allocator ::= to_virtual#(Allocator)($&allocator_provider)
+    assume allocator ::= Virtual#(Allocator)($&allocator_provider)
     box ::= Box(42)
     reference ::= &box.value
     deinit(.self = $&box)

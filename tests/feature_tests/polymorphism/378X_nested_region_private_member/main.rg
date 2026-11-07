@@ -12,6 +12,6 @@ main := () -> () {
     value :: Int32 = 42
     provider ::= remote.Provider($&value)
     wrapper ::= Wrapper(remote.make(&provider))
-    outer ::= to_virtual#(Counter)(&wrapper)
+    outer ::= Virtual#(Counter)(&wrapper)
     _ = Counter#().get(&outer)
 }

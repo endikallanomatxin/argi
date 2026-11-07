@@ -34,7 +34,7 @@ _placed_profile_without_source := (.allocator: Virtual#(Allocator)) -> (
 test profile_placement_owns_analytic_geometry_and_preserves_publication_positions := (
     .system : System
 ) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     placed ::= _placed_profile_without_source(.allocator = allocator)!
     publication ::= profile_brep_with_history(&placed)!
     testing.expect(t.entity_counts(&publication.model).loops == 2)!
@@ -82,7 +82,7 @@ test profile_placement_owns_analytic_geometry_and_preserves_publication_position
 }
 
 test profile_placement_rejects_invalid_frame_without_consuming_source := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [3]g.Point#(Float32) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -108,7 +108,7 @@ test profile_placement_rejects_invalid_frame_without_consuming_source := (.syste
 }
 
 test profile_placement_preserves_disconnected_regions := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [6]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

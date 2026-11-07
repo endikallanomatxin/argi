@@ -33,7 +33,7 @@ _impl_close_Second := (.self: $&Second) -> () {
 }
 
 register_second := (.value: $&Second) -> () {
-    _ ::= to_virtual#(.contract: Closable)(.value = value)
+    _ ::= Virtual#(.contract: Closable)(.value = value)
 }
 
 verify := (.status: $&Int32) -> () {
@@ -51,6 +51,6 @@ main := () -> (.status_code: Int32) {
     second :: Second = (.value = 0)
     register_second(.value = $&second)
     value :: First = (.value = 0)
-    virtual ::= to_virtual#(.contract: Closable)(.value = $&value)
+    virtual ::= Virtual#(.contract: Closable)(.value = $&value)
     close(.self = $&virtual)
 }

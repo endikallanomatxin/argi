@@ -9,7 +9,7 @@ make := (.ffi: $&ForeignFunctionInterface) -> (
 
     allocator_storage :: LocalAllocator = (.ffi = ffi, .deallocations = 0)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     result = allocate_bytes(.self = $&allocator_storage, .size = 1)
 }
@@ -27,7 +27,7 @@ implement Allocator#(LocalAllocator) (
 
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

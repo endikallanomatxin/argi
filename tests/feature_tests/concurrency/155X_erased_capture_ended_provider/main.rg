@@ -16,11 +16,11 @@ read_at := (.array: &DynamicArray#(Holder), .index: UIntNative) -> (.result: Int
 }
 main := (.system: System) -> () {
     allocator_provider ::= CAllocator(.ffi = system.ffi)
-    assume allocator ::= to_virtual#(Allocator)($&allocator_provider)
+    assume allocator ::= Virtual#(Allocator)($&allocator_provider)
     array ::= unwrap_or_abort(.value = DynamicArray#(Holder)(.capacity = 1))
     cell ::= Cell(42)
     provider: Provider = (.cell = &cell)
-    push_assume_capacity(.self = $&array, .value = Holder(to_virtual#(Counter)(&provider)))
+    push_assume_capacity(.self = $&array, .value = Holder(Virtual#(Counter)(&provider)))
     deinit(.self = $&cell)
     _ = read_at(&array, 0)
     deinit(.self = $&array)

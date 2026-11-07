@@ -28,7 +28,7 @@ read_source := (.source: &Virtual#(Source)) -> (.result: Errable#(Int32, (..fail
 main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(42)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
     match read_source(&source) {
         ..ok value { if value != 42 { status_code = 1 } }
         ..error _ { status_code = 1 }

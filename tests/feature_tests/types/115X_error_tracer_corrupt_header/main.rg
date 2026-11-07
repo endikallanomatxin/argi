@@ -13,6 +13,6 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         bytes[i] = 255
         i = i + 1
     }
-    writer ::= to_virtual#(Writer)($&system.terminal&.stderr)
+    writer ::= Virtual#(Writer)($&system.terminal&.stderr)
     ErrorTracer#().report(.self = $&tracer, .writer = $&writer)
 }

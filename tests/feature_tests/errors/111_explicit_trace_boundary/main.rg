@@ -53,7 +53,7 @@ direct := #(.T: Type) (.value: T, .error_tracer: $&Virtual#(ErrorTracer)) -> !!T
 
 extend_with_local_fallback := (.original: $&Virtual#(ErrorTracer), .evaluations: $&Int32) -> !!Int32 {
     local: CounterTracer = ()
-    handle ::= to_virtual#(ErrorTracer)($&local)
+    handle ::= Virtual#(ErrorTracer)($&local)
     assume error_tracer ::= $&handle
     value ::= forward(.evaluations = evaluations, .error_tracer = original)!! "retained original tracer"
     result = ..ok value
@@ -82,7 +82,7 @@ in_condition := () -> !Int32 {
 
 compile_time_status ::= #run () -> (.value: Int32) {
     tracer: CounterTracer = ()
-    handle ::= to_virtual#(ErrorTracer)($&tracer)
+    handle ::= Virtual#(ErrorTracer)($&tracer)
     evaluations :: Int32 = 0
     match traced(.fail = true, .evaluations = $&evaluations, .error_tracer = $&handle) {
         ..ok _ { abort }
@@ -100,8 +100,8 @@ main := () -> (.status_code: Int32 = 1) {
     }
     first: CounterTracer = ()
     second: CounterTracer = ()
-    first_handle ::= to_virtual#(ErrorTracer)($&first)
-    second_handle ::= to_virtual#(ErrorTracer)($&second)
+    first_handle ::= Virtual#(ErrorTracer)($&first)
+    second_handle ::= Virtual#(ErrorTracer)($&second)
     evaluations :: Int32 = 0
     match traced(.fail = false, .evaluations = $&evaluations, .error_tracer = $&first_handle) {
         ..ok value { if value != 42 { abort } }

@@ -41,7 +41,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 3))
@@ -55,10 +55,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     push_assume_capacity#(.t: String)(.self = $&source, .value = ~third)
 
     tracer ::= Counter(.count = 7)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     failing ::= FailFourthAllocator(.ffi = system.ffi)
-    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failing_virtual ::= Virtual#(Allocator)($&failing)
     copied ::= copy(.self = &source, .allocator = failing_virtual)
     if is(.value = copied, .variant = ..ok) {
         status_code = 1
@@ -93,7 +93,7 @@ implement Allocator#(FailFourthAllocator) (
         }
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         if self&.allocation_attempts == 1 { self&.array_backing_size = size }
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

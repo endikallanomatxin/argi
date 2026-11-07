@@ -6,7 +6,7 @@ p := import ("python")
 main := (.system: System) -> (.status_code: Int32 = 0) {
     trace_buffer :: [4096]UInt8 = zeroed#([4096]UInt8)()
     tracer ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))
-    trace_handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    trace_handle ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&trace_handle
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator

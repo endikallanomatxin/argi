@@ -10,6 +10,6 @@ implement CounterAccess#(Provider) (
 main := () -> () {
     holder: Holder = (.counter = 7)
     provider: Provider = (._holder = &holder)
-    counter ::= to_virtual#(CounterAccess)(&provider)
+    counter ::= Virtual#(CounterAccess)(&provider)
     CounterAccess#().set(.self = &counter)
 }

@@ -5,7 +5,7 @@ copy := (.box: BorrowedBox) -> (.result: Int32) {
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     source :: Int32 = 42
     target :: Int32 = 0
     box: BorrowedBox = (.source = &source, .target = $&target)

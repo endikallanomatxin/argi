@@ -10,7 +10,7 @@ expect_formatted := #(.t: Type: Int) (
     .allocator: $&RecordingAllocator, .value: t, .expected: StringView
 ) -> () {
 
-    handle ::= to_virtual#(Allocator)(allocator)
+    handle ::= Virtual#(Allocator)(allocator)
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
     output ::= unwrap_or_abort(.value = format(.value = value, .allocator = handle))
@@ -29,7 +29,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator ::= RecordingAllocator(.ffi = system.ffi)
 
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     int80: Int8 = -128
     expect_formatted(.allocator = $&allocator, .value = int80, .expected = "-128")
     int81: Int8 = 0
@@ -126,7 +126,7 @@ implement Allocator#(RecordingAllocator) (
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

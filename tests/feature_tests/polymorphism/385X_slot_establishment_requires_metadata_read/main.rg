@@ -12,5 +12,5 @@ implement SlotReader#(Provider) (
 )
 main := () -> () {
     provider ::= Provider(0)
-    reader ::= to_virtual#(SlotReader)(&provider)
+    reader ::= Virtual#(SlotReader)(&provider)
 }

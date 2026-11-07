@@ -10,7 +10,7 @@ implement Counter#(Cell) (
     .set = (.self: $&Cell, .value: Int32) -> () { self&.value = value }
 )
 make := (.cell: $&Cell) -> (.result: Virtual#(Counter)) {
-    result = to_virtual#(Counter)(cell)
+    result = Virtual#(Counter)(cell)
 }
 main := () -> () {
     cell ::= Cell(7)

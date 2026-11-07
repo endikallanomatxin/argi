@@ -7,7 +7,7 @@ implement AccessCell#(Provider) (
 )
 main := () -> () {
     provider: Provider = (.marker = 0)
-    cell ::= to_virtual#(AccessCell)(&provider)
+    cell ::= Virtual#(AccessCell)(&provider)
     value :: Int32 = 42
     _ = AccessCell#().get(.self = &cell, .value = &value)
 }

@@ -12,6 +12,6 @@ compute := () -> (.result: Int32) { result = 42 }
 main := (.system: System) -> () {
     base ::= ThreadedExecutor(.ffi = system.ffi)
     provider: BadExecutor = (.base = $&base)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(compute)(.args = ()))
 }

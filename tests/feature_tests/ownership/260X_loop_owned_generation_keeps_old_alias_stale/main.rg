@@ -4,7 +4,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    allocator_storage_virtual ::= to_virtual#(Allocator)($&allocator_storage)
+    allocator_storage_virtual ::= Virtual#(Allocator)($&allocator_storage)
     buffer ::= unwrap_or_abort(
         .value = string_with_capacity(.allocator = allocator_storage_virtual, .capacity = 1)
     )

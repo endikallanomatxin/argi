@@ -12,8 +12,8 @@ implement Counter#(Cell) (
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
-    first ::= to_virtual#(Counter)($&cell)
-    second ::= to_virtual#(Counter)($&first)
+    first ::= Virtual#(Counter)($&cell)
+    second ::= Virtual#(Counter)($&first)
     deinit($&cell)
     bump($&second)
 }

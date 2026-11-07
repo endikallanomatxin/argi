@@ -14,9 +14,9 @@ establish_indirect := (.storage: $&AcquiredStorage, .deallocator: Virtual#(Deall
 }
 main := (.system: System) -> () {
     provider ::= Provider(0)
-    forwarder ::= to_virtual#(Forward)(&provider)
+    forwarder ::= Virtual#(Forward)(&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     acquired ::= unwrap_or_abort(.value = acquire_heap_storage(.size = 8, .alignment = 8, .ffi = system.ffi))
     forwarded ::= Forward#().forward(&forwarder, .storage = ~acquired)
     allocation ::= establish_indirect(.storage = $&forwarded, .deallocator = deallocator)

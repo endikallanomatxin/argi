@@ -20,7 +20,7 @@ implement Counting#(Counter) (
 
 counted := () -> (.result: Int32) {
     counter :: Counter = (.value = 7)
-    erased ::= to_virtual#(.contract: Counting)(.value = $&counter)
+    erased ::= Virtual#(.contract: Counting)(.value = $&counter)
     Counting#().bump($&erased, 35)
     reference ::= Counting#().read_reference(&erased).result
     if reference&!= 42 { abort }

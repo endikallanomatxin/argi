@@ -105,7 +105,7 @@ main := () -> (.status_code: Int32) {
     build_array(.fail = false) handle error { abort }
     if drops != 84 or whole_drops != 1 { abort }
     state :: State = ()
-    handle ::= to_virtual#(.contract: Consumer)(.value = $&state)
+    handle ::= Virtual#(.contract: Consumer)(.value = $&state)
     build_virtual(.handle = $&handle, .fail = true) handle error {
         match error.reason { ..stop {} }
     }

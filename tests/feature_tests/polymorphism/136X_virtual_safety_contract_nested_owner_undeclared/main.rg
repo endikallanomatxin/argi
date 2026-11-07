@@ -41,7 +41,7 @@ _impl_make_Cell := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (.
 main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(0)
-    factory ::= to_virtual#(Factory)(&cell)
+    factory ::= Virtual#(Factory)(&cell)
 
     if true {
         result ::= make(&factory, 0)

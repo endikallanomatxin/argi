@@ -25,7 +25,7 @@ main := () -> (.status_code: Int32 = 0) {
     stream ::= Buffered#(Buffered#(Cursor))(.base = Buffered#(Cursor)(.base = Cursor()))
     if ByteSource#(Buffered#(Buffered#(Cursor))).read_byte($&stream).result != 1 { abort }
     if ByteSource#(Buffered#(Buffered#(Cursor))).read_byte($&stream).result != 2 { abort }
-    erased ::= to_virtual#(.contract: ByteSource)(.value = $&stream)
+    erased ::= Virtual#(.contract: ByteSource)(.value = $&stream)
     if ByteSource#().read_byte($&erased) != 3 { abort }
     if ByteSource#().read_byte($&erased) != 4 { abort }
 }

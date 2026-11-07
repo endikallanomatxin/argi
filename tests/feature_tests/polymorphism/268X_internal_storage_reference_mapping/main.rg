@@ -14,5 +14,5 @@ _impl_clear_Storage := (.self: $&Storage) -> () {}
 main := () -> () {
     contents :: Int32 = 0
     storage ::= Storage($&contents)
-    value ::= to_virtual#(Protocol)($&storage)
+    value ::= Virtual#(Protocol)($&storage)
 }

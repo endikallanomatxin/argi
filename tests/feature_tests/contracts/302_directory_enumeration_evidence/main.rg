@@ -32,7 +32,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 
     failing_directory ::= Directory(.self = system.file_system, .path = root)!!!
     refusing ::= RefusingAllocator()
-    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
+    refusing_virtual ::= Virtual#(Allocator)($&refusing)
     match advance_directory(.self = $&failing_directory, .allocator = refusing_virtual) {
         ..ok ~entry { abort }
         ..error error { if error.reason != ..out_of_memory { abort } }

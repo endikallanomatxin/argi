@@ -29,11 +29,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     manager ::= Manager(0)
-    mover ::= to_virtual#(Mover)(&manager)
+    mover ::= Virtual#(Mover)(&manager)
 
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
     unwrap_or_abort(push(.self = $&source, .value = 42, .allocator = allocator))

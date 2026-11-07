@@ -18,10 +18,10 @@ forward := (.reader: Virtual#(Inspect), .context: Context) -> (.result: Int32) {
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     provider: Provider = (.marker = 0)
-    reader ::= to_virtual#(Inspect)(&provider)
-    writer ::= to_virtual#(Update)(&provider)
+    reader ::= Virtual#(Inspect)(&provider)
+    writer ::= Virtual#(Update)(&provider)
     value :: Int32 = 7
     context: Context = (.counter = $&value)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))

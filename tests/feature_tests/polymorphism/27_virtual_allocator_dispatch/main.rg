@@ -13,7 +13,7 @@ implement Init#(NoopDeallocator, NoopDeallocatorInitArgs) (
 main := () -> (.status_code: Int32) {
 
     noop :: NoopDeallocator = NoopDeallocator()
-    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(.value = $&noop)
+    deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(.value = $&noop)
     byte :: UInt8 = 7
     Deallocator#(
     ).deallocate(

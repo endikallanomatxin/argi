@@ -18,6 +18,6 @@ main := () -> () {
 
     cell ::= Cell(42)
     other :: Int32 = 7
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
     values ::= get(&source, &other)
 }

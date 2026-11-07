@@ -23,11 +23,11 @@ forward := (.reader: Virtual#(AccessReader), .value: &Int32) -> (.result: Int32)
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     provider: Provider = (.marker = 0)
-    reader ::= to_virtual#(AccessReader)(&provider)
-    writer ::= to_virtual#(AccessWriter)(&provider)
-    pure ::= to_virtual#(PureValue)(&provider)
+    reader ::= Virtual#(AccessReader)(&provider)
+    writer ::= Virtual#(AccessWriter)(&provider)
+    pure ::= Virtual#(PureValue)(&provider)
     value :: Int32 = 42
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
     if forward(.reader = reader, .value = &value) != 42 { abort }

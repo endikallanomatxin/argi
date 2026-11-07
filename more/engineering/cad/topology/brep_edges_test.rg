@@ -1,5 +1,5 @@
 test model_ellipse_arc_rejections_leave_builder_usable := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= BrepBuilder#(Float64)()!
     ellipse: g.Ellipse#(Float64) = (
         .center = (0.0, 0.0, 1.0)
@@ -80,7 +80,7 @@ test model_ellipse_arc_rejections_leave_builder_usable := (.system: System) -> !
 }
 
 test model_segment_edge_interval_and_planar_correspondence := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= BrepBuilder#(Float64)()!
     curve: Curve#(Float64) = ..segment(
         .start = (0.0, 0.0, 0.0)

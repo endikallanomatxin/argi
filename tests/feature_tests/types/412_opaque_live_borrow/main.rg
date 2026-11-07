@@ -4,7 +4,7 @@ implement Deinit#(Box) (
 )
 main := (.system: System) -> () {
     allocator_provider ::= CAllocator(.ffi = system.ffi)
-    assume allocator ::= to_virtual#(Allocator)($&allocator_provider)
+    assume allocator ::= Virtual#(Allocator)($&allocator_provider)
     box ::= Box(42)
     reference ::= &box.value
     array ::= unwrap_or_abort(.value = DynamicArray#(&Int32)(.capacity = 1))

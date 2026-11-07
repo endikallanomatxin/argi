@@ -25,15 +25,15 @@ use := (.array: &DynamicArray#(Holder), .index: UIntNative, .value: &Int32, .exe
 }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&executor_provider)
+    executor ::= Virtual#(Executor)($&executor_provider)
     allocator_provider ::= CAllocator(.ffi = system.ffi)
-    assume allocator ::= to_virtual#(Allocator)($&allocator_provider)
+    assume allocator ::= Virtual#(Allocator)($&allocator_provider)
     first :: Int32 = 7
     second :: Int32 = 9
     first_provider: CounterProvider = (.value = $&first)
     second_provider: OtherCounterProvider = (.tag = 1, .value = $&second)
     array ::= unwrap_or_abort(.value = DynamicArray#(Holder)(.capacity = 2))
-    push_assume_capacity(.self = $&array, .value = Holder(to_virtual#(Counter)(&first_provider)))
-    push_assume_capacity(.self = $&array, .value = Holder(to_virtual#(Counter)(&second_provider)))
+    push_assume_capacity(.self = $&array, .value = Holder(Virtual#(Counter)(&first_provider)))
+    push_assume_capacity(.self = $&array, .value = Holder(Virtual#(Counter)(&second_provider)))
     use(.array = &array, .index = 1, .value = &second, .executor = executor)
 }

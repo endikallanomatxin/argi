@@ -9,6 +9,6 @@ main := () -> (.status_code: Int32 = 0) {
     values: [2]StringView = ("first", "second")
     source ::= CliArgumentViews(view(&values))
     if read_first(&source).text != "first" { abort }
-    erased ::= to_virtual#(.contract: ArgumentSource)(.value = &source)
+    erased ::= Virtual#(.contract: ArgumentSource)(.value = &source)
     if read_first(&erased).text != "first" { abort }
 }

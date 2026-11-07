@@ -7,7 +7,7 @@ slot_from := #(.T: Type) (.allocation: &Allocation, .anchor: &Any) -> (.slot: $&
 }
 main := (.system: System) -> () {
     backing ::= CAllocator(.ffi = system.ffi)
-    allocator ::= to_virtual#(Allocator)($&backing)
+    allocator ::= Virtual#(Allocator)($&backing)
     arena ::= unwrap_or_abort(.value = ArenaAllocator(.allocator = allocator, .block_size = 64))
     child ::= unwrap_or_abort(.value = allocate_bytes(.self = $&arena, .size = 8, .alignment = 8))
     marker :: UInt8 = 0

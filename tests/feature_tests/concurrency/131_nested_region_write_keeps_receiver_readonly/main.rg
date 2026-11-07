@@ -16,15 +16,15 @@ implement Counter#(Forwarder) (
     .set = (.self: &Forwarder) -> () { Counter#().set(&self&.base) }
 )
 make := (.self: &Forwarder) -> (.result: Virtual#(Counter)) {
-    result = to_virtual#(Counter)(self)
+    result = Virtual#(Counter)(self)
 }
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     provider: Provider = (._counter = $&value, .offset = 0)
-    wrapper ::= Forwarder(to_virtual#(Counter)(&provider))
+    wrapper ::= Forwarder(Virtual#(Counter)(&provider))
     outer ::= make(&wrapper)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &provider.offset)))
     Counter#().set(&outer)

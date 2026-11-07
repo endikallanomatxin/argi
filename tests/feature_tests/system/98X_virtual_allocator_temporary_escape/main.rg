@@ -1,5 +1,5 @@
 escape := (.system: System) -> (.result: Allocation) {
-    assume allocator := GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator := GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     result = unwrap_or_abort(allocate#(UInt32)($&allocator))
 }
 

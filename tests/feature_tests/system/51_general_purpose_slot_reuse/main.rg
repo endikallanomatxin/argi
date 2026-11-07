@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         .allocations   = 0
         .deallocations = 0
     )
-    tracker_virtual ::= to_virtual#(Allocator)($&tracker)
+    tracker_virtual ::= Virtual#(Allocator)($&tracker)
     allocator ::= GeneralPurposeAllocator(.allocator = tracker_virtual)
     -- The receipt list uses a separate allocator so backing counts describe
     -- only the size class under test: one chunk holds 512 eight-byte slots.
@@ -141,7 +141,7 @@ implement Allocator#(TrackingAllocator) (
                 original ::= ~payload
                 self&.allocations = self&.allocations + 1
                 -- Tracking delegates release to the same backing allocator.
-                original.deallocator = to_virtual#(.contract: Deallocator)(.value = self)
+                original.deallocator = Virtual#(.contract: Deallocator)(.value = self)
                 result = ..ok ~original
             }
         }

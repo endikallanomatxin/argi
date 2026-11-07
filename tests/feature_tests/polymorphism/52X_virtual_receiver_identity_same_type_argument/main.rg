@@ -29,7 +29,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     other :: Holder = (.cell = (.value = 2))
     holder :: Holder = (.cell = (.value = 1))
-    handle ::= to_virtual#(.contract: View)(.value = &holder)
+    handle ::= Virtual#(.contract: View)(.value = &holder)
     deinit(.self = $&holder.cell)
     value ::= read_view(.other = &other, .handle = &handle).value
     observed ::= value&

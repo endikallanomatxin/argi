@@ -7,7 +7,7 @@ implement Counter#(Probe) (.bump = _impl_bump_Probe)
 _impl_bump_Probe := (.self: $&Probe) -> () { self&.value = self&.value + 1 }
 
 escape := () -> (.handle: $&Virtual#(Counter)) {
-    handle = Probe() | to_virtual($&_) | $&_
+    handle = Probe() | Virtual($&_) | $&_
 }
 
 main := () -> (.status_code: Int32) {

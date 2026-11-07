@@ -22,7 +22,7 @@ _impl_mutate_Stateful := (.self: $&Stateful) -> () {
 _impl_mutate_Noop := (.self: $&Noop) -> () {}
 
 register_noop := (.value: $&Noop) -> () {
-    _ ::= to_virtual#(.contract: Mutator)(.value = value)
+    _ ::= Virtual#(.contract: Mutator)(.value = value)
 }
 
 main := (.system: System) -> (.status_code: Int32) {
@@ -42,7 +42,7 @@ main := (.system: System) -> (.status_code: Int32) {
                 .counter = 0
             )
             if 1 == 1 {
-                virtual ::= to_virtual#(.contract: Mutator)(.value = $&state)
+                virtual ::= Virtual#(.contract: Mutator)(.value = $&state)
                 mutate(.self = $&virtual)
             }
             if state.reference&== 0 {

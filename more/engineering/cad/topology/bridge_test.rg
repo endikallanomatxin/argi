@@ -1,5 +1,5 @@
 test model_bridge_annulus := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     source ::= [
         from_planar_faces(
@@ -45,7 +45,7 @@ test model_bridge_annulus := (.system: System) -> !() {
 }
 
 test model_bridge_edge_interiors_and_history := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     source ::= [
         from_planar_faces(
@@ -140,7 +140,7 @@ test model_bridge_edge_interiors_and_history := (.system: System) -> !() {
 }
 
 test model_bridge_preserves_other_hole_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _split_two_holes#(Float32)()
     source ::= [
         from_planar_faces(
@@ -193,7 +193,7 @@ test model_bridge_preserves_other_hole_float32 := (.system: System) -> !() {
 }
 
 test model_bridge_rejects_crossings_and_wrong_loops := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     input ::= _planar_annulus()
     source ::= [
         from_planar_faces(
@@ -295,7 +295,7 @@ _bridge_owned := (.allocator: Virtual#(Allocator)) -> (
 }
 
 test model_bridge_owns_geometry_and_rejects_hole_crossing := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _bridge_owned(.allocator = allocator)!
     [
         testing.expect(

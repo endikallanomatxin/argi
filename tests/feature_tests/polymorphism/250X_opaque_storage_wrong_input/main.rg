@@ -30,5 +30,5 @@ _impl_put_Cell := (
 
 main := () -> () {
     cell ::= Cell()
-    _ ::= to_virtual#(Store)(&cell)
+    _ ::= Virtual#(Store)(&cell)
 }

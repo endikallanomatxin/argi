@@ -23,8 +23,8 @@ implement Source#(Wrapper) (
 )
 main := () -> () {
     cell ::= Cell(41)
-    wrapper ::= Wrapper(to_virtual#(Source)($&cell))
-    outer ::= to_virtual#(Source)($&wrapper)
+    wrapper ::= Wrapper(Virtual#(Source)($&cell))
+    outer ::= Virtual#(Source)($&wrapper)
     previous ::= Source#().get(&outer)
     if previous& != 41 { abort }
     Source#().set($&outer)

@@ -16,7 +16,7 @@ main := () -> () {
     first_holder: Holder = (.target = &first)
     second_holder: Holder = (.target = &second)
     provider: Provider = (.holder = &first_holder)
-    counter ::= forward(to_virtual#(Counter)(&provider))
+    counter ::= forward(Virtual#(Counter)(&provider))
     provider.holder = &second_holder
     _ = Counter#().get(&counter)
 }

@@ -16,10 +16,10 @@ implement Counter#(Forwarder) (
     .set = (.self: &Forwarder) -> () { Counter#().set(&self&.base) }
 )
 make := (.self: &Forwarder) -> (.result: Virtual#(Counter)) {
-    result = to_virtual#(Counter)(self)
+    result = Virtual#(Counter)(self)
 }
 make_changing := (.self: &Forwarder, .destination: $&Forwarder, .other: Virtual#(Counter)) -> (.result: Virtual#(Counter)) {
-    result = to_virtual#(Counter)(self)
+    result = Virtual#(Counter)(self)
     destination&.base = other
 }
 main := () -> () {
@@ -27,7 +27,7 @@ main := () -> () {
     b :: Int32 = 9
     first: Provider = (._counter = $&a)
     second: Provider = (._counter = $&b)
-    wrapper ::= Forwarder(to_virtual#(Counter)(&first))
-    outer ::= make_changing(&wrapper, $&wrapper, to_virtual#(Counter)(&second))
+    wrapper ::= Forwarder(Virtual#(Counter)(&first))
+    outer ::= make_changing(&wrapper, $&wrapper, Virtual#(Counter)(&second))
     _ = Counter#().get(&outer)
 }

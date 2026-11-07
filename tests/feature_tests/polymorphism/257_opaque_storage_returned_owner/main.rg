@@ -52,7 +52,7 @@ make_storage := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (
 ) {
 
     implementation ::= Slots()
-    slots ::= to_virtual#(SlotProtocol)(&implementation)
+    slots ::= Virtual#(SlotProtocol)(&implementation)
     storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
@@ -66,7 +66,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     drops :: Int32 = 0
@@ -77,7 +77,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
             unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
         ).reference
         implementation ::= Slots()
-        slots ::= to_virtual#(SlotProtocol)(&implementation)
+        slots ::= Virtual#(SlotProtocol)(&implementation)
         extracted ::= forward_take(&slots, $&storage, slot)
         deinit($&storage)
         if extracted.drops&!= 0 { status_code = 1 }

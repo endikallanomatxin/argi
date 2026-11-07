@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
-    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
         .value = $&allocator
     )
     storage ::= unwrap_or_abort(
@@ -37,7 +37,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     pages ::= unwrap_or_abort(
         .value = acquire_page_storage(.memory = system.memory, .size = 32, .alignment = 8192)
     )
-    page_deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+    page_deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
         .value = system.memory
     )
     page_allocation ::= establish_allocation(

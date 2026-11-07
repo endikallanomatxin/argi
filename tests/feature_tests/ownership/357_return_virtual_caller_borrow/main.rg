@@ -11,7 +11,7 @@ _impl_read_Local := (.self: &Local) -> (.result: Int32) {
 }
 
 make := (.local: &Local) -> (.result: Virtual#(Source)) {
-    result = to_virtual#(Source)(local)
+    result = Virtual#(Source)(local)
 }
 
 main := () -> (.status_code: Int32 = 0) {

@@ -18,7 +18,7 @@ implement Resetter#(Cell) (.reset = _impl_reset_Cell)
 _impl_reset_Cell := (.self: &Cell, .target: $&Int32) -> () { target&= 42 }
 
 _impl_edit_Cell := (.self: &Cell, .target: $&Int32, .succeed: Bool) -> (.result: ?Int32) {
-    resetter ::= to_virtual#(Resetter)(self)
+    resetter ::= Virtual#(Resetter)(self)
     reset(&resetter, target)
 
     if succeed {
@@ -40,7 +40,7 @@ main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target
-    editor ::= to_virtual#(Editor)(&cell)
+    editor ::= Virtual#(Editor)(&cell)
     result ::= apply_edit(&editor, $&target, false)
 
     match result {

@@ -16,9 +16,9 @@ work := (.holder: Holder, .value: &Int32, .executor: Virtual#(Executor)) -> () {
 }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&executor_provider)
+    executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     provider: Provider = (.value = $&value)
-    holder: Holder = (.counter = to_virtual#(Counter)(&provider))
+    holder: Holder = (.counter = Virtual#(Counter)(&provider))
     work(.holder = holder, .value = &value, .executor = executor)
 }

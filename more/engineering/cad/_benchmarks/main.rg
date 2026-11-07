@@ -6,7 +6,7 @@ _type_size := #(.T: Type) () -> (.bytes: UIntNative) { bytes = size_of(.type = T
 -- Build once with --release. Timings exclude fixture generation and printing.
 -- Independent tetrahedra keep all face sizes fixed as the dataset grows.
 _run := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
 
     assume writer ::= $&system.terminal&.stdout
     sizes: [4]UIntNative = (1, 16, 256, 4096)

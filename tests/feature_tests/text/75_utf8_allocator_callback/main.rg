@@ -17,7 +17,7 @@ main := (.system: System) -> () {
     bytes: [3]UInt8 = (65, 66, 0)
     page :: PageAllocator = PageAllocator(.memory = system.memory)
     allocator ::= MutatingAllocator(.source = $&bytes, .backing = $&page)
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     match string_from_bytes(.bytes = view(&bytes), .allocator = allocator_virtual) {
         ..ok ~text { abort }
         ..error failure { if failure.reason != ..invalid_utf8 { abort } }

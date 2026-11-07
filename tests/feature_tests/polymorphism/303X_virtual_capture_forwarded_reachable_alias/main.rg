@@ -12,7 +12,7 @@ read_box := (.self: &Box) -> (.result: Int32) {
 }
 initialize := (.box: $&Box, .output: $&Virtual#(Source), .holder: &Holder, .other: $&Storage, .next: &Resource) -> () {
     box& = Box(holder)
-    output& = to_virtual#(Source)(box)
+    output& = Virtual#(Source)(box)
     other& = Storage(next)
 }
 forward := (.box: $&Box, .holder: &Holder, .other: $&Storage, .next: &Resource) -> (.result: Int32) {

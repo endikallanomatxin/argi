@@ -26,7 +26,7 @@ read_source := (.source: &Virtual#(Source)) -> (.value: Int32) {
 main := () -> () {
 
     cell ::= Cell(Resource(42))
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
     deinit($&cell.resource)
     read_source(&source)
 }

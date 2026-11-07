@@ -2,7 +2,7 @@
 NoopErrorTracer := (.marker: UInt8 = 0)
 
 noop_error_tracer_storage :: NoopErrorTracer = (.marker = 0)
-noop_error_tracer :: Virtual#(ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
+noop_error_tracer :: Virtual#(ErrorTracer) = Virtual#(.contract: ErrorTracer)(
     .value = $&noop_error_tracer_storage
 )
 

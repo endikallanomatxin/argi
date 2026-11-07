@@ -29,8 +29,8 @@ main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(42)
     other ::= Other(41)
-    first ::= to_virtual#(Source#(Int32))(&cell)
-    second ::= to_virtual#(Source#(Int32))(&other)
+    first ::= Virtual#(Source#(Int32))(&cell)
+    second ::= Virtual#(Source#(Int32))(&other)
 
     if read_source(&first) != 42 or read_source(&second) != 42 {
         status_code = 1

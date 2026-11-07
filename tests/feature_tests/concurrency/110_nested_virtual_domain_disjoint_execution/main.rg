@@ -16,10 +16,10 @@ work := (.holder: Holder, .value: &Int32, .executor: Virtual#(Executor)) -> () {
 }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&executor_provider)
+    executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     provider: Provider = (.value = $&value)
-    holder: Holder = (.counter = to_virtual#(Counter)(&provider))
+    holder: Holder = (.counter = Virtual#(Counter)(&provider))
     other :: Int32 = 21
     work(.holder = holder, .value = &other, .executor = executor)
     if value != 42 or other != 21 { abort }

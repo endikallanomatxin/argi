@@ -36,7 +36,7 @@ main := (.system: System) -> (.status_code: Int32) {
     assume writer ::= $&system.terminal&.stderr
     assume error_tracer ::= [
         FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
-        | to_virtual#(ErrorTracer)($&_)
+        | Virtual#(ErrorTracer)($&_)
         | $&_
     ]
     result := top()

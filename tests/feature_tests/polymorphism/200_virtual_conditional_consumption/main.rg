@@ -40,7 +40,7 @@ release_again := (.releaser: &Virtual#(Releaser), .resource: $&Resource, .consum
 
 main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
-    releaser ::= to_virtual#(Releaser)(&manager)
+    releaser ::= Virtual#(Releaser)(&manager)
 
     if true {
         resource ::= Resource(42)

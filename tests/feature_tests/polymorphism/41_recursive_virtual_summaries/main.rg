@@ -38,7 +38,7 @@ _impl_get_Cell := (.self: &Cell, .depth: Int32) -> (.value: &Int32) {
     if depth == 0 {
         value = &self&.value
     } else {
-        view ::= to_virtual#(View)(self)
+        view ::= Virtual#(View)(self)
         value = read(.view = &view, .depth = depth - 1)
     }
 }
@@ -50,8 +50,8 @@ _impl_get_Other := (.self: &Other, .depth: Int32) -> (.value: &Int32) {
 main := () -> (.status_code: Int32 = 0) {
     cell :: Cell = (.value = 42)
     other :: Other = (.value = 17)
-    view ::= to_virtual#(View)(&cell)
-    other_view ::= to_virtual#(View)(&other)
+    view ::= Virtual#(View)(&cell)
+    other_view ::= Virtual#(View)(&other)
     a ::= identity(.value = &cell.value, .depth = 3)
     b ::= second(.value = &other.value, .depth = 3)
     c ::= read(.view = &view, .depth = 3)

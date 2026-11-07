@@ -19,7 +19,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     storage ::= unwrap_or_abort(allocate#(Allocation)($&allocator))
@@ -29,7 +29,7 @@ main := (.system: System) -> () {
     value ::= unwrap_or_abort(allocate_bytes($&allocator, .size = 1))
     previous ::= unsafe_allocation.trusted_allocation_byte_ro(&value, 0).reference
     cell ::= Cell()
-    erased ::= to_virtual#(Store)(&cell)
+    erased ::= Virtual#(Store)(&cell)
 
     put(&erased, $&storage, slot, ~value)
     if previous&== 0 { abort }

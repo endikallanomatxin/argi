@@ -27,8 +27,8 @@ implement Sum#(Provider) (
 )
 main := () -> () {
     provider ::= Provider(7, 9)
-    counter ::= to_virtual#(Counter)($&provider)
-    sum ::= to_virtual#(Sum)(&provider)
+    counter ::= Virtual#(Counter)($&provider)
+    sum ::= Virtual#(Sum)(&provider)
     before ::= Counter#().borrow(&counter)
     if before& != 7 { abort }
     Counter#().set($&counter, 42)

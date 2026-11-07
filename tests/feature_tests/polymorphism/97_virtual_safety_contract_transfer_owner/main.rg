@@ -24,7 +24,7 @@ _impl_forward_Cell := (.self: &Cell, .input: Owned) -> (.value: Owned) {
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
-    forwarder ::= to_virtual#(Forwarder)(&cell)
+    forwarder ::= Virtual#(Forwarder)(&cell)
     value ::= forward(&forwarder, Owned(42))
     if value.value != 42 { status_code = 1 }
     deinit($&value)

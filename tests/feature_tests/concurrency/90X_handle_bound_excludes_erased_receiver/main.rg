@@ -15,10 +15,10 @@ implement ForwardCounter#(Forwarder) (
 read := (.value: &CounterState) -> (.result: Int32) { result = value&.value }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     state: CounterState = (.value = 7)
-    forwarder: Forwarder = (.base = to_virtual#(Counter)($&state))
-    counter ::= to_virtual#(ForwardCounter)($&forwarder)
+    forwarder: Forwarder = (.base = Virtual#(Counter)($&state))
+    counter ::= Virtual#(ForwardCounter)($&forwarder)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &state)))
     _ = unwrap_or_abort(.value = await($&future))
     ForwardCounter#().set(.self = $&counter)

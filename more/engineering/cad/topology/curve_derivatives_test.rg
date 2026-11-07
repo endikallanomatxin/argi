@@ -147,12 +147,12 @@ _check_interval_derivatives := #(.Scalar: Type: Float) (
 }
 
 test model_interval_derivatives_period_crossing_and_orientation_float32 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     [_check_interval_derivatives#(.Scalar: Float32)(.allocator = allocator)!]
 }
 
 test model_interval_derivatives_period_crossing_and_orientation_float64 := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     [_check_interval_derivatives#(.Scalar: Float64)(.allocator = allocator)!]
 }
 

@@ -107,7 +107,7 @@ responsibilities there.
 An `assume` declaration can bind a constructed temporary for its local scope:
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(.allocator = system.page_allocator))
 ```
 
 The allocator is cleaned up at scope exit, and its reference cannot escape

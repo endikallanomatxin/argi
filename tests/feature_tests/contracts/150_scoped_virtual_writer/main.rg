@@ -29,7 +29,7 @@ flush := (.self: $&Sink) -> () { abort }
 main := () -> (.status_code: Int32 = 0) {
 
     sink ::= Sink()
-    erased ::= to_virtual#(.contract: Output)(.value = $&sink)
+    erased ::= Virtual#(.contract: Output)(.value = $&sink)
     match Output#().write_byte($&erased, .byte = 42) { ..ok _ {} ..error _ { abort } }
     Output#().flush($&erased)
     if sink.last != 42 or sink.flushed == false { abort }

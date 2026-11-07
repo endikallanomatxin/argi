@@ -23,7 +23,7 @@ propagate := (.error_tracer: $&Virtual#(ErrorTracer)) -> (
 
 main := () -> (.status_code: Int32) {
     tracer ::= ProbeTracer()
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
     if tracer.count != 2 {

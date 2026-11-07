@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     external_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)

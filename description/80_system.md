@@ -40,7 +40,7 @@ may be passed explicitly or supplied through lexical `assume`. There is no impli
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0) {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
 }
 ```
 

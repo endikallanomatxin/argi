@@ -8,7 +8,7 @@ implement Source#(Box) (.read = read_box)
 read_box := (.self: &Box) -> (.result: Int32) { result = self&.value&.value }
 initialize := (.box: $&Box, .output: $&Virtual#(Source), .value: &Resource) -> () {
     box& = Box(value)
-    output& = to_virtual#(Source)(box)
+    output& = Virtual#(Source)(box)
 }
 main := () -> (.status_code: Int32 = 0) {
     value ::= Resource(42)

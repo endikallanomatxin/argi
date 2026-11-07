@@ -37,6 +37,6 @@ check := (.holder: $&Holder, .succeed: Bool) -> () {
 }
 main := () -> () {
     cell ::= Cell(41, 9)
-    holder ::= Holder(to_virtual#(Source)($&cell))
+    holder ::= Holder(Virtual#(Source)($&cell))
     check($&holder, false)
 }

@@ -16,5 +16,5 @@ implement Releaser#(Manager) (
 
 main := () -> () {
     manager ::= Manager(0)
-    erased ::= to_virtual#(Releaser)(&manager)
+    erased ::= Virtual#(Releaser)(&manager)
 }

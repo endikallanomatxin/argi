@@ -9,7 +9,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     allocator_storage :: CountingAllocator = (.ffi = system.ffi, .deallocations = 0)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match result {
@@ -41,7 +41,7 @@ implement Allocator#(CountingAllocator) (
 
         storage ::= malloc(.size = size, .ffi = self&.ffi)
         address :: UIntNative = storage | convert#(.to: UIntNative)(_)
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

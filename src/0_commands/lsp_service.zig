@@ -2103,7 +2103,7 @@ test "LSP renames scoped operations independently of shared aliases" {
         \\    cell ::= Cell(42)
         \\    first ::= First#(Cell).read(&cell).result
         \\    second ::= Second#(Cell).read(&cell).result
-        \\    virtual ::= to_virtual#(.contract: First)(&cell)
+        \\    virtual ::= Virtual#(.contract: First)(&cell)
         \\    answer ::= _read_virtual(&virtual).result
         \\}
     ;

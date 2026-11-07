@@ -1921,7 +1921,7 @@ pub const Context = struct {
             const callee_value: ?ir.ParameterizedNodeId = if (call.module_qualifier == null and call.contract_type == null) blk: {
                 if (self.parameterizedBinding(name)) |binding|
                     break :blk try self.addResolvedNode(node, self.graph.semantic.parameterized_storage.ir.bindingType(binding), .{ .binding_use = binding });
-                if (self.parameter(name)) |parameter_binding| if (parameter_binding.kind == .definition) {
+                if (self.parameter(name)) |parameter_binding| if (parameter_binding.kind == .definition or parameter_binding.kind == .type) {
                     break :blk try self.addPending(node, .comptime_parameter, &.{}, null, null, .{ .comptime_parameter = parameter_binding.id });
                 };
                 break :blk null;

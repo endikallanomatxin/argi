@@ -27,7 +27,7 @@ main := () -> (.status_code: Int32) {
         .allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)
     ).reference
     slot&= ..counter(
-        .counter = to_virtual#(.contract: Counting)(.value = $&counter)
+        .counter = Virtual#(.contract: Counting)(.value = $&counter)
         .tag     = 1
     )
     match slot&{

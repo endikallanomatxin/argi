@@ -39,8 +39,8 @@ main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(41)
     relay_cell ::= RelayCell(0)
-    relay ::= to_virtual#(Relay)(&relay_cell)
-    source ::= to_virtual#(Source)($&cell)
+    relay ::= Virtual#(Relay)(&relay_cell)
+    source ::= Virtual#(Source)($&cell)
     forwarded ::= forward_again(&relay, ~source)
     old ::= get(&forwarded)
     if old&!= 41 { status_code = 1 }

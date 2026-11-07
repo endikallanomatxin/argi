@@ -103,7 +103,7 @@ test "virtual associated contract resolution propagates allocation failure" {
         \\}
         \\main := () -> () {
         \\    cell: Cell = (.flag = true)
-        \\    source ::= to_virtual#(Source#(Bool))(&cell)
+        \\    source ::= Virtual#(Source#(Bool))(&cell)
         \\    value ::= read_source(&source)
         \\}
     );

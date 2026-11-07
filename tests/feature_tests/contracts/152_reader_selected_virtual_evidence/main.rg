@@ -15,7 +15,7 @@ main := () -> (.status_code: Int32 = 0) {
         ..error _ { abort }
         ..ok next { match next { ..end { abort } ..ok byte { if byte != 7 { abort } } } }
     }
-    erased ::= to_virtual#(.contract: Reader)(.value = $&reader)
+    erased ::= Virtual#(.contract: Reader)(.value = $&reader)
     match Reader#().read_byte($&erased) {
         ..error _ { abort }
         ..ok next { match next { ..end { abort } ..ok byte { if byte != 8 { abort } } } }

@@ -36,7 +36,7 @@ _impl_store_Consuming := (
 }
 
 register_keeping := (.value: $&Keeping) -> () {
-    _ ::= to_virtual#(.contract: OpaqueStorer)(.value = value)
+    _ ::= Virtual#(.contract: OpaqueStorer)(.value = value)
 }
 
 verify := (.status: $&Int32) -> () {
@@ -67,7 +67,7 @@ main := (.system: System) -> (.status_code: Int32) {
             keeping ::= Keeping(.marker = 0)
             register_keeping(.value = $&keeping)
             implementation ::= Consuming(.marker = 0)
-            virtual ::= to_virtual#(.contract: OpaqueStorer)(.value = $&implementation)
+            virtual ::= Virtual#(.contract: OpaqueStorer)(.value = $&implementation)
             source :: Tracked = (.id = 1)
             store(.self = $&virtual, .storage = $&storage, .slot = slot, .source = $&source)
             trusted_opaque_drop#(.t: Tracked)(.slot = slot)

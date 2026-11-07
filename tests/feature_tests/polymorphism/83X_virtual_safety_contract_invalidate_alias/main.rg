@@ -18,7 +18,7 @@ apply_edit := (.editor: &Virtual#(Editor), .target: $&Int32) -> () {
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     target :: Int32 = 41
-    editor ::= to_virtual#(Editor)(&cell)
+    editor ::= Virtual#(Editor)(&cell)
     previous ::= &target
     apply_edit(&editor, $&target)
 

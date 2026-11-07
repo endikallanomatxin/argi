@@ -227,7 +227,7 @@ test "error tracing requires explicit promotion and preserves borrowed lifetimes
     _ = try environment.check(.{ .name = "local_tracer_cannot_escape_in_direct_error", .files = &.{.{ .path = "main.rg", .code =
         \\traced := () -> !!Int32 {
         \\    local: NoopErrorTracer = ()
-        \\    handle ::= to_virtual#(ErrorTracer)($&local)
+        \\    handle ::= Virtual#(ErrorTracer)($&local)
         \\    assume error_tracer ::= $&handle
         \\    result = ..error (.reason = ..invalid_input)
         \\}
@@ -237,7 +237,7 @@ test "error tracing requires explicit promotion and preserves borrowed lifetimes
         \\plain := () -> !Int32 { result = ..error (.reason = ..invalid_input) }
         \\traced := () -> !!Int32 {
         \\    local: NoopErrorTracer = ()
-        \\    handle ::= to_virtual#(ErrorTracer)($&local)
+        \\    handle ::= Virtual#(ErrorTracer)($&local)
         \\    assume error_tracer ::= $&handle
         \\    value ::= plain()!! "context"
         \\    result = ..ok value

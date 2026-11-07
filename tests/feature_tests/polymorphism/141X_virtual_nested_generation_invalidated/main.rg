@@ -45,7 +45,7 @@ main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     target :: Int32 = 41
     previous ::= &target
-    editor ::= to_virtual#(Editor)(&cell)
+    editor ::= Virtual#(Editor)(&cell)
     result ::= apply_edit(&editor, $&target, 1)
 
     match result {

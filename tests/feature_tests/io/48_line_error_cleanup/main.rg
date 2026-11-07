@@ -29,7 +29,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
 
     assume writer ::= $&system.terminal&.stderr
     allocator ::= RecordingAllocator(.ffi = system.ffi)
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     failed_reader ::= Source(.text = "abc", .fail_after = 1)
     match read_line(.allocator = allocator_virtual, .reader = $&failed_reader) {
         ..ok ~_ { abort }
@@ -71,7 +71,7 @@ implement Allocator#(RecordingAllocator) (
             return
         }
         self&.allocations = self&.allocations + 1
-        deallocator: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(.value = self)
+        deallocator: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(.value = self)
         result = ..ok ~trusted_establish_allocation(
             .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )

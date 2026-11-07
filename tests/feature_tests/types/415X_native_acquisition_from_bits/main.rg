@@ -9,7 +9,7 @@ establish(.bytes: Numbers) -> (): CFunction := {
     alias ::= trusted_mutable_reinterpret_reference#(.from: Numbers, .to: AcquiredStorage)(.base = $&local)
     acquired ::= ~alias&
     allocator ::= NoFree()
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     allocation ::= establish_allocation(.storage = ~acquired, .size = 8, .alignment = 8, .deallocator = deallocator)
     slot ::= trusted_establish_allocation_slot#(UInt64)(
         .allocation = &allocation,

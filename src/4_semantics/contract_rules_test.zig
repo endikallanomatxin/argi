@@ -347,10 +347,10 @@ test "contract diagnostic 108X_shared_generic_associated_mismatch" {
         \\    generic ::= Cell#(Int32)(43)
         \\    if consume#(.item: Int32, .n = 2, .T: Direct)(&direct_other, &direct)&!= 42 { abort }
         \\    if consume#(.item: Int32, .n = 3, .T: Cell#(Int32))(&generic_other, &generic)&!= 43 { abort }
-        \\    direct_handle ::= to_virtual#(.contract: Readable#(.item: Int32, .Count = 2, .Other: Direct))(
+        \\    direct_handle ::= Virtual#(.contract: Readable#(.item: Int32, .Count = 2, .Other: Direct))(
         \\        .value = &direct
         \\    )
-        \\    generic_handle ::= to_virtual#(
+        \\    generic_handle ::= Virtual#(
         \\        .contract: Readable#(.Other: Cell#(Int32), .item: Int32, .Count = 2)
         \\    )(.value = &generic)
         \\    if read(&direct_other, &direct_handle)&!= 42 { abort }
@@ -413,10 +413,10 @@ test "contract diagnostic 109X_shared_direct_associated_conflict" {
         \\    generic ::= Cell#(Int32)(43)
         \\    if consume#(.item: Int32, .n = 2, .T: Direct)(&direct_other, &direct)&!= 42 { abort }
         \\    if consume#(.item: Int32, .n = 2, .T: Cell#(Int32))(&generic_other, &generic)&!= 43 { abort }
-        \\    direct_handle ::= to_virtual#(.contract: Readable#(.item: Int32, .Count = 2, .Other: Direct))(
+        \\    direct_handle ::= Virtual#(.contract: Readable#(.item: Int32, .Count = 2, .Other: Direct))(
         \\        .value = &direct
         \\    )
-        \\    generic_handle ::= to_virtual#(
+        \\    generic_handle ::= Virtual#(
         \\        .contract: Readable#(.Other: Cell#(Int32), .item: Int32, .Count = 2)
         \\    )(.value = &generic)
         \\    if read(&direct_other, &direct_handle)&!= 42 { abort }
@@ -471,7 +471,7 @@ test "contract diagnostic 149X_scoped_virtual_mutability" {
         \\
         \\main := () -> () {
         \\    stream ::= Cursor()
-        \\    erased ::= to_virtual#(.contract: Input)(.value = &stream)
+        \\    erased ::= Virtual#(.contract: Input)(.value = &stream)
         \\}
     , null, "a mutable participant receiver requires a mutable concrete reference", false);
 }
@@ -790,7 +790,7 @@ test "contract diagnostic 310X_virtual_scoped_association_mismatch" {
         \\
         \\main := (.system: System) -> () {
         \\    integer ::= Integer(17)
-        \\    erased ::= to_virtual#(.contract: Readable#(.Item: Float64, .Count = 1))(.value = &integer)
+        \\    erased ::= Virtual#(.contract: Readable#(.Item: Float64, .Count = 1))(.value = &integer)
         \\}
     , null, "incompatible associated elements", false);
 }
@@ -834,7 +834,7 @@ test "contract diagnostic 313X_scoped_virtual_association_mismatch" {
         \\main := () -> () {
         \\    other ::= Cell(7)
         \\    source ::= Cell(42)
-        \\    handle ::= to_virtual#(.contract: Readable#(.Other: Cell))(.value = &source)
+        \\    handle ::= Virtual#(.contract: Readable#(.Other: Cell))(.value = &source)
         \\    value ::= Readable#(.Other: Float64).read(&other, &handle)
         \\}
     , null, "incompatible associated elements for the operation interface", false);
@@ -880,7 +880,7 @@ test "contract diagnostic 32X_tuple_virtual" {
         \\
         \\main := () -> () {
         \\    cell ::= Cell()
-        \\    handle ::= to_virtual#(.contract: Pair)(&cell)
+        \\    handle ::= Virtual#(.contract: Pair)(&cell)
         \\}
     , null, "explicit participants require joint virtual evidence", false);
 }
@@ -897,7 +897,7 @@ test "contract diagnostic 333X_virtual_implementation_signature" {
         \\
         \\main := () -> () {
         \\    owner: Owner = (.value = 42)
-        \\    handle ::= to_virtual#(.contract: Open)(.value = &owner)
+        \\    handle ::= Virtual#(.contract: Open)(.value = &owner)
         \\}
     , null, "implementation-defined operation signatures require static selection and cannot be virtualized", false);
 }

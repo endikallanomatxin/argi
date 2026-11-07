@@ -25,7 +25,7 @@ implement Allocator#(CAllocator) (
         match acquired {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~storage {
-                deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+                deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
                     .value = self
                 )
                 allocation ::= establish_allocation(

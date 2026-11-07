@@ -10,6 +10,6 @@ implement Pure#(Provider) (
 )
 main := (.system: System) -> () {
     provider ::= Provider()
-    pure ::= to_virtual#(Pure)(&provider)
+    pure ::= Virtual#(Pure)(&provider)
     _ = Pure#().get(.self = &pure, .ffi = system.ffi)
 }

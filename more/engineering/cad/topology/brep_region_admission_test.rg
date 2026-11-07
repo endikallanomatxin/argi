@@ -76,7 +76,7 @@ _two_circular_holes := #(.Scalar: Type: Float) (
 }
 
 test model_curved_region_multiple_holes := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _two_circular_holes#(.Scalar: Float64)(.allocator = allocator)!
     counts ::= entity_counts(&model)
     [

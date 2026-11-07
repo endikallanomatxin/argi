@@ -10,6 +10,6 @@ implement Counter#(Provider) (
 main := () -> () {
     value :: Int32 = 0
     provider ::= Provider($&value)
-    counter ::= to_virtual#(Counter)($&provider)
+    counter ::= Virtual#(Counter)($&provider)
     set($&counter)
 }

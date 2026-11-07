@@ -9,7 +9,7 @@ forward := (.first: &Int32, .second: $&Int32, .executor: Virtual#(Executor)) -> 
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&provider)
+    executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 42
     forward(.first = &value, .second = $&value, .executor = executor)
 }

@@ -42,8 +42,8 @@ _impl_replace_Manager := (.self: &Manager, .value: $&Int32) -> () { value&= 0 }
 
 main := () -> () {
     manager ::= Manager(0)
-    splitter ::= to_virtual#(Splitter)(&manager)
-    replacer ::= to_virtual#(Replacer)(&manager)
+    splitter ::= Virtual#(Splitter)(&manager)
+    replacer ::= Virtual#(Replacer)(&manager)
     live :: Int32 = 42
     values: Results
 

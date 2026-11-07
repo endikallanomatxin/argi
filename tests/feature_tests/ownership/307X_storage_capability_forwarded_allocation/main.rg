@@ -11,7 +11,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     root ::= erase_reference#(.t: UInt8)(.base = &marker).reference
     address ::= malloc(.size = 8, .ffi = system.ffi).address
     backing :: CAllocator = (.ffi = system.ffi)
-    deallocator ::= to_virtual#(.contract: Deallocator)(.value = $&backing)
+    deallocator ::= Virtual#(.contract: Deallocator)(.value = $&backing)
     first ::= allocation(.address = address, .deallocator = deallocator).allocation
     second ::= allocation(.address = address, .deallocator = deallocator).allocation
 }

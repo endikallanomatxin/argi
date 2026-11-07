@@ -16,6 +16,6 @@ consume := (.input: &Virtual#(Readable#(.item: Int32))) -> (.value: Int32) {
 
 main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.contract: Readable#(.item: Int32))(.value = &box)
+    handle ::= Virtual#(.contract: Readable#(.item: Int32))(.value = &box)
     if consume(.input = &handle).value != 7 { abort }
 }

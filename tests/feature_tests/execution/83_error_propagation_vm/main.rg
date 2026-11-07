@@ -112,7 +112,7 @@ with_context := (
 
 exercise := () -> (.result: Int32) {
     tracer :: CountingTracer = (.count = 0, .context_bytes = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     drops :: Int32 = 0
     recovered ::= propagate(true, $&erased, $&drops) handle error, value {

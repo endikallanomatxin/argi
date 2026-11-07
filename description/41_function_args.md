@@ -68,7 +68,7 @@ variable or evaluate an initializer. It can also prefix a normal variable
 declaration, which declares and enables the binding in one statement:
 
 ```argi
-assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(.allocator = system.page_allocator))
 text ::= String(.capacity = 16)
 ```
 

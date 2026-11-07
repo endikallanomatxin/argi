@@ -21,7 +21,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     refusal ::= RefusingAllocator()
-    refusal_virtual ::= to_virtual#(Allocator)($&refusal)
+    refusal_virtual ::= Virtual#(Allocator)($&refusal)
     array ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 1)!!!
     push(.self = $&array, .value = _pair(.id = 1).value, .allocator = allocator)!!!
     match push(.self = $&array, .value = _pair(.id = 2).value, .allocator = refusal_virtual) {

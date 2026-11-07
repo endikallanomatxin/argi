@@ -15,7 +15,7 @@ implement Operation#(Provider) (
 )
 main := () -> () {
     provider ::= Provider(0)
-    operation ::= to_virtual#(Operation)(&provider)
+    operation ::= Virtual#(Operation)(&provider)
     value :: Int32 = 7
     Operation#().run(&operation, Args($&value), true)
 }

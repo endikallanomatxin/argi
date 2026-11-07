@@ -304,7 +304,7 @@ test "argi init creates executable package" {
     try expectEqualStrings(
         "main := (.system: System) -> (.status_code: Int32 = 0) {\n" ++
             "    assume ffi ::= system.ffi\n" ++
-            "    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)\n" ++
+            "    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))\n" ++
             "    assume writer ::= $&BufferedWriter#(.base_type: File)(\n" ++
             "        .base = $&system.terminal&.stdout,\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
@@ -2654,7 +2654,7 @@ test "argi repl retains acquired virtual witnesses across submissions" {
         \\memory ::= unwrap_or_abort(.value = allocate#(.t: Holder)(.self = $&allocator))
         \\raw ::= raw_pointer#(.t: Holder)(.address = memory.data.address).raw
         \\slot ::= trusted_establish_allocation_slot#(.t: Holder)(.allocation = &memory, .slot = raw, .anchor = memory.anchor, .index = ..some(.value = 0)).reference
-        \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = to_virtual#(.contract: Counting)(.value = $&counter)))
+        \\trusted_opaque_move_in(.storage = $&memory, .destination = slot, .source = Holder(.counter = Virtual#(.contract: Counting)(.value = $&counter)))
         \\Counting#().bump(.self = $&slot&.counter, .amount = 35)
         \\Counting#().read(.self = &slot&.counter).result
         \\

@@ -10,7 +10,7 @@ implement CounterAccess#(Provider) (
     .set = (.self: &Provider) -> () { self&._counter& = 42 }
 )
 make := (.provider: &Provider) -> (.counter: Virtual#(CounterAccess)) {
-    counter = to_virtual#(CounterAccess)(provider)
+    counter = Virtual#(CounterAccess)(provider)
 }
 get := (.counter: Virtual#(CounterAccess)) -> (.result: Int32) {
     result = CounterAccess#().get(.self = &counter)
@@ -19,13 +19,13 @@ set := (.counter: Virtual#(CounterAccess)) -> () {
     CounterAccess#().set(.self = &counter)
 }
 read_provider := (.provider: &Provider) -> (.result: Int32) {
-    counter ::= to_virtual#(CounterAccess)(provider)
+    counter ::= Virtual#(CounterAccess)(provider)
     result = CounterAccess#().get(.self = &counter)
 }
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     provider: Provider = (._counter = $&value)
     counter ::= make(.provider = &provider)

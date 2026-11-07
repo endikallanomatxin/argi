@@ -85,7 +85,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     }
 
     source.position = 0
-    virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
+    virtual ::= Virtual#(.contract: BlockReader)(.value = $&source)
     virtual_output ::= zeroed#([5]UInt8)()
     virtual_base ::= ByteWriter(.bytes = view($&virtual_output))
     virtual_storage ::= zeroed#([2]UInt8)()

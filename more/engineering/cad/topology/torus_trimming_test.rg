@@ -53,7 +53,7 @@ _torus_band := #(.Scalar: Type: Float) (
 }
 
 test model_torus_band_crosses_both_periods_without_seams := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _torus_band#(.Scalar: Float64)(.allocator = allocator)!
     inverse ::= reverse_orientation(&model)!
     counts ::= entity_counts(&model)
@@ -126,7 +126,7 @@ test model_torus_band_crosses_both_periods_without_seams := (.system: System) ->
 }
 
 test model_torus_band_float32_and_admission_errors := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _torus_band#(.Scalar: Float32)(.allocator = allocator)!
     [
         testing.expect(
@@ -176,7 +176,7 @@ test model_torus_band_float32_and_admission_errors := (.system: System) -> !() {
 }
 
 test model_torus_band_periodic_classification_uncertainty := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _torus_band#(.Scalar: Float64)(.allocator = allocator)!
     [
         testing.expect_error(

@@ -7,7 +7,7 @@ fail := (.error_tracer: $&Virtual#(ErrorTracer)) -> !!Void {
 
 main := (.system: System) -> (.status_code: Int32) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= fail()
     add_context_text(.context = "discarded")

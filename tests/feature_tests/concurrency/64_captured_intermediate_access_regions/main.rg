@@ -20,13 +20,13 @@ set := (.counter: Virtual#(CounterAccess)) -> () {
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     holder: Holder = (.counter = $&value)
     other :: Int32 = 9
     other_holder: Holder = (.counter = $&other)
     provider: Provider = (._holder = &holder)
-    counter ::= to_virtual#(CounterAccess)(&provider)
+    counter ::= Virtual#(CounterAccess)(&provider)
     copied ::= forward(.counter = counter)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
     if get(.counter = copied) != 7 { abort }
@@ -34,7 +34,7 @@ main := (.system: System) -> () {
     set(.counter = counter)
     if value != 42 { abort }
     provider._holder = &other_holder
-    fresh ::= to_virtual#(CounterAccess)(&provider)
+    fresh ::= Virtual#(CounterAccess)(&provider)
     set(.counter = fresh)
     if other != 42 { abort }
 }

@@ -20,7 +20,7 @@ implement ErrorTracer#(CountingTracer) (
 main := () -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     tracer :: CountingTracer = (.count = 0, .location = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     captured ::= capture_error_tracer(.location = (.value = 17), .error_tracer = $&erased)
     ErrorTracer#().reset_context(captured)
     if tracer.count != 1 { abort }

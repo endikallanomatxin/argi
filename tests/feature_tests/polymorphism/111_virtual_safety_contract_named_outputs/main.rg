@@ -20,7 +20,7 @@ _impl_get_Cell := (.self: &Cell) -> (.count: Int32, .first: ?&Int32, .second: ?&
 main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(42)
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
     values ::= get(&source)
 
     if values.count != 2 { status_code = 1 }

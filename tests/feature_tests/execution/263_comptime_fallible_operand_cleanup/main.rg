@@ -114,7 +114,7 @@ build_virtual := (
 probe := () -> (.result: Int32) {
     counter :: Counter = Counter()
     tracer :: NoopErrorTracer = (.marker = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     failed ::= build_owned(.counter = $&counter, .fail = true, .tracer = $&erased)
     if counter.drops != 7 { abort }
@@ -130,7 +130,7 @@ probe := () -> (.result: Int32) {
     succeeded_call ::= build_call(.counter = $&counter, .fail = false, .tracer = $&erased)
     if counter.drops != 84 { abort }
     state :: State = ()
-    handle ::= to_virtual#(.contract: Consumer)(.value = $&state)
+    handle ::= Virtual#(.contract: Consumer)(.value = $&state)
     failed_virtual ::= build_virtual(
         .handle = $&handle, .counter = $&counter, .fail = true, .tracer = $&erased
     )

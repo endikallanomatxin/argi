@@ -51,7 +51,7 @@ escape := (.allocator: $&GeneralPurposeAllocator) -> (.result: Allocation) {
 
     drops :: Int32 = 0
     implementation ::= Slots()
-    slots ::= to_virtual#(SlotProtocol)(&implementation)
+    slots ::= Virtual#(SlotProtocol)(&implementation)
 
     {
         storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
@@ -68,7 +68,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     escape(.allocator = allocator_concrete)

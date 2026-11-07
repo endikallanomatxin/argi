@@ -39,7 +39,7 @@ main := (.system: System) -> (.status_code: Int32 = 1) {
     )!!!
     match next(.self = $&zero, .allocator = allocator)!!! { ..none {} ..some ~_ { abort } }
     refusing ::= RefusingAllocator()
-    refusing_virtual ::= to_virtual#(Allocator)($&refusing)
+    refusing_virtual ::= Virtual#(Allocator)($&refusing)
     match DirectoryWalker(
         .self      = system.file_system
         .path      = "tests/feature_tests/system/86_word_count_consumer/data"

@@ -25,7 +25,7 @@ _impl_close_Closing := (.self: $&Closing) -> () {
 _impl_close_Keeping := (.self: $&Keeping) -> () {}
 
 register_keeping := (.value: $&Keeping) -> () {
-    _ ::= to_virtual#(.contract: Closable)(.value = value)
+    _ ::= Virtual#(.contract: Closable)(.value = value)
 }
 
 verify := (.status: $&Int32) -> () {
@@ -43,6 +43,6 @@ main := () -> (.status_code: Int32) {
     keeping :: Keeping = (.value = 0)
     register_keeping(.value = $&keeping)
     value :: Closing = (.value = 0)
-    virtual ::= to_virtual#(.contract: Closable)(.value = $&value)
+    virtual ::= Virtual#(.contract: Closable)(.value = $&value)
     close(.self = $&virtual)
 }

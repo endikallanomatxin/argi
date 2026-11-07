@@ -10,7 +10,7 @@ forward := (.inputs: Inputs, .executor: Virtual#(Executor)) -> () {
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&provider)
+    executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 42
     forward(.inputs = (.read_value = &value, .write_value = $&value), .executor = executor)
 }

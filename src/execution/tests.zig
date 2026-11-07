@@ -2341,7 +2341,7 @@ test "bytecode executes preselected virtual operations" {
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> (.status_code: Int32 = 0) {
         \\    box :: Box = (.value = 42)
-        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    erased ::= Virtual#(.contract: Readable)(.value = &box)
         \\    status_code = Readable#().read(&erased).result
         \\}
     , .{}));
@@ -2863,7 +2863,7 @@ test "bytecode virtual tables verify receiver access descriptors" {
         \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
         \\main := () -> () {
         \\    box :: Box = (.value = 42)
-        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    erased ::= Virtual#(.contract: Readable)(.value = &box)
         \\}
     }};
     var diagnostics = try diag.Diagnostics.init(&a, &files);
@@ -3259,7 +3259,7 @@ test "retained virtual failures preserve the creation unit source" {
     defer session.deinit();
     try session.submitDefinitions("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})\nBox := (.value: Int32)");
     try session.submitDefinitions("fail_read := (.source: &Box) -> (.result: Int32 = 0) { abort }\nimplement Readable#(Box) (.read = fail_read)");
-    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
+    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= Virtual#(.contract: Readable)(.value = &box)");
     try session.submitDefinitions("invoke := (.handle: &Virtual#(Readable)) -> (.result: Int32) { result = Readable#().read(handle).result }");
     try std.testing.expectError(error.ExecutionAborted, session.submitStatements("result ::= invoke(&erased)"));
     try std.testing.expectEqual(@as(usize, 1), session.diagnostics.list.items.len);
@@ -3518,8 +3518,8 @@ test "virtual once analysis deduplicates handles and checks repeated calls" {
         \\main := () -> (.status_code: Int32 = 0) {
         \\    first :: Box = (.value = 42)
         \\    second :: Box = (.value = 7)
-        \\    left ::= to_virtual#(.contract: Readable)(.value = &first)
-        \\    right ::= to_virtual#(.contract: Readable)(.value = &second)
+        \\    left ::= Virtual#(.contract: Readable)(.value = &first)
+        \\    right ::= Virtual#(.contract: Readable)(.value = &second)
         \\    status_code = Readable#().read(&left).result
         \\}
     , .{}));
@@ -3527,8 +3527,8 @@ test "virtual once analysis deduplicates handles and checks repeated calls" {
         \\main := () -> (.status_code: Int32 = 0) {
         \\    first :: Box = (.value = 42)
         \\    second :: Box = (.value = 7)
-        \\    left ::= to_virtual#(.contract: Readable)(.value = &first)
-        \\    right ::= to_virtual#(.contract: Readable)(.value = &second)
+        \\    left ::= Virtual#(.contract: Readable)(.value = &first)
+        \\    right ::= Virtual#(.contract: Readable)(.value = &second)
         \\    status_code = Readable#().read(&left).result
         \\    status_code = Readable#().read(&right).result
         \\}

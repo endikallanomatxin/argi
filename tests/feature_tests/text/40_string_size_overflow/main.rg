@@ -9,7 +9,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         index = index + 1
     }
     failing :: FailingAllocator = (.attempts = 0)
-    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failing_virtual ::= Virtual#(Allocator)($&failing)
     if is(
         .value = string_with_length(.allocator = failing_virtual, .length = maximum), .variant = ..ok
     ) {

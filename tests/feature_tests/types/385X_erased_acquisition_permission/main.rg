@@ -9,9 +9,9 @@ implement Acquire#(Provider) (
 )
 main := (.system: System) -> () {
     provider ::= Provider(system.ffi)
-    factory ::= to_virtual#(Acquire)(&provider)
+    factory ::= Virtual#(Acquire)(&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     acquired ::= Acquire#().acquire(&factory)
     allocation ::= establish_allocation(.storage = ~acquired, .size = 8, .alignment = 8, .deallocator = deallocator)
 }

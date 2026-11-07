@@ -22,7 +22,7 @@ forward_again := (.handle: &Virtual#(Forwarder), .input: $&Int32) -> (.value: $&
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
     input :: Int32 = 41
-    handle ::= to_virtual#(Forwarder)(&cell)
+    handle ::= Virtual#(Forwarder)(&cell)
     reference ::= forward_again(&handle, $&input)
     reference&= 42
 

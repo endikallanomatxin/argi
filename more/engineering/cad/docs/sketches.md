@@ -6,7 +6,7 @@ axes. The default plane is XY; XZ and YZ are also supported, with an optional
 world origin. Specify `Scalar` when constructing the builder for Float32/Float64.
 
 ```rg
-assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
 builder ::= s.SketchBuilder#(Float64)(.plane = ..xy)!
 ```
 

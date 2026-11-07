@@ -26,7 +26,7 @@ context_failure := (.allocator: Virtual#(Allocator), .error_tracer: $&Virtual#(E
 
 main := (.system: System) -> (.status_code: Int32) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= context_failure(.allocator = system.page_allocator)
     match failed {

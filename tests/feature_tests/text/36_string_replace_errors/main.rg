@@ -4,7 +4,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     allocator :: FailingAllocator = (.attempts = 0)
 
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     match replace(.self = "abc", .pattern = "", .replacement = "x", .allocator = allocator_virtual) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..empty_pattern { abort } }

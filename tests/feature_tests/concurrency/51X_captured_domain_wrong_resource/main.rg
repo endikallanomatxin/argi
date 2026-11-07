@@ -11,6 +11,6 @@ main := () -> () {
     value :: Int32 = 7
     other :: Int32 = 0
     provider: Provider = (._counter = $&value, ._other = $&other)
-    counter ::= to_virtual#(CounterAccess)(&provider)
+    counter ::= Virtual#(CounterAccess)(&provider)
     CounterAccess#().set(.self = &counter)
 }

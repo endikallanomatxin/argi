@@ -27,9 +27,9 @@ exercise := (.allocator: Virtual#(Allocator)) -> () {
 
     -- A virtual provider can back another allocator without changing callers.
     arena ::= unwrap_or_abort(ArenaAllocator(.allocator = allocator, .block_size = 64))
-    arena_handle ::= to_virtual#(Allocator)($&arena)
+    arena_handle ::= Virtual#(Allocator)($&arena)
     nested ::= GeneralPurposeAllocator(.allocator = arena_handle)
-    nested_handle ::= to_virtual#(Allocator)($&nested)
+    nested_handle ::= Virtual#(Allocator)($&nested)
     allocation ::= unwrap_or_abort(allocate#(UInt32)($&nested_handle, .count = 8))
     if allocation.size != 32 { abort }
     deinit($&allocation)
@@ -38,11 +38,11 @@ exercise := (.allocator: Virtual#(Allocator)) -> () {
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     -- Both pipe temporaries must survive every allocation made in this scope.
-    assume allocator := GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator := GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     exercise(allocator)
 
     storage ::= GeneralPurposeAllocator(system.page_allocator)
-    handle ::= to_virtual#(Allocator)($&storage)
+    handle ::= Virtual#(Allocator)($&storage)
     exercise(handle)
     if has_live_allocations(&storage).has_live { abort }
 

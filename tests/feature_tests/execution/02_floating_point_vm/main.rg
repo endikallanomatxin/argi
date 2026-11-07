@@ -1,6 +1,6 @@
 probe := () -> (.result: Int32) {
     tracer_storage :: NoopErrorTracer = (.marker = 0)
-    tracer_handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer_storage)
+    tracer_handle ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer_storage)
 
     fraction := 0.123123
     if fraction + fraction != 0.246246 { abort }

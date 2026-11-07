@@ -11,10 +11,10 @@ set := (.counter: Virtual#(CounterAccess)) -> () { CounterAccess#().set(.self = 
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     provider: Provider = (._counter = $&value)
-    counter ::= to_virtual#(CounterAccess)(&provider)
+    counter ::= Virtual#(CounterAccess)(&provider)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
     set(.counter = counter)
 }

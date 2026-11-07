@@ -44,7 +44,7 @@ forward_take := (.slots: &Virtual#(SlotProtocol), .storage: $&Allocation, .slot:
 extract := (.allocator: $&GeneralPurposeAllocator, .drops: $&Int32) -> (.result: Tracked) {
 
     implementation ::= Slots()
-    slots ::= to_virtual#(SlotProtocol)(&implementation)
+    slots ::= Virtual#(SlotProtocol)(&implementation)
     storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&storage, 0).reference
@@ -64,7 +64,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     value ::= escape(allocator_concrete)

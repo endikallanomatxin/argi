@@ -8,7 +8,7 @@ scoped_result := (.executor: Virtual#(Executor)) -> (.result: Int32) {
 
 main := (.system: System) -> () {
     executor ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor)
+    assume executor ::= Virtual#(Executor)($&executor)
     future ::= unwrap_or_abort(.value = async#(double)(.args = (.x = 21)))
     moved ::= ~future
     result ::= unwrap_or_abort(.value = await(.self = $&moved))

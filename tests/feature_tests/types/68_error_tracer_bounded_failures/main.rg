@@ -17,10 +17,10 @@ main := (.system: System) -> (.status_code: Int32) {
         .fail    = false
     )
     allocator_concrete := $&counting_allocator
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= fail()
     i :: UIntNative = 0
@@ -81,9 +81,9 @@ main := (.system: System) -> (.status_code: Int32) {
             -- the ambient allocator would reject every allocation.
             counting_allocator.fail = true
             unbuffered ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [0]UInt8)()))
-            virtual_unbuffered ::= to_virtual#(ErrorTracer)($&unbuffered)
+            virtual_unbuffered ::= Virtual#(ErrorTracer)($&unbuffered)
             writer.count = 0
-            virtual_writer ::= to_virtual#(Writer)($&writer)
+            virtual_writer ::= Virtual#(Writer)($&writer)
             unwrap_or_abort(
                 .value = ErrorTracer#(
                 ).report(.self = $&virtual_unbuffered, .writer = $&virtual_writer)

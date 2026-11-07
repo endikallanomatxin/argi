@@ -6,7 +6,7 @@ implement Deinit#(Owner) (
 work := () -> () { owner: Owner = (.value = 1) }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(work)(.args = ()))
     _ = unwrap_or_abort(.value = await($&future))
 }

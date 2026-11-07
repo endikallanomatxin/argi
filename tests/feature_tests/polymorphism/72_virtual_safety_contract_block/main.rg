@@ -19,7 +19,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(40)
     other :: Int32 = 2
-    source ::= to_virtual#(Source)(&cell)
+    source ::= Virtual#(Source)(&cell)
     values ::= get(&source, &other)
 
     if values.first&+ values.second&!= 42 {

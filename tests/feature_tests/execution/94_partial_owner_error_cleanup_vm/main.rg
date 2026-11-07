@@ -51,7 +51,7 @@ build_partial := (
 probe := () -> (.result: Int32) {
     counter :: Counter = (.count = 0)
     tracer :: NoopErrorTracer = (.marker = 0)
-    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    erased ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
     build_partial(.counter = $&counter, .tracer = $&erased) handle error {
         match error.reason { ..partial_construction_failed {} }

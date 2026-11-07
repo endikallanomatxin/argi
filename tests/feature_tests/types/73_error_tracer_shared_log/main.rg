@@ -49,7 +49,7 @@ report_value := (
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    virtual ::= to_virtual#(ErrorTracer)($&tracer)
+    virtual ::= Virtual#(ErrorTracer)($&tracer)
     assume error_tracer ::= $&virtual
     first ::= fail(.second = false)
     second ::= fail(.second = true)
@@ -80,7 +80,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         return
     }
     other ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    other_virtual ::= to_virtual#(ErrorTracer)($&other)
+    other_virtual ::= Virtual#(ErrorTracer)($&other)
     assume error_tracer ::= $&other_virtual
     propagated ::= forward(.value = ~first)
     report_value(.value = &propagated, .writer = $&writer)
@@ -107,7 +107,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         }
     }
     writer.count = 0
-    writer_virtual ::= to_virtual#(Writer)($&writer)
+    writer_virtual ::= Virtual#(Writer)($&writer)
     unwrap_or_abort(
         .value = ErrorTracer#().report(.self = $&other_virtual, .writer = $&writer_virtual)
     )

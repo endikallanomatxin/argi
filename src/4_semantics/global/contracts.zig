@@ -179,7 +179,7 @@ pub const Resolver = struct {
     ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
         const input = globalizer.globalNode(o, value.input);
-        if (std.mem.eql(u8, module.text(reference.name), "to_virtual")) {
+        if (reference.module_path == null and std.mem.eql(u8, module.text(reference.name), "Virtual")) {
             const node = (try self.makeVirtualize(module_index, reference, input, if (value.expected_type) |ty| globalizer.globalType(o, ty) else null)) orelse return .deferred;
             try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
             return .resolved;
@@ -253,7 +253,7 @@ pub const Resolver = struct {
         expected: ?global_sg.GlobalTypeId,
     ) !?global_sg.Node {
         if (arguments.len > 1) {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "to_virtual accepts one compile-time contract argument" };
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "Virtual", .reason = "Virtual accepts one compile-time contract argument" };
             return null;
         }
         var contract_type: ?global_sg.GlobalTypeId = null;
@@ -261,7 +261,7 @@ pub const Resolver = struct {
             if (!type_arguments.isVirtualContractParameter(self.graph.text(argument.name)) and
                 self.graph.text(argument.name).len != 0)
             {
-                self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "unknown virtual compile-time argument; use .contract: Contract" };
+                self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "Virtual", .reason = "unknown virtual compile-time argument; use .contract: Contract" };
                 return null;
             }
             contract_type = switch (argument.value) {
@@ -278,12 +278,23 @@ pub const Resolver = struct {
                 else => null,
             };
         };
-        const contract_ty = contract_type orelse return null;
+        return self.makeVirtualConstruction(contract_type orelse return null, input, self.sourceFor(module_index, reference.source));
+    }
+
+    /// Virtual is a language-level type constructor. Named construction and
+    /// calls through aliases share the same selected evidence and borrowed
+    /// receiver; no ordinary Init conformance can bypass this boundary.
+    pub fn makeVirtualConstruction(
+        self: *Resolver,
+        contract_ty: global_sg.GlobalTypeId,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+    ) !?global_sg.Node {
         const contract_use = self.contractUse(contract_ty) orelse return null;
         const contract_decl = contract_use.declaration;
         const located = self.findContractDefinition(contract_decl) orelse return null;
         if (located.definition.participants.len != 1 or contract_use.arguments.len != located.definition.parameters.len) {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence requires every associated element to be bound" };
+            self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence requires every associated element to be bound" };
             return null;
         }
 
@@ -291,26 +302,26 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return null,
         };
-        var value: ?global_sg.GlobalNodeId = null;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
-            if (std.mem.eql(u8, self.graph.text(field.name), "value") or
-                (literal.fields.len == 1 and self.graph.text(field.name).len == 0)) value = field.value;
-        }
-        const handle = value orelse return null;
+        if (literal.fields.len != 1) return self.virtualConstructionFailure(source, "Virtual construction requires one reference argument");
+        const argument_field = self.graph.value_fields.items[literal.fields.start];
+        if (self.graph.text(argument_field.name).len != 0 and !std.mem.eql(u8, self.graph.text(argument_field.name), "value"))
+            return self.virtualConstructionFailure(source, "unknown Virtual construction argument; use '.value = reference' or a positional reference");
+        const handle = argument_field.value;
         const handle_ty = self.graph.nodes.items[@intFromEnum(handle)].ty orelse return null;
+        if (self.graph.isTypeUnresolved(handle_ty)) return null;
         const pointer = switch (self.graph.types.items[@intFromEnum(handle_ty)]) {
             .pointer => |pointer| pointer,
-            else => return null,
+            else => return self.virtualConstructionFailure(source, "Virtual construction requires a reference to the concrete value; use '&value' or '$&value'"),
         };
         const concrete = pointer.child;
-        if (!try self.validateVirtualContract(contract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
+        if (!try self.validateVirtualContract(contract_ty, located, source, pointer.mutability)) return null;
         // A matching erased handle already contains the selected methods and
         // their receiver. Copy it through the supplied reference instead of
         // looking for a concrete conformance for the virtual type itself.
         const concrete_type = self.graph.semanticType(concrete);
         if (concrete_type == .virtual and global_types.equal(self.graph, concrete_type.virtual, contract_ty)) {
             return .{
-                .source = self.sourceFor(module_index, reference.source),
+                .source = source,
                 .ty = concrete,
                 .content = .{ .dereference = .{ .pointer = handle, .pointer_type = handle_ty, .ty = concrete } },
             };
@@ -318,11 +329,11 @@ pub const Resolver = struct {
         var evidence_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer evidence_bindings.deinit(self.allocator);
         const evidence = try self.selectConformance(contract_decl, &.{concrete}, &evidence_bindings, 0, null) orelse {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "the concrete type has no selected conformance for this contract" };
+            self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = "the concrete type has no selected conformance for this contract" };
             return null;
         };
         if (!try self.associatedArgumentsMatch(located, &evidence_bindings, contract_use.arguments)) {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "selected conformance has incompatible associated elements for the virtual interface" };
+            self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = "selected conformance has incompatible associated elements for the virtual interface" };
             return null;
         }
 
@@ -357,7 +368,7 @@ pub const Resolver = struct {
             try self.graph.virtual_registry_refs.append(self.allocator, registry);
         }
         const virtual_ty = try self.generics.internType(.{ .virtual = contract_ty });
-        const domains = (try self.resolveStorageDomains(contract_use, concrete, located, self.sourceFor(module_index, reference.source))) orelse return null;
+        const domains = (try self.resolveStorageDomains(contract_use, concrete, located, source)) orelse return null;
         const virtualize: global_sg.GlobalVirtualizeId = @enumFromInt(@as(u32, @intCast(self.graph.virtualizes.items.len)));
         try self.graph.virtualizes.append(self.allocator, .{
             .value = handle,
@@ -366,14 +377,19 @@ pub const Resolver = struct {
             .virtual_type = virtual_ty,
             .methods = .{ .start = method_start, .len = @intCast(methods.items.len) },
             .safety_methods = .{ .start = safety_start, .len = @intCast(methods.items.len) },
-            .source = self.sourceFor(module_index, reference.source),
+            .source = source,
             .domains = domains,
         });
         return .{
-            .source = self.sourceFor(module_index, reference.source),
+            .source = source,
             .ty = virtual_ty,
             .content = .{ .virtualize = virtualize },
         };
+    }
+
+    fn virtualConstructionFailure(self: *Resolver, source: primitives.SourceRef, message: []const u8) ?global_sg.Node {
+        self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = message };
+        return null;
     }
 
     const MethodSelection = union(enum) {
@@ -401,7 +417,7 @@ pub const Resolver = struct {
     }
 
     fn domainFailure(self: *Resolver, source: primitives.SourceRef, message: []const u8) ?[]const primitives.StorageDomainMapping {
-        self.virtual_signature_failure = .{ .source = source, .method_name = "to_virtual", .reason = message };
+        self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = message };
         return null;
     }
 

@@ -13,7 +13,7 @@ implement Allocator#(ShortAllocator) (
 main := (.system: System) -> () {
     backing ::= CAllocator(.ffi = system.ffi)
     provider ::= ShortAllocator($&backing)
-    allocator ::= to_virtual#(Allocator)($&provider)
+    allocator ::= Virtual#(Allocator)($&provider)
     arena ::= unwrap_or_abort(.value = ArenaAllocator(.allocator = allocator, .block_size = 64))
     allocation ::= unwrap_or_abort(.value = allocate_bytes(.self = $&arena, .size = 8, .alignment = 8))
 }

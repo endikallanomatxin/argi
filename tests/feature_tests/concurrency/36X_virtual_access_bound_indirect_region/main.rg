@@ -8,6 +8,6 @@ implement AccessCell#(Provider) (
 main := () -> () {
     value :: Int32 = 0
     provider: Provider = (.value = $&value)
-    cell ::= to_virtual#(AccessCell)($&provider)
+    cell ::= Virtual#(AccessCell)($&provider)
     AccessCell#().set(.self = $&cell)
 }

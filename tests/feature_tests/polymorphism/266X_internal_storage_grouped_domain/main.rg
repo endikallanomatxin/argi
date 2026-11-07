@@ -13,5 +13,5 @@ _impl_clear_Storage := (.self: $&Storage) -> () {}
 
 main := () -> () {
     storage ::= Storage(1, 2)
-    value ::= to_virtual#(Protocol)($&storage)
+    value ::= Virtual#(Protocol)($&storage)
 }

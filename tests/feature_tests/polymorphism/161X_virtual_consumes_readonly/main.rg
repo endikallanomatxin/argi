@@ -20,5 +20,5 @@ _impl_release_Manager := (.self: &Manager, .resource: &Resource) -> () {}
 
 main := () -> () {
     manager ::= Manager(0)
-    releaser ::= to_virtual#(Releaser)(&manager)
+    releaser ::= Virtual#(Releaser)(&manager)
 }

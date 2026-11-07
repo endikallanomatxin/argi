@@ -12,10 +12,10 @@ main := (.system: System) -> (.status_code: Int32) {
         .allocations   = 0
         .deallocations = 0
     )
-    tracker_virtual ::= to_virtual#(Allocator)($&tracker)
+    tracker_virtual ::= Virtual#(Allocator)($&tracker)
     allocator_storage ::= GeneralPurposeAllocator(.allocator = tracker_virtual)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     if tracker.allocations != 0 {
         status_code = 1
@@ -80,7 +80,7 @@ implement Allocator#(TrackingAllocator) (
                 original ::= ~payload
                 self&.allocations = self&.allocations + 1
                 -- Tracking delegates release to the same backing allocator.
-                original.deallocator = to_virtual#(.contract: Deallocator)(.value = self)
+                original.deallocator = Virtual#(.contract: Deallocator)(.value = self)
                 result = ..ok ~original
             }
         }

@@ -56,7 +56,7 @@ make_storage := (.allocator: $&GeneralPurposeAllocator) -> (.value: Allocation) 
 
     storage ::= unwrap_or_abort(allocate#(Tracked)(allocator))
     backend ::= Backend()
-    protocol ::= to_virtual#(SlotProtocol)(&backend)
+    protocol ::= Virtual#(SlotProtocol)(&backend)
 
     {
         drops :: Int32 = 0
@@ -75,7 +75,7 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     storage ::= make_storage(allocator_concrete)

@@ -9,9 +9,9 @@ implement Acquire#(Provider) (
 )
 run := (.system: System, .flag: Bool) -> () {
     provider ::= Provider(system.ffi)
-    factory ::= to_virtual#(Acquire)(&provider)
+    factory ::= Virtual#(Acquire)(&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     acquired :: AcquiredStorage
     if flag {
         acquired = unwrap_or_abort(.value = acquire_heap_storage(.size = 8, .alignment = 8, .ffi = system.ffi))

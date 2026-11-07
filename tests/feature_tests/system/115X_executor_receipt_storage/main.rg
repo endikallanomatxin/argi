@@ -26,7 +26,7 @@ second := () -> (.result: Float32) { result = 42.0 }
 main := (.system: System) -> () {
     base ::= ThreadedExecutor(.ffi = system.ffi)
     provider: MismatchedExecutor = (.base = $&base, .stash = ..none)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= unwrap_or_abort(.value = async#(first)(.args = ()))
     if unwrap_or_abort(.value = await($&future)) != 42 { abort }
     match async#(second)(.args = ()) {

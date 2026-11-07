@@ -7,5 +7,5 @@ implement Operation#(Provider) (
 )
 main := () -> () {
     provider: Provider = (.marker = 0)
-    operation ::= to_virtual#(Operation)(&provider)
+    operation ::= Virtual#(Operation)(&provider)
 }

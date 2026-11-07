@@ -81,7 +81,7 @@ report_trace := #(.WriterType: Type: Writer#(WriterType)) (
     .tracer: $&Virtual#(ErrorTracer), .writer: $&WriterType
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
 
-    virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)
+    virtual_writer ::= Virtual#(.contract: Writer)(.value = writer)
     ErrorTracer#().report(tracer, .writer = $&virtual_writer)!
 
     result = ..ok Void()
@@ -114,7 +114,7 @@ implement#(.Reasons: Type) _ReportError#(ErrorWithTrace#(Reasons)) (
 report_error := #(.Payload: Type, .WriterType: Type: Writer#(WriterType)) (
     .err: &Payload, .writer: $&WriterType
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
-    virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)
+    virtual_writer ::= Virtual#(.contract: Writer)(.value = writer)
     result = _ReportError#(Payload).report(.error = err, .writer = $&virtual_writer)
 }
 
@@ -122,7 +122,7 @@ report_error_message := #(.reasons: Type, .WriterType: Type: Writer#(WriterType)
     .message: &CChar, .err: &ErrorWithTrace#(.reasons: reasons), .writer: $&WriterType
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
 
-    virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)
+    virtual_writer ::= Virtual#(.contract: Writer)(.value = writer)
     write_trace_text(.text = "error: ", .writer = $&virtual_writer)!
     write_trace_text(.text = message, .writer = $&virtual_writer)!
     write_trace_text(.text = "\n", .writer = $&virtual_writer)!

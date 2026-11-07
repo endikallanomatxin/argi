@@ -65,7 +65,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     if direct != 0 { status_code = direct }
     arena :: ArenaAllocator
     arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
-    arena_virtual ::= to_virtual#(Allocator)($&arena)
+    arena_virtual ::= Virtual#(Allocator)($&arena)
     regional ::= exercise(.allocator = arena_virtual).status
     if regional != 0 { status_code = regional }
     reset(.self = $&arena)

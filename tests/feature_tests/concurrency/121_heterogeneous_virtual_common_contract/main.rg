@@ -17,14 +17,14 @@ code_at := (.array: &DynamicArray#(Holder), .index: UIntNative) -> (.result: Int
 write := (.value: $&Int32) -> () { value& = 42 }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     allocator_provider ::= CAllocator(.ffi = system.ffi)
-    assume allocator ::= to_virtual#(Allocator)($&allocator_provider)
+    assume allocator ::= Virtual#(Allocator)($&allocator_provider)
     first ::= First(0)
     second ::= Second(0, 0)
     array ::= unwrap_or_abort(.value = DynamicArray#(Holder)(.capacity = 2))
-    push_assume_capacity(.self = $&array, .value = Holder(to_virtual#(Code)(&first)))
-    push_assume_capacity(.self = $&array, .value = Holder(to_virtual#(Code)(&second)))
+    push_assume_capacity(.self = $&array, .value = Holder(Virtual#(Code)(&first)))
+    push_assume_capacity(.self = $&array, .value = Holder(Virtual#(Code)(&second)))
     value :: Int32 = 0
     future ::= unwrap_or_abort(.value = async#(write)(.args = (.value = $&value)))
     if code_at(&array, 0) != 7 { abort }

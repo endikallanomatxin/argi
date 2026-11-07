@@ -1,7 +1,7 @@
 test sketch_explicit_selection_ignores_other_contours_and_tracks_caller_order := (
     .system : System
 ) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= SketchBuilder#(.Scalar: Float64)(.plane = ..yz)!
     first ::= [builder | rectangle($&_, .center = (-2.0, 0.0), .width = 1.0, .height = 1.0)!]
     ignored ::= builder | circle($&_, .center = (20.0, 0.0), .diameter = 2.0)!
@@ -84,7 +84,7 @@ test sketch_explicit_selection_ignores_other_contours_and_tracks_caller_order :=
 test sketch_explicit_selection_rejects_invalid_inputs_and_keeps_drawing_reusable := (
     .system : System
 ) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     builder ::= SketchBuilder#(.Scalar: Float32)()!
     exterior ::= builder | rectangle($&_, .width = 4.0, .height = 3.0)!
     hole ::= builder | circle($&_, .diameter = 1.0)!

@@ -30,7 +30,7 @@ check := (.system: System) -> (.result: Errable#(Void, logging.LogReasons) = ..o
     )
     error_text ::= view(&error_text_storage)
     if output_text != "INFO: ready\n" or error_text != "WARN: problem\n" { abort }
-    erased ::= to_virtual#(.contract: logging.Logger)(.value = $&logger)
+    erased ::= Virtual#(.contract: logging.Logger)(.value = $&logger)
     logging.Logger#().log(.self = $&erased, .level = ..debug, .message = "discard")!
     null_logger ::= logging.NullLogger()
     logging.Logger#().log(.self = $&null_logger, .level = ..error, .message = "ignored")!

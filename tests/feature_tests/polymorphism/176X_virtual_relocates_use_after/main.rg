@@ -28,7 +28,7 @@ transfer_owned := (.mover: &Virtual#(Mover), .source: $&Resource, .destination: 
 
 main := () -> (.status_code: Int32 = 0) {
     manager ::= Manager(0)
-    mover ::= to_virtual#(Mover)(&manager)
+    mover ::= Virtual#(Mover)(&manager)
 
     if true {
         source ::= Resource(42)

@@ -142,7 +142,7 @@ For example:
 
 ```rg
 main := (.system: System) -> !(.status_code: Int32 = 0) {
-    assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(.allocator = system.page_allocator))
 
     runtime := FiberRuntime(
         .allocator = allocator,
@@ -213,7 +213,7 @@ enable it with lexical `assume`:
 
 ```rg
 main := (.system: System) -> !(.status_code: Int32 = 0) {
-    assume allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(.allocator = system.page_allocator))
 
     runtime := FiberRuntime(
         .allocator = allocator,

@@ -55,7 +55,7 @@ main := () -> (.status_code: Int32 = 0) {
     unwrap_or_abort(.value = send(.self = $&sink, .value = wide))
     if sink.count != 203 or sink.flushes != 0 { status_code = 1 }
     {
-        erased ::= to_virtual#(.contract: Writer)(.value = $&sink)
+        erased ::= Virtual#(.contract: Writer)(.value = $&sink)
         unwrap_or_abort(.value = send(.self = $&erased, .value = 42))
     }
     if sink.count != 205 or sink.flushes != 0 { status_code = 2 }

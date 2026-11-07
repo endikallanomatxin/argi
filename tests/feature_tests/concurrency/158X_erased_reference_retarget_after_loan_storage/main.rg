@@ -10,14 +10,14 @@ read := (.value: &Int32) -> (.result: Int32) { result = value& }
 write := (.value: $&Int32) -> () { value& = 42 }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     original :: Int32 = 7
     provider ::= Provider(&original)
-    source ::= to_virtual#(Source)(&provider)
+    source ::= Virtual#(Source)(&provider)
     reference :: &Int32 = Source#().get(&source)
     later :: Int32 = 0
     later_provider ::= Provider(&later)
-    later_source ::= to_virtual#(Source)(&later_provider)
+    later_source ::= Virtual#(Source)(&later_provider)
     reference = Source#().get(&later_source)
     future ::= unwrap_or_abort(.value = async#(write)(.args = (.value = $&later)))
     _ = read(reference)

@@ -45,10 +45,10 @@ main := () -> (.status_code: Int32 = 0) {
     if consume#(.item: Int32, .n = 2, .T: Cell#(Int32))(&generic_other, &generic)&!= 43 {
         abort
     }
-    direct_handle ::= to_virtual#(
+    direct_handle ::= Virtual#(
         .contract : Readable#(.item: Int32, .Count = 2, .Other: Direct)
     )(.value = &direct)
-    generic_handle ::= to_virtual#(
+    generic_handle ::= Virtual#(
         .contract : Readable#(.Other: Cell#(Int32), .item: Int32, .Count = 2)
     )(.value = &generic)
     if read(&direct_other, &direct_handle)&!= 42 { abort }

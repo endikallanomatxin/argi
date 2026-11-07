@@ -14,7 +14,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     storage ::= unwrap_or_abort(
         .value = acquire_heap_storage(.size = 32, .alignment = 16, .ffi = system.ffi)
     )
-    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
         .value = $&tracker
     )
     allocation ::= establish_allocation(

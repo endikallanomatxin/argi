@@ -6,6 +6,6 @@ Cell := (.value: Int32)
 implement Counter#(Cell) (.state = 42, .set = (.self: $&Cell) -> () { self&.value = 42 })
 main := () -> () {
     cell ::= Cell(0)
-    handle ::= to_virtual#(Counter)($&cell)
+    handle ::= Virtual#(Counter)($&cell)
     set($&handle)
 }

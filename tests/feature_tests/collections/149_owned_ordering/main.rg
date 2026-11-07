@@ -25,7 +25,7 @@ main := () -> (.status_code: Int32 = 1) {
 
     storage ::= CAllocator(.ffi = ffi)
     allocator_concrete := $&storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
     order ::= PairOrder()
     items ::= [DynamicArray#(.t: Pair)(.capacity = 3) | unwrap_or_abort(_)]
@@ -85,7 +85,7 @@ main := () -> (.status_code: Int32 = 1) {
     deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
-    refusal_virtual ::= to_virtual#(Allocator)($&refusal)
+    refusal_virtual ::= Virtual#(Allocator)($&refusal)
     bounded ::= [
         PriorityQueue#(.t: Pair, .order: PairOrder)(
             .order = &order, .allocator = allocator, .capacity = 1

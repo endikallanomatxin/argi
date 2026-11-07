@@ -14,6 +14,6 @@ implement Runner#(Box) (
 )
 main := () -> () {
     box ::= Box(.callback = zeroed#(Pure)())
-    runner ::= to_virtual#(Runner)(&box)
+    runner ::= Virtual#(Runner)(&box)
     _ = runner
 }

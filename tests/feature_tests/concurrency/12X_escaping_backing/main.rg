@@ -7,7 +7,7 @@ start := (.executor: Virtual#(Executor)) -> (.result: Future#(Void)) {
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&provider)
+    assume executor ::= Virtual#(Executor)($&provider)
     future ::= start()
     _ = unwrap_or_abort(.value = await($&future))
 }

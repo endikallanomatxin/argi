@@ -2,7 +2,7 @@
 -- Vertices and edges have explicit identities. Closing a triangular boundary
 -- creates an open surface, so publication explicitly permits an open model.
 test usage_model_builder := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     -- Declare shared entities before assembling their oriented boundary.
     builder ::= t.ModelBuilder()!
     a ::= builder | t.add_vertex($&_, (0.0, 0.0, 0.0))!

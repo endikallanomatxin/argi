@@ -11,5 +11,5 @@ read := (.self: &Virtual#(Counter)) -> (.result: Int32) {
     result = Counter#().get(self)
 }
 make := (.self: &Provider) -> (.result: Virtual#(Counter)) {
-    result = to_virtual#(Counter)(self)
+    result = Virtual#(Counter)(self)
 }

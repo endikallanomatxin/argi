@@ -3,7 +3,7 @@ semver := import ("semver")
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     text ::= unwrap_or_abort(.value = format(.value = "1.2.3", .allocator = allocator_virtual)).result
     version ::= unwrap_or_abort(.value = semver.parse(.text = view(.self = &text).view)).result
     deinit(.self = $&text)

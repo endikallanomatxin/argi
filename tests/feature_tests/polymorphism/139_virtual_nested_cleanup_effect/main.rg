@@ -22,7 +22,7 @@ _impl_run_Cell := (.self: &Cell, .target: $&Int32) -> () {
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
-    action ::= to_virtual#(Action)(&cell)
+    action ::= Virtual#(Action)(&cell)
     value :: Int32 = 0
 
     run(&action, $&value)

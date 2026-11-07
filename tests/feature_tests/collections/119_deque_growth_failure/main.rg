@@ -35,10 +35,10 @@ implement Deinit#(Tracked) (
 main := (.system: System) -> (.status_code: Int32 = 1) {
     assume writer ::= $&system.terminal&.stderr
     tracer ::= CountingTracer()
-    trace_handle ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    trace_handle ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&trace_handle
     allocator :: RecordingAllocator = (.ffi = system.ffi)
-    allocator_virtual ::= to_virtual#(Allocator)($&allocator)
+    allocator_virtual ::= Virtual#(Allocator)($&allocator)
     queue ::= Deque#(.t: Tracked)(.capacity = 2, .allocator = allocator_virtual)!!!
     push_back(.self = $&queue, .value = Tracked(.id = 1), .allocator = allocator_virtual)!!!
     push_back(.self = $&queue, .value = Tracked(.id = 2), .allocator = allocator_virtual)!!!
@@ -99,7 +99,7 @@ implement Allocator#(RecordingAllocator) (
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

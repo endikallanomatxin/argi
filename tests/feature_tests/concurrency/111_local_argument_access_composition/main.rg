@@ -13,7 +13,7 @@ implement Operation#(Provider) (
 )
 main := () -> () {
     provider ::= Provider(0)
-    operation ::= to_virtual#(Operation)(&provider)
+    operation ::= Virtual#(Operation)(&provider)
     args ::= Args(7)
     if Operation#().run(&operation, args) != 42 { abort }
     if args.value != 7 { abort }

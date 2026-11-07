@@ -1,5 +1,5 @@
 test model_tetrahedron_topology := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [4]g.Point#(Float64) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
@@ -45,7 +45,7 @@ test model_tetrahedron_topology := (.system: System) -> !() {
 }
 
 test model_cube_float32_quad_faces := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     points: [8]g.Point#(Float32) = (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

@@ -14,5 +14,5 @@ implement Work#(Provider) (
 )
 main := () -> () {
     provider: Provider = (.marker = 0)
-    work ::= to_virtual#(Work)(&provider)
+    work ::= Virtual#(Work)(&provider)
 }

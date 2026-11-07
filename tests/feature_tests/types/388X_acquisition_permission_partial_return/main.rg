@@ -16,9 +16,9 @@ choose := (.system: System, .flag: Bool, .factory: Virtual#(Acquire)) -> (.resul
 }
 main := (.system: System) -> () {
     provider ::= Provider(system.ffi)
-    factory ::= to_virtual#(Acquire)(&provider)
+    factory ::= Virtual#(Acquire)(&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     acquired ::= choose(.system = system, .flag = false, .factory = factory)
     allocation ::= establish_allocation(.storage = ~acquired, .size = 8, .alignment = 8, .deallocator = deallocator)
 }

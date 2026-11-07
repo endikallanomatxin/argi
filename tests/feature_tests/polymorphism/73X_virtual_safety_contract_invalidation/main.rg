@@ -20,5 +20,5 @@ _impl_reset_Cell := (.self: $&Cell) -> () {
 
 main := () -> () {
     cell ::= Cell(Resource(42))
-    handle ::= to_virtual#(Resettable)($&cell)
+    handle ::= Virtual#(Resettable)($&cell)
 }

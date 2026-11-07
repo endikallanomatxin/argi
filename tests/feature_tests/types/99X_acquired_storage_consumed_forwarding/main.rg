@@ -16,7 +16,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
-    deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+    deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
         .value = $&allocator
     )
     storage ::= consume_and_return(.ffi = system.ffi, .deallocator = deallocator).result

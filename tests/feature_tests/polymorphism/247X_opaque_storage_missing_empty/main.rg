@@ -10,5 +10,5 @@ _impl_drain_Cell := (.self: &Cell, .storage: $&Allocation) -> () {}
 
 main := () -> () {
     cell ::= Cell()
-    _ ::= to_virtual#(Drain)(&cell)
+    _ ::= Virtual#(Drain)(&cell)
 }

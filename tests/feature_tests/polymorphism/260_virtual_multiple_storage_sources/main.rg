@@ -48,7 +48,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     drops :: Int32 = 0
@@ -65,7 +65,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         trusted_opaque_move_in#(Tracked, Allocation)($&first, first_slot, Tracked($&drops))
         trusted_opaque_move_in#(Tracked, Allocation)($&second, second_slot, Tracked($&drops))
         implementation ::= Slots()
-        slots ::= to_virtual#(SlotProtocol)(&implementation)
+        slots ::= Virtual#(SlotProtocol)(&implementation)
 
         pair ::= take_pair(&slots, $&first, first_slot, $&second, second_slot)
         deinit($&first)

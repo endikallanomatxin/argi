@@ -1,6 +1,6 @@
 main := (.system: System) -> () {
     allocator_provider ::= CAllocator(.ffi = system.ffi)
-    assume allocator ::= to_virtual#(Allocator)($&allocator_provider)
+    assume allocator ::= Virtual#(Allocator)($&allocator_provider)
     text ::= unwrap_or_abort(.value = String(.length = 1))
     array ::= unwrap_or_abort(.value = DynamicArray#(String)(.capacity = 1))
     push_assume_capacity(.self = $&array, .value = ~text)

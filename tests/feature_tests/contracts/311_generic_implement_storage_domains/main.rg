@@ -18,6 +18,6 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     number :: Int32 = 42
     cell ::= Cell#(Int32)(.storage = &number, .marker = 1)
     if get(.self = &cell).value&!= 42 { status_code = 1 }
-    erased ::= to_virtual#(.contract: Source)(.value = &cell)
+    erased ::= Virtual#(.contract: Source)(.value = &cell)
     if get(.self = &erased).value&!= 42 { status_code = 2 }
 }

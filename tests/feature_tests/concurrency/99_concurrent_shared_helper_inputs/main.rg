@@ -6,7 +6,7 @@ work := (.read_value: &Int32, .write_value: &Int32, .executor: Virtual#(Executor
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&provider)
+    executor ::= Virtual#(Executor)($&provider)
     value :: Int32 = 42
     work(.read_value = &value, .write_value = &value, .executor = executor)
 }

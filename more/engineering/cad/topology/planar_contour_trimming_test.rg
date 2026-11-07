@@ -110,7 +110,7 @@ _mixed_planar_face := #(.Scalar: Type: Float) (
 }
 
 test model_mixed_planar_face_with_hole := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _mixed_planar_face#(.Scalar: Float64)(.allocator = allocator)!
     inverse ::= reverse_orientation(&model)!
     rotated ::= [
@@ -227,7 +227,7 @@ test model_mixed_planar_face_with_hole := (.system: System) -> !() {
 }
 
 test model_mixed_planar_face_float32_and_rejections := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     model ::= _mixed_planar_face#(.Scalar: Float32)(.allocator = allocator)!
     [
         testing.expect(

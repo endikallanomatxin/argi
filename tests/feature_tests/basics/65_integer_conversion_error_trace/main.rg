@@ -12,7 +12,7 @@ checked_to_int8 := #(.t: Type) (.value: t, .error_tracer: $&Virtual#(ErrorTracer
 
 main := () -> (.status_code: Int32 = 0) {
     tracer ::= ProbeTracer()
-    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= Virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     valid: Int64 = 127
     if unwrap_or_abort(.value = checked_to_int8(.value = valid)) != 127 or tracer.count != 0 {

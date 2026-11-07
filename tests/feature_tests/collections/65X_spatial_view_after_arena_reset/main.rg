@@ -18,7 +18,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     assume ffi := system.ffi
     arena :: ArenaAllocator
     arena = unwrap_or_abort(.value = ArenaAllocator(.allocator = system.page_allocator))
-    arena_virtual ::= to_virtual#(Allocator)($&arena)
+    arena_virtual ::= Virtual#(Allocator)($&arena)
     array ::= unwrap_or_abort(
         .value = DynamicArray#(.t: UIntNative)(.allocator = arena_virtual, .capacity = 2)
     )

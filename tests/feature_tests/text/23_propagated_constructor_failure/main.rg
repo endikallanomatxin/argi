@@ -4,7 +4,7 @@ main := () -> (.status_code: Int32 = 0) {
 
     failing :: FailingAllocator = (.attempts = 0)
 
-    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failing_virtual ::= Virtual#(Allocator)($&failing)
     string_result ::= String(.allocator = failing_virtual, .length = 1)
     match string_result {
         ..ok _ { status_code = 1 }

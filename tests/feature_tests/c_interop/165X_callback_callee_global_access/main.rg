@@ -14,6 +14,6 @@ implement Runner#(Int32) (
 )
 main := () -> () {
     provider :: Int32 = 0
-    runner ::= to_virtual#(Runner)(&provider)
+    runner ::= Virtual#(Runner)(&provider)
     _ = runner
 }

@@ -32,7 +32,7 @@ apply_edit := (.source: $&Virtual#(Source), .succeed: Bool) -> (.result: ?Int32)
 main := () -> (.status_code: Int32 = 0) {
 
     cell ::= Cell(41, 9)
-    source ::= to_virtual#(Source)($&cell)
+    source ::= Virtual#(Source)($&cell)
     previous ::= get(&source)
     other ::= &cell.other
     result ::= apply_edit($&source, true)

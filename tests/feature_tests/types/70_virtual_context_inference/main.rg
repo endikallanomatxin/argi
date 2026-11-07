@@ -21,14 +21,14 @@ record := #(.t: Type) (.value: t, .counter: $&UIntNative) -> () {
 }
 
 in_generic := #(.t: Type) (.value: $&t) -> () {
-    handle :: Virtual#(Counter) = to_virtual(.value = value)
+    handle :: Virtual#(Counter) = Virtual(.value = value)
     bump(.self = $&handle)
 }
 
 run := (.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
     assume error_tracer: $&Virtual#(ErrorTracer) = [
         FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
-        | to_virtual($&_)
+        | Virtual($&_)
         | $&_
     ]
     add_context_text(.context = "inferred virtual tracer")
@@ -54,7 +54,7 @@ implement Init#(FailTracer, FailTracerInitArgs) (
 )
 
 failed_init := () -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) {
-    assume error_tracer: $&Virtual#(ErrorTracer) = [FailTracer()! | to_virtual($&_) | $&_]
+    assume error_tracer: $&Virtual#(ErrorTracer) = [FailTracer()! | Virtual($&_) | $&_]
     result = ..ok Void()
 }
 
@@ -69,7 +69,7 @@ main := (.system: System) -> (.status_code: Int32) {
     if true {
         assume counter: $&Virtual#(Counter) = [
             Probe(.counter = $&count)
-            | to_virtual($&_)
+            | Virtual($&_)
             | $&_
         ]
         bump(.self = counter)
@@ -85,10 +85,10 @@ main := (.system: System) -> (.status_code: Int32) {
     }
     if true {
         probe ::= Probe(.counter = $&count)
-        handle :: Virtual#(Counter) = to_virtual($&probe)
+        handle :: Virtual#(Counter) = Virtual($&probe)
         bump(.self = $&handle)
         in_generic(.value = $&probe)
-        direct ::= to_virtual#(Counter)($&probe)
+        direct ::= Virtual#(Counter)($&probe)
         bump(.self = $&direct)
         pointer ::= $&probe
         collapsed ::= pointer | $&_

@@ -1,7 +1,7 @@
 -- Use the generated end cap as the support for another sketch. These are two
 -- separate closed models: placement does not imply a boolean union or attachment.
 test usage_sketch_on_generated_cap := (.system: System) -> !() {
-    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | to_virtual#(Allocator)($&_)
+    assume allocator ::= GeneralPurposeAllocator(system.page_allocator) | Virtual#(Allocator)($&_)
     base_frame ::= [
         g.frame_from_directions#(Float64)(
             .origin      = (0.0, 0.0, 0.0)

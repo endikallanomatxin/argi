@@ -70,7 +70,7 @@ require_reasons := #(
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume error_tracer ::= $&noop_error_tracer
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator := to_virtual#(Allocator)($&allocator_storage)
+    assume allocator := Virtual#(Allocator)($&allocator_storage)
     policy ::= Policy(1)
     source ::= unwrap_or_abort(HashMap#(.key: Key, .value: Value, .policy: Policy)(.policy = ~policy))
     key ::= Key(7)
@@ -79,7 +79,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     require_reasons(&source)
 
     failing ::= FailAllocator()
-    failing_virtual ::= to_virtual#(Allocator)($&failing)
+    failing_virtual ::= Virtual#(Allocator)($&failing)
     outcome_allocation ::= copy(.self = &source, .allocator = failing_virtual)
     match outcome_allocation {
         ..ok ~map { abort }

@@ -26,7 +26,7 @@ create := (.factory: &Virtual#(Factory)) -> (.value: Owned) {
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
-    factory ::= to_virtual#(Factory)(&cell)
+    factory ::= Virtual#(Factory)(&cell)
     value ::= create(&factory)
     if value.value != 42 { status_code = 1 }
     deinit($&value)

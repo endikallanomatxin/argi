@@ -16,9 +16,9 @@ perform := (.counter: Virtual#(CounterAccess), .value: $&Int32, .executor: Virtu
 }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    executor ::= to_virtual#(Executor)($&executor_provider)
+    executor ::= Virtual#(Executor)($&executor_provider)
     value :: Int32 = 7
     provider: Provider = (._counter = $&value)
-    counter ::= to_virtual#(CounterAccess)(&provider)
+    counter ::= Virtual#(CounterAccess)(&provider)
     perform(.counter = counter, .value = $&value, .executor = executor)
 }

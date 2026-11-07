@@ -24,13 +24,13 @@ main := (.system: System) -> () {
 
     allocator_concrete := $&GeneralPurposeAllocator(system.page_allocator)
 
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
 
     assume allocator := virtual_allocator
     drops :: Int32 = 0
     storage ::= unwrap_or_abort(allocate_bytes($&allocator, .size = 1))
     cell ::= Cell()
-    erased ::= to_virtual#(Store)(&cell)
+    erased ::= Virtual#(Store)(&cell)
     put(&erased, $&storage, Tracked($&drops))
     if drops != 1 { abort }
 }

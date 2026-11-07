@@ -16,15 +16,15 @@ implement Counter#(Forwarder) (
     .set = (.self: &Forwarder) -> () { Counter#().set(&self&.base) }
 )
 make := (.self: &Forwarder) -> (.result: Virtual#(Counter)) {
-    result = to_virtual#(Counter)(self)
+    result = Virtual#(Counter)(self)
 }
 main := () -> () {
     a :: Int32 = 7
     b :: Int32 = 9
     first: Provider = (._counter = $&a)
     second: Provider = (._counter = $&b)
-    wrapper ::= Forwarder(to_virtual#(Counter)(&first))
+    wrapper ::= Forwarder(Virtual#(Counter)(&first))
     outer ::= make(&wrapper)
-    wrapper.base = to_virtual#(Counter)(&second)
+    wrapper.base = Virtual#(Counter)(&second)
     _ = Counter#().get(&outer)
 }

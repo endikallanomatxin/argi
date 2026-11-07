@@ -42,7 +42,7 @@ forward := (.editor: &Virtual#(Editor), .target: $&Int32, .other: $&Int32) -> (.
 
 main := () -> (.status_code: Int32 = 0) {
     cell ::= Cell(0)
-    editor ::= to_virtual#(Editor)(&cell)
+    editor ::= Virtual#(Editor)(&cell)
     target :: Int32 = 41
     other :: Int32 = 54
     previous ::= &target

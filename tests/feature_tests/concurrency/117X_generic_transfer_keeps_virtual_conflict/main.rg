@@ -33,12 +33,12 @@ forward_again := #(.T: Type) (
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 main := (.system: System) -> () {
     executor_provider ::= ThreadedExecutor(.ffi = system.ffi)
-    assume executor ::= to_virtual#(Executor)($&executor_provider)
+    assume executor ::= Virtual#(Executor)($&executor_provider)
     relay_provider ::= RelayProvider#(Holder)(0)
-    relay ::= to_virtual#(Relay#(.Item: Holder))(&relay_provider)
+    relay ::= Virtual#(Relay#(.Item: Holder))(&relay_provider)
     value :: Int32 = 7
     counter_provider: CounterProvider = (.value = $&value)
-    holder: Holder = (.counter = to_virtual#(Counter)(&counter_provider))
+    holder: Holder = (.counter = Virtual#(Counter)(&counter_provider))
     forwarded ::= forward_again#(Holder)(.relay = relay, .source = ~holder)
     future ::= unwrap_or_abort(.value = async#(read)(.args = (.value = &value)))
     Counter#().set(&forwarded.counter)

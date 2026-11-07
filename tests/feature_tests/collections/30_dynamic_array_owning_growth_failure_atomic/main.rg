@@ -55,11 +55,11 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     allocator_concrete := $&allocator_storage
-    virtual_allocator ::= to_virtual#(Allocator)(allocator_concrete)
+    virtual_allocator ::= Virtual#(Allocator)(allocator_concrete)
     assume allocator := virtual_allocator
 
     backing ::= FailSecondAllocator(.ffi = system.ffi)
-    backing_virtual ::= to_virtual#(Allocator)($&backing)
+    backing_virtual ::= Virtual#(Allocator)($&backing)
     array ::= unwrap_or_abort(
         .value = DynamicArray#(.t: Tracked)(.allocator = backing_virtual, .capacity = 1)
     )
@@ -130,7 +130,7 @@ implement Allocator#(FailSecondAllocator) (
         }
         self&.allocations = self&.allocations + 1
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        deallocator :: Virtual#(Deallocator) = to_virtual#(.contract: Deallocator)(
+        deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(

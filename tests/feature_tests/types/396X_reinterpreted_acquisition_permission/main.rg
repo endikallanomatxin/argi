@@ -1,6 +1,6 @@
 main := (.system: System) -> () {
     allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(Deallocator)($&allocator)
+    deallocator ::= Virtual#(Deallocator)($&allocator)
     bytes :: [3]UIntNative = (8, 8, 8)
     alias ::= trusted_mutable_reinterpret_reference#(.from: [3]UIntNative, .to: AcquiredStorage)(.base = $&bytes)
     forged ::= ~alias&
