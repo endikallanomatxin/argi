@@ -146,6 +146,7 @@ pub const SafetyPrimitive = enum {
     none,
     establish_inherited_reference,
     establish_inherited_storage,
+    require_storage_capability,
     establish_allocation,
     native_allocated_storage,
     acquisition_subaddress,

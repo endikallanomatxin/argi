@@ -248,6 +248,27 @@ Aliases of one acquisition share its state. Separate successful acquisitions
 create separate authorizations, including acquisitions performed by repeated
 calls to the same function.
 
+Normal receipt-based establishment also requires evidence that authorization is
+present, independently of its consumption count. A zero-use precondition can
+require an available acquisition without consuming it. An origin identifier,
+an integer address, ownership or lifetime alone cannot satisfy that requirement.
+Ordinary helpers infer and check it at their callers, including through reference
+fields. A virtual contract cannot silently erase an implementation's requirement.
+
+When a returned value has several possible sources, every represented source
+must provide authorization before the result can establish storage. One branch
+with a genuine acquisition cannot certify another branch carrying only erased
+ownership evidence. Two genuine alternative acquisitions remain usable; distinct
+success/error outcomes retain their own guarantees. These checks preserve the
+existing permission rather than minting a new permission at an abstraction boundary.
+
+`transfers` can preserve a complete input acquisition receipt through a virtual
+forwarder. An abstract factory declaring only `owns(result)` does not publish a
+fresh acquisition guarantee, even if its hidden implementation happens to acquire
+memory. Such an output is conservatively rejected by checked establishment.
+Providing a reusable verified guarantee for that factory remains separate work;
+this restriction is not a proof of physical containment for arbitrary references.
+
 Uses on mutually exclusive branches are alternatives, even when the caller
 supplies aliases for their inputs. Loops and recursive forwarding must not allow
 one authorization to be consumed repeatedly.

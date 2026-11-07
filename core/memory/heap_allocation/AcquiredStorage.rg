@@ -90,3 +90,8 @@ acquire_page_storage := (.memory: $&Memory, .size: UIntNative, .alignment: UIntN
         }
     }
 }
+
+-- A static resource precondition: neither a raw address nor a consumed origin
+-- can stand in for an available acquisition authorization. No runtime test or
+-- new permission is produced by this compiler-checked operation.
+_require_storage_capability := (.address: UIntNative) -> () {}

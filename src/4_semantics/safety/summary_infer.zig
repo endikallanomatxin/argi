@@ -1111,7 +1111,7 @@ pub const Infer = struct {
         const counts = if (capability_exits) |exit| exit.counts.items else capability_flow.counts.items;
         var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
         for (counts) |count| if (count.source == .input) {
-            try capability_uses.append(.{ .target = count.source.input, .minimum = count.minimum, .maximum = count.maximum });
+            try capability_uses.append(.{ .target = count.source.input, .minimum = count.minimum, .maximum = count.maximum, .requires_authorization = count.requires_authorization });
         };
         var capability_conflicts = std.array_list.Managed(facts.StorageCapabilityConflict).init(self.allocator);
         const conflicts = if (capability_exits) |exit| exit.conflicts.items else capability_flow.conflicts.items;
@@ -1560,8 +1560,10 @@ pub const Infer = struct {
                     try self.inferBlock(function_id, statement.then_block, outputs);
                     try alternatives.retain(self, outputs);
                     alternatives.reset(outputs);
-                    if (statement.else_block) |child| try self.inferBlock(function_id, child, outputs);
-                    try alternatives.retain(self, outputs);
+                    if (statement.else_block) |child| {
+                        try self.inferBlock(function_id, child, outputs);
+                        try alternatives.retain(self, outputs);
+                    } else try alternatives.retain(self, outputs);
                     alternatives.finish(outputs);
                 },
                 inline .while_statement, .for_statement => |statement| {
@@ -1605,7 +1607,7 @@ pub const Infer = struct {
 
     const CapabilitySource = union(enum) { input: facts.InputPath, fresh: facts.FreshEffectSource };
     const CapabilityConflict = struct { first: CapabilitySource, second: CapabilitySource };
-    const CapabilityCount = struct { source: CapabilitySource, minimum: u2, maximum: u2 };
+    const CapabilityCount = struct { source: CapabilitySource, minimum: u2, maximum: u2, requires_authorization: bool = false };
     const CapabilityFlow = struct {
         conflicts: std.array_list.Managed(CapabilityConflict),
         counts: std.array_list.Managed(CapabilityCount),
@@ -1656,6 +1658,14 @@ pub const Infer = struct {
         try flow.counts.append(.{ .source = source, .minimum = minimum, .maximum = maximum });
     }
 
+    fn require_capability_source(self: *Infer, flow: *CapabilityFlow, source: CapabilitySource) !void {
+        for (flow.counts.items) |*count| if (self.capability_source_equal(count.source, source)) {
+            count.requires_authorization = true;
+            return;
+        };
+        try flow.counts.append(.{ .source = source, .minimum = 0, .maximum = 0, .requires_authorization = true });
+    }
+
     fn join_capability_flows(self: *Infer, output: *CapabilityFlow, left: *const CapabilityFlow, right: *const CapabilityFlow) !void {
         var joined = CapabilityFlow.init(self.allocator);
         errdefer joined.deinit();
@@ -1665,6 +1675,7 @@ pub const Infer = struct {
             for (right.counts.items) |other| if (self.capability_source_equal(count.source, other.source)) {
                 next.minimum = @min(count.minimum, other.minimum);
                 next.maximum = @max(count.maximum, other.maximum);
+                next.requires_authorization = count.requires_authorization or other.requires_authorization;
                 found = true;
                 break;
             };
@@ -1690,7 +1701,7 @@ pub const Infer = struct {
         entries = right.bindings.iterator();
         while (entries.next()) |entry| {
             const value = if (joined.bindings.get(entry.key_ptr.*)) |previous|
-                try self.mergeValueEffects(previous, entry.value_ptr.*)
+                try self.joinStorageAlternatives(previous, entry.value_ptr.*)
             else
                 entry.value_ptr.*;
             try joined.bindings.put(entry.key_ptr.*, value);
@@ -1846,7 +1857,10 @@ pub const Infer = struct {
         for (incoming.counts.items) |count| for (flow.counts.items) |previous| {
             if (previous.maximum != 0 and count.maximum != 0) try self.record_capability_conflict(flow, previous.source, count.source);
         };
-        for (incoming.counts.items) |count| try self.add_capability_count(flow, count.source, count.minimum, count.maximum);
+        for (incoming.counts.items) |count| {
+            try self.add_capability_count(flow, count.source, count.minimum, count.maximum);
+            if (count.requires_authorization) try self.require_capability_source(flow, count.source);
+        }
         for (incoming.conflicts.items) |pair| try self.record_capability_conflict(flow, pair.first, pair.second);
     }
 
@@ -1876,6 +1890,12 @@ pub const Infer = struct {
 
     fn infer_capability_call(self: *Infer, function: graph_mod.GlobalFunctionId, callee: graph_mod.GlobalFunctionId, arguments: []const graph_mod.ValueField, flow: *CapabilityFlow) !void {
         const primitive = self.graph.function(callee).safety_primitive;
+        if (primitive_transfer.forPrimitive(primitive).requires_storage_input) |index| {
+            if (index < arguments.len) {
+                const sources = try self.capability_sources(try self.capability_value(function, arguments[index].value, flow));
+                for (sources) |source| try self.require_capability_source(flow, source);
+            }
+        }
         if (primitive_transfer.forPrimitive(primitive).consumes_storage_input) |index| {
             if (index < arguments.len) try self.consume_capability_effect(flow, try self.capability_value(function, arguments[index].value, flow), 1, 1);
             return;
@@ -1897,6 +1917,7 @@ pub const Infer = struct {
         for (summary.storage_capability_uses) |use| {
             const sources = try self.capability_sources(try self.mapped_capability_value(function, use.target, arguments, flow));
             for (sources) |source| {
+                if (use.requires_authorization) try self.require_capability_source(&incoming, source);
                 var found = false;
                 for (incoming.counts.items) |*count| if (self.capability_source_equal(count.source, source)) {
                     count.minimum = @max(count.minimum, if (sources.len > 1) @as(u2, 0) else use.minimum);
@@ -4941,6 +4962,18 @@ pub const Infer = struct {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
                 break :blk try self.localAddressTargets(value);
             },
+            .function_call => |call| blk: {
+                // These checked primitives preserve the physical base address;
+                // lifetime-only dependencies never establish this relation.
+                switch (self.graph.function(call.callee).safety_primitive) {
+                    .reinterpret_reference, .mutable_reinterpret_reference => {
+                        const args = self.structArguments(call.input) orelse break :blk &.{};
+                        if (args.len == 0) break :blk &.{};
+                        break :blk try self.localAddressTargets(args[0].value);
+                    },
+                    else => break :blk &.{},
+                }
+            },
             .binding_use => |binding| self.local_address_bindings.get(binding) orelse &.{},
             .move_value, .denied_implicit_copy => |value| self.localAddressTargets(value),
             else => &.{},
@@ -6426,6 +6459,8 @@ pub const Infer = struct {
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
+            .storage_capability_incomplete = effect.storage_capability_incomplete,
+            .input_storage_authorizations = &.{},
             .known_choice_variant = effect.known_choice_variant,
         };
 
@@ -6488,6 +6523,21 @@ pub const Infer = struct {
             for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
             result.input_execution_receipts = try self.union_input_paths(result.input_execution_receipts, value.input_execution_receipts);
             result.fresh_executions = try self.mergeFreshExecutions(result.fresh_executions, value.fresh_executions);
+        }
+        for (effect.input_storage_authorizations) |path| {
+            if (path.input_index >= arguments.len) {
+                result.storage_capability_incomplete = true;
+                continue;
+            }
+            var value = if (override) |symbolic|
+                if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
+            else
+                try context.effect(path.input_index);
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| value = pointee;
+            }
+            for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+            if (!try self.retainStorageAuthorization(&result, value)) result.storage_capability_incomplete = true;
         }
         for (effect.input_storage_capabilities) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -6650,10 +6700,9 @@ pub const Infer = struct {
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
         inline for (.{
-            "input_domains",               "input_dependencies", "input_storage_capabilities",    "input_acquisition_origins",
-            "input_execution_receipts",    "input_places",       "input_generation_dependencies", "input_captured_storages",
-            "input_receiver_values",       "input_place_values", "input_owned_roots",             "opaque_generation_dependencies",
-            "opaque_storage_dependencies",
+            "input_storage_authorizations", "input_domains",     "input_dependencies",             "input_storage_capabilities",  "input_acquisition_origins",
+            "input_execution_receipts",     "input_places",      "input_generation_dependencies",  "input_captured_storages",     "input_receiver_values",
+            "input_place_values",           "input_owned_roots", "opaque_generation_dependencies", "opaque_storage_dependencies",
         }) |field| if (@field(effect, field).len != 0) return true;
         for (effect.fresh_executions) |execution| if (requiresOutputSubstitution(execution.inputs.*)) return true;
         for (effect.domain_values) |domain| {
@@ -6713,6 +6762,7 @@ pub const Infer = struct {
         result.input_dependencies = dependencies;
         result.input_storage_capabilities = try self.projectInputPaths(effect.input_storage_capabilities, projection);
         result.input_acquisition_origins = try self.projectInputPaths(effect.input_acquisition_origins, projection);
+        result.input_storage_authorizations = try self.projectInputPaths(effect.input_storage_authorizations, projection);
         result.input_execution_receipts = try self.projectInputPaths(effect.input_execution_receipts, projection);
         result.input_places = try self.projectInputPaths(effect.input_places, projection);
         // Borrowed generations describe the source value's lifetime, not
@@ -6756,6 +6806,79 @@ pub const Infer = struct {
         const merged = try self.allocator.create(facts.ValueEffect);
         merged.* = try self.mergeValueEffects(a.*, b.*);
         return merged;
+    }
+
+    fn retainStorageAuthorization(self: *Infer, result: *facts.ValueEffect, source: facts.ValueEffect) anyerror!bool {
+        result.storage_capability_incomplete = result.storage_capability_incomplete or source.storage_capability_incomplete;
+        result.input_storage_authorizations = try self.union_input_paths(result.input_storage_authorizations, source.input_storage_authorizations);
+        result.input_storage_authorizations = try self.union_input_paths(result.input_storage_authorizations, source.input_storage_capabilities);
+        var represented = source.fresh_storage_capabilities.len != 0 or source.input_storage_capabilities.len != 0 or source.input_storage_authorizations.len != 0;
+        for (source.input_dependencies) |dependency| if (!dependency.validity_only) {
+            result.input_storage_authorizations = try self.union_input_paths(result.input_storage_authorizations, &.{dependency.path});
+            represented = true;
+        };
+        if (!represented) for (source.fields) |field| {
+            if (try self.retainStorageAuthorization(result, field.value.*)) represented = true;
+        };
+        return represented;
+    }
+
+    fn mayCarryStoragePermission(effect: facts.ValueEffect) bool {
+        if (effect.input_storage_capabilities.len != 0 or effect.fresh_storage_capabilities.len != 0 or
+            effect.input_place_values.len != 0) return true;
+        for (effect.input_dependencies) |dependency| if (!dependency.validity_only) return true;
+        return false;
+    }
+
+    /// A join of alternative values differs from aggregating independent fields.
+    /// Possible capability identities remain useful for consumption checks, but
+    /// cannot prove presence if another returning alternative has no evidence.
+    fn joinStorageAlternatives(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
+        var result = try self.mergeValueEffects(left, right);
+        if (result.fields.len == 0 and result.variants.len == 0 and
+            mayCarryStoragePermission(left) != mayCarryStoragePermission(right))
+            result.storage_capability_incomplete = true;
+        if (result.fields.len == 0 and result.variants.len == 0) {
+            _ = try self.retainStorageAuthorization(&result, left);
+            _ = try self.retainStorageAuthorization(&result, right);
+        }
+        const fields = try self.allocator.dupe(facts.OutputFieldEffect, result.fields);
+        for (fields) |*child| {
+            var a: facts.ValueEffect = .{};
+            var b: facts.ValueEffect = .{};
+            for (left.fields) |candidate| if (candidate.index == child.index) {
+                a = candidate.value.*;
+                break;
+            };
+            for (right.fields) |candidate| if (candidate.index == child.index) {
+                b = candidate.value.*;
+                break;
+            };
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.joinStorageAlternatives(a, b);
+            child.value = value;
+        }
+        result.fields = fields;
+        const variants = try self.allocator.dupe(facts.OutputVariantEffect, result.variants);
+        for (variants) |*child| {
+            var a: ?facts.ValueEffect = null;
+            var b: ?facts.ValueEffect = null;
+            for (left.variants) |candidate| if (candidate.index == child.index) {
+                a = candidate.value.*;
+                break;
+            };
+            for (right.variants) |candidate| if (candidate.index == child.index) {
+                b = candidate.value.*;
+                break;
+            };
+            if (a != null and b != null) {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.joinStorageAlternatives(a.?, b.?);
+                child.value = value;
+            }
+        }
+        result.variants = variants;
+        return result;
     }
 
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
@@ -6889,6 +7012,8 @@ pub const Infer = struct {
             .fresh_owned_roots = try fresh_owned.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
+            .storage_capability_incomplete = left.storage_capability_incomplete or right.storage_capability_incomplete,
+            .input_storage_authorizations = try self.union_input_paths(left.input_storage_authorizations, right.input_storage_authorizations),
             .fresh_storage_capabilities = try fresh_capabilities.toOwnedSlice(),
             .unavailable_fresh_storage = try self.merge_unavailable_fresh_storage(left.unavailable_fresh_storage, right.unavailable_fresh_storage),
         };
@@ -7107,6 +7232,8 @@ pub const Infer = struct {
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
+            .storage_capability_incomplete = effect.storage_capability_incomplete,
+            .input_storage_authorizations = effect.input_storage_authorizations,
         };
     }
 
@@ -7137,6 +7264,8 @@ pub const Infer = struct {
         if (self.graph.semanticType(ty) == .builtin) {
             const storage = try self.scalar_storage_effect(origin);
             result.input_storage_capabilities = storage.input_storage_capabilities;
+            result.storage_capability_incomplete = storage.storage_capability_incomplete;
+            result.input_storage_authorizations = storage.input_storage_authorizations;
             result.fresh_storage_capabilities = storage.fresh_storage_capabilities;
             result.unavailable_fresh_storage = storage.unavailable_fresh_storage;
             const validity = try self.allocator.dupe(facts.InputDependency, result.input_dependencies);
@@ -8348,6 +8477,67 @@ test "acquisition origin selectors compose without establishment permissions" {
     const rebound = try inference.rebaseFreshSources(origin, @enumFromInt(2));
     try std.testing.expectEqual(@as(usize, 1), rebound.fresh_acquisition_origins.len);
     try std.testing.expectEqual(@as(usize, 0), rebound.fresh_storage_capabilities.len);
+}
+
+test "capability presence requirements survive branch joins and composition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    var required = Infer.CapabilityFlow.init(a);
+    defer required.deinit();
+    var empty = Infer.CapabilityFlow.init(a);
+    defer empty.deinit();
+    var joined = Infer.CapabilityFlow.init(a);
+    defer joined.deinit();
+    const source: Infer.CapabilitySource = .{ .input = .{ .input_index = 0 } };
+    try infer.require_capability_source(&required, source);
+    try infer.join_capability_flows(&joined, &required, &empty);
+    try std.testing.expectEqual(@as(usize, 1), joined.counts.items.len);
+    try std.testing.expect(joined.counts.items[0].requires_authorization);
+    try std.testing.expectEqual(@as(u2, 0), joined.counts.items[0].maximum);
+    try infer.add_capability_count(&empty, source, 1, 1);
+    try infer.apply_capability_flow(&empty, &joined);
+    try std.testing.expectEqual(@as(usize, 1), empty.counts.items.len);
+    try std.testing.expect(empty.counts.items[0].requires_authorization);
+    try std.testing.expectEqual(@as(u2, 1), empty.counts.items[0].maximum);
+    try infer.join_capability_flows(&joined, &required, &empty);
+    try std.testing.expect(joined.counts.items[0].requires_authorization);
+}
+
+test "return alternatives preserve capability coverage without poisoning distinct outcomes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const acquired: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{1} };
+    const other: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{2} };
+    const combined = try infer.mergeValueEffects(acquired, .{});
+    try std.testing.expect(!combined.storage_capability_incomplete);
+    const partial = try infer.joinStorageAlternatives(acquired, .{});
+    try std.testing.expect(partial.storage_capability_incomplete);
+    try std.testing.expectEqual(@as(usize, 1), partial.fresh_storage_capabilities.len);
+    try std.testing.expect((try infer.joinStorageAlternatives(.{}, acquired)).storage_capability_incomplete);
+    try std.testing.expect(!(try infer.joinStorageAlternatives(acquired, other)).storage_capability_incomplete);
+    const success: facts.ValueEffect = .{ .variants = &.{.{ .index = 0, .value = &acquired }}, .known_choice_variant = 0 };
+    const failure: facts.ValueEffect = .{ .variants = &.{.{ .index = 1, .value = &.{} }}, .known_choice_variant = 1 };
+    const outcomes = try infer.joinStorageAlternatives(success, failure);
+    try std.testing.expect(!outcomes.storage_capability_incomplete);
+    try std.testing.expect(!(try infer.projectValueEffect(outcomes, .{ .variant = 0 })).storage_capability_incomplete);
+    const record: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &acquired }} };
+    const missing: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &.{} }} };
+    const records = try infer.joinStorageAlternatives(record, missing);
+    try std.testing.expect((try infer.projectValueEffect(records, .{ .field = 0 })).storage_capability_incomplete);
 }
 
 test "region locating reads cannot replace an intermediate domain" {

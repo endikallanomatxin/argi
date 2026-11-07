@@ -474,6 +474,29 @@ a concrete allocator body to manufacture the missing public guarantee.
 
 ### Preferred candidate: a sealed physical-storage value
 
+The prerequisite acquisition checkpoint separates presence from consumption in
+the existing capability state and summaries. Checked normal establishment uses
+an explicit static precondition; raw trusted integration retains its documented
+caller obligations. The precondition must survive ordinary wrappers, alternatives
+and reference fields, and cannot disappear at virtual conformance. Origin facts
+remain metadata after consumption and never reauthorize establishment. This
+requires no new permission category and does not yet establish the sealed-value
+invariant below. In particular an erased factory promising only ownership still
+lacks a public acquisition guarantee. Do not use that limitation as justification
+to infer physical independence from its nominal result type.
+Nor may each erased return mint an unrelated available permission solely because
+its nominal type names a receipt. Copies of a numeric address can retain aliases
+to one permission; replacing that identity could conceal consumption. A future
+sealed-carrier guarantee must justify custody and transport of the authorization,
+as well as physical bounds. Private fields or move-only representation alone do
+not establish that semantic invariant.
+
+The isolated acquisition checkpoint passes 2,516 program tests with 11 skips and
+no failures, plus the focused native-bit-forgery regression. The Debug internal
+suite passes 1,488 tests with one skip. It excludes the unfinished unknown-call
+gate and loop-access precision experiment; no physical-separation claim follows
+from these acquisition checks.
+
 Do not add an allocator-specific `has_storage` assertion merely to make the
 current regression pass. A more compositional candidate is a sealed physical
 storage value, retained inside owners and views. Its semantic interpretation is:

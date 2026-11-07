@@ -28,6 +28,7 @@ pub const specs = [_]Spec{
     .{ .flags = .{ .is_source_location_resolver = true }, .path = "core/errors/source_location.rg", .name = "source_location", .signatures = &.{"(.id: SourceLocationId) -> (.location: SourceLocation)"} },
     .{ .primitive = .float_math, .path = "core/numbers/math.rg", .name = "_float_math", .signatures = &.{"#(.t: Type: Float)(.operation: UInt32, .left: t, .right: t) -> (.result: t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .require_storage_capability, .path = "core/memory/heap_allocation/AcquiredStorage.rg", .name = "_require_storage_capability", .signatures = &.{"(.address: UIntNative) -> ()"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
     .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
     .{ .primitive = .mutable_reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_mutable_reference_offset", .signatures = &.{"#(.t: Type)(.base: $&t, .elements: UIntNative) -> (.reference: $&t)"} },
@@ -194,6 +195,7 @@ test "primitive signature comparison preserves operand order and modes" {
 pub const Transfer = struct {
     value: Value,
     consumes_storage_input: ?u32 = null,
+    requires_storage_input: ?u32 = null,
     input: Input = .none,
     opaque_state: Opaque = .none,
 
@@ -224,6 +226,7 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
+        .require_storage_capability => .{ .value = .empty, .requires_storage_input = 0 },
         .execution_lend => .{ .value = .execution_lend },
         .execution_complete => .{ .value = .execution_complete },
         .execution_input => .{ .value = .execution_input },
@@ -272,6 +275,7 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .allocation_metadata_layout,
         .establish_inherited_reference,
         .establish_inherited_storage,
+        .require_storage_capability,
         .reference_offset,
         .mutable_reference_offset,
         .reinterpret_reference,

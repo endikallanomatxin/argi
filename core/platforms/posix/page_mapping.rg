@@ -42,26 +42,25 @@
     }
 
     -- POSIX may release alignment padding independently from the returned range.
-    _memory_acquire_aligned := (
+    _memory_acquire_storage := (
         .length: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
-    ) -> (.address: UIntNative) {
+    ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
         assume ffi
         page_size ::= _memory_getpagesize().size
         extra :: UIntNative = 0
         if alignment > page_size { extra = alignment - page_size }
         request_size ::= length + extra
         if request_size < length {
-            address = 0
-            address = address - 1
+            result = ..error(.reason = ..out_of_memory)
             return
         }
         mapped_address ::= _memory_map_anonymous(.length = request_size).address
         if mapped_address + 1 == 0 {
-            address = mapped_address
+            result = ..error(.reason = ..out_of_memory)
             return
         }
         if mapped_address + request_size < mapped_address { abort }
-        address = mapped_address
+        address ::= mapped_address
         if alignment > page_size {
             remainder ::= mapped_address % alignment
             if remainder != 0 {
@@ -83,9 +82,10 @@
                 }
             }
         }
-        address = _trusted_acquisition_subaddress(
+        selected ::= _trusted_acquisition_subaddress(
             .base = mapped_address, .address = address
         ).result
+        result = ..ok(._address = selected, ._size = length, ._alignment = alignment)
     }
 
     _memory_release_aligned := (

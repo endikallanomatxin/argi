@@ -53,14 +53,7 @@ _memory_map_aligned := (
         return
     }
 
-    address ::= _memory_acquire_aligned(.length = mapped_size, .alignment = alignment).address
-
-    if address + 1 == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    result = ..ok(._address = address, ._size = mapped_size, ._alignment = alignment)
+    result = _memory_acquire_storage(.length = mapped_size, .alignment = alignment)
 }
 
 map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (

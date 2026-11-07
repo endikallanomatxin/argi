@@ -165,7 +165,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
     if (a.storage_capability_uses.len != b.storage_capability_uses.len) return false;
     for (a.storage_capability_uses, b.storage_capability_uses) |left, right|
-        if (!inputPathEql(left.target, right.target) or left.minimum != right.minimum or left.maximum != right.maximum) return false;
+        if (!inputPathEql(left.target, right.target) or left.minimum != right.minimum or left.maximum != right.maximum or left.requires_authorization != right.requires_authorization) return false;
     if (a.outputs.len != b.outputs.len or
         a.required_live_inputs.len != b.required_live_inputs.len or
         a.required_opaque_inputs.len != b.required_opaque_inputs.len or
@@ -195,6 +195,8 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
+    if (a.input_storage_authorizations.len != b.input_storage_authorizations.len) return false;
+    for (a.input_storage_authorizations, b.input_storage_authorizations) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_acquisition_origins, b.fresh_acquisition_origins)) return false;
     if (a.input_acquisition_origins.len != b.input_acquisition_origins.len) return false;
     for (a.input_acquisition_origins, b.input_acquisition_origins) |left, right| if (!inputPathEql(left, right)) return false;
@@ -224,7 +226,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         a.fresh_storage_capabilities.len != b.fresh_storage_capabilities.len or
         a.known_choice_variant != b.known_choice_variant or
         a.integer_address != b.integer_address or
-        a.foreign_storage != b.foreign_storage) return false;
+        a.foreign_storage != b.foreign_storage or a.storage_capability_incomplete != b.storage_capability_incomplete) return false;
 
     for (a.input_dependencies, b.input_dependencies) |left, right| {
         if (left.transfers_ownership != right.transfers_ownership or
@@ -582,4 +584,27 @@ test "region locating reads participate in summary equality" {
     try std.testing.expect(!valueEffectEql(plain, located));
     try std.testing.expect(!valueEffectEql(located, plain));
     try std.testing.expect(valueEffectEql(located, located));
+}
+
+test "summary equality distinguishes capability presence from consumption counts" {
+    const optional: facts.SafetySummary = .{ .storage_capability_uses = &.{.{
+        .target = .{ .input_index = 0 },
+        .minimum = 0,
+        .maximum = 0,
+    }} };
+    const required: facts.SafetySummary = .{ .storage_capability_uses = &.{.{
+        .target = .{ .input_index = 0 },
+        .minimum = 0,
+        .maximum = 0,
+        .requires_authorization = true,
+    }} };
+    try std.testing.expect(!summaryEql(optional, required));
+    try std.testing.expect(summaryEql(required, required));
+}
+
+test "output capability coverage is part of summary equality" {
+    const recipe: facts.ValueEffect = .{ .input_storage_authorizations = &.{.{ .input_index = 0 }} };
+    try std.testing.expect(!valueEffectEql(recipe, .{}));
+    try std.testing.expect(valueEffectEql(recipe, recipe));
+    try std.testing.expect(!valueEffectEql(recipe, .{ .input_storage_authorizations = &.{.{ .input_index = 1 }} }));
 }

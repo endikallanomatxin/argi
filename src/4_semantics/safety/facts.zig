@@ -158,6 +158,9 @@ pub const ValueFacts = struct {
     integer_address: bool = false,
     foreign_storage: bool = false,
     storage_capabilities: []const StorageCapabilityId = &.{},
+    /// Some retained value alternative lacks acquisition authorization. Keep
+    /// possible identities for consumption checks without proving presence.
+    storage_capability_incomplete: bool = false,
     /// Acquisition identity only: no establishment permission, initializedness,
     /// physical range, owner liveness or access authority follows from this fact.
     acquisition_origins: []const StorageCapabilityId = &.{},
@@ -184,6 +187,7 @@ pub const ValueFacts = struct {
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
+            .storage_capability_incomplete = self.storage_capability_incomplete,
             .acquisition_origins = self.acquisition_origins,
             .referenced_place = self.referenced_place,
             .symbolic_pointees = self.symbolic_pointees,
@@ -210,6 +214,7 @@ pub const ValueFacts = struct {
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
+            .storage_capability_incomplete = self.storage_capability_incomplete,
             .acquisition_origins = self.acquisition_origins,
             .choice_selectors = self.choice_selectors,
             .choice_observations = self.choice_observations,

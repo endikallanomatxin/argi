@@ -164,6 +164,10 @@ pub const ValueEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     /// Scalar/raw facts copied without borrowing the source lifetime.
     input_storage_capabilities: []const InputPath = &.{},
+    storage_capability_incomplete: bool = false,
+    /// Every selected source must carry permission before the returned value
+    /// can prove acquisition authorization. This grants no permission itself.
+    input_storage_authorizations: []const InputPath = &.{},
     /// Select acquisition identity without copying establishment permission.
     input_acquisition_origins: []const InputPath = &.{},
     input_execution_receipts: []const InputPath = &.{},
@@ -240,6 +244,8 @@ pub const OpaqueOwnershipConsumption = enum {
 /// two means some execution can consume an input capability repeatedly.
 pub const StorageCapabilityUse = struct {
     target: InputPath,
+    /// A checked precondition, distinct from consuming an optional permission.
+    requires_authorization: bool = false,
     minimum: u2 = 1,
     maximum: u2 = 1,
 };

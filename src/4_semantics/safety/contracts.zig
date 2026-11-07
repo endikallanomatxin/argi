@@ -477,6 +477,7 @@ pub const Failure = struct {
         missing_empty_storage,
         unsupported_opaque_effect,
         unsupported_capability_effect,
+        unsupported_capability_requirement,
         unsupported_alias_obligation,
         missing_choice_relation,
         missing_execution_transfer,
@@ -508,6 +509,7 @@ pub const Failure = struct {
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
+            .unsupported_capability_requirement => "storage acquisition requirements are not published by this contract",
             .unsupported_alias_obligation => "a caller-side storage alias obligation is not represented by this contract",
         };
     }
@@ -533,6 +535,12 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
     if (summary.storage_observation_conflicts.len != 0) return .{
         .kind = .unsupported_alias_obligation,
         .input = summary.storage_observation_conflicts[0].incompatible,
+    };
+    // Preconditions apply even when guarded returning guarantees are complete.
+    // Selecting an outcome cannot hide authority required earlier in the call.
+    for (summary.storage_capability_uses) |use| if (use.requires_authorization) return .{
+        .kind = .unsupported_capability_requirement,
+        .input = use.target,
     };
     if (contract.general_conditions) return checkGeneralContract(allocator, contract, summary);
     for (contract.relocations) |relocation| {
@@ -930,6 +938,7 @@ fn samePath(a: facts.InputPath, b: facts.InputPath) bool {
 /// concrete checker additionally proves direct forwarding before accepting a
 /// declaration. Lifetime-only anchors cannot select an output's storage.
 fn hasExactReferent(actual: facts.ValueEffect, expected: facts.InputPath) bool {
+    if (actual.storage_capability_incomplete or actual.input_storage_authorizations.len != 0) return false;
     if (actual.input_place_values.len != 0 or actual.fields.len != 0 or actual.variants.len != 0 or
         actual.fresh_cleanup_obligation or actual.fresh_dependencies.len != 0 or actual.fresh_owned_roots.len != 0 or
         actual.fresh_storage_capabilities.len != 0 or actual.fresh_acquisition_origins.len != 0 or actual.input_acquisition_origins.len != 0 or actual.unavailable_fresh_storage.len != 0 or
@@ -1093,6 +1102,7 @@ fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
 }
 
 fn emptyValue(value: facts.ValueEffect) bool {
+    if (value.storage_capability_incomplete or value.input_storage_authorizations.len != 0) return false;
     if (value.fresh_cleanup_obligation or value.explicit_dependency or value.input_dependencies.len != 0 or
         value.input_storage_capabilities.len != 0 or value.input_acquisition_origins.len != 0 or value.input_places.len != 0 or
         value.input_generation_dependencies.len != 0 or value.input_captured_storages.len != 0 or value.input_receiver_values.len != 0 or value.input_place_values.len != 0 or
@@ -1886,4 +1896,17 @@ test "erased access bounds require the same region and complete handle path" {
     }) |other| {
         try std.testing.expectEqual(Failure.Kind.undeclared_access, checkAccessBounds(bounded, .{ .input_accesses = &.{.{ .target = other, .mode = .read }} }).?.kind);
     }
+}
+
+test "guarded output guarantees cannot erase an acquisition precondition" {
+    const allocator = std.testing.allocator;
+    const returning: facts.SafetySummary = .{};
+    const summary: facts.SafetySummary = .{
+        .storage_capability_uses = &.{.{ .target = .{ .input_index = 0 }, .minimum = 0, .maximum = 0, .requires_authorization = true }},
+        .guarded_returns_complete = true,
+        .guarded_effects = &.{.{ .conditions = .{}, .effects = &returning }},
+    };
+    const contract: Contract = .{ .outputs = &.{}, .general_conditions = true };
+    try std.testing.expectEqual(Failure.Kind.unsupported_capability_requirement, (try check(allocator, contract, summary)).?.kind);
+    try std.testing.expectEqual(Failure.Kind.unsupported_capability_requirement, (try checkStatic(allocator, contract, summary)).?.kind);
 }

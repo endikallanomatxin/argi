@@ -86,6 +86,7 @@ establish_allocation := (
         .base = &allocation_static_anchor
     ).reference
 ) -> (.allocation: Allocation) {
+    _require_storage_capability(.address = storage._address)
     _require_allocation_alignment(.alignment = alignment)
 
     if size > storage._size { abort }

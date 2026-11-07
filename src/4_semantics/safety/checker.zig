@@ -911,6 +911,21 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn requiresStorageAuthorization(summary: ?*const facts.SafetySummary, prefix: facts.InputPath, descendants: bool) bool {
+        const selected = summary orelse return false;
+        for (selected.storage_capability_uses) |use| {
+            if (!use.requires_authorization or use.target.storage_domain != null or
+                use.target.input_index != prefix.input_index or use.target.projections.len < prefix.projections.len) continue;
+            if (!descendants and use.target.projections.len != prefix.projections.len) continue;
+            var matches = true;
+            for (prefix.projections, use.target.projections[0..prefix.projections.len]) |left, right| {
+                if (!left.eql(right)) matches = false;
+            }
+            if (matches) return true;
+        }
+        return false;
+    }
+
     fn seedInputValue(
         self: *SafetyChecker,
         ty: graph_mod.GlobalTypeId,
@@ -926,10 +941,22 @@ pub const SafetyChecker = struct {
             const input = try state.establishSymbolicInput(self.graph.semanticType(ty).pointer.child, shared_backing.*);
             shared_backing.* = input.backing;
             shared_generation.* = input.generation;
-            if (self.seeding_function_inputs) {
-                var origin = prefix;
-                if (origin.projections.len != 0) origin = try self.appendInputProjection(origin, .dereference);
+            var origin = prefix;
+            if (origin.projections.len != 0) origin = try self.appendInputProjection(origin, .dereference);
+            if (self.seeding_function_inputs)
                 state.symbolic_pointees.items[state.symbolic_pointees.items.len - 1].input_path = origin;
+            if (requiresStorageAuthorization(summary, origin, true)) {
+                const child = self.graph.semanticType(ty).pointer.child;
+                var assumed = try self.seedInputValue(child, state, shared_backing, shared_generation, summary, origin);
+                // Capability flow keeps an explicit root dereference when an
+                // owning referent is moved into a by-value argument. Both path
+                // spellings still select this same initialized input referent.
+                if (prefix.projections.len == 0) {
+                    const dereferenced = try self.appendInputProjection(prefix, .dereference);
+                    if (requiresStorageAuthorization(summary, dereferenced, true))
+                        assumed = try self.mergeValueFacts(assumed, try self.seedInputValue(child, state, shared_backing, shared_generation, summary, dereferenced));
+                }
+                try state.setSymbolicValue(.{ .identity = input.identity, .value = assumed }, true, true);
             }
             dependencies[0] = .{ .root = input.backing.? };
             dependencies[1] = .{ .root = input.generation.? };
@@ -949,7 +976,7 @@ pub const SafetyChecker = struct {
         }
 
         if (types.arrayElement(self.graph, ty)) |element| {
-            if (!self.inputTypeHasReferences(element, 0)) return .{};
+            if (!self.inputTypeHasReferences(element, 0) and !requiresStorageAuthorization(summary, prefix, true)) return .{};
             const selected = summary orelse return .{};
             const indices = try @import("input_demands.zig").arrayIndices(self.allocator, selected, prefix, types.arrayLength(self.graph, ty).?);
             defer self.allocator.free(indices);
@@ -970,12 +997,21 @@ pub const SafetyChecker = struct {
         // Copied input records retain one identity per reference leaf. Empty
         // siblings remain explicit so projection never inherits another leaf's
         // facts. Plain scalar records allocate no field facts.
-        const range = types.fields(self.graph, ty) orelse return .{};
+        const range = types.fields(self.graph, ty) orelse {
+            // Body checking may assume an inferred resource precondition. Call
+            // instantiation must prove its presence using the caller's facts.
+            if (requiresStorageAuthorization(summary, prefix, false)) {
+                const id = try state.establishCapability();
+                return .{ .storage_capabilities = try self.oneCapability(id) };
+            }
+            return .{};
+        };
         var fields: ?[]facts.FieldFacts = null;
         var result: facts.ValueFacts = .{};
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
             const aggregate = types.arrayElement(self.graph, field.ty) != null or types.fields(self.graph, field.ty) != null;
-            const nested = if (aggregate or isPointer(self.graph, field.ty) or self.graph.semanticType(field.ty) == .virtual) try self.appendInputProjection(prefix, .{ .field = @intCast(index) }) else prefix;
+            const projected = try self.appendInputProjection(prefix, .{ .field = @intCast(index) });
+            const nested = if (aggregate or isPointer(self.graph, field.ty) or self.graph.semanticType(field.ty) == .virtual or requiresStorageAuthorization(summary, projected, true)) projected else prefix;
             const child = try self.seedInputValue(field.ty, state, shared_backing, shared_generation, summary, nested);
             if (facts.isEmptyValue(child)) continue;
             if (fields == null) {
@@ -2903,6 +2939,13 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
+        if (primitive_transfer.forPrimitive(primitive).requires_storage_input) |index| {
+            const before = self.diagnostics.list.items.len;
+            if (index >= values.len) return error.InvalidStorageCapabilityPrimitive;
+            try self.require_storage_authorization(source, values[index]);
+            try self.require_available_storage_capabilities(source, values[index], 0, state);
+            if (before != self.diagnostics.list.items.len) return .{};
+        }
         if (primitive_transfer.forPrimitive(primitive).consumes_storage_input) |index| {
             if (index < values.len) try self.consume_storage_capabilities(source, values[index], 1, 1, state);
         }
@@ -3010,6 +3053,11 @@ pub const SafetyChecker = struct {
         try origins.appendSlice(value.acquisition_origins);
         for (value.storage_capabilities) |origin| try appendCapabilityFact(&origins, origin);
         return origins.toOwnedSlice();
+    }
+
+    fn require_storage_authorization(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts) !void {
+        if (value.storage_capabilities.len == 0 or value.storage_capability_incomplete)
+            try self.report(source, "operation requires an authenticated storage acquisition permission; an address, lifetime or consumed origin is insufficient", .{});
     }
 
     fn require_available_storage_capabilities(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, maximum: u2, state: *FunctionState) !void {
@@ -4263,7 +4311,9 @@ pub const SafetyChecker = struct {
 
         const capability_diagnostics = self.diagnostics.list.items.len;
         for (summary.storage_capability_uses) |use| {
-            try self.require_available_storage_capabilities(source, try self.load_summary_input_value(use.target, arguments, state), use.maximum, state);
+            const value = try self.load_summary_input_value(use.target, arguments, state);
+            if (use.requires_authorization) try self.require_storage_authorization(source, value);
+            try self.require_available_storage_capabilities(source, value, use.maximum, state);
         }
         for (summary.storage_capability_conflicts) |pair| {
             const first = try self.load_summary_input_value(pair.first, arguments, state);
@@ -4924,7 +4974,12 @@ pub const SafetyChecker = struct {
         fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
     ) !facts.ValueFacts {
         const capture_source: primitives.SourceRef = if (self.call_stack.items.len != 0) self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source else .{ .file_index = 0, .offset = 0 };
-        var result: facts.ValueFacts = .{ .explicit_dependency = effect.explicit_dependency };
+        var result: facts.ValueFacts = .{ .explicit_dependency = effect.explicit_dependency, .storage_capability_incomplete = effect.storage_capability_incomplete };
+        for (effect.input_storage_authorizations) |path| {
+            const selected = try self.load_summary_input_value(path, arguments, state);
+            if (selected.storage_capabilities.len == 0 or selected.storage_capability_incomplete)
+                result.storage_capability_incomplete = true;
+        }
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         var execution_ids = std.array_list.Managed(facts.ExecutionId).init(self.allocator);
         for (effect.input_execution_receipts) |path| {
@@ -5548,6 +5603,7 @@ pub const SafetyChecker = struct {
             .known_choice_variant = if (left.known_choice_variant != null and left.known_choice_variant == right.known_choice_variant) left.known_choice_variant else null,
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
+            .storage_capability_incomplete = left.storage_capability_incomplete or right.storage_capability_incomplete,
             .storage_capabilities = try capabilities.toOwnedSlice(),
             .execution_receipts = try executions.toOwnedSlice(),
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
@@ -7908,8 +7964,11 @@ pub const SafetyChecker = struct {
     };
 
     fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: *const FunctionState, right_state: *const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
-        const merged = try self.mergeValueFacts(left, right);
-        if (generations.len == 0) return merged;
+        if (generations.len == 0 and valueFactsEqual(left, right)) return left;
+        var merged = try self.mergeValueFacts(left, right);
+        if (merged.fields.len == 0 and merged.variants.len == 0 and
+            ((left.storage_capabilities.len == 0) != (right.storage_capabilities.len == 0)))
+            merged.storage_capability_incomplete = true;
         var result = merged;
         if (left.symbolic_pointees.len == 1 and right.symbolic_pointees.len == 1 and
             left.symbolic_pointees[0] == right.symbolic_pointees[0] and
@@ -7925,11 +7984,20 @@ pub const SafetyChecker = struct {
             }
         }
         var projected = false;
-        for (left.fields) |a| for (right.fields) |b| if (a.index == b.index) {
-            result = try self.replaceProjectedValue(result, .{ .field = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
+        for (merged.fields) |field| {
+            var a: facts.ValueFacts = .{};
+            var b: facts.ValueFacts = .{};
+            for (left.fields) |candidate| if (candidate.index == field.index) {
+                a = candidate.value.*;
+                break;
+            };
+            for (right.fields) |candidate| if (candidate.index == field.index) {
+                b = candidate.value.*;
+                break;
+            };
+            result = try self.replaceProjectedValue(result, .{ .field = field.index }, try self.joinObservedSymbolicValues(a, b, left_state, right_state, generations));
             projected = true;
-            break;
-        };
+        }
         for (left.variants) |a| for (right.variants) |b| if (a.index == b.index) {
             result = try self.replaceProjectedValue(result, .{ .variant = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
             projected = true;
@@ -9185,6 +9253,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.explicit_dependency != right.explicit_dependency or
         left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
+        left.storage_capability_incomplete != right.storage_capability_incomplete or
         left.known_choice_variant != right.known_choice_variant or
         !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
         !std.mem.eql(facts.StorageCapabilityId, left.acquisition_origins, right.acquisition_origins) or
@@ -12420,6 +12489,140 @@ test "fresh acquisition origin reservation does not grant or consume permission"
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
 }
 
+test "erased ownership and lifetime output guarantees do not manufacture acquisition origins" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph = try allocationPrimitiveTestGraph(a, 12);
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const origin = try state.establishCapability();
+    const root = try state.tracker.establish(.fresh);
+    const source: facts.ValueFacts = .{
+        .storage_capabilities = &.{origin},
+        .acquisition_origins = &.{origin},
+        .dependencies = &.{.{ .root = root }},
+    };
+    const output = try @import("contract_outputs.zig").build(a, &graph, @enumFromInt(1), .{
+        .fresh_owner = true,
+        .dependencies = &.{.{ .input_index = 0 }},
+    }, 7);
+    const erased = try checker.instantiateOutput(output, &.{source}, &state);
+    try std.testing.expectEqual(@as(usize, 1), erased.dependencies.len);
+    try std.testing.expectEqual(root, erased.dependencies[0].root);
+    try std.testing.expectEqual(@as(usize, 0), erased.acquisition_origins.len);
+    try std.testing.expectEqual(@as(usize, 0), erased.storage_capabilities.len);
+    for (erased.fields) |field| {
+        try std.testing.expectEqual(@as(usize, 0), field.value.acquisition_origins.len);
+        try std.testing.expectEqual(@as(usize, 0), field.value.storage_capabilities.len);
+    }
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(origin));
+}
+
+test "unknown reference targets preserve read compatibility without bypassing execution loans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (std.meta.tags(facts.AccessMode)) |loan_mode| {
+        for (std.meta.tags(facts.AccessMode)) |access_mode| {
+            var state = SafetyChecker.FunctionState.init(a);
+            defer state.deinit();
+            const loan: facts.ExecutionLoan = .{ .storage = .{ .root = @enumFromInt(0) }, .mode = loan_mode };
+            const id = try state.establishExecution(&.{loan});
+            const before = diags.list.items.len;
+            try checker.requireExecutionPointerAccess(source, .{}, access_mode, &state);
+            const conflict = loan_mode == .write or access_mode == .write;
+            try std.testing.expectEqual(before + @intFromBool(conflict), diags.list.items.len);
+            state.completeExecution(id);
+            const after = diags.list.items.len;
+            try checker.requireExecutionPointerAccess(source, .{}, access_mode, &state);
+            try std.testing.expectEqual(after, diags.list.items.len);
+        }
+    }
+    var plain = SafetyChecker.FunctionState.init(a);
+    defer plain.deinit();
+    _ = try plain.establishExecution(&.{});
+    const before = diags.list.items.len;
+    try checker.requireExecutionPointerAccess(source, .{}, .write, &plain);
+    try std.testing.expectEqual(before, diags.list.items.len);
+}
+
+test "required acquisition permission is not manufactured or consumed by a presence check" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const required: facts.SafetySummary = .{ .storage_capability_uses = &.{.{
+        .target = .{ .input_index = 0 },
+        .minimum = 0,
+        .maximum = 0,
+        .requires_authorization = true,
+    }} };
+    try checker.applySummaryEffects(source, required, &.{}, &.{.{}}, &state);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.storage_capabilities.items.len);
+    const permission = try state.establishCapability();
+    try checker.applySummaryEffects(source, required, &.{}, &.{.{ .acquisition_origins = &.{permission} }}, &state);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+    const available: facts.ValueFacts = .{ .storage_capabilities = &.{permission} };
+    try checker.applySummaryEffects(source, required, &.{}, &.{available}, &state);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(permission));
+    state.consumeCapability(permission, true);
+    try checker.applySummaryEffects(source, required, &.{}, &.{available}, &state);
+    try std.testing.expectEqual(@as(usize, 3), diags.list.items.len);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(permission));
+}
+
+test "symbolic output authorization coverage checks every source without granting permission" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first = try state.establishCapability();
+    const second = try state.establishCapability();
+    const recipe: facts.ValueEffect = .{ .input_storage_authorizations = &.{ .{ .input_index = 0 }, .{ .input_index = 1 } } };
+    const good: [2]facts.ValueFacts = .{ .{ .storage_capabilities = &.{first} }, .{ .storage_capabilities = &.{second} } };
+    const covered = try checker.instantiateOutput(recipe, &good, &state);
+    try std.testing.expect(!covered.storage_capability_incomplete);
+    try std.testing.expectEqual(@as(usize, 0), covered.storage_capabilities.len);
+    for (0..2) |index| {
+        var partial = good;
+        partial[index] = .{};
+        const result = try checker.instantiateOutput(recipe, &partial, &state);
+        try std.testing.expect(result.storage_capability_incomplete);
+        try std.testing.expectEqual(@as(usize, 0), result.storage_capabilities.len);
+    }
+    var partial = good;
+    partial[1].storage_capability_incomplete = true;
+    try std.testing.expect((try checker.instantiateOutput(recipe, &partial, &state)).storage_capability_incomplete);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(first));
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(second));
+}
+
 test "allocation slot retains borrowed backing independently of its explicit anchor" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -12456,41 +12659,6 @@ test "allocation slot retains borrowed backing independently of its explicit anc
     state.tracker.end(backing);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(direct));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(summarized));
-}
-
-test "unknown reference targets preserve read compatibility without bypassing execution loans" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
-    defer graph.deinit(a);
-    var diags = try diagnostics.Diagnostics.init(&a, &.{});
-    defer diags.deinit();
-    var checker = SafetyChecker.init(a, &diags, &graph);
-    defer checker.deinit();
-    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
-    for (std.meta.tags(facts.AccessMode)) |loan_mode| {
-        for (std.meta.tags(facts.AccessMode)) |access_mode| {
-            var state = SafetyChecker.FunctionState.init(a);
-            defer state.deinit();
-            const loan: facts.ExecutionLoan = .{ .storage = .{ .root = @enumFromInt(0) }, .mode = loan_mode };
-            const id = try state.establishExecution(&.{loan});
-            const before = diags.list.items.len;
-            try checker.requireExecutionPointerAccess(source, .{}, access_mode, &state);
-            const conflict = loan_mode == .write or access_mode == .write;
-            try std.testing.expectEqual(before + @intFromBool(conflict), diags.list.items.len);
-            state.completeExecution(id);
-            const after = diags.list.items.len;
-            try checker.requireExecutionPointerAccess(source, .{}, access_mode, &state);
-            try std.testing.expectEqual(after, diags.list.items.len);
-        }
-    }
-    var plain = SafetyChecker.FunctionState.init(a);
-    defer plain.deinit();
-    _ = try plain.establishExecution(&.{});
-    const before = diags.list.items.len;
-    try checker.requireExecutionPointerAccess(source, .{}, .write, &plain);
-    try std.testing.expectEqual(before, diags.list.items.len);
 }
 
 test "symbolic input routes cannot drop or overwrite an intermediate region" {
