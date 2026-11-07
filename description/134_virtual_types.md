@@ -715,7 +715,7 @@ are independent of lifetime dependencies. They do not grant general access to
 other fields of the input. [Concurrency](173_concurrency.md) describes their use
 by executors.
 
-The `cli` library's `ArgumentSource` illustrates borrowed results: `length` has an empty
+The `command_line_interface/argument_parsing` library's `ArgumentSource` illustrates borrowed results: `length` has an empty
 contract, while `get` permits its successful `StringView` to depend on `self`.
 Its ordinary error has no borrowed dependencies. Both native `Arguments` and borrowed
 `cli.ArgumentViews` satisfy this signature. A virtual conversion preserves the

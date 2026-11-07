@@ -29,18 +29,9 @@ _valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
     }
 }
 
--- Specs and results borrow their text. Callers retain both the argument source
--- and schema until matches are destroyed. Every option uses a canonical long
--- name; aliases and defaults are resolved without copying argument bytes.
--- Names exclude ASCII controls, spaces and '='. Defaults require value options.
-parse := #(.t: Type: ArgumentSource#(t)) (
-    .source    : &t,
-    .specs     : ArrayView#(.t: Spec),
-    .start     : UIntNative            = 0,
-    .allocator : Virtual#(Allocator)
-) -> (.result: Errable#(Matches, Reasons)) {
-
-    assume allocator
+_validate_specs := (.specs: ArrayView#(Spec)) -> (
+    .result : Errable#(Void, Reasons) = ..ok Void()
+) {
     count ::= length(&specs).count
     index :: UIntNative = 0
 
@@ -84,6 +75,26 @@ parse := #(.t: Type: ArgumentSource#(t)) (
         index = index + 1
     }
 
+}
+
+-- Specs and results borrow their text. Callers retain both the argument source
+-- and schema until matches are destroyed. Every option uses a canonical long
+-- name; aliases and defaults are resolved without copying argument bytes.
+-- Names exclude ASCII controls, spaces and '='. Defaults require value options.
+parse := #(.t: Type: ArgumentSource#(t)) (
+    .source     : &t,
+    .specs      : ArrayView#(.t: Spec),
+    .start      : UIntNative            = 0,
+    .allocator  : Virtual#(Allocator),
+    .diagnostic : ?$&Diagnostic         = ..none
+) -> (.result: Errable#(Matches, Reasons)) {
+
+    assume allocator
+    _set_diagnostic(diagnostic, .argument = "", .message = "")
+    _validate_specs(specs)!
+    count ::= length(&specs).count
+    index :: UIntNative = 0
+
     options ::= DynamicArray#(.t: Value)(.capacity = count)!
     positionals ::= DynamicArray#(.t: StringView)(.capacity = 1)!
     parser ::= Parser#(.t: t)(.source = source, .start = start)
@@ -110,6 +121,11 @@ parse := #(.t: Type: ArgumentSource#(t)) (
                                     while cursor < length(&options).count {
                                         existing ::= get(&options, .index = cursor)!
                                         if existing.name == spec.name {
+                                            _set_diagnostic(
+                                                diagnostic
+                                                .argument = spec.name
+                                                .message  = "option cannot be repeated"
+                                            )
                                             result = ..error(.reason = ..duplicate_option)
                                             return
                                         }
@@ -118,12 +134,39 @@ parse := #(.t: Type: ArgumentSource#(t)) (
                                 }
                                 value :: ?StringView = ..none
                                 if byte_length(&spec.value_name).count > 0 {
-                                    value = ..some(
-                                        .value = take_value($&parser, .option = option)!
-                                    )
+                                    match take_value($&parser, .option = option) {
+                                        ..ok taken { value = ..some(.value = taken) }
+                                        ..error error {
+                                            _set_diagnostic(
+                                                diagnostic
+                                                .argument = spec.name
+                                                .message  = "option requires a value"
+                                            )
+                                            match error.reason {
+                                                ..missing_option_value {
+                                                    result = ..error(
+                                                        .reason = ..missing_option_value
+                                                    )
+                                                }
+                                                ..invalid_utf8 {
+                                                    result = ..error(.reason = ..invalid_utf8)
+                                                }
+                                                ..out_of_bounds {
+                                                    result = ..error(.reason = ..out_of_bounds)
+                                                }
+                                            }
+                                            return
+                                        }
+                                    }
                                 } else {
                                     match option.value {
-                                        ..some _ {
+                                        ..some entry {
+                                            _set_diagnostic(
+                                                diagnostic
+                                                .argument = spec.name
+                                                .value    = entry.value
+                                                .message  = "flag does not accept a value"
+                                            )
                                             result = ..error(
                                                 .reason = ..unexpected_option_value
                                             )
@@ -141,6 +184,9 @@ parse := #(.t: Type: ArgumentSource#(t)) (
                             index = index + 1
                         }
                         if found == false {
+                            _set_diagnostic(
+                                diagnostic, .argument = option.name, .message = "unknown option"
+                            )
                             result = ..error(.reason = ..unknown_option)
                             return
                         }
@@ -177,6 +223,9 @@ parse := #(.t: Type: ArgumentSource#(t)) (
                 } ..none {}
             }
             if spec.required and found == false {
+                _set_diagnostic(
+                    diagnostic, .argument = spec.name, .message = "required option is missing"
+                )
                 result = ..error(.reason = ..required_option)
                 return
             }

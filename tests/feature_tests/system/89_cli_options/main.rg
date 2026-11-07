@@ -1,9 +1,9 @@
-cli := import ("cli")
+ap := import("command_line_interface/argument_parsing")
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
-    specs ::= (cli.Spec(.name = "help", .short_name = "h"),)
-    matches ::= cli.parse(
+    specs ::= (ap.Spec(.name = "help", .short_name = "h"),)
+    matches ::= ap.parse(
         .source    = system.args
         .specs     = view(&specs)
         .start     = 1

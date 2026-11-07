@@ -1,4 +1,4 @@
-cli := import("cli")
+ap := import("command_line_interface/argument_parsing")
 
 -- A small consumer of declarative options, owned paths and directory walking.
 main := (.system: System) -> (.status_code: Int32 = 0) {
@@ -9,9 +9,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     output ::= $&system.terminal&.stdout
 
     specs ::= (
-        cli.Spec("help", "h", "Show help"),
-        cli.Spec("root", "r", "Directory to visit", .value_name = "PATH", .required = true),
-        cli.Spec(
+        ap.Spec("help", "h", "Show help"),
+        ap.Spec("root", "r", "Directory to visit", .value_name = "PATH", .required = true),
+        ap.Spec(
             "depth"
             "d"
             "Maximum depth"
@@ -20,10 +20,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         )
     )
 
-    if cli.ArgumentSource#().length(system.args).count == 2 {
+    if ap.ArgumentSource#().length(system.args).count == 2 {
         argument ::= argument_view_at(system.args, 1)!!!
         if argument == "--help" or argument == "-h" {
-            cli.write_help(
+            ap.write_help(
                 .program = "tree"
                 .about   = "List directory entries"
                 .specs   = view(&specs)
@@ -33,7 +33,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         }
     }
 
-    parsed ::= cli.parse(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+    parsed ::= ap.parse(.source = system.args, .specs = view(&specs), .start = 1)!!! {
         status_code = 1
     }
 

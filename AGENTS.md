@@ -85,7 +85,8 @@ feature first.
 - Keep CLI help aligned with the tool's current capabilities.
 
 - Core exposes process arguments through `Arguments`; CLI parsing policy lives
-  in `more/cli` and requires an explicit import. Keep ArgumentSource and its
+  in `more/command_line_interface/argument_parsing` and requires an explicit import.
+  Use `ap` as its conventional import alias. Keep ArgumentSource and its
   native/borrowed adapters with that library. Use public string/view operations
   there; library code has no bundled-core private-field privileges.
 

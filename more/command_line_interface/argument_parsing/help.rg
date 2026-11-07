@@ -9,6 +9,10 @@ write_help := #(.WriterType: Type: Writer#(WriterType)) (
     write(writer, .value = "\nUsage: ")!
     write(writer, .value = program)!
     write(writer, .value = " [OPTIONS] [ARGS]\n\nOptions:\n")!
+    _write_options(writer, specs)!
+}
+
+_write_options := #(.W: Type: Writer#(W)) (.writer: $&W, .specs: ArrayView#(Spec)) -> !() {
     index :: UIntNative = 0
 
     while index < length(&specs).count {
@@ -40,4 +44,45 @@ write_help := #(.WriterType: Type: Writer#(WriterType)) (
         write(writer, .value = "\n")!
         index = index + 1
     }
+}
+
+write_command_help := #(.W: Type: Writer#(W)) (
+    .writer   : $&W,
+    .program  : StringView,
+    .about    : StringView           = "",
+    .commands : ArrayView#(Command),
+    .command  : StringView           = ""
+) -> !() {
+    if byte_length(&command) == 0 {
+        write(writer, about)!
+        write(writer, "\nUsage: ")!
+        write(writer, program)!
+        write(writer, " <COMMAND> [OPTIONS] [ARGS]\n\nCommands:\n")!
+        for entry in commands {
+            write(writer, "  ")!
+            write(writer, entry.name)!
+            write(writer, "  ")!
+            write(writer, entry.about)!
+            write(writer, "\n")!
+        }
+    } else {
+        for entry in commands {
+            if entry.name == command {
+                write(writer, entry.about)!
+                write(writer, "\nUsage: ")!
+                write(writer, program)!
+                write(writer, " ")!
+                write(writer, entry.name)!
+                write(writer, " [OPTIONS] [ARGS]\n\nOptions:\n")!
+                _write_options(writer, entry.specs)!
+                write(writer, "  -h, --help  Show help\n")!
+                return
+            }
+        }
+        write(writer, "Unknown command: ")!
+        write(writer, command)!
+        write(writer, "\n")!
+        return
+    }
+    write(writer, "\nUse <COMMAND> --help for command help.\n  -h, --help  Show help\n")!
 }

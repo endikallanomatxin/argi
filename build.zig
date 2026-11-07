@@ -189,7 +189,7 @@ pub fn build(b: *std.Build) void {
     const cli_workspace = b.addWriteFiles();
     _ = cli_workspace.add(".keep", "");
     cli_tests.setCwd(cli_workspace.getDirectory());
-    cli_tests.addArgs(&.{ "test", b.pathFromRoot("more/cli"), "--sysroot", b.getInstallPath(.prefix, "") });
+    cli_tests.addArgs(&.{ "test", b.pathFromRoot("more/command_line_interface/argument_parsing"), "--sysroot", b.getInstallPath(.prefix, "") });
     if (b.args) |args| cli_tests.addArgs(args);
     cli_tests.step.dependOn(b.getInstallStep());
     cli_tests.has_side_effects = true;

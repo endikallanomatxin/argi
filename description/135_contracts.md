@@ -390,7 +390,7 @@ operations. Native Arguments and cli.ArgumentViews share those identities throug
 static generic consumers and selected virtual tables. Single-output operation
 labels remain accessible on both direct and virtual calls, including in
 parameterized bodies. The source protocol, native Arguments adapter, borrowed argument views, option
-parser, schema and help rendering belong to `more/cli`. Core only provides
+parser, schema and help rendering belong to `more/command_line_interface/argument_parsing`. Core only provides
 access to process arguments.
 
 Generic operation aliases infer their ordinary function parameters from the
