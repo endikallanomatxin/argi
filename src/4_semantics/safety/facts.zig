@@ -164,6 +164,10 @@ pub const ValueFacts = struct {
     /// Acquisition identity only: no establishment permission, initializedness,
     /// physical range, owner liveness or access authority follows from this fact.
     acquisition_origins: []const StorageCapabilityId = &.{},
+    /// Upper bound on lexical allocations visible when this valid reference was
+    /// observed, relative to this proof's shared namespace. This is separation
+    /// evidence only; it grants neither liveness nor access authority.
+    lexical_frame: ?u32 = null,
     referenced_place: ?Place = null,
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
@@ -189,6 +193,7 @@ pub const ValueFacts = struct {
             .storage_capabilities = self.storage_capabilities,
             .storage_capability_incomplete = self.storage_capability_incomplete,
             .acquisition_origins = self.acquisition_origins,
+            .lexical_frame = self.lexical_frame,
             .referenced_place = self.referenced_place,
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
@@ -298,6 +303,9 @@ pub const Tracker = struct {
         next_symbolic_id: u32 = 0,
         next_capability_id: u32 = 0,
         next_execution_id: u32 = 0,
+        // First observations persist across branches and loop iterations. A
+        // repeated lexical binding never receives a later, stronger birth.
+        lexical_allocations: std.AutoArrayHashMapUnmanaged(graph.GlobalBindingId, bool) = .empty,
         projected_storage: std.ArrayList(struct {
             parent: SymbolicPointeeId,
             parent_generation: ValidityRootId,
@@ -313,12 +321,15 @@ pub const Tracker = struct {
         /// one proof still share it. Immutable Place paths retain their arena.
         pub fn clone(self: *const RootNamespace, allocator: std.mem.Allocator) !RootNamespace {
             var result = self.*;
+            result.lexical_allocations = try self.lexical_allocations.clone(allocator);
+            errdefer result.lexical_allocations.deinit(allocator);
             result.initial_storage = try self.initial_storage.clone(allocator);
             errdefer result.initial_storage.deinit(allocator);
             result.projected_storage = try self.projected_storage.clone(allocator);
             return result;
         }
         pub fn deinit(self: *RootNamespace, allocator: std.mem.Allocator) void {
+            self.lexical_allocations.deinit(allocator);
             self.initial_storage.deinit(allocator);
             self.projected_storage.deinit(allocator);
         }

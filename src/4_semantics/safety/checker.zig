@@ -1429,8 +1429,8 @@ pub const SafetyChecker = struct {
             .array_literal => |literal| try self.evaluateArray(function, literal, state),
             .choice_literal => |literal| try self.evaluateChoice(function, literal, state),
             .choice_payload_access => |access| try self.evaluateChoicePayload(function, node.source, access, state),
-            .function_call => |call| try self.evaluateCall(function, node_id, call, state),
-            .virtual_call => |call_id| try self.evaluateVirtualCall(function, call_id, state),
+            .function_call => |call| try self.observeReturnedReferences(try self.evaluateCall(function, node_id, call, state), node.ty, state),
+            .virtual_call => |call_id| try self.observeReturnedReferences(try self.evaluateVirtualCall(function, call_id, state), node.ty, state),
             .virtualize => |virtualize_id| blk: {
                 const virtualize = self.graph.virtualizes.items[@intFromEnum(virtualize_id)];
                 var value = (try self.evaluate(function, virtualize.value, state)).referenceCopy();
@@ -1674,6 +1674,46 @@ pub const SafetyChecker = struct {
             .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
+    }
+
+    /// A safe reference returned now cannot denote later lexical storage. This
+    /// does not identify its existing backing, authorize a read, or certify raw
+    /// pointers. Missing fields remain unknown instead of inheriting a frame
+    /// from the enclosing record or container.
+    fn observeReturnedReferences(self: *SafetyChecker, original: facts.ValueFacts, ty: ?graph_mod.GlobalTypeId, state: *const FunctionState) anyerror!facts.ValueFacts {
+        const value_type = ty orelse return original;
+        if (!self.typeContainsPointer(value_type)) return original;
+        var result = original;
+        if (isPointer(self.graph, value_type)) {
+            if (result.lexical_frame == null) result.lexical_frame = state.lexicalFrame();
+            return result;
+        }
+        if (types.fields(self.graph, value_type)) |shape| {
+            if (result.fields.len != 0) {
+                const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
+                for (fields) |*field| {
+                    if (field.index >= shape.len) continue;
+                    const child = try self.allocator.create(facts.ValueFacts);
+                    child.* = try self.observeReturnedReferences(field.value.*, self.graph.fields.items[shape.start + field.index].ty, state);
+                    field.value = child;
+                }
+                result.fields = fields;
+            }
+        }
+        if (types.variants(self.graph, value_type)) |shape| {
+            if (result.variants.len != 0) {
+                const variants = try self.allocator.dupe(facts.VariantFacts, result.variants);
+                for (variants) |*variant| {
+                    if (variant.index >= shape.len) continue;
+                    const payload = self.graph.variants.items[shape.start + variant.index].payload_type orelse continue;
+                    const child = try self.allocator.create(facts.ValueFacts);
+                    child.* = try self.observeReturnedReferences(variant.value.*, payload, state);
+                    variant.value = child;
+                }
+                result.variants = variants;
+            }
+        }
+        return result;
     }
 
     fn rejectPropagatedLocalError(
@@ -2906,7 +2946,17 @@ pub const SafetyChecker = struct {
             // A valid lifetime or audited raw-reference construction does not
             // locate these bytes relative to a pending loan. Missing target
             // evidence denotes an unknown footprint, never an empty one.
-            _ = try self.requireUnknownExecutionAccess(source, "reference access", mode, state);
+            for (state.executions.items) |execution| {
+                if (!execution.pending) continue;
+                for (execution.loans) |loan| {
+                    if (mode == .read and loan.mode == .read) continue;
+                    if (pointer.lexical_frame) |frame| if (loan.storage) |storage| {
+                        if (!self.graph.isModuleBinding(storage.root) and state.frameExcludesStorage(frame, storage)) continue;
+                    };
+                    try self.report(source, "reference access has unknown memory effects while a pending execution retains borrowed storage; declare and verify an access bound", .{});
+                    return;
+                }
+            }
             return;
         }
         if (pointer.referenced_place) |place| try self.requireExecutionAccess(source, place, null, mode, state);
@@ -5469,7 +5519,7 @@ pub const SafetyChecker = struct {
                         found = field.value.*;
                         break;
                     };
-                    current = found orelse current;
+                    if (found) |selected| current = selected else current.lexical_frame = null;
                 },
                 .variant => |wanted| {
                     var found: ?facts.ValueFacts = null;
@@ -5477,7 +5527,7 @@ pub const SafetyChecker = struct {
                         found = variant.value.*;
                         break;
                     };
-                    current = found orelse current;
+                    if (found) |selected| current = selected else current.lexical_frame = null;
                 },
                 .static_index => |wanted| {
                     var found: ?facts.ValueFacts = null;
@@ -5485,17 +5535,43 @@ pub const SafetyChecker = struct {
                         found = field.value.*;
                         break;
                     };
-                    current = found orelse current;
+                    if (found) |selected| current = selected else current.lexical_frame = null;
                 },
                 .dynamic_index => {
                     var merged: facts.ValueFacts = .{ .foreign_storage = current.foreign_storage };
                     for (current.fields) |field| merged = try self.mergeValueFacts(merged, field.value.*);
-                    if (current.fields.len != 0) current = merged;
+                    if (current.fields.len != 0) current = merged else current.lexical_frame = null;
                 },
-                .dereference => {},
+                .dereference => current.lexical_frame = null,
             }
         }
         return current;
+    }
+
+    fn withoutLexicalFrames(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
+        var result = original;
+        result.lexical_frame = null;
+        var fields: ?[]facts.FieldFacts = null;
+        for (original.fields, 0..) |field, index| {
+            const child = try self.withoutLexicalFrames(field.value.*);
+            if (valueFactsEqual(child, field.value.*)) continue;
+            if (fields == null) fields = try self.allocator.dupe(facts.FieldFacts, original.fields);
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = child;
+            fields.?[index].value = stored;
+        }
+        if (fields) |updated| result.fields = updated;
+        var variants: ?[]facts.VariantFacts = null;
+        for (original.variants, 0..) |variant, index| {
+            const child = try self.withoutLexicalFrames(variant.value.*);
+            if (valueFactsEqual(child, variant.value.*)) continue;
+            if (variants == null) variants = try self.allocator.dupe(facts.VariantFacts, original.variants);
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = child;
+            variants.?[index].value = stored;
+        }
+        if (variants) |updated| result.variants = updated;
+        return result;
     }
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
@@ -5544,10 +5620,12 @@ pub const SafetyChecker = struct {
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
-            for (right.fields) |right_field| if (right_field.index == left_field.index) {
+            const present = for (right.fields) |right_field| {
+                if (right_field.index != left_field.index) continue;
                 merged = try self.mergeValueFacts(merged, right_field.value.*);
-                break;
-            };
+                break true;
+            } else false;
+            if (!present) merged = try self.withoutLexicalFrames(merged);
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = merged;
             try fields.append(.{ .index = left_field.index, .value = stored });
@@ -5558,16 +5636,22 @@ pub const SafetyChecker = struct {
                 found = true;
                 break;
             };
-            if (!found) try fields.append(right_field);
+            if (!found) {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = try self.withoutLexicalFrames(right_field.value.*);
+                try fields.append(.{ .index = right_field.index, .value = stored });
+            }
         }
 
         var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator);
         for (left.variants) |left_variant| {
             var merged = left_variant.value.*;
-            for (right.variants) |right_variant| if (right_variant.index == left_variant.index) {
+            const present = for (right.variants) |right_variant| {
+                if (right_variant.index != left_variant.index) continue;
                 merged = try self.mergeValueFacts(merged, right_variant.value.*);
-                break;
-            };
+                break true;
+            } else false;
+            if (!present) merged = try self.withoutLexicalFrames(merged);
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = merged;
             try variants.append(.{ .index = left_variant.index, .value = stored });
@@ -5578,7 +5662,11 @@ pub const SafetyChecker = struct {
                 found = true;
                 break;
             };
-            if (!found) try variants.append(right_variant);
+            if (!found) {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = try self.withoutLexicalFrames(right_variant.value.*);
+                try variants.append(.{ .index = right_variant.index, .value = stored });
+            }
         }
 
         var symbolic_pointees: std.ArrayList(facts.SymbolicPointeeId) = .empty;
@@ -5594,6 +5682,7 @@ pub const SafetyChecker = struct {
         for (right.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
         return .{
             .acquisition_origins = try origins.toOwnedSlice(),
+            .lexical_frame = if (left.lexical_frame != null and right.lexical_frame != null) @max(left.lexical_frame.?, right.lexical_frame.?) else null,
             .symbolic_pointees = symbolic,
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
@@ -7482,6 +7571,8 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         if (opaque_provenance.len == 0) {
             if (storage) |target| {
+                if (!self.graph.isModuleBinding(target.root) and self.functionInputIndex(function, target.root) == null)
+                    try state.observeLexicalStorage(target.root, true);
                 const generation = try state.storageGeneration(target);
                 try appendDependencyFact(&dependencies, .{ .root = generation });
                 // Taking the address of an input/output slot borrows this
@@ -9070,6 +9161,7 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
 }
 
 fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.lexical_frame != right.lexical_frame) return false;
     if (left.explicit_dependency != right.explicit_dependency or left.foreign_storage != right.foreign_storage or left.opaque_provenance.len != 0 or right.opaque_provenance.len != 0) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |place| if (!place.eql(right.referenced_place.?)) return false;
@@ -9237,6 +9329,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.lexical_frame != right.lexical_frame) return false;
     if (!std.mem.eql(facts.ExecutionId, left.execution_receipts, right.execution_receipts)) return false;
     if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
     for (left.symbolic_pointees) |identity|
@@ -12892,4 +12985,71 @@ test "capture observations remain checked independently of execution authority" 
     // turning its old target into an unknown but authorized observation.
     try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, summary, &.{}, &.{captured}, &state));
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "lexical reference frames weaken at joins and never flow from a containing slot" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    const early = facts.ValueFacts{ .lexical_frame = 2 };
+    const late = facts.ValueFacts{ .lexical_frame = 7 };
+    try std.testing.expectEqual(@as(?u32, 2), early.referenceCopy().lexical_frame);
+    try std.testing.expectEqual(@as(?u32, null), early.scalarOpaqueRead().lexical_frame);
+    try std.testing.expectEqual(@as(?u32, 7), (try checker.mergeValueFacts(early, late)).lexical_frame);
+    try std.testing.expectEqual(@as(?u32, 7), (try checker.mergeValueFacts(late, early)).lexical_frame);
+    try std.testing.expectEqual(@as(?u32, null), (try checker.mergeValueFacts(early, .{})).lexical_frame);
+    try std.testing.expectEqual(@as(?u32, null), (try checker.mergeValueFacts(.{}, late)).lexical_frame);
+    const paths = [_]facts.Projection{ .{ .field = 0 }, .{ .variant = 0 }, .{ .static_index = 0 }, .dynamic_index, .dereference };
+    for (paths) |path| {
+        const projected = try checker.projectValueFacts(early, &.{path});
+        try std.testing.expectEqual(@as(?u32, null), projected.lexical_frame);
+    }
+    const nested = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &early }} };
+    const partial = facts.ValueFacts{ .fields = &.{.{ .index = 0, .value = &nested }} };
+    for ([_]facts.ValueFacts{ try checker.mergeValueFacts(partial, .{}), try checker.mergeValueFacts(.{}, partial) }) |joined| {
+        const leaf = try checker.projectValueFacts(joined, &.{ .{ .field = 0 }, .{ .variant = 0 } });
+        try std.testing.expectEqual(@as(?u32, null), leaf.lexical_frame);
+    }
+    const aggregate = facts.ValueFacts{ .fields = &.{.{ .index = 0, .value = &late }} };
+    try std.testing.expectEqual(@as(?u32, 7), (try checker.projectValueFacts(aggregate, &.{.{ .field = 0 }})).lexical_frame);
+}
+
+test "lexical reference frames authorize only independently later concrete loans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const old = facts.Place{ .root = @enumFromInt(0) };
+    const later = facts.Place{ .root = @enumFromInt(1) };
+    try state.beginLexicalStorage(old);
+    const pointer = facts.ValueFacts{ .lexical_frame = state.lexicalFrame() };
+    try state.beginLexicalStorage(later);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (std.meta.tags(facts.AccessMode)) |access_mode| {
+        const independent = try state.establishExecution(&.{.{ .storage = later, .mode = .write }});
+        const before = diags.list.items.len;
+        try checker.requireExecutionPointerAccess(source, pointer, access_mode, &state);
+        try std.testing.expectEqual(before, diags.list.items.len);
+        state.completeExecution(independent);
+        const aliased = try state.establishExecution(&.{.{ .storage = old, .mode = .write }});
+        try checker.requireExecutionPointerAccess(source, pointer, access_mode, &state);
+        try std.testing.expectEqual(before + 1, diags.list.items.len);
+        state.completeExecution(aliased);
+        const unknown = try state.establishExecution(&.{.{ .symbolic = @enumFromInt(0), .mode = .write }});
+        try checker.requireExecutionPointerAccess(source, pointer, access_mode, &state);
+        try std.testing.expectEqual(before + 2, diags.list.items.len);
+        state.completeExecution(unknown);
+    }
 }

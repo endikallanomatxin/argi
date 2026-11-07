@@ -1044,3 +1044,77 @@ fresh-authorization postcondition as a shortcut to the physical observation
 needed by collection access. The immediate design target remains the second
 row: a valid bounded storage observation that can survive erasure without
 claiming disjointness, initialization, ownership or a new establishment right.
+
+### Bounded implementation experiment: references and later lexical storage
+
+A safe reference observed at a call return denotes already existing backing.
+It therefore cannot denote the physical slot of a later fresh lexical binding
+in the same execution. This statement concerns physical allocation order, not
+validity-root creation, value initialization, ownership or acquisition IDs.
+It says nothing about separation from older storage, globals, symbolic input
+referents, or storage reached by dereferencing a later local pointer.
+
+The checker experiment records a caller-relative lexical frame on returned safe
+references. Its shared proof namespace records the first declaration of each
+lexical storage family. Repeated loop declarations never move that first
+observation forward. Branches share the namespace, so a declaration visited on
+another branch can only weaken the bound. Taking an address before visiting its
+declaration records possibly preexisting storage; it cannot prove a fresh birth.
+Changing a value generation never changes this physical observation.
+
+The authorization rule is deliberately narrow:
+
+```text
+valid_reference(p) and frame(p) = F
+and loan(k) targets a concrete lexical slot L
+and first_declaration(L) is after F
+and L was not already observed as possibly preexisting
+and L contains no dereference projection
+    => this reference access cannot conflict with loan(k)
+```
+
+All other pending loans retain the existing overlap checks. In particular,
+unknown calls do not become bounded merely because their result is a reference.
+Their effects must be authorized before the result is observed. Lifetime and
+initialization checks still run; a frame cannot revive a stale reference.
+
+Copying a reference preserves its frame. Joining known frames takes the later
+bound; joining with unknown evidence forgets the bound. Missing projected fields
+and dereferenced contents never inherit the physical frame of their containing
+slot. A value inserted later into an older container therefore cannot acquire
+that container's older separation evidence. Reference retargeting replaces its
+facts rather than preserving an earlier observation.
+
+This is an optional approximation, not an exact identity for every runtime
+allocation. It is local to one proof namespace and is not exported as a raw
+numeric timestamp in function summaries. A returned reference with no retained
+observation receives the current caller bound, which can lose precision.
+Preserving stronger bounds through abstract forwarding needs a verified source
+relation; a lifetime dependency alone is insufficient.
+
+The experiment checks a reference obtained through `Virtual` before an unrelated
+local writer starts, including reads inside a loop. Paired negative programs lend
+the reference's older possible backing or retarget it to the new local first.
+Actual checker/state unit tests exercise joins, projections, namespace copies,
+repeated declarations, early address observations and generation changes.
+
+This does not close the heterogeneous collection case. An Allocation still
+carries a raw data address rather than a published physical observation. Creating
+a slot reference after the loan starts gives a weaker frame; deriving it from an
+older observation will require preserving the same backing relation through
+checked containment. Do not inherit a bound from an allocator lifetime anchor.
+
+Validation resource policy for this experiment: after reported memory pressure,
+stop the parallel full-suite attempt. Run focused program cases with `-j1` and
+`-Dtest-jobs=1`, a 6 GiB per-process address-space limit, explicit progress and
+`/usr/bin/time -v` peak-RSS reporting. The three targeted Debug internal tests
+pass. The isolated ReleaseSafe program run passes all four `erased_reference`
+fixtures (156--159), with 2,813,124 KiB maximum RSS and no swaps reported by
+`time`, under the 6 GiB address-space limit. This includes compilation of both
+the test runner and compiler, in series. The isolated full Debug internal suite
+also passes: 1,491 passed, one skipped, maximum RSS 577,496 KiB and no swaps.
+The isolated full ReleaseSafe program suite subsequently passes: 2,524 passed,
+11 skipped, zero failures and zero reported leaks. Its maximum RSS is
+2,425,772 KiB, with no swaps, under the same serial execution and 6 GiB
+address-space limit. These checks validate this bounded approximation; they do
+not establish general physical provenance or close unknown-call authorization.

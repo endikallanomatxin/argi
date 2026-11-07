@@ -728,7 +728,32 @@ pub const State = struct {
             self.storage_generations.appendAssumeCapacity(.{ .storage = storage, .generation = generation });
     }
 
+    /// Record physical lexical storage independently of value generations.
+    /// Never refresh this observation on assignment, reinitialization or loops.
+    pub fn observeLexicalStorage(self: *State, binding: graph_mod.GlobalBindingId, may_preexist: bool) !void {
+        const namespace = self.tracker.namespace orelse return;
+        if (namespace.lexical_allocations.contains(binding)) return;
+        if (namespace.lexical_allocations.count() == std.math.maxInt(u32)) return error.SafetyLexicalFrameLimit;
+        try namespace.lexical_allocations.put(self.tracker.allocator, binding, may_preexist);
+    }
+
+    pub fn lexicalFrame(self: *const State) ?u32 {
+        const namespace = self.tracker.namespace orelse return null;
+        return @intCast(namespace.lexical_allocations.count());
+    }
+
+    /// Unknown external backing remains possible. Only later lexical storage
+    /// in this proof can be excluded; a dereference denotes external storage,
+    /// not the local reference slot from which it was reached.
+    pub fn frameExcludesStorage(self: *const State, frame: u32, storage: facts.Place) bool {
+        for (storage.projections) |projection| if (projection == .dereference) return false;
+        const namespace = self.tracker.namespace orelse return false;
+        const index = namespace.lexical_allocations.getIndex(storage.root) orelse return false;
+        return !namespace.lexical_allocations.values()[index] and index >= frame;
+    }
+
     pub fn beginLexicalStorage(self: *State, storage: facts.Place) !void {
+        try self.observeLexicalStorage(storage.root, false);
         for (self.storage_generations.items) |entry| {
             if (!storage.isPrefixOf(entry.storage)) continue;
             try self.refreshStorageGeneration(storage);
@@ -1515,4 +1540,48 @@ test "virtual captured domains have stable identities distinct from handle bytes
     try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items.len);
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{generation}, state.opaque_storages.items[1].hidden_dependencies);
+}
+
+test "lexical reference frames exclude only later storage and survive generation changes" {
+    const a = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = State.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const first = facts.Place{ .root = @enumFromInt(0) };
+    const later = facts.Place{ .root = @enumFromInt(1) };
+    const external = facts.Place{ .root = @enumFromInt(2) };
+    try state.beginLexicalStorage(first);
+    const frame = state.lexicalFrame().?;
+    const generation = try state.storageGeneration(first);
+    try state.beginLexicalStorage(later);
+    try std.testing.expect(!state.frameExcludesStorage(frame, first));
+    try std.testing.expect(state.frameExcludesStorage(frame, later));
+    try std.testing.expect(!state.frameExcludesStorage(frame, external));
+    try std.testing.expect(!state.frameExcludesStorage(frame, .{ .root = later.root, .projections = &.{.dereference} }));
+    try std.testing.expect(state.frameExcludesStorage(frame, .{ .root = later.root, .projections = &.{.{ .field = 0 }} }));
+    try state.refreshStorageGeneration(first);
+    try std.testing.expect(generation != try state.storageGeneration(first));
+    try std.testing.expect(!state.frameExcludesStorage(frame, first));
+    // Repeated loop declarations and branch copies cannot assign a later birth
+    // to existing backing. The shared first observation is conservative.
+    var branch = try state.clone(a);
+    defer branch.deinit();
+    try branch.beginLexicalStorage(first);
+    try std.testing.expectEqual(@as(usize, 2), namespace.lexical_allocations.count());
+    try std.testing.expectEqual(state.lexicalFrame(), branch.lexicalFrame());
+    // Address formation can observe storage before its declaration is visited.
+    try state.observeLexicalStorage(external.root, true);
+    // Even an earlier frame cannot exclude storage first encountered by an
+    // address observation: that observation does not establish its birth.
+    try std.testing.expect(!state.frameExcludesStorage(0, external));
+    const before_declaration = state.lexicalFrame().?;
+    try state.beginLexicalStorage(external);
+    try std.testing.expect(!state.frameExcludesStorage(before_declaration, external));
+    var copied_namespace = try namespace.clone(a);
+    defer copied_namespace.deinit(a);
+    try std.testing.expectEqual(namespace.lexical_allocations.count(), copied_namespace.lexical_allocations.count());
+    try std.testing.expectEqualSlices(graph_mod.GlobalBindingId, namespace.lexical_allocations.keys(), copied_namespace.lexical_allocations.keys());
+    try std.testing.expectEqualSlices(bool, namespace.lexical_allocations.values(), copied_namespace.lexical_allocations.values());
 }
