@@ -13,6 +13,11 @@ Keep compiler acceptance, rejection, lifetime diagnostics, and backend regressio
 fixtures under `tests/`. A library's functional test suite should not need a
 parallel set of executable fixtures there.
 
+CLI library behavior tests live in `more/cli/*_test.rg`. Run them with
+`argi test more/cli` or `zig build test-cli -j16 -Dtest-jobs=16`; unfiltered
+`zig build test` includes them. Compiler integration and lifetime regressions
+for imported argument sources remain under `tests/`.
+
 ## Fixture tests
 
 Each ordinary feature fixture keeps a `test.zig` beside its Argi sources:

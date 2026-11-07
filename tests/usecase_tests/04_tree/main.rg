@@ -1,3 +1,5 @@
+cli := import("cli")
+
 -- A small consumer of declarative options, owned paths and directory walking.
 main := (.system: System) -> (.status_code: Int32 = 0) {
 
@@ -7,9 +9,9 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     output ::= $&system.terminal&.stdout
 
     specs ::= (
-        CliSpec("help", "h", "Show help"),
-        CliSpec("root", "r", "Directory to visit", .value_name = "PATH", .required = true),
-        CliSpec(
+        cli.Spec("help", "h", "Show help"),
+        cli.Spec("root", "r", "Directory to visit", .value_name = "PATH", .required = true),
+        cli.Spec(
             "depth"
             "d"
             "Maximum depth"
@@ -18,10 +20,10 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         )
     )
 
-    if length(system.args).count == 2 {
-        argument ::= unwrap_or_abort(.value = argument_view_at(system.args, 1))
+    if cli.ArgumentSource#().length(system.args).count == 2 {
+        argument ::= argument_view_at(system.args, 1)!!!
         if argument == "--help" or argument == "-h" {
-            write_cli_help(
+            cli.write_help(
                 .program = "tree"
                 .about   = "List directory entries"
                 .specs   = view(&specs)
@@ -31,7 +33,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         }
     }
 
-    parsed ::= parse_cli(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+    parsed ::= cli.parse(.source = system.args, .specs = view(&specs), .start = 1)!!! {
         status_code = 1
     }
 

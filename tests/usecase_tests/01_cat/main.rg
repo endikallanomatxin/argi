@@ -1,3 +1,5 @@
+cli := import("cli")
+
 -- Transfer binary input through one buffered output stream.
 main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_code: Int32 = 0) {
     assume error_tracer
@@ -12,14 +14,14 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
         }
     }
 
-    specs ::= (CliSpec("help", "h", "Show help"),)
-    arguments ::= parse_cli(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+    specs ::= (cli.Spec("help", "h", "Show help"),)
+    arguments ::= cli.parse(.source = system.args, .specs = view(&specs), .start = 1)!!! {
         status_code = 1
     }
 
     for option in arguments.options {
         if option.name == "help" {
-            write_cli_help(
+            cli.write_help(
                 .program = "cat"
                 .about   = "Concatenate files to standard output. With no files or FILE '-', read standard input."
                 .specs   = view(&specs)

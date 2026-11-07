@@ -84,6 +84,11 @@ feature first.
 
 - Keep CLI help aligned with the tool's current capabilities.
 
+- Core exposes process arguments through `Arguments`; CLI parsing policy lives
+  in `more/cli` and requires an explicit import. Keep ArgumentSource and its
+  native/borrowed adapters with that library. Use public string/view operations
+  there; library code has no bundled-core private-field privileges.
+
 - Construct borrowed virtual handles with `Virtual#(Contract)(reference)`.
   Aliases of virtual types use the same checked construction path; do not
   reintroduce a separate public conversion function.

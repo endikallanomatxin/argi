@@ -386,11 +386,12 @@ selected Item evidence. Validation of newly selected evidence joins ordinary
 resolution and cleanup before the final graph is published.
 
 ArgumentSource now uses an explicit Source participant and scoped length/get
-operations. Native Arguments and CliArgumentViews share those identities through
+operations. Native Arguments and cli.ArgumentViews share those identities through
 static generic consumers and selected virtual tables. Single-output operation
 labels remain accessible on both direct and virtual calls, including in
-parameterized bodies. The source protocol and CLI view adapter live separately
-from option-tokenization and schema code.
+parameterized bodies. The source protocol, native Arguments adapter, borrowed argument views, option
+parser, schema and help rendering belong to `more/cli`. Core only provides
+access to process arguments.
 
 Generic operation aliases infer their ordinary function parameters from the
 selected requirement's input signature. A named alias can retain a completely

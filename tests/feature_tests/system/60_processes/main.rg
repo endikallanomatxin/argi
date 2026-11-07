@@ -29,14 +29,15 @@ check_bytes := #(.ReaderType: Type: Reader#(ReaderType)) (
 }
 
 child_main := (.system: System) -> (.status: Int32 = 7) {
+    assume writer ::= $&system.terminal&.stderr
 
     if length(.self = system.args).count != 7 { abort }
     expected: Array#(.n = 4, .t: StringView) = ("a b", "a\"b", "trail\\", "á;$(no)")
-    empty ::= unwrap_or_abort(.value = get(.self = system.args, .index = 2)).result
+    empty ::= argument_view_at(.self = system.args, .index = 2)!!!
     if byte_length(&empty).count != 0 { abort }
     i :: UIntNative = 0
     while i < 4 {
-        value ::= unwrap_or_abort(.value = get(.self = system.args, .index = i + 3)).result
+        value ::= argument_view_at(.self = system.args, .index = i + 3)!!!
         if value != expected[i] { abort }
         i = i + 1
     }
@@ -48,6 +49,7 @@ child_main := (.system: System) -> (.status: Int32 = 7) {
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume writer ::= $&system.terminal&.stderr
 
     if length(.self = system.args).count == 2 {
         status_code = 23
@@ -58,7 +60,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         return
     }
     assume proc_man ::= system.proc_man
-    executable ::= unwrap_or_abort(.value = get(.self = system.args, .index = 0)).result
+    executable ::= argument_view_at(.self = system.args, .index = 0)!!!
     args: Array#(.n = 6, .t: StringView) = ("echo", "", "a b", "a\"b", "trail\\", "á;$(no)")
     child ::= unwrap_or_abort(
         .value = spawn(

@@ -4,7 +4,7 @@
 ..unexpected_option_value
 ..invalid_cli_schema
 
-CliSpec := (
+Spec := (
     .name          : StringView,
     .short_name    : StringView  = "",
     .help          : StringView  = "",
@@ -14,35 +14,13 @@ CliSpec := (
     .default_value : ?StringView = ..none
 )
 
-implement ImplicitlyCopyable#(CliSpec) ()
-
-CliValue := (.name: StringView, .value: ?StringView)
-
-implement ImplicitlyCopyable#(CliValue) ()
-
-CliMatches := (
-    .options     : DynamicArray#(.t: CliValue),
-    .positionals : DynamicArray#(.t: StringView)
-)
-
-CliReasons: Type = (
-    ..invalid_utf8,
-    ..out_of_bounds,
-    ..invalid_option,
-    ..missing_option_value,
-    ..unknown_option,
-    ..duplicate_option,
-    ..required_option,
-    ..unexpected_option_value,
-    ..invalid_cli_schema,
-    ..out_of_memory
-)
+implement ImplicitlyCopyable#(Spec) ()
 
 _valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
 
     index :: UIntNative = 0
     while index < byte_length(&name).count {
-        byte ::= unwrap_or_abort(.value = bytes_get(.view = &name, .index = index))
+        byte ::= bytes_get(.view = &name, .index = index) handle ignored, value { abort }
         if byte <= 32 or byte == 127 or byte == 61 {
             ok = false
             return
@@ -55,20 +33,20 @@ _valid_cli_option_name := (.name: StringView) -> (.ok: Bool = true) {
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
 -- Names exclude ASCII controls, spaces and '='. Defaults require value options.
-parse_cli := #(.t: Type: ArgumentSource#(t)) (
+parse := #(.t: Type: ArgumentSource#(t)) (
     .source    : &t,
-    .specs     : ArrayView#(.t: CliSpec),
-    .start     : UIntNative               = 0,
+    .specs     : ArrayView#(.t: Spec),
+    .start     : UIntNative            = 0,
     .allocator : Virtual#(Allocator)
-) -> (.result: Errable#(CliMatches, CliReasons)) {
+) -> (.result: Errable#(Matches, Reasons)) {
 
     assume allocator
     count ::= length(&specs).count
     index :: UIntNative = 0
 
     while index < count {
-        spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
-        if spec.name._length == 0 or spec.short_name._length > 1 {
+        spec ::= get(&specs, .index = index)!
+        if byte_length(&spec.name).count == 0 or byte_length(&spec.short_name).count > 1 {
             result = ..error(.reason = ..invalid_cli_schema)
             return
         }
@@ -79,7 +57,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
             result = ..error(.reason = ..invalid_cli_schema)
             return
         }
-        if spec.value_name._length == 0 {
+        if byte_length(&spec.value_name).count == 0 {
             match spec.default_value {
                 ..none {}
                 ..some _ {
@@ -90,10 +68,13 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
         }
         previous :: UIntNative = 0
         while previous < index {
-            other ::= unwrap_or_abort(.value = get(&specs, .index = previous))
+            other ::= get(&specs, .index = previous)!
             if [
                 other.name == spec.name
-                or [spec.short_name._length > 0 and other.short_name == spec.short_name]
+                or [
+                    byte_length(&spec.short_name).count > 0
+                    and other.short_name == spec.short_name
+                ]
             ] {
                 result = ..error(.reason = ..invalid_cli_schema)
                 return
@@ -103,9 +84,9 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
         index = index + 1
     }
 
-    options ::= DynamicArray#(.t: CliValue)(.capacity = count)!
+    options ::= DynamicArray#(.t: Value)(.capacity = count)!
     positionals ::= DynamicArray#(.t: StringView)(.capacity = 1)!
-    parser ::= CliParser#(.t: t)(.source = source, .start = start)
+    parser ::= Parser#(.t: t)(.source = source, .start = start)
 
     while true {
         match next($&parser)! {
@@ -119,7 +100,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
                         found ::= false
                         index = 0
                         while index < count {
-                            spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
+                            spec ::= get(&specs, .index = index)!
                             matches :: Bool = option.name == spec.name
                             if option.short { matches = option.name == spec.short_name }
                             if matches {
@@ -127,9 +108,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
                                 if spec.repeatable == false {
                                     cursor :: UIntNative = 0
                                     while cursor < length(&options).count {
-                                        existing ::= unwrap_or_abort(
-                                            .value = get(&options, .index = cursor)
-                                        )
+                                        existing ::= get(&options, .index = cursor)!
                                         if existing.name == spec.name {
                                             result = ..error(.reason = ..duplicate_option)
                                             return
@@ -138,7 +117,7 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
                                     }
                                 }
                                 value :: ?StringView = ..none
-                                if spec.value_name._length > 0 {
+                                if byte_length(&spec.value_name).count > 0 {
                                     value = ..some(
                                         .value = take_value($&parser, .option = option)!
                                     )
@@ -153,8 +132,8 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
                                     }
                                 }
                                 push(
-                                    .self  = $&options
-                                    .value = CliValue(.name = spec.name, .value = value)
+                                    .self      = $&options
+                                    .value     = Value(.name = spec.name, .value = value)
                                     .allocator = allocator
                                 )!
                                 break
@@ -174,11 +153,11 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
     index = 0
 
     while index < count {
-        spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
+        spec ::= get(&specs, .index = index)!
         found ::= false
         cursor :: UIntNative = 0
         while cursor < length(&options).count {
-            existing ::= unwrap_or_abort(.value = get(&options, .index = cursor))
+            existing ::= get(&options, .index = cursor)!
             if existing.name == spec.name {
                 found = true
                 break
@@ -190,8 +169,8 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
                 ..some entry {
                     defaulted :: ?StringView = ..some(.value = entry.value)
                     push(
-                        .self  = $&options
-                        .value = CliValue(.name = spec.name, .value = defaulted)
+                        .self      = $&options
+                        .value     = Value(.name = spec.name, .value = defaulted)
                         .allocator = allocator
                     )!
                     found = true
@@ -206,48 +185,4 @@ parse_cli := #(.t: Type: ArgumentSource#(t)) (
     }
 
     result = ..ok(.options = ~options, .positionals = ~positionals)
-}
-
-write_cli_help := #(.WriterType: Type: Writer#(WriterType)) (
-    .writer  : $&WriterType,
-    .program : StringView,
-    .about   : StringView,
-    .specs   : ArrayView#(.t: CliSpec)
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
-
-    write(writer, .value = about)!
-    write(writer, .value = "\nUsage: ")!
-    write(writer, .value = program)!
-    write(writer, .value = " [OPTIONS] [ARGS]\n\nOptions:\n")!
-    index :: UIntNative = 0
-
-    while index < length(&specs).count {
-        spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
-        write(writer, .value = "  ")!
-        if spec.short_name._length > 0 {
-            write(writer, .value = "-")!
-            write(writer, .value = spec.short_name)!
-            write(writer, .value = ", ")!
-        }
-        write(writer, .value = "--")!
-        write(writer, .value = spec.name)!
-        if spec.value_name._length > 0 {
-            write(writer, .value = " <")!
-            write(writer, .value = spec.value_name)!
-            write(writer, .value = ">")!
-        }
-        if spec.required { write(writer, .value = " (required)")! }
-        if spec.repeatable { write(writer, .value = " (repeatable)")! }
-        write(writer, .value = "  ")!
-        write(writer, .value = spec.help)!
-        match spec.default_value {
-            ..none {} ..some entry {
-                write(writer, .value = " [default: ")!
-                write(writer, .value = entry.value)!
-                write(writer, .value = "]")!
-            }
-        }
-        write(writer, .value = "\n")!
-        index = index + 1
-    }
 }

@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume writer ::= $&system.terminal&.stderr
 
     if length(.self = system.args).count > 1 {
         unwrap_or_abort(.value = close(.self = $&system.terminal&.stdin))
@@ -18,7 +19,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         return
     }
     assume proc_man ::= system.proc_man
-    executable ::= unwrap_or_abort(.value = get(.self = system.args, .index = 0)).result
+    executable ::= argument_view_at(.self = system.args, .index = 0)!!!
     args: [1]StringView = ("wait")
     child ::= unwrap_or_abort(
         .value = spawn(

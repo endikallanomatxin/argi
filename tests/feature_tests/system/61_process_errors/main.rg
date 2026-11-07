@@ -1,4 +1,5 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume writer ::= $&system.terminal&.stderr
 
     assume proc_man ::= system.proc_man
     match spawn(.self = proc_man, .executable = "") {
@@ -22,7 +23,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
             abort
         }
     }
-    executable ::= unwrap_or_abort(.value = get(.self = system.args, .index = 0)).result
+    executable ::= argument_view_at(.self = system.args, .index = 0)!!!
     bytes: [3]UInt8 = (97, 0, 98)
     invalid: StringView = "a\0b"
     args: [1]StringView = (invalid)

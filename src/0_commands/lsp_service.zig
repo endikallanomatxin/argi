@@ -1554,9 +1554,10 @@ test "LSP constructor navigation finds selected init bodies and default record d
         \\    first ::= MyType()
         \\    second ::= MyType(2)
         \\    boxed ::= Box#(.t: Int32)(3)
-        \\    specs ::= (CliSpec("help", "h", "Show help"),)
+        \\    specs ::= (cli.Spec("help", "h", "Show help"),)
         \\    imported ::= library.Thing(4)
         \\}
+        \\cli := import("cli")
         \\library := import("./library")
     ;
     var tmp = std.testing.tmpDir(.{});
@@ -1597,11 +1598,11 @@ test "LSP constructor navigation finds selected init bodies and default record d
         defer edits.deinit();
         try std.testing.expectEqual(@as(usize, 0), edits.items.len);
     }
-    const spec = (try service.definition(uri, outlinePosition(code, std.mem.indexOf(u8, code, "CliSpec(").?))).?;
+    const spec = (try service.definition(uri, outlinePosition(code, std.mem.indexOf(u8, code, "cli.Spec(").? + "cli.".len))).?;
     defer spec.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, spec.path, if (@import("builtin").os.tag == .windows) "\\system\\command.rg" else "/system/command.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, spec.path, if (@import("builtin").os.tag == .windows) "\\cli\\schema.rg" else "/cli/schema.rg"));
     try std.testing.expectEqual(@as(u32, 6), spec.range.start.line);
-    try std.testing.expectEqual(@as(u32, 7), spec.range.end.character);
+    try std.testing.expectEqual(@as(u32, 4), spec.range.end.character);
     const imported = (try service.definition(uri, outlinePosition(code, std.mem.indexOf(u8, code, "library.Thing(").? + "library.".len))).?;
     defer imported.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, imported.path, if (@import("builtin").os.tag == .windows) "\\library\\thing.rg" else "/library/thing.rg"));

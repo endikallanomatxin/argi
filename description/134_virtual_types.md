@@ -715,10 +715,10 @@ are independent of lifetime dependencies. They do not grant general access to
 other fields of the input. [Concurrency](173_concurrency.md) describes their use
 by executors.
 
-Core's `ArgumentSource` illustrates borrowed results: `length` has an empty
+The `cli` library's `ArgumentSource` illustrates borrowed results: `length` has an empty
 contract, while `get` permits its successful `StringView` to depend on `self`.
 Its ordinary error has no borrowed dependencies. Both native `Arguments` and borrowed
-`CliArgumentViews` satisfy this signature. A virtual conversion preserves the
+`cli.ArgumentViews` satisfy this signature. A virtual conversion preserves the
 source's dependencies; a wrapper returning `get` cannot outlive locally owned
 argument storage merely because the receiver's concrete layout was erased.
 

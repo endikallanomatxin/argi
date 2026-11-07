@@ -98,20 +98,9 @@ implement Iterator#(ArgumentsIterator) (
     }
 )
 
-implement ArgumentSource#(Arguments) (
-    .length = (.self: &Arguments) -> (.count: UIntNative) {
+-- Process arguments remain usable without importing a command-line parser.
+implement CollectionLength#(Arguments) (
+    .measure_length = (.self: &Arguments) -> (.count: UIntNative) {
         count = self&.count
-    }
-
-    .get = (.self: &Arguments, .index: UIntNative) -> (
-        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
-    ) {
-
-        if index >= self&.count {
-            result = ..error(.reason = ..out_of_bounds)
-            return
-        }
-
-        result = argument_view_at(self, .index = index)
     }
 )

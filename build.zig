@@ -185,6 +185,17 @@ pub fn build(b: *std.Build) void {
     const internal_test_step = b.step("test-internal", "Run compiler unit tests");
     internal_test_step.dependOn(&run_internal_tests.step);
 
+    const cli_tests = b.addRunArtifact(exe);
+    const cli_workspace = b.addWriteFiles();
+    _ = cli_workspace.add(".keep", "");
+    cli_tests.setCwd(cli_workspace.getDirectory());
+    cli_tests.addArgs(&.{ "test", b.pathFromRoot("more/cli"), "--sysroot", b.getInstallPath(.prefix, "") });
+    if (b.args) |args| cli_tests.addArgs(args);
+    cli_tests.step.dependOn(b.getInstallStep());
+    cli_tests.has_side_effects = true;
+    const cli_test_step = b.step("test-cli", "Run the CLI library's native Argi tests");
+    cli_test_step.dependOn(&cli_tests.step);
+
     const http_tests = b.addRunArtifact(exe);
     // Shared CLI fixtures can remove the repository's .argi-cache. Give HTTP
     // validation its own working directory so linking cannot race that cleanup.
@@ -237,7 +248,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);
     test_step.dependOn(program_test_step);
-    if (test_filters.len == 0) test_step.dependOn(http_test_step);
+    if (test_filters.len == 0) {
+        test_step.dependOn(http_test_step);
+        test_step.dependOn(cli_test_step);
+    }
 }
 
 /// Assemble discovered tests in one module, so Zig collects their test blocks.

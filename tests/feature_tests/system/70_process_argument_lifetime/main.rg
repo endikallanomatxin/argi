@@ -1,11 +1,12 @@
 main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume writer ::= $&system.terminal&.stderr
 
     if length(.self = system.args).count == 2 {
-        value ::= unwrap_or_abort(.value = get(.self = system.args, .index = 1)).result
+        value ::= argument_view_at(.self = system.args, .index = 1)!!!
         if value != "done" { abort }
         return
     }
-    executable ::= unwrap_or_abort(.value = get(.self = system.args, .index = 0)).result
+    executable ::= argument_view_at(.self = system.args, .index = 0)!!!
     child :: Process
     {
         bytes: [4]UInt8 = (100, 111, 110, 101)

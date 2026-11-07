@@ -1,44 +1,14 @@
-main := (.system: System) -> (.status_code: Int32 = 1) {
+cli := import ("cli")
 
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
-    args :: [7]StringView = ("-ab", "--size=12", "--offset", "-3", "file", "--", "--literal")
-    source ::= CliArgumentViews(.values = view(.self = &args))
-    parser ::= CliParser#(.t: CliArgumentViews)(.source = &source)
-    index :: Int32 = 0
-    while true {
-        match next(.self = $&parser)!!! {
-            ..none { break }
-            ..some item {
-                match item.value {
-                    ..option option {
-                        if index == 0 and option.name != "a" { abort }
-                        if index == 1 and option.name != "b" { abort }
-                        if index == 2 {
-                            if take_value(.self = $&parser, .option = option)!!! != "12" {
-                                abort
-                            }
-                        }
-                        if index == 3 {
-                            if take_value(.self = $&parser, .option = option)!!! != "-3" {
-                                abort
-                            }
-                        }
-                    }
-                    ..positional text {
-                        if index == 4 and text != "file" { abort }
-                        if index == 5 and text != "--literal" { abort }
-                    }
-                }
-                index = index + 1
-            }
-        }
-    }
-    if index != 6 { abort }
-    bad :: [1]StringView = ("--=bad")
-    bad_view ::= CliArgumentViews(.values = view(.self = &bad))
-    invalid ::= CliParser#(.t: CliArgumentViews)(.source = &bad_view)
-    match next(.self = $&invalid) {
-        ..ok _ { abort } ..error&err { if [err&.reason != ..invalid_option] { abort } }
-    }
-    status_code = 0
+    specs ::= (cli.Spec(.name = "help", .short_name = "h"),)
+    matches ::= cli.parse(
+        .source    = system.args
+        .specs     = view(&specs)
+        .start     = 1
+        .allocator = system.page_allocator
+    )!!! { status_code = 1 }
+    if length(&matches.options) != 0 { abort }
+    if length(&matches.positionals) != 0 { abort }
 }
