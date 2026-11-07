@@ -20,8 +20,8 @@ pub const Spec = struct {
 
 pub const specs = [_]Spec{
     .{ .primitive = .execution_lend, .path = "core/memory/execution_access.rg", .name = "_execution_lend", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
-    .{ .primitive = .execution_complete, .path = "core/memory/execution_access.rg", .name = "_execution_complete", .signatures = &.{"(.receipt: $&_ExecutionReceipt) -> ()"} },
-    .{ .primitive = .execution_input, .path = "core/memory/execution_access.rg", .name = "_execution_input", .signatures = &.{"#(.t: Type)(.address: UIntNative, .anchor: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .execution_complete, .path = "core/memory/execution_access.rg", .name = "_execution_complete", .signatures = &.{"(.receipt: $&_ExecutionReceipt, .join: ?_ExecutionJoin = ..none) -> ()"} },
+    .{ .primitive = .execution_input, .path = "core/memory/execution_access.rg", .name = "_execution_input", .signatures = &.{"#(.t: Type)(.invocation: _ExecutionInvocation, .anchor: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .prepare_allocation_metadata, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_prepare_allocation_metadata", .signatures = &.{"#(.t: Type)(.allocation: &Allocation) -> (.state: UIntNative)"} },
     .{ .primitive = .allocation_metadata_layout, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_allocation_metadata_layout", .signatures = &.{"#(.t: Type)() -> (.layout: _AllocationMetadataLayout)"} },
     .{ .flags = .{ .is_source_location_id = true }, .path = "core/errors/source_location.rg", .name = "error_location_id", .signatures = &.{"() -> (.location: SourceLocationId)"} },

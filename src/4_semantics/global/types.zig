@@ -973,7 +973,7 @@ pub fn isExecutionReceiptType(graph: *const graph_mod.GlobalSemanticGraph, ty: g
     for (graph.functions.items) |function| {
         if (function.safety_primitive == .execution_lend and function.output.len == 1) {
             if (equal(graph, ty, graph.fields.items[function.output.start].ty)) return true;
-        } else if (function.safety_primitive == .execution_complete and function.input.len == 1) {
+        } else if (function.safety_primitive == .execution_complete and function.input.len >= 1) {
             const input = graph.resolvedSemanticType(graph.fields.items[function.input.start].ty) orelse continue;
             if (input == .pointer and equal(graph, ty, input.pointer.child)) return true;
         }

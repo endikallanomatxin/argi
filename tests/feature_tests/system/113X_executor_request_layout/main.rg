@@ -1,5 +1,6 @@
 BadExecutor := (.base: $&ThreadedExecutor)
 implement Executor#(BadExecutor) (
+    .state = region(self.base)
     .submit = (.self: $&BadExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {

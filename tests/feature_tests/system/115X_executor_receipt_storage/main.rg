@@ -1,6 +1,7 @@
 MismatchedExecutor := (.base: $&ThreadedExecutor, .stash: ?TaskReceipt)
 
 implement Executor#(MismatchedExecutor) (
+    .state = region(self, self.base)
     .submit = (.self: $&MismatchedExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {

@@ -2,6 +2,7 @@ write := (.value: $&Int32) -> () { value& = 42 }
 read := (.value: &Int32) -> (.result: Int32) { result = value& }
 FailingExecutor := (.unused: Bool)
 implement Executor#(FailingExecutor) (
+    .state = region(self)
     .submit = (.self: $&FailingExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {

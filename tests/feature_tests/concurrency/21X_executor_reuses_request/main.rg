@@ -1,5 +1,6 @@
 TwiceExecutor := (.base: $&ThreadedExecutor)
 implement Executor#(TwiceExecutor) (
+    .state = region(self.base)
     .submit = (.self: $&TwiceExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {

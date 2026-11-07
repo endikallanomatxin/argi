@@ -1,5 +1,6 @@
 ForwardingExecutor := (.base: $&ThreadedExecutor)
 implement Executor#(ForwardingExecutor) (
+    .state = region(self.base)
     .submit = (.self: $&ForwardingExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {

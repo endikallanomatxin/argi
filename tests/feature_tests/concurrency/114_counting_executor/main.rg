@@ -1,5 +1,6 @@
 CountingExecutor := (.base: ThreadedExecutor, .submissions: Int32)
 implement Executor#(CountingExecutor) (
+    .state = region(self.base, self.submissions)
     .submit = (.self: $&CountingExecutor, .request: TaskRequest) -> (
         .result: Errable#(TaskReceipt, (..task_start_failed))
     ) {

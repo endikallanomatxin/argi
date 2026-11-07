@@ -83,6 +83,10 @@ invocation: the native adapter owns correctly sized and aligned buffers until
 the worker returns. Inputs permit only plain referents, and results prevent
 borrowed leaves or destructors from escaping that boundary. A private
 ingress operation reconstructs the checked nested reference facts for the worker.
+The private callback argument binds its invocation identity to both buffer
+addresses, sizes and alignments. Ingress checks the input layout, and the worker
+checks the result layout before initializing it. This descriptor is supplied by
+the audited adapter, not constructed from an application-supplied address.
 
 ## Access effects
 
@@ -144,9 +148,18 @@ assume its virtual Executor handle. This initial backend creates one OS thread
 per task. It has no worker pool, cancellation or task groups and currently runs
 only in native execution.
 
+`InlineExecutor(.ffi = system.ffi)` executes synchronously without an OS worker.
+It uses the same stable buffers and one-shot result extraction. The common
+Executor contract retains loans until await or cleanup even when work has already
+finished. Application-defined executors can call
+`execute_inline(.request = ~request, .ffi = ffi)` to consume an opaque request
+without gaining access to its callback or layout fields.
+
 Executor has one monomorphic submit operation. Its move-only TaskRequest binds the
 callback, source borrow, sizes, alignments and a private execution receipt.
-TaskReceipt owns native completion and cleanup. The submit contract requires
+TaskReceipt owns native completion and cleanup. Executor's associated `state`
+region bounds submission writes; forwarding implementations map that role to the
+actual captured provider state. The submit contract requires
 `carries_execution(result, request)` on success and
 `completes_execution(request)` on failure; these checked guarantees survive
 virtual dispatch. Forwarding providers move the request with `~request` rather
@@ -154,6 +167,13 @@ than duplicating it. A provider taking responsibility for a request must move it
 into a lexical owner before a fallible start. Futures reject receipts for a
 different typed worker with `executor_mismatch`. A foreign holder may invoke a callback repeatedly, so a
 callback's reachable body cannot consume a `once` function.
+
+An accepted execution receipt records its native handle. Authority recovery
+requires matching private join operands and performs native synchronization
+before returning; missing operands, mismatched handles and failed synchronization
+cannot certify completion. A prepared request can be cancelled without joining
+only because native start failure guarantees no worker escaped. These are audited
+core/runtime guarantees; transport contracts alone do not prove OS synchronization.
 
 A named access mapping to a `Virtual` field selects its erased receiver, while
 reading the handle itself remains a separate access. Such a mapping does not

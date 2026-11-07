@@ -15,7 +15,261 @@ introduce independent permission systems. The compiler still has known
 unknown-call authorization and native-buffer provenance gaps. Existing checked
 loans and delegated projections do not close those gaps.
 
+## Architecture review: lending and certified reclaim
+
+The next implementation should test a smaller authority core before extending
+the general Resource Machine. This is a design recommendation, not a completed
+proof or a claim that the current checker can already be substantially reduced.
+Keep the sequential storage/ownership model. Describe temporary interexecution
+authority using `lend` and certified `reclaim`; describe physical execution using
+a separate, audited protocol. Keep detailed region inference as a precision tool,
+not a prerequisite for every concurrency abstraction.
+
+### What the review baseline provided (995b54d66)
+
+`core/memory/execution_access.rg` supplies `_ExecutionReceipt` and three registered
+primitives: `_execution_lend`, `_execution_complete` and `_execution_input`.
+`_execution_accept` is an ordinary Argi function updating a private runtime marker,
+not a fourth checker primitive. Execution identities are logical invocation
+identities, not OS thread identities.
+
+* Lending collects reference loans, their read/write modes and storage
+  observations. Pending loans restrict the caller. Authority is already largely
+  derived from this ledger; adding another independently mutable permission
+  ledger would duplicate the invariant.
+* Completion discharges the receipt's matching execution identities. The
+  primitive does not itself verify that a native join occurred. Its sound use
+  currently depends on private core call discipline and the audited adapter.
+* Worker input establishes symbolic input facts using a type, address and anchor.
+  It does not authenticate the physical buffer's identity, bounds or connection
+  to a particular accepted invocation. The native callback convention supplies
+  assumptions that must remain explicit.
+* Acceptance marks a receipt so its destructor aborts rather than reclaiming
+  accepted work. A worker may start inside native creation before this marker
+  changes. The actual handoff must therefore be justified by the native start
+  protocol, not by treating the marker write as the start of concurrency.
+* `carries_execution` and `completes_execution` check transport and discharge of
+  logical obligations across functions and virtual contracts. They do not prove
+  native exactly-once execution or memory synchronization.
+
+Prepared request destruction can discharge a loan because no execution right
+has escaped. Successful submission moves the receipt into the accepted task.
+Native join or destruction joins the worker before core code completes the
+receipt. Failed join must retain the obligation. Core privacy prevents ordinary
+application code from directly fabricating these transitions; bundled core
+modules are trusted peers, so privacy alone does not verify their protocol.
+
+### Minimal borrowing rules and their certification boundary
+
+For each loan keep its identity, source authority, target storage observations,
+mode, custodian and return condition. Copying a reference never copies authority.
+Readonly loans suspend incompatible writes; write loans suspend incompatible
+reads and writes. Reclaim removes only the matching temporary restriction and
+recomputes authority from all remaining obligations. It never restores moved
+ownership, initialization or an ended generation, nor upgrades an originally
+readonly grant to writing.
+
+The execution protocol needs the following semantic states, whether or not they
+are represented by separate types or runtime tags:
+
+```text
+Prepared -- accepted handoff --> Accepted -- quiescence + publication --> Reclaimable
+    |                                                                      |
+    +-- certified no execution right escaped --> Reclaimable                 |
+                                                                           v
+                                                                       Reclaimed
+```
+
+Lending reserves authority before work can start. An accepted execution right is
+used at most once and stays linked to its receipt and buffers. Reclaim requires
+either exclusive cancellation of a still-prepared right or certified quiescence
+and publication for the accepted invocation. Quiescence includes delegated work
+that could still use the grant. An error result is not automatically proof that
+start failed: partial acceptance must be drained before reclaim. A cancellation
+request, wake notification, result address or ordinary completion flag is not
+sufficient evidence.
+
+The certificate need not be a new public object. A checked transition on a private
+linear owner, connected to an audited native handle and outcome, may suffice.
+It must be bound to the exact invocation and cannot be synthesized by writing a
+boolean or declaring a `where` clause. This is the main unresolved protocol
+design task. Renaming `_execution_complete` to `reclaim` does not solve it.
+Likewise, eliminating `_execution_input` is justified only when a shared storage
+acquisition protocol establishes both physical access and worker authority;
+an address with a live anchor is insufficient.
+
+### What can be simplified, and what cannot
+
+| Mechanism | Decision and cost |
+| --- | --- |
+| Separate authority bookkeeping | Reuse pending loans and certified protocol custody; do not add a second source of permission truth. |
+| Exact histories of erased container elements | Do not require them universally. Use common verified interface guarantees or conservative access envelopes. Some safe heterogeneous selections will remain unprovable. |
+| Arbitrarily precise region/effect inference | Keep existing useful inference; prefer reusable confinement bounds at concurrency boundaries. Less precision can reject otherwise independent operations. |
+| General ordered resource effects | Defer. Keep call-entry authorization and existing conservative completion-before-access rejections until a bounded extension is justified. |
+| Execution IDs, loan modes, generations and receipt transport | Essential. Removing them permits wrong-task reclaim, conflicting readers/writers or stale observation reuse. |
+| Validity and physical storage evidence | Essential independently of lending. No concurrency simplification can turn lifetime into containment or initialization. |
+| Cleanup and execution requirements | Essential for owner transfer. Access effects alone prove neither transferability nor synchronization. |
+| Protocol-held authority and guard acquisition identity | Essential for protected sharing; a task completion receipt alone cannot express mutex exclusion. |
+
+No existing implementation has yet been shown redundant enough to delete in
+bulk. Several simplifications concern planned inference machinery rather than
+code already required by sequential safety. Preserve those fixes and regression
+tests. `Sigma = (V, A, O, K)` remains a semantic decomposition, not a requirement
+for four independent runtime objects or checker databases.
+
+Contextual isolation can certify that worker accesses stay within supplied
+inputs and capabilities, excluding mutable ambient state. Contracts must preserve
+that guarantee through virtual, indirect, foreign and cleanup calls. Unknown
+effects remain unknown; isolation is not an excuse to ignore them. A broader
+verified footprint can replace exact target inference, but lifetime dependencies
+must not automatically become part of the access footprint. Reading string bytes
+does not by itself require concurrent deallocation permission on its allocator.
+
+Unknown identity and stale identity are different failures. A valid abstract
+handle may support sequential operations without identifying its exact captured
+target; it still needs valid hidden dependencies and a checked interface. Do not
+relax missing-region errors indiscriminately: lost evidence and an invalidated
+capture must not become interchangeable. Concurrent calls require compatibility
+with every possible target or another verified isolation guarantee.
+
+Structured borrowing is a useful optional simplification: a scope/group can own
+completion obligations while futures observe results. This may simplify storing
+observers in containers. It does not remove alias conflicts, certify native
+completion or justify restoring authority when a handle is discarded. Preserve
+existing checked futures returned through functions and individual early reclaim;
+do not impose universal lexical scopes or universally blocking destruction.
+
+Permanent owner transfer is not a loan: source responsibility and designated
+authority move to the destination. Completion never resurrects the source owner.
+Returning an owner is another transfer. Validate external cleanup requirements
+and failure cleanup before relaxing current payload restrictions.
+
+An inline executor needs a once-only invocation and synchronous completion
+protocol; a threaded executor needs accepted handoff and joined publication;
+an evented executor must retain obligations until its work is truly quiescent.
+The checker should consume their guarantees rather than recognize their names.
+Current external executors mainly forward or reject requests: private packet
+fields do not yet expose a general safe run-once interface for an independent
+executor. Exposing raw callbacks and byte buffers is not an adequate substitute.
+
+A mutex additionally holds authority in protocol custody. Certified acquisition
+grants guard-scoped access; release revokes that acquisition and publishes writes.
+It does not end the protected value's generation or the execution itself. Earlier
+aliases cannot bypass custody, and ordinary aliases within the guard remain
+permitted. These rules share conservation with lending, but require an actual
+exclusion protocol. Two job-specific transitions alone are not a complete mutex
+model.
+
+### Incremental validation before migration
+
+1. Specify accepted handoff, prepared cancellation, worker entry and joined
+   publication against the current adapter. Separate audited native assumptions
+   from compiler-proved transitions. Keep current names and public behavior.
+2. Connect certified reclaim to the exact receipt and physical input/output
+   evidence. Test wrong receipt/buffer, duplicate invocation, premature completion,
+   failed or partially accepted start, unsuccessful join and delegated work.
+   Ordinary flags and declarations must not manufacture certificates.
+3. Complete uniform call authorization without losing current safe programs.
+   In particular retain the positive heterogeneous common-contract and
+   after-completion collection cases (concurrency 121 and 143), alongside their
+   conflicting variants. A coarser model must explain their acceptance, not
+   change their expected outcomes.
+4. Validate one independent inline executor alongside the threaded backend,
+   using checked once-only ownership rather than another forwarding wrapper.
+   Then test owner transfer with known cleanup, external dependencies and a
+   virtual deallocator, and protected access through a mutex guard. If these
+   require separate permission languages, reconsider the core before expansion.
+5. Add scopes or precision improvements only when these examples show their
+   benefit. Record expressivity and compilation costs before replacing existing
+   inference. No broad checker rewrite is justified by this review alone.
+
+Research supports the distinctions rather than proving this proposed design:
+[Rust's join contract](https://doc.rust-lang.org/std/thread/struct.JoinHandle.html)
+separates uniquely owned joining permission from completion/publication;
+[scoped threads](https://rust-lang.github.io/rfcs/3151-scoped-threads.html)
+illustrate why a scope must ensure joining rather than rely on a discardable
+observer; [Swift's sending boundaries](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0430-transferring-parameters-and-results.md)
+illustrate reusable isolation requirements at function boundaries. None replaces
+Argi's sequential provenance, ownership or native synchronization obligations.
+
 ## Resource Machine: candidate operational core
+
+### Native execution boundary checkpoint (in progress)
+
+The current implementation work strengthens the existing three primitives,
+without adding another authority category or ordered-effect representation.
+`_execution_complete` now takes optional private join operands. For an accepted
+receipt, normal return requires the operands' handle to match the accepted handle
+and the native reclaim operation to perform successful synchronization. Missing
+or mismatched operands and failed synchronization abort before logical discharge.
+Prepared cancellation needs no join; the native start adapter must guarantee
+that its failure return leaves no worker. Reclaim is idempotent for an already
+completed receipt and does not take the result a second time.
+
+The boundary rule is `Bound(k, h) AND Join(h) succeeds => Reclaimed(k)`.
+`Bound` comes from moving the prepared receipt into the accepted handle owner;
+it is not inferred from address equality between arbitrary values. All other
+loans remain pending. The prepared alternative requires both exclusive custody
+of the request and the native no-start failure guarantee. A successful native
+start must be followed immediately by nonfallible acceptance: no fallible helper
+may run between handoff and recording the handle in the receipt. Worker entry
+may precede that recording, since lending has already reserved the authority.
+For inline execution, callback return precedes successful handoff and supplies
+quiescence by ordinary program order. For threaded execution, only successful
+join supplies publication. Result-size mismatch does not join, consume a result
+or discharge a loan. Cleanup failure may abort but cannot return authority to
+continued code without successful synchronization.
+
+The callback ABI now carries a private invocation descriptor containing one
+native identity and the two acquired buffer addresses, sizes and alignments.
+`_execution_input` accepts this descriptor rather than an independent address,
+and validates the selected input type's layout. Output reconstruction validates
+the matching result layout. References remain confined by the callback-local
+anchor. The adapter supplies the descriptor directly from its live task state;
+the stable handle links native reclaim to that invocation.
+
+This is an audited boundary, not a cryptographic certificate or a compiler proof
+of arbitrary C. Bundled core must not forge descriptors, retarget an accepted
+receipt or invoke a callback outside its lifetime. The compiler still models
+worker inputs symbolically rather than carrying a complete task-buffer acquisition
+proof through its spatial model. Invocation addresses can be reused only after
+the old task is destroyed; the unique owner and absence of escaped descriptors
+are essential, not an assumption that addresses are globally unique.
+
+`InlineExecutor` executes through the same adapter's synchronous path, sharing
+buffer ownership, typed entry, result extraction and reclaim. Its callback has
+returned before submission succeeds, but the public Executor contract retains
+the loan until await/cleanup. `execute_inline` exposes the opaque, once-consumed
+request operation to application-defined executors without exposing mutable
+entry/layout fields. No compiler rule recognizes InlineExecutor.
+
+The execution right is currently confined to the generated callback: its inputs
+cannot contain owning task requests, its results cannot export owners, and
+pending loans cannot escape through opaque storage. Any nested work must discharge
+its obligations before callback return; detached descendants carrying these
+loans are not certified by this protocol.
+Only plain results and the existing nonowning payload subset remain supported.
+Thread joins remain the accepted threaded backend's waiting policy; this does
+not establish a blocking destructor requirement for future evented backends.
+
+The checkpoint is not closed while unknown-call authorization and the positive
+opaque/virtual composition gates remain unresolved. Those problems cannot be
+fixed by treating unknown physical provenance as disjoint, or missing captured
+region evidence as empty access. Existing positive expectations must remain.
+
+Validation of the working tree: the full ReleaseSafe program suite reports
+2,519 passes, 11 skips and two failures, the existing positive concurrency cases
+121 and 143. All five new execution-boundary fixtures pass, as does the Debug
+internal suite. The real native task probe passes ThreadSanitizer; deterministic
+adapter failure paths pass AddressSanitizer/UBSan. Generated host LLVM IR passes
+the invocation record by value to the C callback and retains the native reclaim
+call inside completion. These results validate this increment, not the complete
+concurrency guarantee or non-host ABI behavior.
+
+The publication candidate excludes the unfinished acquisition/unknown-call
+experiments. Its isolated full program suite passes 2,495 tests with 11 skips
+and no failures. This preserves the published positive cases while leaving the
+documented authorization gap open; passing this suite does not close that gap.
 
 The provisional name Region-Based Execution Authority describes the intended
 semantics, not a new user-visible feature or a separate checker. Write the logical

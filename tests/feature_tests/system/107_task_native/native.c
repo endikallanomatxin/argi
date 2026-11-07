@@ -7,17 +7,23 @@
 #include <string.h>
 
 struct input { uintptr_t gate; uintptr_t entered; int value; };
-static void calculate(uintptr_t input_address, uintptr_t output_address) {
+static void calculate(struct argi_execution_invocation invocation) {
+    uintptr_t input_address = invocation.input, output_address = invocation.output;
+    if (!invocation.identity || invocation.input_size != sizeof(struct input) || invocation.output_size != sizeof(int)) abort();
     const struct input *input = (const struct input *)input_address;
     _argi_atomic_u32_store(input->entered, 1);
     while (!_argi_atomic_u32_load(input->gate)) {}
     *(int *)output_address = input->value * 2;
 }
-static void buffers(uintptr_t input, uintptr_t output) {
+static void buffers(struct argi_execution_invocation invocation) {
+    uintptr_t input = invocation.input, output = invocation.output;
+    if (!invocation.identity || invocation.input_size != sizeof(int)) abort();
     if (!input || !output || input % 64 || output % 64) abort();
     *(int *)output = *(const int *)input * 2;
 }
-static void empty_buffers(uintptr_t input, uintptr_t output) {
+static void empty_buffers(struct argi_execution_invocation invocation) {
+    uintptr_t input = invocation.input, output = invocation.output;
+    if (!invocation.identity || invocation.input_size || invocation.output_size) abort();
     if (!input || !output || input % 64 || output % 64) abort();
 }
 struct destroy_job { uintptr_t task; uintptr_t entered; int result; };
@@ -29,6 +35,15 @@ static void destroy_task(void *context) {
 
 int32_t argi_task_probe(void) {
     int original = 21;
+    if (!_argi_execution_reclaim(0)) abort();
+    if (_argi_task_create_inline_buffers(NULL, &original, sizeof(original), sizeof(original), 64, 64)) abort();
+    uintptr_t inline_task = _argi_task_create_inline_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 64);
+    if (!inline_task || _argi_execution_reclaim(inline_task)) abort();
+    if (_argi_task_join_result(inline_task, sizeof(original) - 1)) abort();
+    uintptr_t inline_result = _argi_task_join_result(inline_task, sizeof(original));
+    if (!inline_result || *(int *)inline_result != 42) abort();
+    if (_argi_execution_reclaim(inline_task) || _argi_task_join_result(inline_task, sizeof(original))) abort();
+    if (_argi_task_destroy(inline_task)) abort();
     if (_argi_task_create_buffers(NULL, &original, sizeof(original), sizeof(original), 64, 64)) abort();
     if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 3, 64)) abort();
     if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 0)) abort();
@@ -98,6 +113,7 @@ int32_t argi_task_probe(void) {
     task = 0;
     if (_argi_task_join_result(moved, sizeof(int) - 1)) abort();
     _argi_atomic_u32_store(gate, 1);
+    if (_argi_execution_reclaim(moved)) abort();
     result_address = _argi_task_join_result(moved, sizeof(int));
     if (!result_address || *(int *)result_address != 42) abort();
     if (_argi_task_join_result(moved, sizeof(int))) abort();

@@ -311,3 +311,10 @@ runtime's publication/lifetime assumptions; it does not check Argi reference
 provenance or prove the runtime race-free. Sanitizer findings and host-runtime
 startup failures must be distinguished. Keep the temporary directory when
 investigating a failure; remove it after inspection.
+
+`concurrency/148_execution_protocol_failures` additionally compiles the production
+task adapter with isolated thread-operation stubs. It checks failure before
+start, failed joins retaining work, successful reclaim before result extraction,
+destruction failure retaining buffers, immediate callback completion during
+creation, and inline execution without a worker. The stubs exercise adapter
+outcomes; they do not prove the native thread implementation's guarantees.

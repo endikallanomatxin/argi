@@ -1,6 +1,6 @@
 -- Scheduling is independent of I/O capabilities. The erased ABI transports
 -- audited inputs and plain results; typed packaging remains in async/await.
-_TaskEntry(.input: UIntNative, .output: UIntNative) -> (): CFunctionPointer(.isolated = true)
+_TaskEntry(.invocation: _ExecutionInvocation) -> (): CFunctionPointer(.isolated = true)
 
 -- Entry, layout and source are one authenticated request. Providers can forward
 -- it, but cannot change an entry's buffer bounds or retain the source borrow.
@@ -20,9 +20,12 @@ implement Deinit#(TaskRequest) (
 )
 
 Executor#(.Provider: Type): Contract = (
+    .state: Region#(Provider)
     .submit: (
         .self: $&Provider, .request: TaskRequest
     ) -> (.result: Errable#(TaskReceipt, (..task_start_failed))) where {
+        writes(self.state)
+        reads(request._input)
         on result ..ok { owns(result) depends_on(result, self) carries_execution(result, request) }
         on result ..error { completes_execution(request) }
     }
@@ -35,6 +38,11 @@ _task_create(
     .entry: _TaskEntry, .input: &Any, .input_size: UIntNative,
     .output_size: UIntNative, .input_alignment: UIntNative, .output_alignment: UIntNative
 ) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_create_buffers") where { reads(input) }
+
+_task_create_inline(
+    .entry: _TaskEntry, .input: &Any, .input_size: UIntNative,
+    .output_size: UIntNative, .input_alignment: UIntNative, .output_alignment: UIntNative
+) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_create_inline_buffers") where { reads(input) }
 
 _task_join(.handle: UIntNative, .size: UIntNative) -> (.address: UIntNative): CFunction(
     .symbol = "_argi_task_join_result"
@@ -61,12 +69,14 @@ TaskReceipt := (
 implement Deinit#(TaskReceipt) (
     .deinit = (.self: $&TaskReceipt) -> () {
         assume ffi := self&._ffi
+        _execution_complete(.receipt = $&self&._access,
+            .join = ..some(.value = (._handle = self&._handle, ._ffi = self&._ffi)))
         if _task_destroy(.handle = self&._handle) != 0 { abort }
-        _execution_complete(.receipt = $&self&._access)
     }
 )
 
 implement Executor#(ThreadedExecutor) (
+    .state = region(self),
     .submit = (
         .self: $&ThreadedExecutor, .request: TaskRequest
     ) -> (.result: Errable#(TaskReceipt, (..task_start_failed))) {
@@ -83,11 +93,54 @@ implement Executor#(ThreadedExecutor) (
             result = ..error(.reason = ..task_start_failed)
             return
         }
-        _execution_accept(.receipt = $&pending._access)
+        _execution_accept(.receipt = $&pending._access, .handle = handle)
         result = ..ok(
             ._handle = handle, ._ffi = self&._ffi, ._entry = pending._entry,
             ._access = ~pending._access
         )
+    }
+)
+
+-- Independent synchronous execution: no ThreadedExecutor and no OS worker.
+-- The same stable-buffer and reclaim protocol owns its result until extraction.
+InlineExecutor := (._ffi: $&ForeignFunctionInterface)
+InlineExecutorInitArgs: Type = (.ffi: $&ForeignFunctionInterface)
+implement Init#(InlineExecutor, InlineExecutorInitArgs) (
+    .Result: Type = InlineExecutor
+    .init = InlineExecutorInitArgs -> (.result: InlineExecutor) {
+        result = (._ffi = ffi)
+    }
+)
+
+-- Safe once-only execution boundary for application-defined executors. The
+-- request stays opaque; callers cannot replace its entry or buffer layout.
+execute_inline := (.request: TaskRequest, .ffi: $&ForeignFunctionInterface) -> (
+    .result: Errable#(TaskReceipt, (..task_start_failed))
+) {
+    pending ::= ~request
+    handle ::= _task_create_inline(
+        .ffi = ffi, .entry = pending._entry, .input = pending._input,
+        .input_size = pending._input_size, .output_size = pending._output_size,
+        .input_alignment = pending._input_alignment,
+        .output_alignment = pending._output_alignment
+    )
+    if handle == 0 {
+        result = ..error(.reason = ..task_start_failed)
+        return
+    }
+    _execution_accept(.receipt = $&pending._access, .handle = handle)
+    result = ..ok(
+        ._handle = handle, ._ffi = ffi, ._entry = pending._entry,
+        ._access = ~pending._access
+    )
+}
+
+implement Executor#(InlineExecutor) (
+    .state = region(self),
+    .submit = (
+        .self: $&InlineExecutor, .request: TaskRequest
+    ) -> (.result: Errable#(TaskReceipt, (..task_start_failed))) {
+        result = execute_inline(.request = ~request, .ffi = self&._ffi)
     }
 )
 

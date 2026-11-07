@@ -4026,7 +4026,7 @@ pub const Infer = struct {
         const callee_function = self.graph.function(callee);
         if (self.inferring_completions) {
             if (callee_function.safety_primitive == .execution_complete) {
-                if (arguments.len != 1) return;
+                if (arguments.len == 0) return;
                 try self.recordOpaqueStorageEmpties(state, try self.inferInputPaths(function_id, arguments[0].value));
                 return;
             }

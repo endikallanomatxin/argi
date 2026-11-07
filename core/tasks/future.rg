@@ -14,14 +14,18 @@ implement#(.T: Type) Deinit#(Future#(T)) (
 -- The native adapter keeps both aligned buffers live for this entire callback.
 -- Local anchors bound these trusted borrows to that callback, not to an
 -- arbitrary foreign address. Input reference leaves are checked at submission.
-_task_worker := #(.F: Function) (.input: UIntNative, .output: UIntNative) -> (): CFunction {
+_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (): CFunction {
     anchor: UInt8 = 0
     root ::= erase_reference#(UInt8)(.base = &anchor)
-    input_ref ::= _execution_input#(inputs_of#(F))(.address = input, .anchor = root)
+    input_ref ::= _execution_input#(inputs_of#(F))(.invocation = invocation, .anchor = root)
     args ::= input_ref&
     value ::= invoke#(F)(.args = ~args)
+    if invocation._output == 0 or
+        invocation._output_size != size_of(.type = result_of#(F)) or
+        invocation._output_alignment != alignment_of(.type = result_of#(F)) or
+        invocation._output % alignment_of(.type = result_of#(F)) != 0 { abort }
     output_ref ::= trusted_establish_inherited_reference#(result_of#(F))(
-        .raw = raw_pointer#(result_of#(F))(.address = output), .root = root
+        .raw = raw_pointer#(result_of#(F))(.address = invocation._output), .root = root
     )
     output_ref&= ~value
 }
@@ -68,7 +72,8 @@ await := #(.T: Type) (.self: $&Future#(T)) -> (
             result = ..error(.reason = ..task_join_failed)
             return
         }
-        _execution_complete(.receipt = $&self&._task._access)
+        _execution_complete(.receipt = $&self&._task._access,
+            .join = ..some(.value = (._handle = self&._task._handle, ._ffi = self&._task._ffi)))
         value ::= _copy_plain_task_result#(
             .T: T,
             .N = #run () -> (.size: UIntNative) { size = size_of(.type = T) }
