@@ -282,22 +282,9 @@ pub const PlaceFacts = struct {
 
 /// Symbolic observations distinguish embedded storage from an erased resource.
 /// A domain is not a byte projection or a subobject of its handle.
-pub const SymbolicStorageSelector = union(enum) {
-    projection: Projection,
-    domain: u32,
-
-    pub fn eql(self: SymbolicStorageSelector, other: SymbolicStorageSelector) bool {
-        if (std.meta.activeTag(self) != std.meta.activeTag(other)) return false;
-        return switch (self) {
-            .projection => |projection| projection.eql(other.projection),
-            .domain => |domain| domain == other.domain,
-        };
-    }
-
-    pub fn embedded(self: SymbolicStorageSelector) bool {
-        return self == .projection and self.projection != .dereference;
-    }
-};
+pub const StorageSelector = base.StorageSelector;
+pub const InputRoute = base.InputRoute;
+pub const SymbolicStorageSelector = StorageSelector;
 
 pub const Tracker = struct {
     /// Cloned branch states share identities, never reuse another branch's ID.

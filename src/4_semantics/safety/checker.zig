@@ -2782,21 +2782,19 @@ pub const SafetyChecker = struct {
     }
 
     fn symbolicInputPath(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?facts.InputPath {
+        const route = try self.symbolicInputRoute(state, identity) orelse return null;
+        return route.toInputPath(self.allocator);
+    }
+
+    fn symbolicInputRoute(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?facts.InputRoute {
         for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
-            if (entry.input_path) |path| return path;
+            if (entry.input_path) |path| return try facts.InputRoute.fromInputPath(self.allocator, path);
             break;
         };
         const namespace = state.tracker.namespace orelse return null;
         for (namespace.projected_storage.items) |projection| if (projection.identity == identity) {
-            const parent = try self.symbolicInputPath(state, projection.parent) orelse return null;
-            // InputPath encodes one terminal domain, not a route through it.
-            // Appending a field would drop/move that domain, and selecting a
-            // second domain would overwrite it. Neither is the original path.
-            if (parent.storage_domain != null) return null;
-            return switch (projection.selector) {
-                .projection => |physical| try self.appendInputProjection(parent, physical),
-                .domain => |domain| .{ .input_index = parent.input_index, .projections = parent.projections, .storage_domain = domain },
-            };
+            const parent = try self.symbolicInputRoute(state, projection.parent) orelse return null;
+            return try parent.append(self.allocator, projection.selector);
         };
         return null;
     }
@@ -12475,15 +12473,23 @@ test "symbolic input routes cannot drop or overwrite an intermediate region" {
     const field = (try state.projectSymbolicStorage(input, .{ .field = 3 }, null)).?;
     const field_path = (try checker.symbolicInputPath(&state, field.identity)).?;
     try std.testing.expect(field_path.eql(.{ .input_index = 0, .projections = &.{.{ .field = 3 }} }));
+    var previous_route: ?facts.InputRoute = null;
     for (0..2) |index| {
         const domain = (try state.projectSymbolicDomain(input, @intCast(index))).?;
         const path = (try checker.symbolicInputPath(&state, domain.identity)).?;
         try std.testing.expect(path.eql(.{ .input_index = 0, .storage_domain = @intCast(index) }));
         const parent = state.symbolicPointee(domain.identity).?;
         const projected = (try state.projectSymbolicStorage(parent, .{ .field = 3 }, null)).?;
+        const route = (try checker.symbolicInputRoute(&state, projected.identity)).?;
+        try std.testing.expect(route.eql(.{ .input_index = 0, .selectors = &.{ .{ .domain = @intCast(index) }, .{ .projection = .{ .field = 3 } } } }));
+        if (previous_route) |previous| try std.testing.expect(!previous.eql(route));
+        previous_route = route;
         try std.testing.expect(try checker.symbolicInputPath(&state, projected.identity) == null);
         try std.testing.expect(SafetyChecker.symbolicStorageComesFromInput(&state, projected.identity));
         const nested = (try state.projectSymbolicDomain(parent, 2)).?;
+        const nested_route = (try checker.symbolicInputRoute(&state, nested.identity)).?;
+        try std.testing.expect(nested_route.eql(.{ .input_index = 0, .selectors = &.{ .{ .domain = @intCast(index) }, .{ .domain = 2 } } }));
+        try std.testing.expect(!nested_route.eql(route));
         try std.testing.expect(try checker.symbolicInputPath(&state, nested.identity) == null);
         try std.testing.expect(SafetyChecker.symbolicStorageComesFromInput(&state, nested.identity));
     }

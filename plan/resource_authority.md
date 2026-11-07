@@ -404,6 +404,16 @@ from a path already ending in one produces an unknown access bound, while any
 independent known reads remain. Overwriting the first selector is not a valid
 approximation, even if the two domain indexes happen to be equal.
 
+`InputRoute` now preserves the complete ordered sequence of physical selectors
+and abstract domains when deriving symbolic caller routes. It shares the existing
+storage-observation selector vocabulary; it is not another permission system.
+Conversion to the current flat summary path is explicitly partial and must be
+lossless. Unrepresentable routes remain exact in the checker but still cannot
+publish a caller alias obligation. The bounded round-trip regression covers all
+sequences of up to three selectors from two fields, dereference and two domains.
+This is a migration foundation: opaque-content selectors, summary substitution
+and cache publication of complete routes are not implemented yet.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and

@@ -1,3 +1,4 @@
+const std = @import("std");
 const place = @import("place.zig");
 const value_state = @import("value_state.zig");
 
@@ -43,6 +44,65 @@ pub const InputPath = struct {
         if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or
             left.projections.len != right.projections.len) return false;
         for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
+        return true;
+    }
+};
+
+/// Logical selection distinguishes a region from a physical field of its
+/// handle. This vocabulary is shared with symbolic storage observations.
+pub const StorageSelector = union(enum) {
+    projection: place.Projection,
+    domain: u32,
+
+    pub fn eql(self: StorageSelector, other: StorageSelector) bool {
+        if (std.meta.activeTag(self) != std.meta.activeTag(other)) return false;
+        return switch (self) {
+            .projection => |projection| projection.eql(other.projection),
+            .domain => |domain| domain == other.domain,
+        };
+    }
+
+    pub fn embedded(self: StorageSelector) bool {
+        return self == .projection and self.projection != .dereference;
+    }
+};
+
+/// Exact caller-relative route. Conversion to the legacy flat InputPath is
+/// partial; unsupported routes retain their identity here without granting
+/// authority or inventing a different representable path.
+pub const InputRoute = struct {
+    input_index: u32,
+    selectors: []const StorageSelector = &.{},
+
+    pub fn fromInputPath(allocator: std.mem.Allocator, path: InputPath) !InputRoute {
+        const selectors = try allocator.alloc(StorageSelector, path.projections.len + @intFromBool(path.storage_domain != null));
+        for (path.projections, 0..) |projection, index| selectors[index] = .{ .projection = projection };
+        if (path.storage_domain) |domain| selectors[path.projections.len] = .{ .domain = domain };
+        return .{ .input_index = path.input_index, .selectors = selectors };
+    }
+
+    pub fn append(self: InputRoute, allocator: std.mem.Allocator, selector: StorageSelector) !InputRoute {
+        const selectors = try allocator.alloc(StorageSelector, self.selectors.len + 1);
+        @memcpy(selectors[0..self.selectors.len], self.selectors);
+        selectors[self.selectors.len] = selector;
+        return .{ .input_index = self.input_index, .selectors = selectors };
+    }
+
+    pub fn toInputPath(self: InputRoute, allocator: std.mem.Allocator) !?InputPath {
+        var domain: ?u32 = null;
+        for (self.selectors, 0..) |selector, index| if (selector == .domain) {
+            if (index + 1 != self.selectors.len) return null;
+            domain = selector.domain;
+        };
+        const count = self.selectors.len - @intFromBool(domain != null);
+        const projections = try allocator.alloc(place.Projection, count);
+        for (self.selectors[0..count], projections) |selector, *projection| projection.* = selector.projection;
+        return .{ .input_index = self.input_index, .projections = projections, .storage_domain = domain };
+    }
+
+    pub fn eql(self: InputRoute, other: InputRoute) bool {
+        if (self.input_index != other.input_index or self.selectors.len != other.selectors.len) return false;
+        for (self.selectors, other.selectors) |left, right| if (!left.eql(right)) return false;
         return true;
     }
 };
@@ -275,3 +335,30 @@ pub const OpaqueStorageEffect = struct {
     storage: InputPath,
     hidden_dependencies: ValueEffect,
 };
+
+test "symbolic input routes flatten without losing selector identity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const alphabet = [_]StorageSelector{
+        .{ .projection = .{ .field = 0 } }, .{ .projection = .{ .field = 1 } },
+        .{ .projection = .dereference }, .{ .domain = 0 }, .{ .domain = 1 },
+    };
+    var count: usize = 1;
+    for (0..4) |length| {
+        for (0..count) |encoded| {
+            var selectors: [3]StorageSelector = undefined;
+            var digits = encoded;
+            for (selectors[0..length]) |*selector| {
+                selector.* = alphabet[digits % alphabet.len];
+                digits /= alphabet.len;
+            }
+            const route = InputRoute{ .input_index = 7, .selectors = selectors[0..length] };
+            if (try route.toInputPath(allocator)) |flat| {
+                const roundtrip = try InputRoute.fromInputPath(allocator, flat);
+                try std.testing.expect(route.eql(roundtrip));
+            }
+        }
+        count *= alphabet.len;
+    }
+}
