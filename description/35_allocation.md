@@ -19,6 +19,13 @@ The ordinary `allocate_bytes` helper accepts size and optional alignment.
 The unique typed `allocate#(T)` helper accepts an optional count, defaulting
 to one; neither creates initialized values.
 
+Both helpers validate a successful provider response against the complete requested
+byte extent and alignment before exposing it to code that initializes payload or
+metadata. The check uses the receipt's authenticated bounds and its public usable
+grant. A short or misaligned successful response violates the allocator protocol
+and aborts; it is not reclassified as an allocation failure. Typed requests check
+the reservation including their metadata prefix before publishing element slots.
+
 The low-level alignment must be a nonzero power of two. Implementations check
 this precondition and `abort` if it is violated; an invalid alignment is not
 `..out_of_memory`. The typed `allocate#(.t: T)(.count)` helper computes the

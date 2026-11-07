@@ -18,7 +18,21 @@ allocate_bytes := #(.SelfType: Type: Allocator#(SelfType)) (
     .self: $&SelfType, .size: UIntNative, .alignment: UIntNative = 1
 ) -> (.result: Errable#(Allocation, (..out_of_memory))) {
 
-    result = Allocator#().allocate(self, .size = size, .alignment = alignment)
+    _require_allocation_alignment(.alignment = alignment)
+    allocated ::= Allocator#().allocate(self, .size = size, .alignment = alignment)
+    match allocated {
+        ..error ~failure { result = ..error ~failure }
+        ..ok ~payload {
+            allocation ::= ~payload
+            -- An abstract provider must satisfy the complete reservation before
+            -- any caller writes headers, element metadata or payload bytes.
+            _require_allocation_slot_range(
+                .allocation = &allocation, .address = allocation.data.address,
+                .size = size, .alignment = alignment
+            )
+            result = ..ok ~allocation
+        }
+    }
 }
 
 -- Validate the complete typed reservation before calling the provider, including
@@ -89,7 +103,7 @@ allocate := #(.t: Type, .SelfType: Type: Allocator#(SelfType)) (
         return
     }
     if prefix != 0 and alignment < metadata.alignment { alignment = metadata.alignment }
-    allocated ::= Allocator#().allocate(self, .size = total, .alignment = alignment)
+    allocated ::= allocate_bytes(self, .size = total, .alignment = alignment)
     tagged ::= _typed_allocation_result(
         .allocated    = ~allocated
         .element_size = element_size

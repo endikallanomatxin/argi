@@ -30,7 +30,7 @@ copy_c_string := (
         return
     }
     size :: UIntNative = self._length + 1
-    allocated ::= Allocator#().allocate(.self = $&allocator, .size = size, .alignment = 1)
+    allocated ::= allocate_bytes(.self = $&allocator, .size = size, .alignment = 1)
 
     match allocated {
         ..error _ {
