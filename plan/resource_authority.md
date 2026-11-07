@@ -374,6 +374,23 @@ of its contents remain distinct. Never reconstruct either from lifetime roots.
 Keep missing contents evidence conservative; the experiment supplies its inputs
 explicitly and does not establish them for arbitrary opaque storage.
 
+For an ordinary helper, the returned value relation must remain caller-relative:
+conceptually, `contents(input-domain, complete-type)` followed by the value's
+structural/member projections. Substitution identifies the caller's domain; a
+different input index is never evidence of independent storage. Resolving this
+relation must separately authorize loading the element slot and invoking any
+operation on its captures. A `no_access` method removes neither the slot read
+nor its lifetime obligations.
+
+The recipe experiment additionally distinguishes copied values from borrowed
+element routes. Instantiate a copied result's observations at the call; do not
+re-resolve its recipe against a later replacement of the container contents.
+Borrowed routes instead retain the necessary generation/shape observations.
+Creating fresh unknown symbolic regions at extraction would not solve this:
+without a caller-relative source, effects and invalidation could disappear in
+the next summary. Extend the existing value/projection vocabulary only when this
+substitution can be represented end to end, including its missing-evidence case.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and

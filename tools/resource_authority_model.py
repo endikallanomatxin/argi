@@ -287,6 +287,58 @@ class OpaqueContents:
         raise Denied("no value evidence for the requested stored type")
 
 
+@dataclass(frozen=True)
+class CapturedSelection:
+    # A caller-relative result recipe, not a region or an authority token.
+    input: int
+    tag: int
+
+    def substitute(self, inputs):
+        if not 0 <= self.input < len(inputs):
+            raise Denied("missing opaque input substitution")
+        return CapturedSelection(inputs[self.input], self.tag)
+
+    def load(self, arguments, state):
+        if not 0 <= self.input < len(arguments):
+            raise Denied("missing opaque argument")
+        slot, contents = arguments[self.input]
+        # A method's no_access promise cannot authorize loading its handle.
+        slot.access(state, 0, READ)
+        return contents.select_unknown(self.tag)
+
+
+def opaque_recipe_experiments():
+    left = StorageObservation(((0,),), 0)
+    right = StorageObservation(((1,),), 0)
+    captured_left = CapturedValue(0, (left,))
+    captured_right = CapturedValue(0, (right,))
+    arguments = ((right, OpaqueContents().insert(captured_left)),
+                 (right, OpaqueContents().insert(captured_right)))
+    writer = State().lend(0, 1, (0,), WRITE)
+    first = CapturedSelection(0, 0)
+    # Loading an independent slot succeeds but does not authorize the capture.
+    loaded = first.load(arguments, writer)
+    denied(lambda: loaded.call(writer, 0, 0, READ))
+    loaded.call(writer.complete(0), 0, 0, READ)
+    # A wrapper's parameter positions cannot replace caller resource identity.
+    second = first.substitute((1,))
+    second.load(arguments, writer).call(writer, 0, 0, WRITE)
+    aliased = (arguments[0], arguments[0])
+    denied(lambda: second.load(aliased, writer).call(writer, 0, 0, READ))
+    # Even a no_access operation still needs authority over the handle slot.
+    blocked_slot = ((left, OpaqueContents().insert(captured_right)),)
+    denied(lambda: first.load(blocked_slot, writer))
+    denied(lambda: CapturedSelection(0, 1).load(arguments, State()))
+    denied(lambda: CapturedSelection(2, 0).load(arguments, State()))
+    denied(lambda: first.substitute(()))
+    # A returned value is instantiated once. Resolving its recipe again after
+    # replacement would silently change the region denoted by the copied value.
+    copied = first.load(arguments, State())
+    replaced_arguments = ((right, OpaqueContents().insert(captured_right)), arguments[1])
+    first.load(replaced_arguments, writer).call(writer, 0, 0, READ)
+    denied(lambda: copied.call(writer, 0, 0, READ))
+
+
 def opaque_capture_experiments():
     observations = tuple(StorageObservation((r,), 0) for r in REGIONS)
     values = tuple(CapturedValue(0, members) for members in product(observations, repeat=2))
@@ -1114,6 +1166,7 @@ def explore_interactions(depth=3):
 
 
 if __name__ == "__main__":
+    opaque_recipe_experiments()
     opaque_captures_checked = opaque_capture_experiments()
     physical_loans_checked = physical_loan_experiments()
     physical_checked = physical_heap_experiments()
@@ -1135,6 +1188,7 @@ if __name__ == "__main__":
     print(f"Physical backing: {physical_checked} overlap checks and release/reuse adversarial cases passed")
     print(f"Physical loans: {physical_loans_checked} authority/lifetime combinations checked")
     print(f"Opaque captures: {opaque_captures_checked} typed member-region joins checked")
+    print("Opaque result recipes: input substitution, slot/capture separation and snapshot contrasts passed")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")

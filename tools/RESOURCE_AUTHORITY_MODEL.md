@@ -179,6 +179,27 @@ or add a separate Virtual permission system. It must additionally handle emptyin
 borrowing versus ownership extraction, generation invalidation and summary
 substitution before these finite checks justify an implementation.
 
+`CapturedSelection` adds caller-relative result recipes to this bounded fragment.
+A recipe selects a complete stored type from an input opaque domain. Resolving
+it checks the physical slot read separately from the associated regions of the
+loaded value. Static substitution remaps input coordinates; two different input
+positions may still denote identical resources. Wrong type/argument evidence is
+rejected rather than interpreted as an empty captured region.
+
+An explicit replacement contrast establishes a timing constraint: a copied
+result is instantiated at its call, not by resolving the recipe again when the
+result is eventually used. The latter could replace a conflicting old capture
+with a newer nonconflicting one. This contrast models an already copied value,
+not a still-borrowed element reference; borrowed references additionally require
+container generation/shape checks. The recipe does not establish occupancy,
+initialization or the physical validity of its supplied slot observation.
+
+These adversarial checks specify a missing summary relation, not production
+summary inference. They do not justify seeding a fresh symbolic region for a
+loaded Virtual: such an identity would still need caller-side substitution and
+conservative alias checking. Existing `from_storage` lifetime envelopes alone do
+not publish these value/member correspondences.
+
 ### Resource-transformer reference cases
 
 The same experiment includes a finite reference interpreter for access,
