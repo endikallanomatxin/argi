@@ -5163,10 +5163,9 @@ pub const SafetyChecker = struct {
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
         for (effect.input_places) |path| {
-            const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
-            try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(target) });
-            referenced_place = target;
-            has_referent = true;
+            const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
+            includeReferenceAlternative(&referenced_place, &has_referent, target);
+            if (target) |storage| try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(storage) });
         }
         for (effect.input_captured_storages) |capture| {
             const path = capture.path;
@@ -5253,12 +5252,10 @@ pub const SafetyChecker = struct {
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activate_conditional_resources(state, input);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
-            if (!dependency.validity_only) if (input.referenced_place) |place| {
-                // A copied pointer retains its referent. Validity-only anchors
-                // contribute lifetime requirements without selecting storage.
-                referenced_place = if (!has_referent or (referenced_place != null and referenced_place.?.eql(place))) place else null;
-                has_referent = true;
-            };
+            // Every copied alternative contributes, including an unknown
+            // target. Validity-only anchors never select referenced storage.
+            if (!dependency.validity_only)
+                includeReferenceAlternative(&referenced_place, &has_referent, input.referenced_place);
             if (dependency.validity_only) {
                 var borrowed = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 try borrowed.appendSlice(input.dependencies);
@@ -5277,6 +5274,7 @@ pub const SafetyChecker = struct {
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = try self.load_summary_input_value(path, arguments, state);
+            includeReferenceAlternative(&referenced_place, &has_referent, input.referenced_place);
             result = try self.mergeValueFacts(result, input);
         }
 
@@ -5359,8 +5357,12 @@ pub const SafetyChecker = struct {
         result.integer_address = result.integer_address or effect.integer_address;
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         result.known_choice_variant = effect.known_choice_variant;
-        if (referenced_place) |target| result.referenced_place = target;
+        if (has_referent) result.referenced_place = referenced_place;
         try self.attachAbsentFreshExecutions(effect, &result, state);
+        if (effect.forwarded_reference) |path| {
+            const input = try self.load_summary_input_value(path, arguments, state);
+            result.lexical_frame = input.lexical_frame;
+        }
         return result;
     }
 
@@ -13052,4 +13054,66 @@ test "lexical reference frames authorize only independently later concrete loans
         try std.testing.expectEqual(before + 2, diags.list.items.len);
         state.completeExecution(unknown);
     }
+}
+
+test "verified forwarding preserves observations without manufacturing authority" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.end(root);
+    const input = facts.ValueFacts{ .lexical_frame = 3, .dependencies = &.{.{ .root = root }} };
+    const dependency = facts.InputDependency{ .path = .{ .input_index = 0 }, .validity_only = true };
+    const anchored = try checker.instantiateOutput(.{ .input_dependencies = &.{dependency} }, &.{input}, &state);
+    try std.testing.expectEqual(@as(?u32, null), anchored.lexical_frame);
+    const forwarded = try checker.instantiateOutput(.{
+        .input_dependencies = &.{dependency},
+        .forwarded_reference = .{ .input_index = 0 },
+    }, &.{input}, &state);
+    try std.testing.expectEqual(@as(?u32, 3), forwarded.lexical_frame);
+    try std.testing.expect(!state.tracker.isAlive(root));
+    try std.testing.expectEqual(@as(usize, 0), forwarded.storage_capabilities.len);
+    try std.testing.expectEqual(@as(usize, 0), forwarded.execution_receipts.len);
+    try std.testing.expectEqual(@as(?u32, null), (try checker.instantiateOutput(.{
+        .forwarded_reference = .{ .input_index = 1 },
+    }, &.{ input, .{} }, &state)).lexical_frame);
+}
+
+test "summary reference alternatives cannot hide an unknown target behind a known one" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const target = facts.Place{ .root = @enumFromInt(0) };
+    const known = facts.ValueFacts{ .referenced_place = target };
+    const dependencies = [_]facts.InputDependency{ .{ .path = .{ .input_index = 0 } }, .{ .path = .{ .input_index = 1 } } };
+    const effect = facts.ValueEffect{ .input_dependencies = &dependencies };
+    for ([_][2]facts.ValueFacts{ .{ .{}, known }, .{ known, .{} } }) |inputs| {
+        const result = try checker.instantiateOutput(effect, &inputs, &state);
+        try std.testing.expectEqual(@as(?facts.Place, null), result.referenced_place);
+    }
+    const same = try checker.instantiateOutput(effect, &.{ known, known }, &state);
+    try std.testing.expect(same.referenced_place.?.eql(target));
+}
+
+/// A singleton target is justified only when every represented alternative
+/// identifies the same storage. Missing evidence is never an identity element.
+fn includeReferenceAlternative(target: *?facts.Place, seen: *bool, candidate: ?facts.Place) void {
+    if (!seen.*) {
+        target.* = candidate;
+    } else if (target.* == null or candidate == null or !target.*.?.eql(candidate.?)) {
+        target.* = null;
+    }
+    seen.* = true;
 }

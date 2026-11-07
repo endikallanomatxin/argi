@@ -159,6 +159,9 @@ pub const FreshExecution = struct {
 };
 
 pub const ValueEffect = struct {
+    /// Verified whole-reference identity, not a may-dependency or authority.
+    /// Absent evidence must never be interpreted as an empty access footprint.
+    forwarded_reference: ?InputPath = null,
     /// Preserves the use-site check for declared dependencies across calls.
     explicit_dependency: bool = false,
     input_dependencies: []const InputDependency = &.{},
@@ -349,7 +352,8 @@ test "symbolic input routes flatten without losing selector identity" {
     const allocator = arena.allocator();
     const alphabet = [_]StorageSelector{
         .{ .projection = .{ .field = 0 } }, .{ .projection = .{ .field = 1 } },
-        .{ .projection = .dereference }, .{ .domain = 0 }, .{ .domain = 1 },
+        .{ .projection = .dereference },    .{ .domain = 0 },
+        .{ .domain = 1 },
     };
     var count: usize = 1;
     for (0..4) |length| {

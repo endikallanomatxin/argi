@@ -28,6 +28,7 @@ const Builder = struct {
             };
         }
         var result = facts.ValueEffect{
+            .forwarded_reference = allowed.referent,
             .input_dependencies = try dependencies.toOwnedSlice(self.allocator),
             .input_domains = allowed.domains,
             .opaque_storage_dependencies = allowed.storage_sources,

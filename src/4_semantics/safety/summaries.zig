@@ -195,6 +195,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
+    if (a.forwarded_reference) |path| {
+        if (b.forwarded_reference == null or !inputPathEql(path, b.forwarded_reference.?)) return false;
+    } else if (b.forwarded_reference != null) return false;
     if (a.input_storage_authorizations.len != b.input_storage_authorizations.len) return false;
     for (a.input_storage_authorizations, b.input_storage_authorizations) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_acquisition_origins, b.fresh_acquisition_origins)) return false;

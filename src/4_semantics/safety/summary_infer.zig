@@ -625,6 +625,11 @@ pub const Infer = struct {
 
     fn bindVirtualReceiverValues(self: *Infer, effect: facts.ValueEffect, receiver: u32) anyerror!facts.ValueEffect {
         var result = effect;
+        // The erased receiver's provider is not the handle slot. A whole-input
+        // forwarding proof cannot substitute the slot's physical observation.
+        if (result.forwarded_reference) |path| if (path.input_index == receiver) {
+            result.forwarded_reference = null;
+        };
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
         var receivers = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_dependencies) |dependency| {
@@ -1131,6 +1136,23 @@ pub const Infer = struct {
             post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
         };
 
+        // Publish identity only after proving the complete forwarding body.
+        // May-dependencies cannot establish this universal return guarantee.
+        const forwarded_calls = try self.forwardedReferenceCalls(function);
+        for (outputs, 0..) |*output, output_index| {
+            output.forwarded_reference = null;
+            if (output_index >= output_fields.len or self.graph.semanticType(output_fields[output_index].ty) != .pointer) continue;
+            for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, input_index| {
+                if (!types.equal(self.graph, self.graph.binding(binding).ty, output_fields[output_index].ty)) continue;
+                if (try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, .{
+                    .input_index = @intCast(input_index),
+                    .output_index = @intCast(output_index),
+                }, false, forwarded_calls)) {
+                    output.forwarded_reference = .{ .input_index = @intCast(input_index) };
+                    break;
+                }
+            }
+        }
         profile.accumulate(self.profile_io, start, &self.capability_ns);
         var summary: facts.SafetySummary = .{
             .input_accesses = try accesses.inputs.toOwnedSlice(),
@@ -1157,6 +1179,46 @@ pub const Infer = struct {
         try self.mergeCaptureObligations(&summary);
         if (self.body_alias_conflicts.get(function_id)) |body_conflicts| summary = try self.withAliasConflicts(summary, body_conflicts, self.allocator);
         return summary;
+    }
+
+    fn forwardedReferenceCalls(self: *Infer, function: graph_mod.Function) ![]const @import("lexical_forwarding.zig").ForwardedCall {
+        const block = self.graph.blocks.items[@intFromEnum(function.body orelse return &.{})];
+        var calls: std.ArrayList(@import("lexical_forwarding.zig").ForwardedCall) = .empty;
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
+            var value = switch (self.graph.node(node).content) {
+                .assignment => |assignment| assignment.value,
+                .binding_declaration => |binding| self.graph.binding(binding).initialization orelse continue,
+                else => continue,
+            };
+            for (0..self.graph.nodes.items.len) |_| {
+                const selected = switch (self.graph.node(value).content) {
+                    .function_call => |call| blk: {
+                        if (call.callee_value != null) break;
+                        break :blk .{ self.engine.summaryFor(call.callee) orelse break, call.input };
+                    },
+                    .virtual_call => |id| blk: {
+                        const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                        break :blk .{ try self.virtualSummary(call.safety_methods) orelse break, call.input };
+                    },
+                    else => break,
+                };
+                if (selected[0].outputs.len != 1) break;
+                const source = selected[0].outputs[0].forwarded_reference orelse break;
+                if (source.storage_domain != null or source.projections.len != 0) break;
+                const arguments = self.structArguments(selected[1]) orelse break;
+                if (source.input_index >= arguments.len) break;
+                const argument = arguments[source.input_index].value;
+                var seen = false;
+                for (calls.items) |call| if (call.call == value) {
+                    seen = true;
+                    break;
+                };
+                if (seen) break;
+                try calls.append(self.allocator, .{ .call = value, .argument = argument });
+                value = argument;
+            }
+        }
+        return calls.toOwnedSlice(self.allocator);
     }
 
     /// Forward exact outputs of one call through a straight-line wrapper.
@@ -6698,6 +6760,7 @@ pub const Infer = struct {
 
     fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
         // Sparse tag-only facts still need the existing normalization path.
+        if (effect.forwarded_reference != null) return true;
         if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
         inline for (.{
             "input_storage_authorizations", "input_domains",     "input_dependencies",             "input_storage_capabilities",  "input_acquisition_origins",
@@ -6751,6 +6814,8 @@ pub const Infer = struct {
             .dereference => {},
         }
         var result = effect;
+        // Projected contents are not the forwarded reference value.
+        result.forwarded_reference = null;
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
         for (effect.input_dependencies, 0..) |dependency, index| {
             dependencies[index] = dependency;
@@ -8572,4 +8637,30 @@ test "region locating reads cannot replace an intermediate domain" {
         try std.testing.expectEqual(@as(usize, 1), nested.inputs.items.len);
         try std.testing.expect(nested.inputs.items[0].target.eql(enclosing));
     }
+}
+
+test "forwarded reference evidence is conservative across alternatives and receiver erasure" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const first = facts.ValueEffect{ .forwarded_reference = .{ .input_index = 0 } };
+    const second = facts.ValueEffect{ .forwarded_reference = .{ .input_index = 1 } };
+    try std.testing.expect(Infer.requiresOutputSubstitution(first));
+    try std.testing.expect(!summaries.valueEffectEql(first, second));
+    try std.testing.expect(!summaries.valueEffectEql(first, .{}));
+    try std.testing.expect(!summaries.valueEffectEql(.{}, first));
+    try std.testing.expect((try infer.joinStorageAlternatives(first, first)).forwarded_reference != null);
+    for ([_]facts.ValueEffect{ try infer.joinStorageAlternatives(first, .{}), try infer.joinStorageAlternatives(.{}, first), try infer.joinStorageAlternatives(first, second), try infer.joinStorageAlternatives(second, first) }) |joined| {
+        try std.testing.expectEqual(@as(?facts.InputPath, null), joined.forwarded_reference);
+    }
+    try std.testing.expectEqual(@as(?facts.InputPath, null), (try infer.projectValueEffect(first, .{ .field = 0 })).forwarded_reference);
+    try std.testing.expectEqual(@as(?facts.InputPath, null), (try infer.bindVirtualReceiverValues(first, 0)).forwarded_reference);
+    const forwarded = try infer.bindVirtualReceiverValues(second, 0);
+    try std.testing.expectEqual(@as(u32, 1), forwarded.forwarded_reference.?.input_index);
 }

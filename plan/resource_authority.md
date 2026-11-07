@@ -1118,3 +1118,162 @@ The isolated full ReleaseSafe program suite subsequently passes: 2,524 passed,
 2,425,772 KiB, with no swaps, under the same serial execution and 6 GiB
 address-space limit. These checks validate this bounded approximation; they do
 not establish general physical provenance or close unknown-call authorization.
+
+### Next composition gate: retain observations through derived references
+
+A focused probe reuses the existing `ArrayView` representation rather than adding
+another descriptor. It takes `view(&array)` before starting an unrelated lexical
+writer, then accesses the view while the loan is pending. With the unfinished
+unknown-call gate enabled, the current checker still rejects this safe pattern.
+Two reductions distinguish the missing evidence:
+
+- A `code_at(&view, index)` wrapper is rejected for unknown call effects.
+- Inlining the wrapper lets `get_reference` return, but reading the returned
+  holder's handle slot is rejected for an unknown reference footprint.
+
+The probe uses source matching the installed compiler's older `to_virtual`
+spelling. A concurrent repository migration to `Virtual#(C)(provider)` is separate;
+a stale binary's syntax error is not evidence about authority. The probe is
+exploratory and does not claim validation of the migrated compiler.
+
+This shows that adding a reference field to Allocation is not sufficient by
+itself. The existing view already retains a reference at runtime. Its older
+observation must also survive checked reference derivation and summary
+substitution. Assigning the current frame after `get_reference` returns is safe
+but loses the separation needed here. A dependency on the view's lifetime or
+slot does not supply that missing backing relation.
+
+The next implementation must therefore distinguish a verified source relation
+from a may-dependency. Compare these restricted alternatives before changing ABI:
+
+1. Preserve an existing reference observation through a verified derivation
+   relation in summaries, using current input paths/routes and reference-copy
+   primitives. Track coverage across every return alternative; unknown paths
+   must not inherit a known branch's older frame.
+2. Publish a bounded storage descriptor with an explicit semantic invariant.
+   This still needs the same derivation relation when creating references to
+   its contents, plus construction, zero-extent and cleanup rules.
+3. Infer exact backing alternatives through all collection operations. This
+   requires more historical precision than the interface should need and does
+   not eliminate the need for a verified relation at erased boundaries.
+
+Investigate the first alternative first: it reuses reference evidence and tests
+composition before adding a descriptor. It must preserve prior observations,
+not infer physical independence from `owns`, `depends_on`, a nominal type or a
+new certificate ID. Reuse the existing lexical forwarding verifier where it
+actually proves identity, but do not pretend that forwarding a reference,
+selecting an offset in its backing, and loading a reference from its contents
+are the same operation.
+
+Required counterexamples are an unknown return alternative, a retargeted view,
+a reference loaded from later-inserted contents, backing invalidation, an offset
+outside the authorized range and a mutable alias of the backing itself. Check
+both a direct accessor and an ordinary wrapper. Preserve the original
+heterogeneous DynamicArray positive case; an explicitly precomputed view is a
+composition test, not a replacement requirement or a permanent workaround.
+
+A smaller regression is now registered as
+`concurrency/160_reference_forwarding_preserves_separation`: obtain an erased
+reference before an unrelated lexical allocation, start its writer, forward the
+old reference through `forward(value) { result = value }`, then read the returned
+reference. The reduced probe fails at the final read, while the corresponding
+case without forwarding is covered by fixture 156. This isolates preservation
+of reference identity without offsets, opaque contents or collection protocols.
+
+Prefer a verified whole-reference forwarding relation for this first fix, rather
+than treating every non-validity dependency as a guaranteed source. The existing
+lexical forwarding proofs already separate exact identity from may-dependencies.
+Any published relation must be checked once for the implementation and transported
+in the same summary/contract representation used at calls; do not re-evaluate a
+callee or add a special case for this helper's name. Losing a relation may reduce
+precision, but combining an unknown return with a known return must never restore
+it. Keep the bounded-subrange problem separate until the direct case composes.
+
+#### Whole-reference forwarding checkpoint plan
+
+Goal: preserve an existing observation across a verified whole-reference return,
+without deriving any authority from may-dependencies. This implements the direct
+forwarding gate above, not subrange inference or general physical provenance.
+
+- [ ] Confirm fixture 160 fails at the returned reference's read on the current
+  compiler, with a serial, memory-limited run.
+- [ ] Add an optional caller-relative forwarding relation to `ValueEffect` in
+  `safety_facts.zig`. It is evidence of identical returned reference values,
+  not a permission and not an additional lifetime root.
+- [ ] Infer the relation only after `lexical_forwarding.proves` verifies the
+  complete body. Publish declared `refers_to` through the same representation
+  in `contract_outputs.zig`, after ordinary conformance checking.
+- [ ] Include the relation in summary equality, snapshots and cache format.
+  Projection, substitution and alternative joins must discard unsupported
+  relations instead of treating missing evidence as an identity element.
+- [ ] At output instantiation, copy the referenced input's observation after
+  normal effect composition. Preserve its old bound; never substitute a lifetime
+  anchor or observe it again as fresh backing. All ordinary access, validity and
+  cleanup checks still apply.
+- [ ] Test direct and generic forwarding, declared virtual forwarding, an unknown
+  return alternative, the wrong input, retargeting and ended generations. Keep
+  fixture 156 and the ArrayView probe as composition checks.
+- [ ] Validate in series under the 6 GiB process limit. Publish one meaningful
+  checkpoint only after its positive and negative coverage passes. Any remaining
+  rejection of derived views stays documented as an open requirement.
+
+The forwarding checkpoint exposed an authorization bug in summary instantiation:
+combining an unknown reference target with a known independent target could
+select the known one and hide the unknown alias. The inverse of fixture 161
+compiled while its actual selected reference pointed at a worker's borrowed
+storage. The new `concurrency/164X` is build-only and records that counterexample;
+it must never be executed as a runtime test while acceptance is under investigation.
+
+A direct Zig unit reproduced the loss in both source orders. Instantiation now
+includes unknown alternatives when selecting a singleton referent, handles
+multiple `input_places` without last-source selection, and clears an accumulated
+exact target when coverage no longer supports it. Three focused internal tests
+pass, covering the union, forwarding observation transport, receiver erasure and
+unknown alternatives. Full program validation of this new correction remains
+pending. Do not conflate the earlier passing forwarding positives with validation
+of the subsequently changed union rule.
+
+The straight-line wrapper regression is fixture 165. The lexical verifier now
+accepts compiler-internal call-to-argument relations derived only from the
+selected callee's verified summary, keeping ordinary safety checking of the call
+unchanged. Direct and virtual calls may supply that relation; unresolved indirect
+calls do not. Forwarding through multiple wrappers converges via the existing
+summary fixed point rather than recursive body inspection. Owning transfers keep
+their separate explicit-move proof. Fixture 166X wraps an alternative-target
+function and must remain rejected; the wrapper cannot turn its callee's missing
+identity guarantee into a forwarding fact.
+
+Four focused Debug internal tests pass, including lexical proof rejection of
+missing, wrong-source and cyclic call metadata. Isolated compiler/program
+validation is pending; no publication claim follows from these internal tests.
+
+The isolated ReleaseSafe compiler now builds successfully under the 6 GiB
+process limit, with no swaps. Fresh frontend builds confirm the seven new program
+outcomes: 160, 162, 163 and 165 compile; 161X, 164X and 166X reject with a pending
+execution diagnostic. These are compile checks, not yet fixture execution or
+full-suite validation. The isolated full Debug internal suite is running next;
+no checkpoint has been published yet.
+
+The isolated full Debug internal suite passes after the forwarding composition
+and reference-alternative correction: 1,499 passed, one skipped, zero failures;
+maximum RSS 577,872 KiB, no swaps. The isolated full ReleaseSafe program suite is
+now running in series, with the compiler already built. Its outcome remains
+pending, and the checkpoint is still unpublished.
+
+
+#### Forwarding checkpoint validation result
+
+The isolated implementation passes the full serial ReleaseSafe program suite:
+2,532 passed, 11 skipped, zero failures, zero leaks and zero error logs. Maximum
+RSS is 2,418,512 KiB, with no swaps, under the 6 GiB process limit. The full Debug
+internal suite passes 1,499 tests with one skip. The seven new fixtures include
+ordinary, generic, virtual and wrapper forwarding, unknown alternatives, and the
+mixed-target alias that compiled before the correction. Positive fixtures run;
+negative fixtures are build-only and require a pending-execution diagnostic.
+
+This checkpoint publishes a verified whole-reference source relation, conserves
+its old lexical observation at calls, and corrects singleton target selection
+when unknown alternatives are present. It does not implement subrange source
+relations, physical allocation descriptors, general owner transfer, protected
+sharing, or the pending uniform unknown-call gate. Those remain requirements of
+the overall safety consolidation, not reasons to weaken the alias correction.

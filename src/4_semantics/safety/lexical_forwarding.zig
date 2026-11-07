@@ -6,7 +6,15 @@ const primitives = @import("../primitives/schema.zig");
 // Each owning link must move. Reference forwarding may coexist with independent
 // moved owners and operations that do not access its forwarding bindings.
 // Changes to forwarding slots and alternate returns need stronger proofs.
+/// Caller-relative identity already verified by the selected callee summary.
+/// This is compiler proof metadata, never a source-level assertion.
+pub const ForwardedCall = struct { call: graph_mod.GlobalNodeId, argument: graph_mod.GlobalNodeId };
+
 pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool) !bool {
+    return provesWithCalls(allocator, graph, function, relation, owning, &.{});
+}
+
+pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool, calls: []const ForwardedCall) !bool {
     const block = graph.blocks.items[@intFromEnum(function.body orelse return false)];
     if (relation.input_index >= function.input_bindings.len or relation.output_index >= function.output_bindings.len) return false;
     const input = graph.binding_refs.items[function.input_bindings.start + relation.input_index];
@@ -21,7 +29,7 @@ pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemant
             const record = graph.binding(binding);
             if (record.deferred_initialization or binding == output or linksContains(links.items, binding)) return false;
             const initializer = record.initialization orelse return false;
-            if (!isForwardingLink(graph, initializer, links.items, owning)) {
+            if (!isForwardingLink(graph, initializer, links.items, owning, calls)) {
                 if (owning or !independentMove(graph, initializer, links.items, output)) return false;
                 continue;
             }
@@ -29,7 +37,7 @@ pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemant
         },
         .assignment => |assignment| {
             if (assignment.binding != output or assigned) return false;
-            if (!isForwardingLink(graph, assignment.value, links.items, owning)) return false;
+            if (!isForwardingLink(graph, assignment.value, links.items, owning, calls)) return false;
             assigned = true;
         },
         .auto_deinit_binding => {
@@ -117,8 +125,17 @@ fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.Gl
     return std.mem.indexOfScalar(graph_mod.GlobalBindingId, links, binding) != null;
 }
 
-fn isForwardingLink(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool) bool {
-    var expression = graph.node(id).content;
+fn isForwardingLink(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool, calls: []const ForwardedCall) bool {
+    var current = id;
+    // Only reference identity composes here. Ownership forwarding retains its
+    // separate requirement that every link explicitly moves its resource.
+    if (!owning) for (0..calls.len + 1) |_| {
+        const argument = for (calls) |call| {
+            if (call.call == current) break call.argument;
+        } else break;
+        current = argument;
+    };
+    var expression = graph.node(current).content;
     if (owning) {
         if (expression != .move_value) return false;
         expression = graph.node(expression.move_value).content;
@@ -173,6 +190,15 @@ test "reference forwarding permits independent moved owners without consuming it
     const relation: primitives.MethodSafetyContract.Dependency = .{ .input_index = 0, .output_index = 0 };
     try std.testing.expect(try proves(a, &graph, function, relation, false));
     try std.testing.expect(!try proves(a, &graph, function, relation, true));
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(3) } } });
+    graph.nodes.items[4].content.assignment.value = @enumFromInt(6);
+    // The lexical verifier consumes a supplied verified call relation; missing,
+    // wrong-source and cyclic metadata cannot prove identity.
+    try std.testing.expect(!try proves(a, &graph, function, relation, false));
+    try std.testing.expect(try provesWithCalls(a, &graph, function, relation, false, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(3) }}));
+    try std.testing.expect(!try provesWithCalls(a, &graph, function, relation, false, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(0) }}));
+    try std.testing.expect(!try provesWithCalls(a, &graph, function, relation, false, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(6) }}));
+    graph.nodes.items[4].content.assignment.value = @enumFromInt(3);
     graph.bindings.items[3].initialization = @enumFromInt(5);
     try std.testing.expect(!try proves(a, &graph, function, relation, false));
 }
