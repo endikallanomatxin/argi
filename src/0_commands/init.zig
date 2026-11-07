@@ -98,7 +98,6 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 
 const moduleMainParameterized =
     \\main := (.system: System) -> (.status_code: Int32 = 0) {
-    \\    assume ffi ::= system.ffi
     \\    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
     \\    assume writer ::= $&BufferedWriter#(.base_type: File)(
     \\        .base = $&system.terminal&.stdout,

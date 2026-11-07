@@ -16,7 +16,6 @@ sets up allocator and I/O capabilities:
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0)  {
-    assume ffi ::= system.ffi
     assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,
@@ -25,6 +24,10 @@ main := (.system: System) -> (.status_code: Int32 = 0)  {
     assume reader ::= $&system.terminal&.stdin
 }
 ```
+
+Foreign-call permission is opt-in: the generated entrypoint does not assume
+`ffi`. Supply `.ffi = system.ffi` explicitly when calling foreign functions,
+or add `assume ffi ::= system.ffi` in the scope that needs it.
 
 Fallible operations return ordinary errors without requiring a tracer. `!`
 propagates them without adding context. To create or extend a diagnostic trace,
