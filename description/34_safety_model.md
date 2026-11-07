@@ -124,6 +124,12 @@ of the stored references, including roots that have already ended. The same
 check applies through function summaries. Live storage for the slot does not
 prove that the referenced values remain live.
 
+Insertion must preserve those dependencies even if a borrowed root was already
+invalid before the value entered storage. Filtering the retained set to live
+roots would make a stale reference appear usable after extraction. A move may
+exclude the old owned roots it consumes; that does not permit forgetting ended
+external borrows or still-live owned roots whose transfer has not completed.
+
 Using or destroying stored elements requires their hidden external dependencies
 to remain live. This obligation follows concrete and static calls, wrappers,
 and automatic cleanup, as well as virtual receiver calls. Accessing allocation

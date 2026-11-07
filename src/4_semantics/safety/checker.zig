@@ -4343,7 +4343,7 @@ pub const SafetyChecker = struct {
                     var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
                     defer hidden.deinit();
                     try self.instantiateOpaqueDependencies(post_state.value, arguments, state, &fresh_roots, &hidden);
-                    for (storages.items) |storage| try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+                    for (storages.items) |storage| try self.mergeOpaqueStorage(state, storage, hidden.items);
                 }
             }
 
@@ -4732,7 +4732,7 @@ pub const SafetyChecker = struct {
                 if (!internal_generation and !containsRoot(hidden_owned.items, dependency))
                     try appendRootFact(&external, dependency);
             }
-            try self.mergeLiveOpaqueDependencies(state, storage, external.items);
+            try self.mergeOpaqueStorage(state, storage, external.items);
         }
     }
 
@@ -6005,18 +6005,6 @@ pub const SafetyChecker = struct {
         try state.mergeOpaqueStorage(storage, dependencies, owners.items);
     }
 
-    fn mergeLiveOpaqueDependencies(
-        self: *SafetyChecker,
-        state: *FunctionState,
-        storage: StorageIdentity,
-        dependencies: []const facts.ValidityRootId,
-    ) !void {
-        var live = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        defer live.deinit();
-        for (dependencies) |dependency| if (state.tracker.isAlive(dependency)) try appendRootFact(&live, dependency);
-        try self.mergeOpaqueStorage(state, storage, live.items);
-    }
-
     fn collectOpaqueHiddenDependencies(
         self: *SafetyChecker,
         state: *FunctionState,
@@ -6060,7 +6048,17 @@ pub const SafetyChecker = struct {
         var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer hidden.deinit();
         try self.collectOpaqueHiddenDependencies(state, value, &hidden);
-        try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+        // Moving ownership ends its old roots. Only those roots are internal
+        // to the transfer; an already-ended external borrow remains a stale
+        // dependency and must not disappear merely because it is not live.
+        var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer owned.deinit();
+        try collectOwnedRoots(value, &owned);
+        var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer external.deinit();
+        for (hidden.items) |root|
+            if (!containsRoot(owned.items, root) or state.tracker.isAlive(root)) try appendRootFact(&external, root);
+        try self.mergeOpaqueStorage(state, storage, external.items);
     }
 
     fn collectOpaqueDomainsAccessedBy(
@@ -12495,4 +12493,31 @@ test "symbolic input routes cannot drop or overwrite an intermediate region" {
     }
     const local = try state.establishSymbolicInput(@enumFromInt(0), null);
     try std.testing.expect(!SafetyChecker.symbolicStorageComesFromInput(&state, local.identity));
+}
+
+test "opaque retention preserves ended external borrows independently of moved ownership" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const owned = try state.tracker.establish(.fresh);
+    const borrowed = try state.tracker.establish(.fresh);
+    const live = try state.tracker.establish(.fresh);
+    const live_owned = try state.tracker.establish(.fresh);
+    state.tracker.end(owned);
+    state.tracker.end(borrowed);
+    try checker.hideOpaqueDependencies(&state, .{ .place = .{ .root = @enumFromInt(0) } }, .{
+        .owned_roots = &.{ owned, live_owned },
+        .dependencies = &.{ .{ .root = owned }, .{ .root = borrowed }, .{ .root = live }, .{ .root = live_owned } },
+    });
+    const hidden = state.opaque_storages.items[0].hidden_dependencies;
+    try std.testing.expect(!containsRoot(hidden, owned));
+    try std.testing.expect(containsRoot(hidden, borrowed));
+    try std.testing.expect(containsRoot(hidden, live));
+    try std.testing.expect(containsRoot(hidden, live_owned));
 }
