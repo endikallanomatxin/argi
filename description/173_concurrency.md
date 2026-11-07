@@ -27,6 +27,12 @@ writes, destruction, replacement and ending the backing lifetime. These rules
 follow aliases and calls, including wrappers. A loan must end within the loop
 iteration that created it.
 
+A direct reference access without a tracked target has an unknown physical
+footprint, not an empty one. Such a read remains compatible with pending read
+loans; a write conflicts with any pending loan, and a read conflicts with a
+pending write loan. A lifetime anchor or trusted raw-reference construction
+alone does not establish separation from those loans.
+
 `is_borrowable_data(.type = T)` recognizes plain nonowning input records and
 arrays with eligible reference leaves. Referents must be recursively plain and
 reference-free; destructors, raw pointers, callbacks and virtual handles are not
@@ -121,6 +127,11 @@ inputs in the caller. Use `prepare_args#(F)` when preparing the record separatel
 `await` joins and copies out the result once; a second extraction returns
 `already_awaited`. A function's own fallible result remains nested inside the
 execution result. Zero and multiple outputs follow ordinary result conventions.
+
+Native extraction copies initialized result bytes by value into aligned local
+storage after join. It does not reconstruct a reference to the native output
+buffer from its address. This keeps extraction compatible with other pending
+loans without granting general authority over foreign memory.
 
 Future is move-only. Native stable buffers stay at the same addresses when the
 Future moves. Dropping it joins before releasing those buffers, including when

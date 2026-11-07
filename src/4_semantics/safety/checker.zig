@@ -2855,8 +2855,27 @@ pub const SafetyChecker = struct {
     }
 
     fn requireExecutionPointerAccess(self: *SafetyChecker, source: primitives.SourceRef, pointer: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
+        if (pointer.referenced_place == null and pointer.symbolic_pointees.len == 0) {
+            // A valid lifetime or audited raw-reference construction does not
+            // locate these bytes relative to a pending loan. Missing target
+            // evidence denotes an unknown footprint, never an empty one.
+            _ = try self.requireUnknownExecutionAccess(source, "reference access", mode, state);
+            return;
+        }
         if (pointer.referenced_place) |place| try self.requireExecutionAccess(source, place, null, mode, state);
         for (pointer.symbolic_pointees) |identity| try self.requireExecutionAccess(source, null, identity, mode, state);
+    }
+
+    fn requireUnknownExecutionAccess(self: *SafetyChecker, source: primitives.SourceRef, operation: []const u8, mode: facts.AccessMode, state: *const FunctionState) !bool {
+        for (state.executions.items) |execution| {
+            if (!execution.pending) continue;
+            for (execution.loans) |loan| {
+                if (mode == .read and loan.mode == .read) continue;
+                try self.report(source, "{s} has unknown memory effects while a pending execution retains borrowed storage; declare and verify an access bound", .{operation});
+                return false;
+            }
+        }
+        return true;
     }
 
     fn applyExecutionCompletions(self: *SafetyChecker, paths: []const facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !void {
@@ -12392,4 +12411,39 @@ test "allocation slot retains borrowed backing independently of its explicit anc
     state.tracker.end(backing);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(direct));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(summarized));
+}
+
+test "unknown reference targets preserve read compatibility without bypassing execution loans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (std.meta.tags(facts.AccessMode)) |loan_mode| {
+        for (std.meta.tags(facts.AccessMode)) |access_mode| {
+            var state = SafetyChecker.FunctionState.init(a);
+            defer state.deinit();
+            const loan: facts.ExecutionLoan = .{ .storage = .{ .root = @enumFromInt(0) }, .mode = loan_mode };
+            const id = try state.establishExecution(&.{loan});
+            const before = diags.list.items.len;
+            try checker.requireExecutionPointerAccess(source, .{}, access_mode, &state);
+            const conflict = loan_mode == .write or access_mode == .write;
+            try std.testing.expectEqual(before + @intFromBool(conflict), diags.list.items.len);
+            state.completeExecution(id);
+            const after = diags.list.items.len;
+            try checker.requireExecutionPointerAccess(source, .{}, access_mode, &state);
+            try std.testing.expectEqual(after, diags.list.items.len);
+        }
+    }
+    var plain = SafetyChecker.FunctionState.init(a);
+    defer plain.deinit();
+    _ = try plain.establishExecution(&.{});
+    const before = diags.list.items.len;
+    try checker.requireExecutionPointerAccess(source, .{}, .write, &plain);
+    try std.testing.expectEqual(before, diags.list.items.len);
 }

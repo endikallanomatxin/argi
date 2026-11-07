@@ -95,3 +95,13 @@ _task_result_address := (.task: $&TaskReceipt, .size: UIntNative) -> (.address: 
     assume ffi := task&._ffi
     address = _task_join(.handle = task&._handle, .size = size)
 }
+
+_TaskResultBlock: CStruct = (._bytes: [32]UInt8, ._count: UIntNative)
+_task_result_block(.handle: UIntNative, .offset: UIntNative) -> (.block: _TaskResultBlock): CFunction(
+    .symbol = "_argi_task_result_block"
+) where { no_access() }
+
+_read_task_result_block := (.task: &TaskReceipt, .offset: UIntNative) -> (.block: _TaskResultBlock) {
+    assume ffi := task&._ffi
+    block = _task_result_block(.handle = task&._handle, .offset = offset)
+}

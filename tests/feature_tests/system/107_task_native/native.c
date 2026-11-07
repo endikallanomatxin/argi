@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct input { uintptr_t gate; uintptr_t entered; int value; };
 static void calculate(uintptr_t input_address, uintptr_t output_address) {
@@ -37,8 +38,21 @@ int32_t argi_task_probe(void) {
     uintptr_t buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 64);
     if (!buffer_task) abort();
     original = 0;
+    struct argi_task_result_block unavailable = _argi_task_result_block(buffer_task, 0);
+    if (unavailable.count) abort();
     uintptr_t result_address = _argi_task_join_result(buffer_task, sizeof(original));
     if (!result_address || *(int *)result_address != 42) abort();
+    struct argi_task_result_block block = _argi_task_result_block(buffer_task, 0);
+    if (block.count != sizeof(original) || memcmp(block.bytes, (const void *)result_address, sizeof(original))) abort();
+    for (size_t i = block.count; i < sizeof(block.bytes); ++i) if (block.bytes[i]) abort();
+    block = _argi_task_result_block(buffer_task, sizeof(original) - 1);
+    if (block.count != 1 || block.bytes[0] != ((const uint8_t *)result_address)[sizeof(original) - 1]) abort();
+    for (size_t i = 1; i < sizeof(block.bytes); ++i) if (block.bytes[i]) abort();
+    block = _argi_task_result_block(buffer_task, sizeof(original));
+    if (block.count || _argi_task_result_block(buffer_task, UINTPTR_MAX).count) abort();
+    block = _argi_task_result_block(0, 0);
+    if (block.count) abort();
+
     if (_argi_task_join_result(buffer_task, sizeof(original))) abort();
     if (_argi_task_destroy(buffer_task)) abort();
     original = 21;
@@ -62,6 +76,17 @@ int32_t argi_task_probe(void) {
     if (!buffer_task) abort();
     result_address = _argi_task_join_result(buffer_task, 0);
     if (!result_address || result_address % 64 || _argi_task_destroy(buffer_task)) abort();
+    buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), 80, 64, 64);
+    if (!buffer_task || !_argi_task_join_result(buffer_task, 80)) abort();
+    block = _argi_task_result_block(buffer_task, 0);
+    if (block.count != 32) abort();
+    block = _argi_task_result_block(buffer_task, 32);
+    if (block.count != 32) abort();
+    for (size_t i = 0; i < sizeof(block.bytes); ++i) if (block.bytes[i]) abort();
+    block = _argi_task_result_block(buffer_task, 64);
+    if (block.count != 16) abort();
+    for (size_t i = 0; i < sizeof(block.bytes); ++i) if (block.bytes[i]) abort();
+    if (_argi_task_result_block(buffer_task, 80).count || _argi_task_destroy(buffer_task)) abort();
     uintptr_t gate = _argi_atomic_u32_create(0), entered = _argi_atomic_u32_create(0);
     if (!gate || !entered) abort();
     struct input source = { gate, entered, 21 };

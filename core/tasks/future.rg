@@ -62,20 +62,51 @@ await := #(.T: Type) (.self: $&Future#(T)) -> (
         return
     }
     #if is_plain_data(.type = T) {
-        address ::= _task_result_address(.task = $&self&._task, .size = size_of(.type = T))
+        result_size ::= size_of(.type = T)
+        address ::= _task_result_address(.task = $&self&._task, .size = result_size)
         if address == 0 {
             result = ..error(.reason = ..task_join_failed)
             return
         }
         _execution_complete(.receipt = $&self&._task._access)
-        output ::= trusted_establish_inherited_reference#(T)(
-            .raw = raw_pointer#(T)(.address = address),
-            .root = erase_mutable_reference#(Future#(T))(.base = self)
-        )
-        value ::= output&
+        value ::= _copy_plain_task_result#(
+            .T: T,
+            .N = #run () -> (.size: UIntNative) { size = size_of(.type = T) }
+        )(.task = &self&._task)!
         self&._taken = true
         result = ..ok ~value
     } #else {
         result = ..error(.reason = ..task_join_failed)
     }
+}
+
+-- A zero-length array carries T's alignment without constructing a T. The
+-- initialized byte array starts at offset zero and has exactly T's byte size.
+_TaskResultStorage := #(.T: Type, .N: UIntNative) (
+    ._alignment: [0]T, ._bytes: [N]UInt8
+)
+
+_copy_plain_task_result := #(.T: Type, .N: UIntNative) (.task: &TaskReceipt) -> (
+    .result: Errable#(T, (..task_join_failed))
+) {
+    if N != size_of(.type = T) { abort }
+    storage: _TaskResultStorage#(T, N) = (._alignment = (), ._bytes = zeroed#([N]UInt8)())
+    offset :: UIntNative = 0
+    while offset < N {
+        block ::= _read_task_result_block(.task = task, .offset = offset)
+        if block._count == 0 or block._count > 32 or block._count > N - offset {
+            result = ..error(.reason = ..task_join_failed)
+            return
+        }
+        index :: UIntNative = 0
+        while index < block._count {
+            storage._bytes[offset + index] = block._bytes[index]
+            index = index + 1
+        }
+        offset = offset + block._count
+    }
+    -- Only plain results instantiate this helper. Every byte came from the
+    -- matching typed worker after join, including aggregate representation.
+    value ::= trusted_reinterpret_reference#(.from: [N]UInt8, .to: T)(.base = &storage._bytes)
+    result = ..ok value&
 }

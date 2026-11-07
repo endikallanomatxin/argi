@@ -84,6 +84,18 @@ uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size) {
     return (uintptr_t)task->output;
 }
 
+struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_t offset) {
+    struct argi_task_result_block result = {{0}, 0};
+    if (!handle) return result;
+    const struct argi_task *task = (const struct argi_task *)handle;
+    if (!task->joined || !task->taken || offset >= task->output_size) return result;
+    uintptr_t count = task->output_size - offset;
+    if (count > sizeof(result.bytes)) count = sizeof(result.bytes);
+    memcpy(result.bytes, (const unsigned char *)task->output + offset, count);
+    result.count = count;
+    return result;
+}
+
 int32_t _argi_task_destroy(uintptr_t handle) {
     if (!handle) return -1;
     struct argi_task *task = (struct argi_task *)handle;
