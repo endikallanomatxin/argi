@@ -399,6 +399,10 @@ exact caller alias obligation. It separately preserves their input provenance
 for hidden-lifetime escape checks. Unknown exact identity must not be confused
 with local storage or an absent lifetime obligation. The direct regression
 contrasts ordinary fields, terminal domains and both unsupported continuations.
+The same restriction applies to locating-read inference: selecting another domain
+from a path already ending in one produces an unknown access bound, while any
+independent known reads remain. Overwriting the first selector is not a valid
+approximation, even if the two domain indexes happen to be equal.
 
 ### Acquisition identity: implementation audit and candidate
 

@@ -4768,6 +4768,12 @@ pub const Infer = struct {
         const sink = self.access_sink.?;
         for (effect.input_generation_dependencies) |path| try sink.addInput(path, .read);
         for (effect.input_domains) |domain| {
+            // A locating read through another region is not a direct read of
+            // this receiver's domain. Flat paths cannot encode both selectors.
+            if (domain.path.storage_domain != null) {
+                sink.unknown = true;
+                continue;
+            }
             var path = domain.path;
             path.storage_domain = domain.domain_index;
             try sink.addInput(path, .read);
@@ -8342,4 +8348,38 @@ test "acquisition origin selectors compose without establishment permissions" {
     const rebound = try inference.rebaseFreshSources(origin, @enumFromInt(2));
     try std.testing.expectEqual(@as(usize, 1), rebound.fresh_acquisition_origins.len);
     try std.testing.expectEqual(@as(usize, 0), rebound.fresh_storage_capabilities.len);
+}
+
+test "region locating reads cannot replace an intermediate domain" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var inference = Infer.init(a, &graph, &engine);
+    defer inference.deinit();
+    const enclosing = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 3 }} };
+    var ordinary = Infer.AccessEffects.init(a);
+    inference.access_sink = &ordinary;
+    try inference.recordRegionLocatingReads(.{ .input_domains = &.{.{ .path = enclosing, .domain_index = 1 }} });
+    try std.testing.expect(!ordinary.unknown);
+    try std.testing.expectEqual(@as(usize, 1), ordinary.inputs.items.len);
+    try std.testing.expect(ordinary.inputs.items[0].target.eql(.{ .input_index = 0, .projections = enclosing.projections, .storage_domain = 1 }));
+    for (0..2) |index| {
+        var nested = Infer.AccessEffects.init(a);
+        inference.access_sink = &nested;
+        var source = enclosing;
+        source.storage_domain = @intCast(index);
+        try inference.recordRegionLocatingReads(.{
+            .input_generation_dependencies = &.{enclosing},
+            .input_domains = &.{.{ .path = source, .domain_index = 1 }},
+        });
+        try std.testing.expect(nested.unknown);
+        // Keep the independent locating read, but never publish the second
+        // domain as if it had been selected directly from the receiver.
+        try std.testing.expectEqual(@as(usize, 1), nested.inputs.items.len);
+        try std.testing.expect(nested.inputs.items[0].target.eql(enclosing));
+    }
 }
