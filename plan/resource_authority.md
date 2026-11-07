@@ -1277,3 +1277,41 @@ when unknown alternatives are present. It does not implement subrange source
 relations, physical allocation descriptors, general owner transfer, protected
 sharing, or the pending uniform unknown-call gate. Those remain requirements of
 the overall safety consolidation, not reasons to weaken the alias correction.
+
+#### Identity-preserving primitive checkpoint
+
+The same-type reinterpretation reduction fails through a wrapper after fixture
+160 passes. Add fixture 167 before implementation. Reuse `forwarded_reference`
+for canonical core primitives only when their selected input/output reference
+types are identical and the operation preserves the address. Publish this in
+the ordinary primitive summary; let the existing wrapper proof consume it.
+Offsets are explicitly excluded even when the programmer supplies literal zero:
+the primitive's universal guarantee does not assert reference identity. Different
+referent types and mutability conversions are also left out of this bounded
+identity rule. They require a weaker backing relation, not a fabricated exact
+reference. Test the classifier independently of any Future or collection name.
+
+Fixture 167 now compiles with a fresh frontend and runs successfully after
+publishing identical-reference guarantees in the initial primitive summaries.
+The reduced offset control remains rejected for an unknown reference footprint;
+it has not been mislabeled as exact forwarding. The focused registry unit passes
+and distinguishes readonly/mutable same-type identity from changed referent types,
+mutability changes, offsets, raw establishment and allocation-slot construction.
+The ReleaseSafe compiler build peaks at 2,874,692 KiB with zero swaps under the
+6 GiB process limit. Regression-suite validation is still pending; this incremental
+primitive-summary change has not been committed or published.
+
+The primitive-identity change is isolated from the pending unknown-call/loop
+experiments in `/tmp/argi-reference-forward-checkpoint`. Three focused internal
+regressions pass in the primary workspace (classification, alternative evidence,
+and lexical forwarding); they are not mislabeled as isolated-suite validation.
+The isolated compiler rebuild and fixture validation are the next gates.
+
+The isolated primitive-identity increment now passes all nine program checks
+160--168: five positives build and run, and four negatives reject with the
+required pending-execution diagnostic. New negative fixture 168X confirms that
+copying the reference cannot hide an alias of the worker's original backing.
+Three focused Debug internal tests also pass in the isolated tree: primitive
+classification, evidence alternatives, and lexical call forwarding. No full-suite
+rerun is claimed for this increment; the preceding full-suite results belong to
+the previous forwarding checkpoint. There is no new runtime field or permission.

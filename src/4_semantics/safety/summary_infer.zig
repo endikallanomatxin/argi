@@ -227,6 +227,14 @@ pub const Infer = struct {
                 summary.required_live_inputs = &.{};
             }
             if (function.safety_primitive != .none) {
+                if (primitive_transfer.forwardsIdenticalReference(self.graph, function)) {
+                    const summary = self.engine.summaries.getPtr(id).?;
+                    if (summary.outputs.len == 1) {
+                        const outputs = try self.allocator.dupe(facts.ValueEffect, summary.outputs);
+                        outputs[0].forwarded_reference = .{ .input_index = 0 };
+                        summary.outputs = outputs;
+                    }
+                }
                 if (primitive_transfer.memoryAccesses(function.safety_primitive)) |accesses| {
                     const summary = self.engine.summaries.getPtr(id).?;
                     const inputs = try self.allocator.alloc(facts.InputAccess, accesses.len);

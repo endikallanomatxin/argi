@@ -314,6 +314,20 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
 /// Allocation establishment publishes one fresh storage root and borrows its
 /// anchor and virtual deallocator. Both interpreters use this field mapping;
 /// raw byte ownership must not erase the deallocator's receiver lifetime.
+/// A universal whole-reference identity guarantee. Offsets and type-changing
+/// views may retain backing, but cannot publish this stronger relation.
+pub fn forwardsIdenticalReference(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, function: @import("../global/graph.zig").Function) bool {
+    switch (function.safety_primitive) {
+        .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => {},
+        else => return false,
+    }
+    if (function.input.len != 1 or function.output.len != 1) return false;
+    const input = graph.fields.items[function.input.start].ty;
+    const output = graph.fields.items[function.output.start].ty;
+    if (graph.semanticType(input) != .pointer or graph.semanticType(output) != .pointer) return false;
+    return @import("../global/types.zig").equal(graph, input, output);
+}
+
 pub const AllocationTransfer = struct {
     pub fn fieldCount(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, callee: @import("../global/graph.zig").GlobalFunctionId) !u32 {
         const function = graph.function(callee);
@@ -373,4 +387,46 @@ test "trusted primitive paths accept native separators without weakening identit
     try std.testing.expect(findBundled(name, "/opt/argi/core/memory/heap_allocation/RawPointer.rg") != null);
     try std.testing.expect(findBundled(name, "/opt/argi/othercore/memory/heap_allocation/RawPointer.rg") == null);
     try std.testing.expect(findBundled(name, "C:\\argi\\core\\memory\\RawPointer.rg") == null);
+}
+
+test "reference identity classification excludes offsets and representation changes" {
+    const graph_mod = @import("../global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } },
+    });
+    for ([_]graph_mod.GlobalTypeId{ @enumFromInt(2), @enumFromInt(2) }) |ty| try graph.fields.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = ty,
+    });
+    var function = graph_mod.Function{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 1 },
+        .output = .{ .start = 1, .len = 1 },
+        .safety_primitive = .reinterpret_reference,
+    };
+    try std.testing.expect(forwardsIdenticalReference(&graph, function));
+    for ([_]primitives.SafetyPrimitive{ .reference_offset, .mutable_reference_offset, .establish_inherited_reference, .establish_allocation_slot, .none }) |primitive| {
+        function.safety_primitive = primitive;
+        try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+    }
+    function.safety_primitive = .reinterpret_reference;
+    graph.fields.items[1].ty = @enumFromInt(4);
+    try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+    function.safety_primitive = .read_reference;
+    graph.fields.items[0].ty = @enumFromInt(3);
+    graph.fields.items[1].ty = @enumFromInt(2);
+    try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+    function.safety_primitive = .mutable_reinterpret_reference;
+    graph.fields.items[1].ty = @enumFromInt(3);
+    try std.testing.expect(forwardsIdenticalReference(&graph, function));
+    function.output.len = 0;
+    try std.testing.expect(!forwardsIdenticalReference(&graph, function));
 }
