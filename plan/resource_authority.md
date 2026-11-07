@@ -391,6 +391,15 @@ without a caller-relative source, effects and invalidation could disappear in
 the next summary. Extend the existing value/projection vocabulary only when this
 substitution can be represented end to end, including its missing-evidence case.
 
+The current flat `InputPath` has physical projections followed by one terminal
+domain. A symbolic route that projects through that domain cannot be flattened
+by dropping it, moving it to the end, or overwriting it with another domain.
+The checker now leaves such routes unrepresentable, conservatively refusing an
+exact caller alias obligation. It separately preserves their input provenance
+for hidden-lifetime escape checks. Unknown exact identity must not be confused
+with local storage or an absent lifetime obligation. The direct regression
+contrasts ordinary fields, terminal domains and both unsupported continuations.
+
 ### Acquisition identity: implementation audit and candidate
 
 `State.establishCapability` already allocates nonreused identities and

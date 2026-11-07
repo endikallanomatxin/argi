@@ -2789,12 +2789,25 @@ pub const SafetyChecker = struct {
         const namespace = state.tracker.namespace orelse return null;
         for (namespace.projected_storage.items) |projection| if (projection.identity == identity) {
             const parent = try self.symbolicInputPath(state, projection.parent) orelse return null;
+            // InputPath encodes one terminal domain, not a route through it.
+            // Appending a field would drop/move that domain, and selecting a
+            // second domain would overwrite it. Neither is the original path.
+            if (parent.storage_domain != null) return null;
             return switch (projection.selector) {
                 .projection => |physical| try self.appendInputProjection(parent, physical),
                 .domain => |domain| .{ .input_index = parent.input_index, .projections = parent.projections, .storage_domain = domain },
             };
         };
         return null;
+    }
+
+    fn symbolicStorageComesFromInput(state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
+        for (state.symbolic_pointees.items) |entry|
+            if (entry.identity == identity and entry.input_path != null) return true;
+        const namespace = state.tracker.namespace orelse return false;
+        for (namespace.projected_storage.items) |projection|
+            if (projection.identity == identity) return symbolicStorageComesFromInput(state, projection.parent);
+        return false;
     }
 
     fn deferExecutionAliasConflict(self: *SafetyChecker, accessed: facts.SymbolicPointeeId, loaned: facts.SymbolicPointeeId, state: *const FunctionState) !bool {
@@ -7702,7 +7715,7 @@ pub const SafetyChecker = struct {
         for (state.opaque_storages.items) |domain| {
             const caller_storage = switch (domain.storage) {
                 .place => |place| self.abstractExternalAccessStorage(place),
-                .symbolic => |identity| (try self.symbolicInputPath(state, identity)) != null,
+                .symbolic => |identity| symbolicStorageComesFromInput(state, identity),
             };
             if (!caller_storage) continue;
             for (domain.hidden_dependencies) |root| {
@@ -12442,4 +12455,38 @@ test "unknown reference targets preserve read compatibility without bypassing ex
     const before = diags.list.items.len;
     try checker.requireExecutionPointerAccess(source, .{}, .write, &plain);
     try std.testing.expectEqual(before, diags.list.items.len);
+}
+
+test "symbolic input routes cannot drop or overwrite an intermediate region" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const input = try state.establishSymbolicInput(@enumFromInt(0), null);
+    state.symbolic_pointees.items[0].input_path = .{ .input_index = 0 };
+    const field = (try state.projectSymbolicStorage(input, .{ .field = 3 }, null)).?;
+    const field_path = (try checker.symbolicInputPath(&state, field.identity)).?;
+    try std.testing.expect(field_path.eql(.{ .input_index = 0, .projections = &.{.{ .field = 3 }} }));
+    for (0..2) |index| {
+        const domain = (try state.projectSymbolicDomain(input, @intCast(index))).?;
+        const path = (try checker.symbolicInputPath(&state, domain.identity)).?;
+        try std.testing.expect(path.eql(.{ .input_index = 0, .storage_domain = @intCast(index) }));
+        const parent = state.symbolicPointee(domain.identity).?;
+        const projected = (try state.projectSymbolicStorage(parent, .{ .field = 3 }, null)).?;
+        try std.testing.expect(try checker.symbolicInputPath(&state, projected.identity) == null);
+        try std.testing.expect(SafetyChecker.symbolicStorageComesFromInput(&state, projected.identity));
+        const nested = (try state.projectSymbolicDomain(parent, 2)).?;
+        try std.testing.expect(try checker.symbolicInputPath(&state, nested.identity) == null);
+        try std.testing.expect(SafetyChecker.symbolicStorageComesFromInput(&state, nested.identity));
+    }
+    const local = try state.establishSymbolicInput(@enumFromInt(0), null);
+    try std.testing.expect(!SafetyChecker.symbolicStorageComesFromInput(&state, local.identity));
 }
