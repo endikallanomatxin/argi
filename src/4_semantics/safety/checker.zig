@@ -2940,6 +2940,14 @@ pub const SafetyChecker = struct {
                 if (values[0].referenced_place) |place| {
                     if (self.valueAtPlace(state, place)) |allocation_value| {
                         for (allocation_value.owned_roots) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+                        // A region-backed allocation may borrow its backing
+                        // without owning a fresh root. A caller-supplied anchor
+                        // can restrict the slot lifetime, never replace those
+                        // existing backing dependencies.
+                        var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                        defer backing.deinit();
+                        try collectDependencyRoots(allocation_value, &backing);
+                        for (backing.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
                     }
                 }
                 for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
@@ -12346,4 +12354,42 @@ test "fresh acquisition origin reservation does not grant or consume permission"
     try std.testing.expectEqual(origin, try checker.instantiateFreshOrigin(7, &state, &identities));
     try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities));
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
+}
+
+test "allocation slot retains borrowed backing independently of its explicit anchor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const anchor = try state.tracker.establish(.fresh);
+    const storage: facts.Place = .{ .root = @enumFromInt(0) };
+    try state.setPlace(storage, .initialized, .{ .dependencies = &.{.{ .root = backing }} });
+    const values: [3]facts.ValueFacts = .{
+        .{ .referenced_place = storage }, .{}, .{ .dependencies = &.{.{ .root = anchor }}, .symbolic_pointees = &.{@enumFromInt(77)} },
+    };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const direct = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .establish_allocation_slot, &.{}, &values, &state, source);
+    var engine = @import("summaries.zig").Engine.init(a);
+    defer engine.deinit();
+    var inference = @import("summary_infer.zig").Infer.init(a, &graph, &engine);
+    defer inference.deinit();
+    const effect = try inference.primitiveValueEffect(.establish_allocation_slot, 0, null);
+    const summarized = try checker.instantiateOutput(effect, &values, &state);
+    for ([_]facts.ValueFacts{ direct, summarized }) |value| {
+        try std.testing.expect(valueDependsOnRoot(value, backing));
+        try std.testing.expect(valueDependsOnRoot(value, anchor));
+        try std.testing.expectEqual(@as(usize, 0), value.owned_roots.len);
+        try std.testing.expectEqual(@as(usize, 0), value.storage_capabilities.len);
+        try std.testing.expectEqual(@as(usize, 0), value.symbolic_pointees.len);
+        try std.testing.expect(value.referenced_place == null);
+    }
+    state.tracker.end(backing);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(direct));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(summarized));
 }

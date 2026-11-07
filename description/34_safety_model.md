@@ -246,6 +246,15 @@ Uses on mutually exclusive branches are alternatives, even when the caller
 supplies aliases for their inputs. Loops and recursive forwarding must not allow
 one authorization to be consumed repeatedly.
 
+A slot selected from an allocation retains the backing value's existing validity
+dependencies, including borrowed region storage without a fresh owned root.
+An explicit slot anchor may impose another lifetime bound; it cannot replace
+those dependencies. Consuming a nonowning allocation receipt need not invalidate
+a slot while its backing remains live, but resetting or releasing that backing
+invalidates the slot even if the explicit anchor remains live. These dependencies
+confer neither ownership nor concurrent access authority. The slot also does not
+inherit the anchor's referent identity: a lifetime bound is not its address.
+
 An `ArrayView#(T)` or `MutableArrayView#(T)` length must describe initialized elements inside its
 physical region. Checking an index against length is necessary but cannot
 validate a forged region. A zero-length region contains no readable element,

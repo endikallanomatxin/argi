@@ -6959,7 +6959,10 @@ pub const Infer = struct {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .reference_copy => self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
             .allocation_slot => blk: {
-                var result = try self.withoutOwnershipTransfer(try self.inputValueEffect(2, &.{}));
+                var result = try self.mergeValueEffects(
+                    try self.validityOnlyEffect(try self.inputValueEffect(2, &.{})),
+                    try self.validityOnlyEffect(try self.inputValueEffect(0, &.{.dereference})),
+                );
                 result.input_owned_roots = try self.oneInputPath(0, &.{});
                 break :blk result;
             },
