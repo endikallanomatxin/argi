@@ -3543,11 +3543,8 @@ pub const Infer = struct {
         return null;
     }
 
-    fn inputPathEqual(self: *Infer, left: facts.InputPath, right: facts.InputPath) bool {
-        _ = self;
-        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) return false;
-        for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) return false;
-        return true;
+    fn inputPathEqual(_: *Infer, left: facts.InputPath, right: facts.InputPath) bool {
+        return left.eql(right);
     }
 
     fn optionalInputPathEqual(self: *Infer, left: ?facts.InputPath, right: ?facts.InputPath) bool {
@@ -7320,31 +7317,13 @@ fn pointerUseOperand(content: graph_mod.Node.Content) ?graph_mod.GlobalNodeId {
 }
 
 fn appendCapturedStorage(list: *std.array_list.Managed(facts.CapturedStorage), capture: facts.CapturedStorage) !void {
-    for (list.items) |existing| {
-        if (existing.phase != capture.phase) continue;
-        const left = existing.path;
-        const right = capture.path;
-        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) continue;
-        var equal = true;
-        for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) {
-            equal = false;
-            break;
-        };
-        if (equal) return;
-    }
+    for (list.items) |existing|
+        if (existing.phase == capture.phase and existing.path.eql(capture.path)) return;
     try list.append(capture);
 }
 
 fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.InputPath) !void {
-    for (list.items) |existing| {
-        if (existing.input_index != path.input_index or existing.storage_domain != path.storage_domain or existing.projections.len != path.projections.len) continue;
-        var equal = true;
-        for (existing.projections, path.projections) |left, right| if (!std.meta.eql(left, right)) {
-            equal = false;
-            break;
-        };
-        if (equal) return;
-    }
+    for (list.items) |existing| if (existing.eql(path)) return;
     try list.append(path);
 }
 
@@ -8064,15 +8043,8 @@ test "large numeric literals keep no per-element summary records" {
 }
 
 fn appendDomain(list: *std.array_list.Managed(facts.InputDomain), domain: facts.InputDomain) !void {
-    for (list.items) |existing| {
-        if (existing.domain_index != domain.domain_index or existing.path.input_index != domain.path.input_index or existing.path.storage_domain != domain.path.storage_domain or existing.path.projections.len != domain.path.projections.len) continue;
-        var same = true;
-        for (existing.path.projections, domain.path.projections) |x, y| if (!x.eql(y)) {
-            same = false;
-            break;
-        };
-        if (same) return;
-    }
+    for (list.items) |existing|
+        if (existing.domain_index == domain.domain_index and existing.path.eql(domain.path)) return;
     try list.append(domain);
 }
 

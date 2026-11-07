@@ -10835,11 +10835,7 @@ fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFact
     return result.toOwnedSlice(allocator);
 }
 
-fn sameInputPath(left: facts.InputPath, right: facts.InputPath) bool {
-    if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) return false;
-    for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
-    return true;
-}
+const sameInputPath = facts.InputPath.eql;
 
 test "generation outcome proofs cannot be replayed after another call or invalidation" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

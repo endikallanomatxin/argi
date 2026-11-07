@@ -324,11 +324,7 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     return true;
 }
 
-pub fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
-    if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
-    for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
-    return true;
-}
+pub const inputPathEql = facts.InputPath.eql;
 
 test "summary equality retains ordered storage observations and caller alias obligations" {
     const first = facts.InputPath{ .input_index = 0 };

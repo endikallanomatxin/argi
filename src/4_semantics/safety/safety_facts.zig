@@ -38,6 +38,13 @@ pub const InputPath = struct {
     /// Opaque effects may select a named domain after projecting the receiver.
     /// This is a symbolic storage identity, never a physical Place projection.
     storage_domain: ?u32 = null,
+
+    pub fn eql(left: InputPath, right: InputPath) bool {
+        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or
+            left.projections.len != right.projections.len) return false;
+        for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
+        return true;
+    }
 };
 
 /// May-access effects are independent of lifetime requirements and final
