@@ -3057,6 +3057,21 @@ pub const SafetyChecker = struct {
                 break :blk result;
             },
             .reference_copy => if (values.len != 0) values[0].referenceCopy() else .{},
+            .reference_view => blk: {
+                if (values.len == 0) break :blk .{};
+                if (primitive_transfer.preservesReferenceStorage(self.graph, self.graph.function(callee)))
+                    break :blk values[0].referenceCopy();
+                var result = values[0].derivedReference();
+                if ((primitive == .reference_offset or primitive == .mutable_reference_offset) and argument_ids.len >= 2) {
+                    const index_node = self.graph.value_fields.items[@intFromEnum(argument_ids[1])].value;
+                    if (self.staticIndex(index_node)) |offset| if (values[0].referenced_place) |base| {
+                        const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
+                        const element_type = self.graph.semanticType(input_type).pointer.child;
+                        result.referenced_place = try self.offsetArrayPlace(base, offset, element_type);
+                    };
+                }
+                break :blk result;
+            },
             .allocation_slot => blk: {
                 if (values.len < 3) break :blk .{};
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
@@ -7707,6 +7722,22 @@ pub const SafetyChecker = struct {
             return self.report(source, "place rooted at '{s}' is maybe_initialized and cannot be used", .{name});
         }
         try self.requireInitialized(function, source, initializedness);
+    }
+
+    /// Offset an identified array element without treating the source element
+    /// as the destination. Field adjacency and unknown extents prove nothing.
+    /// Logical indices also distinguish zero-sized elements for cleanup.
+    fn offsetArrayPlace(self: *SafetyChecker, base: facts.Place, offset: usize, element: graph_mod.GlobalTypeId) !?facts.Place {
+        if (base.projections.len == 0) return null;
+        const last = base.projections.len - 1;
+        if (base.projections[last] != .static_index) return null;
+        const array = facts.Place{ .root = base.root, .projections = base.projections[0..last] };
+        const ty = self.domainStorageType(array) orelse return null;
+        const length = types.arrayLength(self.graph, ty) orelse return null;
+        if (!types.equal(self.graph, element, types.arrayElement(self.graph, ty) orelse return null)) return null;
+        const index = std.math.add(usize, base.projections[last].static_index, offset) catch return null;
+        if (index >= length) return null;
+        return try self.project(array, .{ .static_index = index });
     }
 
     fn domainStorageType(self: *SafetyChecker, storage: facts.Place) ?graph_mod.GlobalTypeId {

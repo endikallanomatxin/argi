@@ -207,6 +207,7 @@ pub const Transfer = struct {
         allocation,
         allocation_slot,
         reference_copy,
+        reference_view,
         restrict_reference,
         depend_on,
         relocate,
@@ -243,7 +244,8 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
         .establish_inherited_storage => .{ .value = .inherited_storage, .consumes_storage_input = 0 },
         .establish_allocation => .{ .value = .allocation, .consumes_storage_input = 0 },
         .establish_allocation_slot => .{ .value = .allocation_slot },
-        .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => .{ .value = .reference_copy },
+        .reference_offset, .mutable_reference_offset, .reinterpret_reference, .mutable_reinterpret_reference => .{ .value = .reference_view },
+        .read_reference => .{ .value = .reference_copy },
         .restrict_reference => .{ .value = .restrict_reference },
         .depend_on => .{ .value = .depend_on },
         .relocate => .{ .value = .relocate, .input = .relocate },
@@ -311,23 +313,35 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
     };
 }
 
-/// Allocation establishment publishes one fresh storage root and borrows its
-/// anchor and virtual deallocator. Both interpreters use this field mapping;
-/// raw byte ownership must not erase the deallocator's receiver lifetime.
 /// A universal whole-reference identity guarantee. Offsets and type-changing
 /// views may retain backing, but cannot publish this stronger relation.
 pub fn forwardsIdenticalReference(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, function: @import("../global/graph.zig").Function) bool {
+    if (!preservesReferenceStorage(graph, function)) return false;
+    return @import("../global/types.zig").equal(graph, graph.fields.items[function.input.start].ty, graph.fields.items[function.output.start].ty);
+}
+
+/// The exact storage footprint can survive changing only reference mutability.
+/// Readonly Any erasure retains the source as a conservative footprint.
+/// Other referent types may select a different extent or layout instead.
+pub fn preservesReferenceStorage(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, function: @import("../global/graph.zig").Function) bool {
     switch (function.safety_primitive) {
         .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => {},
         else => return false,
     }
     if (function.input.len != 1 or function.output.len != 1) return false;
-    const input = graph.fields.items[function.input.start].ty;
-    const output = graph.fields.items[function.output.start].ty;
-    if (graph.semanticType(input) != .pointer or graph.semanticType(output) != .pointer) return false;
-    return @import("../global/types.zig").equal(graph, input, output);
+    const input = graph.semanticType(graph.fields.items[function.input.start].ty);
+    const output = graph.semanticType(graph.fields.items[function.output.start].ty);
+    if (input != .pointer or output != .pointer) return false;
+    if (@import("../global/types.zig").equal(graph, input.pointer.child, output.pointer.child)) return true;
+    // Readonly erasure cannot select fields or enlarge the observed extent.
+    // Retaining the original footprint is conservative, not pointer-type identity.
+    const child = graph.semanticType(output.pointer.child);
+    return output.pointer.mutability == .read_only and child == .builtin and child.builtin == .Any;
 }
 
+/// Allocation establishment publishes one fresh storage root and borrows its
+/// anchor and virtual deallocator. Both interpreters use this field mapping;
+/// raw byte ownership must not erase the deallocator's receiver lifetime.
 pub const AllocationTransfer = struct {
     pub fn fieldCount(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, callee: @import("../global/graph.zig").GlobalFunctionId) !u32 {
         const function = graph.function(callee);
@@ -400,6 +414,8 @@ test "reference identity classification excludes offsets and representation chan
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
         .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } },
+        .{ .builtin = .Any },
+        .{ .pointer = .{ .child = @enumFromInt(5), .mutability = .read_only } },
     });
     for ([_]graph_mod.GlobalTypeId{ @enumFromInt(2), @enumFromInt(2) }) |ty| try graph.fields.append(a, .{
         .name = .{ .start = 0, .len = 0 },
@@ -413,20 +429,30 @@ test "reference identity classification excludes offsets and representation chan
         .safety_primitive = .reinterpret_reference,
     };
     try std.testing.expect(forwardsIdenticalReference(&graph, function));
+    try std.testing.expect(preservesReferenceStorage(&graph, function));
     for ([_]primitives.SafetyPrimitive{ .reference_offset, .mutable_reference_offset, .establish_inherited_reference, .establish_allocation_slot, .none }) |primitive| {
         function.safety_primitive = primitive;
         try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+        try std.testing.expect(!preservesReferenceStorage(&graph, function));
     }
     function.safety_primitive = .reinterpret_reference;
     graph.fields.items[1].ty = @enumFromInt(4);
     try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+    try std.testing.expect(!preservesReferenceStorage(&graph, function));
     function.safety_primitive = .read_reference;
     graph.fields.items[0].ty = @enumFromInt(3);
     graph.fields.items[1].ty = @enumFromInt(2);
     try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+    try std.testing.expect(preservesReferenceStorage(&graph, function));
     function.safety_primitive = .mutable_reinterpret_reference;
     graph.fields.items[1].ty = @enumFromInt(3);
     try std.testing.expect(forwardsIdenticalReference(&graph, function));
+    graph.fields.items[1].ty = @enumFromInt(6);
+    try std.testing.expect(preservesReferenceStorage(&graph, function));
+    try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+    graph.fields.items[0].ty = @enumFromInt(6);
+    graph.fields.items[1].ty = @enumFromInt(3);
+    try std.testing.expect(!preservesReferenceStorage(&graph, function));
     function.output.len = 0;
     try std.testing.expect(!forwardsIdenticalReference(&graph, function));
 }

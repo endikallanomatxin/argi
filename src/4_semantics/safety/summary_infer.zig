@@ -7095,7 +7095,11 @@ pub const Infer = struct {
     fn withOwnershipTransfer(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
         var result = effect;
         const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
-        for (dependencies) |*dependency| dependency.transfers_ownership = true;
+        // A move transfers contained owners, not the resources borrowed solely
+        // to keep the value alive (including anchors retained by derived views).
+        for (dependencies) |*dependency| if (!dependency.validity_only) {
+            dependency.transfers_ownership = true;
+        };
         result.input_dependencies = dependencies;
         return result;
     }
@@ -7159,6 +7163,11 @@ pub const Infer = struct {
     pub fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource, callee: ?graph_mod.GlobalFunctionId) !facts.ValueEffect {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
             .reference_copy => self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
+            // Views retain the base lifetime, not an unchanged slot or extent.
+            .reference_view => if (callee != null and primitive_transfer.preservesReferenceStorage(self.graph, self.graph.function(callee.?)))
+                self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{}))
+            else
+                self.validityOnlyEffect(try self.inputValueEffect(0, &.{})),
             .allocation_slot => blk: {
                 var result = try self.mergeValueEffects(
                     try self.validityOnlyEffect(try self.inputValueEffect(2, &.{})),
@@ -8197,6 +8206,14 @@ test "validity-only transfer retains loaded input anchor paths" {
     try std.testing.expectEqual(@as(usize, 0), effect.input_place_values.len);
     const projected = try inference.projectValueEffect(effect, .{ .field = 7 });
     try std.testing.expectEqualDeep(path, projected.input_dependencies[0].path);
+    // Moving a value transfers its owners, never the lifetime anchors it borrows.
+    const moved = try inference.withOwnershipTransfer(effect);
+    try std.testing.expect(moved.input_dependencies[0].validity_only);
+    try std.testing.expect(!moved.input_dependencies[0].transfers_ownership);
+    const owner = try inference.withOwnershipTransfer(.{
+        .input_dependencies = &.{.{ .path = path }},
+    });
+    try std.testing.expect(owner.input_dependencies[0].transfers_ownership);
 }
 
 test "array summary projections select and merge element effects" {

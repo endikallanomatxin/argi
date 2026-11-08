@@ -1315,3 +1315,61 @@ Three focused Debug internal tests also pass in the isolated tree: primitive
 classification, evidence alternatives, and lexical call forwarding. No full-suite
 rerun is claimed for this increment; the preceding full-suite results belong to
 the previous forwarding checkpoint. There is no new runtime field or permission.
+
+#### Derived references: backing is not an unchanged target
+
+Two build-only reductions exposed false authority in the previous primitive
+transfer rule. Offsetting a reference to the first CStruct field retained that
+field's Place even when the pointer reached the second field. Reinterpreting a
+reference to the first scalar as a reference to its containing record similarly
+retained an insufficient footprint. A worker could therefore receive a loan
+that failed to protect the bytes it actually accessed. Neither unsafe reduction
+was executed.
+
+The shared primitive registry now distinguishes `reference_copy` from
+`reference_view`, without introducing another permission system:
+
+- Unchanged referent types preserve their storage identity, including a change
+  of reference mutability. Whole-reference forwarding additionally requires
+  identical complete reference types.
+- Readonly Any erasure retains the source footprint as a conservative upper
+  bound. Any exposes no structural fields; casting back to another referent
+  type does not recover its old exact target.
+- Other views preserve lifetime and existing lexical backing evidence, but
+  forget exact slots, symbolic pointees, virtual methods and captured domains.
+  Their summaries retain validity-only dependencies. Missing target evidence
+  cannot authorize a concurrent loan.
+- A constant offset from a known array element can select the resulting array
+  element when the referent type matches the element type and the index is in
+  range. Logical indices also preserve cleanup identity for zero-sized elements.
+  Adjacent struct fields, dynamic indices and widened casts supply no such proof.
+
+Moving a value must not mark its validity-only dependencies as ownership
+transfers. The new view summaries exposed this existing distinction in
+`ArgumentSource`: borrowed StringView anchors remain borrowed when a successful
+result is moved. The regression unit checks both a borrowed anchor and an actual
+owner dependency.
+
+Fixtures 169X, 170X, 172X, 173X and 174X reject shifted/widened loans, including
+readonly and wrapper variants. Fixture 171 preserves sequential mutable aliasing.
+Fixtures 175/176X pair independent-element access with a conflicting access to
+the offset element. Existing execution fixture 247 checks native and VM cleanup,
+including zero-sized elements and loaded reference fields.
+
+These rules do not establish arbitrary subrange provenance or preserve exact
+identity through every wrapper. Array-store authorization currently checks its
+whole base; fixture 175 uses references to the selected elements. Narrowing that
+existing check is separate work. General physical backing, collection evidence
+and unknown-call authorization remain open; these tests do not establish full
+data-race freedom.
+
+The initial full program run found five regressions (four ArgumentSource/CLI
+conformance failures and offset cleanup). Reduced checks now build all four CLI
+cases, run cleanup natively and in the VM, and confirm both outcomes of 175/176X.
+The updated unit first reproduced the borrowed-anchor ownership error, then
+passed with its correction. The full isolated Debug internal suite also succeeds
+(660,816 KiB peak RSS, no swaps). The final isolated ReleaseSafe program suite
+passes: 2,542 passed, 11 skipped, zero failures, leaks or error logs; peak RSS is
+2,425,080 KiB with no swaps. A read-only independent review found no outstanding
+issues in this checkpoint. All runs use one worker and a 6 GiB process limit.
+This validation covers the derived-reference correction, not the open gates above.

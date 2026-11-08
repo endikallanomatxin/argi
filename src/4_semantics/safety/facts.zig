@@ -207,6 +207,17 @@ pub const ValueFacts = struct {
         };
     }
 
+    /// A derived view can retain caller-certified backing, but its selected
+    /// slot or extent and stored identities need not match the base reference.
+    pub fn derivedReference(self: ValueFacts) ValueFacts {
+        var result = self.referenceCopy();
+        result.referenced_place = null;
+        result.symbolic_pointees = &.{};
+        result.virtual_methods = &.{};
+        result.domains = &.{};
+        return result;
+    }
+
     /// Scalar values loaded from opaque storage retain physical/raw-storage
     /// facts, but not the lifetime envelope of the container that happened to
     /// hold them. This is the indexed equivalent of the legacy checker's
@@ -565,4 +576,22 @@ test "Safety root materialization does not publish partial gaps on allocation fa
             for (tracker.roots.items[0..67]) |root| try std.testing.expect(!root.present);
         }
     }.materialize, .{});
+}
+
+test "reference offsets retain validity observations without retaining a false target" {
+    const original = ValueFacts{
+        .referenced_place = .{ .root = @enumFromInt(0), .projections = &.{.{ .field = 0 }} },
+        .symbolic_pointees = &.{@enumFromInt(1)},
+        .dependencies = &.{.{ .root = @enumFromInt(2) }},
+        .lexical_frame = 3,
+        .virtual_methods = &.{@enumFromInt(4)},
+        .domains = &.{.{ .domain_index = 0, .storages = &.{} }},
+    };
+    const offset = original.derivedReference();
+    try std.testing.expectEqual(@as(?Place, null), offset.referenced_place);
+    try std.testing.expectEqual(@as(usize, 0), offset.symbolic_pointees.len);
+    try std.testing.expectEqual(@as(usize, 0), offset.domains.len);
+    try std.testing.expectEqual(@as(usize, 0), offset.virtual_methods.len);
+    try std.testing.expectEqual(@as(?u32, 3), offset.lexical_frame);
+    try std.testing.expectEqualSlices(ValidityDependency, original.dependencies, offset.dependencies);
 }
