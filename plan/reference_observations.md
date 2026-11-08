@@ -521,3 +521,36 @@ Validation on the isolated checkpoint tree passes 312 Debug safety unit tests an
 skips, leaks or error logs. The compiler build succeeds. Runs are serial under
 a 6 GiB process limit with the local cache on disk. This is focused validation,
 not a new full-program-suite result. Staged compiler sources match that tree.
+
+
+## Definite helper retargeting checkpoint
+
+A helper can replace a reference field through a pointer to a local record.
+The subsequent return must describe the replacement, not the record's original
+reference. The previous summary visitor retained the original local facts and
+accepted a read of a worker-owned referent in this reduction.
+
+Ordinary call inference now applies definite, initialized post-values for
+reference-bearing storage to a single resolved local destination, using the
+existing selected-value store operation. Substitution evaluates all post-values
+before updating destinations, preserving the call's argument snapshots. Preserved
+cleanup facts are not replacements and must not overwrite local values.
+
+The negative concurrency/200X fixture checks rejection after retargeting toward a
+pending writer. Its 201 positive counterpart retargets toward independent storage
+and executes successfully. The unsafe variant is checked only for rejection.
+This supersedes the earlier open status of this specific helper-retargeting
+reduction; broader embedded-input observation publication remains disabled.
+
+This is deliberately not a general alias-update algorithm. Multiple possible
+local destinations need weak updates, and conditional post-values need separate
+reasoning. No new provenance producer, ordered effects, or runtime transition is
+introduced. The uniform unknown-effect authorization gate and unchanged 121/177
+acceptance cases remain open; this checkpoint does not establish general
+concurrent soundness.
+
+Validation: 312 Debug safety unit tests and 131 filtered program tests pass, with
+zero program failures, skips, leaks or error logs. The program selection covers
+aliasing, retargeting, and the existing fallible reference-observation cases.
+The Debug compiler builds successfully. All runs are serial under a 6 GiB process
+limit; this is focused validation rather than a full-suite result.

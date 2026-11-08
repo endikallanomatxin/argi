@@ -1672,6 +1672,29 @@ pub const Infer = struct {
                     }
                 },
                 .function_call => |call| {
+                    if (self.engine.summaryFor(call.callee)) |summary| if (self.structArguments(call.input)) |arguments| {
+                        // Only definite reference-slot replacements describe a
+                        // new local value; preserved cleanup facts do not.
+                        const values = try self.allocator.alloc(facts.ValueEffect, summary.input_post_states.len);
+                        for (summary.input_post_states, values) |post, *value|
+                            value.* = if (post.initialization == .definite and post.initializedness == .initialized)
+                                try self.substituteOutput(function_id, post.value, arguments)
+                            else .{};
+                        for (summary.input_post_states, values) |post, value| {
+                            if (post.initialization != .definite or post.initializedness != .initialized or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
+                            const signature = self.graph.function(call.callee);
+                            const parameter = self.graph.fields.items[signature.input.start + post.target.input_index].ty;
+                            if (self.graph.semanticType(parameter) != .pointer) continue;
+                            const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
+                            if (!self.typeContainsPointer(selected.ty)) continue;
+                            const targets = try self.localAddressTargets(arguments[post.target.input_index].value);
+                            // Strong replacement requires one definite local
+                            // destination. Multiple possible aliases need a weak
+                            // update rather than overwriting every alternative.
+                            if (targets.len != 1) continue;
+                            try self.storeSelectedValueEffect(function_id, targets[0], post.target.projections, value, outputs, .locals_and_outputs);
+                        }
+                    };
                     if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
                         const arguments = self.structArguments(call.input) orelse continue;
                         if (arguments.len != 2) continue;
