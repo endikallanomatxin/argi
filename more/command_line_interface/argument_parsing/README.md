@@ -207,3 +207,38 @@ record. Config metadata is queried to describe the selected command.
 Typed StringView values borrow the original argument source. Keep that source
 alive while using the resulting record/choice. The optional Diagnostic follows
 the same rules as `parse_specs`; command failures preserve their original reason.
+
+## Default subcommands and command aliases
+
+Command choices can attach optional metadata to a payload:
+
+```rg
+HelpArgs := (.command: ap.Positional#(StringView, .default_value = ..some(.value = "")))
+EmptyArgs: Type = ()
+Command: Type = (
+    ..build BuildArgs,
+    ..help ap.Subcommand#(
+        HelpArgs, .is_default = true, .long_alias = "help", .short_alias = "h"
+    ),
+    ..version ap.Subcommand#(EmptyArgs, .long_alias = "version", .short_alias = "V")
+)
+```
+
+With no arguments, `parse#(Command)` selects the default alternative and parses
+its arguments normally. Required fields still apply. With no default, a missing
+command remains an error. `--help`, `-h` and `help` select the declared help
+command above; `--version`, `-V` and `version` select its version command.
+The parser contains no reserved version result or version output policy.
+
+Ordinary payloads remain unchanged. A Subcommand payload stores its parsed
+record in `.arguments`, so the help target above is
+`args.arguments.command.value` after matching `..help args`. Metadata is part of
+the specialized type, not stored in each instance. The SubcommandPayload contract
+supplies the record type, metadata and wrapping operation for these payloads.
+
+Aliases are recognized only in command position. Text consumed as an option
+value, or following `--` in a command's arguments, keeps its ordinary meaning.
+`build --help` still returns `..help Help` without requiring or constructing
+BuildArgs. If no command claims `--help`/`-h`, they retain the existing top-level
+help behavior. Multiple defaults, duplicate aliases and invalid alias spellings
+are schema errors. The library never prints or exits on these outcomes.

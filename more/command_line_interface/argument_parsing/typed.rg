@@ -277,8 +277,10 @@ _ChoiceContext := #(.Source: Type) (
     .reason     : TypedReasons         = ..invalid_argument_value
 )
 
-_command_info := #(.Payload: Type) (.name: StringView, .context: Int32) -> (.command: Command) {
-    command = Command(.name = name)
+_command_info := #(.Payload: Type) (.name: StringView, .context: Int32) -> (
+    .command : SubcommandInfo
+) {
+    command = SubcommandPayload#(Payload).describe(name)
 }
 
 _choose_payload := #(.Payload: Type, .Source: Type) (
@@ -296,7 +298,7 @@ _empty_field := #(.Field: Type: ArgumentField#(Field), .Context: Type) (
 _read_payload := #(.Payload: Type, .Source: Type: ArgumentSource#(Source)) (
     .name: StringView, .context: $&_ChoiceContext#(Source)
 ) -> (.payload: Payload) {
-    match _parse_record#(Payload)(
+    match _parse_record#(SubcommandPayload#(Payload).Arguments)(
         .source     = context&.source
         .start      = context&.start
         .allocator  = context&.allocator
@@ -305,7 +307,7 @@ _read_payload := #(.Payload: Type, .Source: Type: ArgumentSource#(Source)) (
         ..ok ~parsed {
             match parsed {
                 ..arguments ~arguments {
-                    payload = ~arguments
+                    payload = SubcommandPayload#(Payload).wrap(~arguments)
                     return
                 }
                 ..help _ { context&.help = true }
@@ -316,14 +318,19 @@ _read_payload := #(.Payload: Type, .Source: Type: ArgumentSource#(Source)) (
             context&.reason = error.reason
         }
     }
-    payload = construct_record#(Payload, _empty_field)(.context = Int32())
+    empty ::= construct_record#(SubcommandPayload#(Payload).Arguments, _empty_field)(
+        .context = Int32()
+    )
+    payload = SubcommandPayload#(Payload).wrap(~empty)
 }
 
 _probe_payload_help := #(.Payload: Type, .Source: Type: ArgumentSource#(Source)) (
     .name: StringView, .context: $&_ChoiceContext#(Source)
 ) -> () {
     if name == context&.name {
-        infos ::= collect_fields#(Payload, _field_info, FieldInfo)(.context = Int32())
+        infos ::= collect_fields#(SubcommandPayload#(Payload).Arguments, _field_info, FieldInfo)(
+            .context = Int32()
+        )
         -- Value-taking options must consume their operands during help scanning.
         specs ::= DynamicArray#(Spec)(.capacity = 4, .allocator = context&.allocator) handle ignored, recovered {
             context&.failed = true
@@ -368,26 +375,69 @@ _parse_choice := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .diagnostic : ?$&Diagnostic
 ) -> (.result: Errable#(Parsed#(T), TypedReasons)) {
     _set_diagnostic(diagnostic, .argument = "", .message = "")
-    commands ::= collect_variants#(T, _command_info, Command)(.context = Int32())
+    commands ::= collect_variants#(T, _command_info, SubcommandInfo)(.context = Int32())
+    defaults :: UIntNative = 0
+    for command in commands {
+        if command.is_default { defaults = defaults + 1 }
+        if [
+            byte_length(&command.short_alias) > 1
+            or _valid_cli_option_name(command.long_alias) == false
+            or _valid_cli_option_name(command.short_alias) == false
+        ] {
+            result = ..error(.reason = ..invalid_cli_schema);
+            return
+        }
+        for other in commands {
+            if command.name != other.name {
+                if [
+                    [command.long_alias != "" and command.long_alias == other.long_alias]
+                    or [command.short_alias != "" and command.short_alias == other.short_alias]
+                ] {
+                    result = ..error(.reason = ..invalid_cli_schema);
+                    return
+                }
+            }
+        }
+    }
+    if defaults > 1 {
+        result = ..error(.reason = ..invalid_cli_schema);
+        return
+    }
+    name :: StringView = ""
+    next_start ::= start
     if start >= ArgumentSource#().length(source) {
-        result = ..error(.reason = ..missing_command)
-        return
-    }
-    name ::= ArgumentSource#().get(source, start)!
-    if name == "--help" or name == "-h" {
-        result = ..ok ..help(.command = "")
-        return
-    }
-    found ::= false
-    for command in commands { if command.name == name { found = true } }
-    if found == false {
-        _set_diagnostic(diagnostic, .argument = name, .message = "unknown command")
-        result = ..error(.reason = ..unknown_command)
-        return
+        for command in commands { if command.is_default { name = command.name } }
+        if name == "" {
+            result = ..error(.reason = ..missing_command);
+            return
+        }
+    } else {
+        token ::= ArgumentSource#().get(source, start)!
+        next_start = start + 1
+        for command in commands {
+            if token == command.name { name = command.name }
+            if [
+                command.long_alias != ""
+                and _command_alias(token, command.long_alias, .short = false)
+            ] { name = command.name }
+            if [
+                command.short_alias != ""
+                and _command_alias(token, command.short_alias, .short = true)
+            ] { name = command.name }
+        }
+        if name == "" and [token == "--help" or token == "-h"] {
+            result = ..ok ..help(.command = "");
+            return
+        }
+        if name == "" {
+            _set_diagnostic(diagnostic, .argument = token, .message = "unknown command")
+            result = ..error(.reason = ..unknown_command);
+            return
+        }
     }
     context ::= _ChoiceContext#(Source)(
         .source     = source
-        .start      = start + 1
+        .start      = next_start
         .name       = name
         .allocator  = allocator
         .diagnostic = diagnostic
@@ -424,7 +474,7 @@ _write_payload_help := #(.Payload: Type, .W: Type: Writer#(W)) (
     .name: StringView, .context: $&_HelpContext#(W)
 ) -> () {
     if name == context&.command {
-        _help_record#(Payload)(
+        _help_record#(SubcommandPayload#(Payload).Arguments)(
             context&.writer, .program = name, .about = "", .parent = context&.program
         ) handle error { context&.failed = true }
     }
@@ -435,6 +485,20 @@ _write_command_name := #(.Payload: Type, .W: Type: Writer#(W)) (
 ) -> () {
     write(context&.writer, "  ") handle error { context&.failed = true }
     write(context&.writer, name) handle error { context&.failed = true }
+    info ::= SubcommandPayload#(Payload).describe(name)
+    if info.long_alias != "" {
+        write(context&.writer, " (--") handle error { context&.failed = true }
+        write(context&.writer, info.long_alias) handle error { context&.failed = true }
+        write(context&.writer, ")") handle error { context&.failed = true }
+    }
+    if info.short_alias != "" {
+        write(context&.writer, " (-") handle error { context&.failed = true }
+        write(context&.writer, info.short_alias) handle error { context&.failed = true }
+        write(context&.writer, ")") handle error { context&.failed = true }
+    }
+    if info.is_default {
+        write(context&.writer, " [default]") handle error { context&.failed = true }
+    }
     write(context&.writer, "\n") handle error { context&.failed = true }
 }
 
@@ -467,4 +531,26 @@ write_typed_help := #(.T: Type, .W: Type: Writer#(W)) (
     } #else {
         _help_record#(T)(writer, .program = program, .about = about)!
     }
+}
+
+_command_alias := (.token: StringView, .alias: StringView, .short: Bool) -> (
+    .matches : Bool = false
+) {
+    prefix :: UIntNative = 2
+    if short { prefix = 1 }
+    if byte_length(&token) != byte_length(&alias) + prefix { return }
+    index :: UIntNative = 0
+    while index < prefix {
+        byte ::= bytes_get(&token, index) handle ignored, recovered { return }
+        if byte != 45 { return }
+        index = index + 1
+    }
+    index = 0
+    while index < byte_length(&alias).count {
+        left ::= bytes_get(&token, index + prefix) handle ignored, recovered { return }
+        right ::= bytes_get(&alias, index) handle ignored, recovered { return }
+        if left != right { return }
+        index = index + 1
+    }
+    matches = true
 }

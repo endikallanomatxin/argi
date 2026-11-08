@@ -270,3 +270,114 @@ test typed_optional_positional_help := (.system: System) -> !() {
 }
 
 _DefaultInput := (.input: Positional#(StringView, .default_value = ..some(.value = ".")))
+
+_DefaultCommand: Type = (
+    ..run _TestRun,
+    ..help Subcommand#(_EmptyArgs, .is_default = true, .long_alias = "help", .short_alias = "h"),
+    ..version Subcommand#(_EmptyArgs, .long_alias = "version", .short_alias = "V")
+)
+
+test typed_default_command_and_aliases := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    empty: [0]StringView = ()
+    source ::= ArgumentViews(view(&empty))
+    match parse#(_DefaultCommand)(.source = &source)! {
+        ..help _ { abort }
+        ..arguments command {
+            match command { ..help _ {} ..run _ { abort } ..version _ { abort } }
+        }
+    }
+    version_tokens: [3]StringView = ("--version", "-V", "version")
+    for token in version_tokens {
+        values: [1]StringView = (token)
+        selected ::= ArgumentViews(view(&values))
+        match parse#(_DefaultCommand)(.source = &selected)! {
+            ..help _ { abort }
+            ..arguments command {
+                match command { ..version _ {} ..run _ { abort } ..help _ { abort } }
+            }
+        }
+    }
+    help_tokens: [3]StringView = ("--help", "-h", "help")
+    for token in help_tokens {
+        values: [1]StringView = (token)
+        selected ::= ArgumentViews(view(&values))
+        match parse#(_DefaultCommand)(.source = &selected)! {
+            ..help _ { abort }
+            ..arguments command {
+                match command { ..help _ {} ..run _ { abort } ..version _ { abort } }
+            }
+        }
+    }
+    detail: [2]StringView = ("run", "--help")
+    detail_source ::= ArgumentViews(view(&detail))
+    match parse#(_DefaultCommand)(.source = &detail_source)! {
+        ..arguments ~_ { abort }
+        ..help info { if info.command != "run" { abort } }
+    }
+    literal: [3]StringView = ("run", "--", "--version")
+    literal_source ::= ArgumentViews(view(&literal))
+    match parse#(_DefaultCommand)(.source = &literal_source)! {
+        ..help _ { abort }
+        ..arguments command {
+            match command {
+                ..run args { if args.input.value != "--version" { abort } }
+                ..help _ { abort }
+                ..version _ { abort }
+            }
+        }
+    }
+}
+
+_TwoDefaults: Type = (
+    ..first Subcommand#(_EmptyArgs, .is_default = true),
+    ..second Subcommand#(_EmptyArgs, .is_default = true)
+)
+
+_DuplicateAliases: Type = (
+    ..first Subcommand#(_EmptyArgs, .long_alias = "same"),
+    ..second Subcommand#(_EmptyArgs, .long_alias = "same")
+)
+
+_RequiredDefault: Type = (..run Subcommand#(_TestRun, .is_default = true))
+
+_WrappedBuild: Type = (..build Subcommand#(_TestBuild, .long_alias = "build"))
+
+test typed_command_metadata_validation := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    empty: [0]StringView = ()
+    source ::= ArgumentViews(view(&empty))
+    match parse#(_TwoDefaults)(.source = &source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_cli_schema { abort } }
+    }
+    match parse#(_DuplicateAliases)(.source = &source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_cli_schema { abort } }
+    }
+    match parse#(_RequiredDefault)(.source = &source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..required_option { abort } }
+    }
+    values: [4]StringView = ("--build", "--output", "--version", "main.rg")
+    selected ::= ArgumentViews(view(&values))
+    match parse#(_WrappedBuild)(.source = &selected)! {
+        ..help _ { abort }
+        ..arguments command {
+            match command {
+                ..build data {
+                    if [
+                        data.arguments.output.value != "--version"
+                        or data.arguments.input.value != "main.rg"
+                    ] { abort }
+                }
+            }
+        }
+    }
+    detail: [2]StringView = ("build", "--help")
+    detail_source ::= ArgumentViews(view(&detail))
+    match parse#(_WrappedBuild)(.source = &detail_source)! {
+        ..arguments ~_ { abort }
+        ..help info { if info.command != "build" { abort } }
+    }
+}
