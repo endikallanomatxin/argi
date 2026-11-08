@@ -103,6 +103,7 @@ checking, testing, project scaffolding, formatting, and LSP support.
 argi init hello     # Create a project
 cd hello
 argi run            # Build and run
+argi run -- --help  # Pass --help to the program
 argi build --release
 argi check          # Check all function bodies
 argi test

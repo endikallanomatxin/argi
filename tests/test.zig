@@ -580,13 +580,13 @@ test "argi run package uses configured default and selected executable" {
         \\
         ,
     });
+    const argument_fixture_path = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "tests/feature_tests/system/91_run_program_arguments/main.rg" });
+    defer std.testing.allocator.free(argument_fixture_path);
+    const argument_fixture = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, argument_fixture_path, std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(argument_fixture);
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/cli/main.rg",
-        .data =
-        \\main := () -> (.status_code: Int32 = 7)  {
-        \\}
-        \\
-        ,
+        .data = argument_fixture,
     });
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/source/entrypoints/server/main.rg",
@@ -603,12 +603,23 @@ test "argi run package uses configured default and selected executable" {
     const default_result = try runChildInCwd(&.{ installed_argi, "run" }, module_root);
     defer std.testing.allocator.free(default_result.stdout);
     defer std.testing.allocator.free(default_result.stderr);
+    if (default_result.term != .exited or default_result.term.exited != 7) std.debug.print("run stderr: {s}\n", .{default_result.stderr});
     try expectEqual(std.process.Child.Term{ .exited = 7 }, default_result.term);
 
     const server_result = try runChildInCwd(&.{ installed_argi, "run", "server" }, module_root);
     defer std.testing.allocator.free(server_result.stdout);
     defer std.testing.allocator.free(server_result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 11 }, server_result.term);
+    for ([_][]const []const u8{
+        &.{ installed_argi, "run", "--", "--output", "--emit-llvm", "--vm", "--help", "-v", "", "a b", "--", "á;$(no)" },
+        &.{ installed_argi, "run", "cli", "--", "--output", "--emit-llvm", "--vm", "--help", "-v", "", "a b", "--", "á;$(no)" },
+    }) |argv| {
+        const forwarded = try runChildInCwd(argv, module_root);
+        defer std.testing.allocator.free(forwarded.stdout);
+        defer std.testing.allocator.free(forwarded.stderr);
+        if (forwarded.term != .exited or forwarded.term.exited != 7) std.debug.print("run stderr: {s}\n", .{forwarded.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 7 }, forwarded.term);
+    }
 }
 
 test "argi run package uses single executable without run default" {

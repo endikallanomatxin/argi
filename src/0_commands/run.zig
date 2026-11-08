@@ -26,19 +26,27 @@ pub fn run(
     environ_map: ?*const std.process.Environ.Map,
     args: []const []const u8,
 ) !u8 {
-    for (args) |arg| if (std.mem.eql(u8, arg, "--vm")) return @import("run_vm.zig").run(execution_allocator, io, environ_map, args);
-    try rejectUnsupportedRunFlags(args);
+    const separator = for (args, 0..) |arg, index| {
+        if (std.mem.eql(u8, arg, "--")) break index;
+    } else args.len;
+    const command_args = args[0..separator];
+    const program_args = if (separator < args.len) args[separator + 1 ..] else args[args.len..];
+    for (command_args) |arg| if (std.mem.eql(u8, arg, "--vm")) {
+        if (program_args.len != 0) return error.VmProgramArgumentsUnsupported;
+        return @import("run_vm.zig").run(execution_allocator, io, environ_map, command_args);
+    };
+    try rejectUnsupportedRunFlags(command_args);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     const in_package = cwdHasManifest(io);
-    const selected_executable: ?[]const u8 = if (in_package and args.len > 0 and !std.mem.startsWith(u8, args[0], "--") and !std.mem.eql(u8, args[0], "."))
-        args[0]
+    const selected_executable: ?[]const u8 = if (in_package and command_args.len > 0 and !std.mem.startsWith(u8, command_args[0], "--") and !std.mem.eql(u8, command_args[0], "."))
+        command_args[0]
     else
         null;
-    const build_args = if (selected_executable != null) args[1..] else args;
+    const build_args = if (selected_executable != null) command_args[1..] else command_args;
     const parsed = try build_plan.parseBuildArgs(allocator, build_args);
     if (!parsed.flags.target.isNative()) {
         std.debug.print("Error: argi run cannot execute an incompatible target; use argi build.\n", .{});
@@ -55,10 +63,14 @@ pub fn run(
 
     try build.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
 
+    const argv = try allocator.alloc([]const u8, program_args.len + 1);
+    argv[0] = plan.output_path;
+    @memcpy(argv[1..], program_args);
+
     // Run is an interactive command: retain the caller's terminal or pipes
     // instead of capturing output and replacing stdin with an empty stream.
     var child = try std.process.spawn(io, .{
-        .argv = &.{plan.output_path},
+        .argv = argv,
         .environ_map = environ_map,
         .stdin = .inherit,
         .stdout = .inherit,
@@ -114,4 +126,8 @@ test "run command returns executable status code" {
 
     const code = try run(std.testing.allocator, std.testing.io, null, &.{module_dir});
     try std.testing.expectEqual(@as(u8, 7), code);
+}
+
+test "run command rejects program arguments in the pure VM" {
+    try std.testing.expectError(error.VmProgramArgumentsUnsupported, run(std.testing.allocator, std.testing.io, null, &.{ "--vm", "/tmp/module", "--", "--help" }));
 }

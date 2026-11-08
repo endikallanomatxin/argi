@@ -17,6 +17,9 @@ fn exitCommandError(prefix: []const u8, err: anyerror) noreturn {
 
 fn exitRunError(err: anyerror) noreturn {
     switch (err) {
+        error.VmProgramArgumentsUnsupported => {
+            std.debug.print("Run error: program arguments are not supported by run --vm; use native argi run instead\n", .{});
+        },
         error.RunOutputFlagUnsupported => {
             std.debug.print("Run error: --output is not supported by argi run; use argi build --output and execute the binary manually\n", .{});
         },
@@ -36,7 +39,7 @@ fn printHelp() void {
     std.debug.print("\nCommands:\n", .{});
     std.debug.print("  build [path] [flags]                   Build the current module or a selected module path\n", .{});
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
-    std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
+    std.debug.print("  run [executable] [build flags] [-- args...]  Build and run the default or selected executable\n", .{});
     std.debug.print("  run --vm <directory>                  Execute the experimental scalar/aggregate bytecode subset\n", .{});
     std.debug.print("  repl [flags]                           Start the persistent bytecode REPL\n", .{});
     std.debug.print("  test [directory] [flags]               Build and run native Argi tests\n", .{});
@@ -67,6 +70,7 @@ fn printHelp() void {
     std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
     std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
     std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
+    std.debug.print("\nNative run forwards arguments after -- unchanged to the program.\n", .{});
     std.debug.print("\nBytecode execution limits (run --vm, repl):\n  {s}\n", .{@import("0_commands/execution_options.zig").help});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
