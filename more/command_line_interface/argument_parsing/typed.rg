@@ -96,7 +96,7 @@ _read_field := #(.Field: Type: ArgumentField#(Field), .Source: Type: ArgumentSou
                                     }
                                     consumed = ..some(.value = parsed)
                                 }
-                                if info.positional == false and spec.name == name {
+                                if info.positional == false and spec.name == info.spec.name {
                                     present = true
                                     text = consumed
                                 }
@@ -120,7 +120,7 @@ _read_field := #(.Field: Type: ArgumentField#(Field), .Source: Type: ArgumentSou
             match text { ..none {} ..some entry { shown = entry.value } }
             _set_diagnostic(
                 context&.diagnostic
-                .argument = name
+                .argument = info.spec.name
                 .value    = shown
                 .message  = "missing or invalid argument value"
             )
@@ -246,9 +246,9 @@ _help_record := #(.T: Type, .W: Type: Writer#(W)) (
     write(writer, program)!
     for info in infos {
         if info.positional {
-            write(writer, " <")!
+            if info.spec.required { write(writer, " <")! } else { write(writer, " [")! }
             write(writer, info.spec.name)!
-            write(writer, ">")!
+            if info.spec.required { write(writer, ">")! } else { write(writer, "]")! }
         }
     }
     write(writer, " [OPTIONS]\n\nArguments and options:\n")!

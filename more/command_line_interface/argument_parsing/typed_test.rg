@@ -236,3 +236,37 @@ test typed_inline_metadata_and_defaults := (.system: System) -> !() {
         != size_of(.type = UInt8)
     ] { abort }
 }
+
+_LongNameArgs := (
+    .output_file : Option#(StringView, .long_name = "output-file", .short_name = "o"),
+    .no_cache    : Flag#(.long_name = "no-cache")
+)
+
+test typed_explicit_long_names := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    values: [3]StringView = ("--output-file", "app", "--no-cache")
+    source ::= ArgumentViews(view(&values))
+    match parse#(_LongNameArgs)(.source = &source)! {
+        ..help _ { abort }
+        ..arguments args {
+            if args.output_file.value != "app" or args.no_cache.value == false { abort }
+        }
+    }
+    aliases: [2]StringView = ("-o", "alias")
+    alias_source ::= ArgumentViews(view(&aliases))
+    match parse#(_LongNameArgs)(.source = &alias_source)! {
+        ..help _ { abort }
+        ..arguments args { if args.output_file.value != "alias" { abort } }
+    }
+}
+
+test typed_optional_positional_help := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    expected ::= "\nUsage: example [input] [OPTIONS]\n\nArguments and options:\n  input  \n  -h, --help  Show help\n"
+    output ::= _HelpOutput(.expected = expected)
+    info ::= Help(.command = "")
+    write_typed_help#(_DefaultInput)($&output, &info, .program = "example")!
+    if output.index != byte_length(&expected) { abort }
+}
+
+_DefaultInput := (.input: Positional#(StringView, .default_value = ..some(.value = ".")))

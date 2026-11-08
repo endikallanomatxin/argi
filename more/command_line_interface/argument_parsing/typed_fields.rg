@@ -4,7 +4,8 @@ Option := #(
     .short_name    : StringView = "",
     .help          : StringView = "",
     .value_name    : StringView = "VALUE",
-    .default_value : ?T         = ..none
+    .default_value : ?T         = ..none,
+    .long_name     : StringView = ""
 ) (.value: T)
 
 Positional := #(
@@ -14,7 +15,9 @@ Positional := #(
     .default_value : ?T         = ..none
 ) (.value: T)
 
-Flag := #(.short_name: StringView = "", .help: StringView = "") (.value: Bool)
+Flag := #(.short_name: StringView = "", .help: StringView = "", .long_name: StringView = "") (
+    .value : Bool
+)
 
 FieldInfo := (.spec: Spec, .positional: Bool = false)
 
@@ -45,14 +48,17 @@ implement#(
     .short_name    : StringView,
     .help          : StringView,
     .value_name    : StringView,
-    .default_value : ?T
-) ArgumentField#(Option#(T, short_name, help, value_name, default_value)) (
+    .default_value : ?T,
+    .long_name     : StringView
+) ArgumentField#(Option#(T, short_name, help, value_name, default_value, long_name)) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
+        option_name ::= name
+        if long_name != "" { option_name = long_name }
         required ::= false
         match default_value { ..none { required = true } ..some _ {} }
         info = (
             .spec = Spec(
-                .name       = name
+                .name       = option_name
                 .short_name = short_name
                 .help       = help
                 .value_name = value_name
@@ -62,7 +68,7 @@ implement#(
     }
     .read = (.text: ?StringView, .present: Bool) -> (
         .result : Errable#(
-            Option#(T, short_name, help, value_name, default_value),
+            Option#(T, short_name, help, value_name, default_value, long_name),
             (..invalid_argument_value, ..required_option)
         )
     ) {
@@ -79,7 +85,9 @@ implement#(
             ..none { result = ..error(.reason = ..required_option) }
         }
     }
-    .empty = () -> (.field: Option#(T, short_name, help, value_name, default_value)) {
+    .empty = () -> (
+        .field : Option#(T, short_name, help, value_name, default_value, long_name)
+    ) {
         field = (.value = ArgumentValue#(T).empty())
     }
 )
@@ -88,8 +96,12 @@ implement#(
     .T: Type: ArgumentValue#(T), .help: StringView, .value_name: StringView, .default_value: ?T
 ) ArgumentField#(Positional#(T, help, value_name, default_value)) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
+        required ::= false
+        match default_value { ..none { required = true } ..some _ {} }
         info = (
-            .spec       = Spec(.name = name, .help = help, .value_name = value_name)
+            .spec = Spec(
+                .name = name, .help = help, .value_name = value_name, .required = required
+            )
             .positional = true
         )
     }
@@ -117,18 +129,22 @@ implement#(
     }
 )
 
-implement#(.short_name: StringView, .help: StringView) ArgumentField#(Flag#(short_name, help)) (
+implement#(.short_name: StringView, .help: StringView, .long_name: StringView) ArgumentField#(
+    Flag#(short_name, help, long_name)
+) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
-        info = (.spec = Spec(.name = name, .short_name = short_name, .help = help))
+        option_name ::= name
+        if long_name != "" { option_name = long_name }
+        info = (.spec = Spec(.name = option_name, .short_name = short_name, .help = help))
     }
     .read = (.text: ?StringView, .present: Bool) -> (
         .result : Errable#(
-            Flag#(short_name, help), (..invalid_argument_value, ..required_option)
+            Flag#(short_name, help, long_name), (..invalid_argument_value, ..required_option)
         )
     ) {
         result = ..ok(.value = present)
     }
-    .empty = () -> (.field: Flag#(short_name, help)) { field = (.value = false) }
+    .empty = () -> (.field: Flag#(short_name, help, long_name)) { field = (.value = false) }
 )
 
 _numeric_argument := #(.T: Type, .F: Function) (.text: StringView) -> (

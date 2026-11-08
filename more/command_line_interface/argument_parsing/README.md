@@ -132,7 +132,10 @@ lexical cleanup.
 
 A record declares the arguments; a choice declares subcommands whose payloads
 are argument records. The field/alternative names become long option/command
-names. Positional fields are consumed in declaration order.
+names. Option and Flag accept `.long_name = "output-file"` to override the
+field name while preserving an ordinary field such as `.output_file`. Positional
+fields are consumed in declaration order; help shows required positionals in
+angle brackets and defaulted positionals in square brackets.
 
 ```rg
 ap := import("command_line_interface/argument_parsing")
@@ -180,9 +183,9 @@ parameter requires an implicitly copyable value type; noncopyable owning custom
 values are not supported by these wrappers.
 
 Configuration is supplied directly as compile-time parameters of each field's
-type. `Option` accepts `T`, `short_name`, `help`, `value_name`, and
+type. `Option` accepts `T`, `short_name`, `help`, `value_name`, `long_name`, and
 `default_value: ?T`. `Positional` accepts `T`, `help`, `value_name`, and
-`default_value`; `Flag` accepts `short_name` and `help`. Parameter values are
+`default_value`; `Flag` accepts `short_name`, `help`, and `long_name`. Parameter values are
 immutable literals or forwarded compile-time value parameters. Strings and
 compound defaults participate in type identity, without occupying instance
 storage. Each wrapper contains only `.value`; the parser specializes for the
