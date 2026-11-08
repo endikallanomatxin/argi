@@ -43,6 +43,33 @@ implement ArgumentValue#(StringView) (
     .empty = () -> (.value: StringView) { value = "" }
 )
 
+-- Optional values preserve the distinction between no argument and an empty value.
+implement#(.T: Type: ArgumentValue#(T)) ArgumentValue#(?T) (
+    .parse = (.text: StringView) -> (.result: Errable#(?T, (..invalid_argument_value))) {
+        parsed ::= ArgumentValue#(T).parse(text)!
+        result = ..ok ..some(.value = ~parsed)
+    }
+    .empty = () -> (.value: ?T = ..none) {}
+)
+
+-- A configured default takes priority over the value type's absence policy.
+_ArgumentDefault#(.T: Type): Contract = (.get: () -> (.value: ?T))
+
+implement#(.T: Type) _ArgumentDefault#(T) (
+    .get = () -> (.value: ?T = ..none) {}
+)
+
+implement#(.T: Type) _ArgumentDefault#(?T) (
+    .get = () -> (.value: ??T) { value = ..some(.value = ..none) }
+)
+
+_argument_default := #(.T: Type) (.configured: ?T) -> (.value: ?T) {
+    match configured {
+        ..some entry { value = ..some(.value = entry.value) }
+        ..none { value = _ArgumentDefault#(T).get() }
+    }
+}
+
 implement#(
     .T             : Type: ArgumentValue#(T),
     .short_name    : StringView,
@@ -55,7 +82,7 @@ implement#(
         option_name ::= name
         if long_name != "" { option_name = long_name }
         required ::= false
-        match default_value { ..none { required = true } ..some _ {} }
+        match _argument_default#(T)(default_value) { ..none { required = true } ..some _ {} }
         info = (
             .spec = Spec(
                 .name       = option_name
@@ -80,7 +107,7 @@ implement#(
             }
             ..none {}
         }
-        match default_value {
+        match _argument_default#(T)(default_value) {
             ..some entry { result = ..ok(.value = entry.value) }
             ..none { result = ..error(.reason = ..required_option) }
         }
@@ -97,7 +124,7 @@ implement#(
 ) ArgumentField#(Positional#(T, help, value_name, default_value)) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
         required ::= false
-        match default_value { ..none { required = true } ..some _ {} }
+        match _argument_default#(T)(default_value) { ..none { required = true } ..some _ {} }
         info = (
             .spec = Spec(
                 .name = name, .help = help, .value_name = value_name, .required = required
@@ -119,7 +146,7 @@ implement#(
             }
             ..none {}
         }
-        match default_value {
+        match _argument_default#(T)(default_value) {
             ..some entry { result = ..ok(.value = entry.value) }
             ..none { result = ..error(.reason = ..required_option) }
         }

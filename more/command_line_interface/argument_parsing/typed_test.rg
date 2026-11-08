@@ -586,3 +586,92 @@ test typed_command_help_respects_option_value_boundaries := (.system: System) ->
         ..help _ { abort }
     }
 }
+
+_OptionalArgs := (.output: Option#(?StringView, .short_name = "o"), .jobs: Option#(?UInt8))
+
+test typed_optional_values_distinguish_absence_from_empty_text := (.system: System) -> !!() {
+    assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
+    empty: [0]StringView = ()
+    empty_source ::= ArgumentViews(view(&empty))
+    absent ::= parse#(_OptionalArgs)(.source = &empty_source)!
+    match absent.output.value { ..none {} ..some _ { abort } }
+    match absent.jobs.value { ..none {} ..some _ { abort } }
+    values: [1]StringView = ("--output=")
+    source ::= ArgumentViews(view(&values))
+    supplied ::= parse#(_OptionalArgs)(.source = &source)!
+    match supplied.output.value {
+        ..none { abort }
+        ..some value { if value.value != "" { abort } }
+    }
+    match supplied.jobs.value { ..none {} ..some _ { abort } }
+    actual: [4]StringView = ("-o", "app", "--jobs", "8")
+    actual_source ::= ArgumentViews(view(&actual))
+    parsed ::= parse#(_OptionalArgs)(.source = &actual_source)!
+    match parsed.output.value {
+        ..none { abort }
+        ..some value { if value.value != "app" { abort } }
+    }
+    match parsed.jobs.value {
+        ..none { abort }
+        ..some value { if value.value != 8 { abort } }
+    }
+}
+
+test typed_optional_values_still_validate_supplied_arguments := (.system: System) -> !!() {
+    assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
+    invalid: [2]StringView = ("--jobs", "256")
+    invalid_source ::= ArgumentViews(view(&invalid))
+    match parse#(_OptionalArgs)(.source = &invalid_source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_argument_value { abort } }
+    }
+    missing: [1]StringView = ("--output")
+    missing_source ::= ArgumentViews(view(&missing))
+    match parse#(_OptionalArgs)(.source = &missing_source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..missing_option_value { abort } }
+    }
+    repeated: [2]StringView = ("--output=one", "--output=two")
+    repeated_source ::= ArgumentViews(view(&repeated))
+    match parse#(_OptionalArgs)(.source = &repeated_source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..duplicate_option { abort } }
+    }
+}
+
+_OptionalDefaults := (
+    .output : Option#(?StringView, .default_value = ..some(.value = ..some(.value = "app"))),
+    .jobs   : Option#(?UInt8, .default_value = ..some(.value = ..none)),
+    .input  : Positional#(?StringView)
+)
+
+test typed_optional_values_preserve_explicit_defaults := (.system: System) -> !!() {
+    assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
+    empty: [0]StringView = ()
+    source ::= ArgumentViews(view(&empty))
+    parsed ::= parse#(_OptionalDefaults)(.source = &source)!
+    match parsed.output.value {
+        ..none { abort }
+        ..some value { if value.value != "app" { abort } }
+    }
+    match parsed.jobs.value { ..none {} ..some _ { abort } }
+    match parsed.input.value { ..none {} ..some _ { abort } }
+    values: [3]StringView = ("--output=", "--jobs=8", "main.rg")
+    supplied_source ::= ArgumentViews(view(&values))
+    supplied ::= parse#(_OptionalDefaults)(.source = &supplied_source)!
+    match supplied.output.value {
+        ..none { abort }
+        ..some value { if value.value != "" { abort } }
+    }
+    match supplied.jobs.value {
+        ..none { abort }
+        ..some value { if value.value != 8 { abort } }
+    }
+    match supplied.input.value {
+        ..none { abort }
+        ..some value { if value.value != "main.rg" { abort } }
+    }
+}

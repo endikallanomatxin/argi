@@ -185,7 +185,27 @@ For records without subcommands, pass `BuildArgs` instead of `Command`;
 then `parse` returns that record directly and recognizes only its declared fields.
 Automatic help requires a choice with a declared `Help` payload.
 An `Option` or `Positional` is required unless its configuration supplies a
-default. Flags default to false. Numeric options use the existing checked core
+default or its value type is optional. `Option#(?StringView)` and
+`Positional#(?StringView)` default to `..none`; a supplied value becomes
+`..some(.value = text)`. In particular, `--output=` is a supplied empty string,
+not an absent option. Optional values delegate conversion to their inner
+`ArgumentValue` implementation, including numeric range checking. Explicit
+defaults take priority over the implicit `..none`. For example:
+
+```rg
+Args := (
+    .output: ap.Option#(?StringView, .short_name = "o", .value_name = "FILE"),
+    .jobs: ap.Option#(?UInt8)
+)
+```
+
+Omitting `--output` yields `..none` in `args.output.value`; supplying it yields
+a `..some` payload containing the string. A supplied option still requires a
+value, and duplicate options are still rejected. A nonempty explicit default
+for an optional value uses the outer configuration optional:
+`.default_value = ..some(.value = ..some(.value = "app"))`.
+
+Flags default to false. Numeric options use the existing checked core
 parsers; an invalid value, including overflow, returns `invalid_argument_value`.
 Built-in value support covers StringView, Bool, signed/unsigned 8/16/32/64-bit
 integers, UIntNative, Float32 and Float64. Implement `ArgumentValue#(T)` for
