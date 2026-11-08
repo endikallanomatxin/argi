@@ -52,3 +52,34 @@ This does not complete physical provenance, checked backing derivation, owner
 transfer between executions, or protected-access protocols. In particular, the
 positive ArrayView reduction and heterogeneous collection authorization remain
 open. The broader acceptance gates remain in [resource_authority.md](resource_authority.md).
+
+## Runtime element selection
+
+Selecting an unknown index chooses one value, not the union of all elements'
+permissions. Both concrete and symbolic projections use the existing conservative
+alternative join. Each fold starts with an actual element; adding an artificial
+empty alternative would reject uniformly authenticated arrays.
+
+Concrete projection reuses joinObservedSymbolicValues without state-specific
+generation rebasing. The state-join caller still supplies its states and generation
+correspondence. Missing permission on any selected alternative marks authorization
+incomplete while retaining possible identities for consumption checking. Nested
+choice payloads obey the same rule: a missing payload is excluded only by a known
+different discriminant, never by missing facts alone.
+
+The reduced program types/424X moves a runtime-selected element from an array with
+one authenticated acquisition and another returned behind an ownership-only
+virtual interface. Published 86d88738f accepts it; the combined correction rejects
+it for missing acquisition permission. The accepted negative was compiled only,
+never executed. Unit reductions reproduce both the plain and nested-choice gaps.
+
+Types/425 preserves compilation when both elements are authenticated. It is
+build-only: dropping an unused acquisition receipt does not free its raw bytes.
+Establishing both selected and unselected elements loses selection correlation
+and is currently rejected for possible duplicate consumption. That existing
+precision limit is not solved by this correction.
+
+Final isolated Debug validation passes: 1,505 tests passed, one skipped,
+580,556 KiB peak RSS, no swaps. ReleaseSafe compilation succeeds. The final isolated
+program suite passes: 2,548 passed, 11 skipped, zero failures, leaks or error logs,
+including both runtime-selection fixtures. The broader limits above remain open.

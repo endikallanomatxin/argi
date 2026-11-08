@@ -6818,8 +6818,13 @@ pub const Infer = struct {
             },
             .dynamic_index => {
                 if (effect.fields.len != 0) {
-                    var merged: facts.ValueEffect = .{ .foreign_storage = effect.foreign_storage };
-                    for (effect.fields) |field| merged = try self.mergeValueEffects(merged, field.value.*);
+                    // A runtime index chooses one value, not the union of all
+                    // elements' permissions. Seed with a real alternative so
+                    // a fully known uniform array does not join with unknown.
+                    var merged = effect.fields[0].value.*;
+                    for (effect.fields[1..]) |field|
+                        merged = try self.joinStorageAlternatives(null, merged, field.value.*);
+                    merged.foreign_storage = merged.foreign_storage or effect.foreign_storage;
                     return merged;
                 }
             },
@@ -8830,4 +8835,27 @@ test "alternative joins retain canonical symbolic array element paths" {
         };
         try std.testing.expect(requires_element);
     }
+}
+
+test "dynamic element selection cannot grant another element's acquisition permission" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const permission = facts.ValueEffect{ .input_storage_capabilities = &.{.{ .input_index = 0 }} };
+    const unknown: facts.ValueEffect = .{};
+    const array = facts.ValueEffect{ .fields = &.{
+        .{ .index = 0, .value = &permission },
+        .{ .index = 1, .value = &unknown },
+    } };
+    const selected = try infer.projectValueEffect(array, .dynamic_index);
+    try std.testing.expect(selected.storage_capability_incomplete);
+    try std.testing.expectEqual(@as(usize, 1), selected.input_storage_capabilities.len);
+    const exact = try infer.projectValueEffect(array, .{ .static_index = 0 });
+    try std.testing.expect(!exact.storage_capability_incomplete);
 }

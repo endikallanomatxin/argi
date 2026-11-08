@@ -5555,9 +5555,13 @@ pub const SafetyChecker = struct {
                     if (found) |selected| current = selected else current.lexical_frame = null;
                 },
                 .dynamic_index => {
-                    var merged: facts.ValueFacts = .{ .foreign_storage = current.foreign_storage };
-                    for (current.fields) |field| merged = try self.mergeValueFacts(merged, field.value.*);
-                    if (current.fields.len != 0) current = merged else current.lexical_frame = null;
+                    if (current.fields.len != 0) {
+                        var merged = current.fields[0].value.*;
+                        for (current.fields[1..]) |field|
+                            merged = try self.joinObservedSymbolicValues(merged, field.value.*, null, null, &.{});
+                        merged.foreign_storage = merged.foreign_storage or current.foreign_storage;
+                        current = merged;
+                    } else current.lexical_frame = null;
                 },
                 .dereference => current.lexical_frame = null,
             }
@@ -8087,7 +8091,7 @@ pub const SafetyChecker = struct {
         result: facts.ValidityRootId,
     };
 
-    fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: *const FunctionState, right_state: *const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
+    fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: ?*const FunctionState, right_state: ?*const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
         if (generations.len == 0 and valueFactsEqual(left, right)) return left;
         var merged = try self.mergeValueFacts(left, right);
         if (merged.fields.len == 0 and merged.variants.len == 0 and
@@ -8097,7 +8101,8 @@ pub const SafetyChecker = struct {
         if (left.symbolic_pointees.len == 1 and right.symbolic_pointees.len == 1 and
             left.symbolic_pointees[0] == right.symbolic_pointees[0] and
             left.opaque_provenance.len == 0 and right.opaque_provenance.len == 0 and
-            left_state.tracker.dependenciesAreAlive(left) and right_state.tracker.dependenciesAreAlive(right))
+            left_state != null and right_state != null and
+            left_state.?.tracker.dependenciesAreAlive(left) and right_state.?.tracker.dependenciesAreAlive(right))
         {
             for (generations) |generation| {
                 if (generation.identity != left.symbolic_pointees[0]) continue;
@@ -8122,11 +8127,22 @@ pub const SafetyChecker = struct {
             result = try self.replaceProjectedValue(result, .{ .field = field.index }, try self.joinObservedSymbolicValues(a, b, left_state, right_state, generations));
             projected = true;
         }
-        for (left.variants) |a| for (right.variants) |b| if (a.index == b.index) {
-            result = try self.replaceProjectedValue(result, .{ .variant = a.index }, try self.joinObservedSymbolicValues(a.value.*, b.value.*, left_state, right_state, generations));
+        for (merged.variants) |variant| {
+            var a: ?facts.ValueFacts = null;
+            var b: ?facts.ValueFacts = null;
+            for (left.variants) |candidate| if (candidate.index == variant.index) {
+                a = candidate.value.*;
+                break;
+            };
+            for (right.variants) |candidate| if (candidate.index == variant.index) {
+                b = candidate.value.*;
+                break;
+            };
+            if (a == null and left.known_choice_variant != null and left.known_choice_variant.? != variant.index) continue;
+            if (b == null and right.known_choice_variant != null and right.known_choice_variant.? != variant.index) continue;
+            result = try self.replaceProjectedValue(result, .{ .variant = variant.index }, try self.joinObservedSymbolicValues(a orelse .{}, b orelse .{}, left_state, right_state, generations));
             projected = true;
-            break;
-        };
+        }
         return if (projected) self.refreshProjectedValueRoots(merged, result) else result;
     }
 
@@ -11018,6 +11034,36 @@ test "array concrete projections select and merge element facts" {
     try std.testing.expectEqual(@as(usize, 0), dynamic.storage_capabilities.len);
     const uniform = facts.ValueFacts{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
     try std.testing.expect((try checker.projectValueFacts(uniform, &.{.dynamic_index})).foreign_storage);
+    const authorized = facts.ValueFacts{ .storage_capabilities = &.{@enumFromInt(0)} };
+    const mixed = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &authorized },
+        .{ .index = 1, .value = &local },
+    } };
+    const selected = try checker.projectValueFacts(mixed, &.{.dynamic_index});
+    try std.testing.expect(selected.storage_capability_incomplete);
+    try std.testing.expectEqual(@as(usize, 1), selected.storage_capabilities.len);
+    const all_authorized = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &authorized },
+        .{ .index = 1, .value = &authorized },
+    } };
+    try std.testing.expect(!(try checker.projectValueFacts(all_authorized, &.{.dynamic_index})).storage_capability_incomplete);
+    const success = facts.ValueFacts{
+        .known_choice_variant = 0,
+        .variants = &.{.{ .index = 0, .value = &authorized }},
+    };
+    const choices = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &success },
+        .{ .index = 1, .value = &local },
+    } };
+    const choice = try checker.projectValueFacts(choices, &.{.dynamic_index});
+    try std.testing.expect(choice.variants[0].value.storage_capability_incomplete);
+    const error_case = facts.ValueFacts{ .known_choice_variant = 1 };
+    const outcomes = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &success },
+        .{ .index = 1, .value = &error_case },
+    } };
+    const outcome = try checker.projectValueFacts(outcomes, &.{.dynamic_index});
+    try std.testing.expect(!outcome.variants[0].value.storage_capability_incomplete);
 }
 
 test "large numeric literals keep no per-element safety records" {
