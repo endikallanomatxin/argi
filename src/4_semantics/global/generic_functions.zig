@@ -906,6 +906,7 @@ pub const Resolver = struct {
                         .definition => |v| local.definitions[raw] = v,
                         .type => |v| local.types[raw] = v,
                         .comptime_int => |v| local.ints[raw] = v,
+                        .comptime_value => |v| local.values[raw] = v,
                     }
                 },
                 .definition => |definition_value| local.definitions[raw] = self.generics.instantiateDefinitionValue(module_index, definition_value, bindings) catch |err| switch (err) {
@@ -914,6 +915,10 @@ pub const Resolver = struct {
                 },
                 .type => |ty| local.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
                     error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                    else => return err,
+                },
+                .comptime_value => |expression| local.values[raw] = @import("comptime_values.zig").encode(self.generics, module_index, expression, bindings) catch |err| switch (err) {
+                    error.UnboundComptimeParameter => null,
                     else => return err,
                 },
                 .comptime_int => |integer| local.ints[raw] = self.generics.evalInt(module_index, integer, bindings) catch |err| switch (err) {
@@ -960,6 +965,7 @@ pub const Resolver = struct {
                 },
                 .type => |ty| if (local.types[raw] == null or !global_types.equal(self.graph, local.types[raw].?, ty)) return false,
                 .comptime_int => |integer| if (local.ints[raw] != integer) return false,
+                .comptime_value => |bytes| if (local.values[raw] == null or !std.mem.eql(u8, self.graph.text(local.values[raw].?), self.graph.text(bytes))) return false,
             }
         }
         // Return only evidence inferred from inputs/defaults. Result types never
@@ -975,6 +981,7 @@ pub const Resolver = struct {
                         .definition => .{ .definition = local.definitions[raw] orelse return false },
                         .type => .{ .type = local.types[raw] orelse return false },
                         .comptime_int => .{ .comptime_int = local.ints[raw] orelse return false },
+                        .comptime_value => .{ .comptime_value = local.values[raw] orelse return false },
                     };
                     if (!global_types.genericArgumentValuesEqual(self.graph, value, actual)) return false;
                 },
@@ -983,6 +990,9 @@ pub const Resolver = struct {
                 },
                 .type => |ty| if (local.types[raw]) |actual| {
                     if (!try self.inferInputType(module_index, ty, actual, bindings)) return false;
+                },
+                .comptime_value => |expression| if (local.values[raw]) |bytes| {
+                    if (!try self.generics.inferValue(module_index, expression, bytes, bindings)) return false;
                 },
                 .comptime_int => |integer| if (local.ints[raw]) |actual| {
                     if (!try self.inferIntExpression(module_index, integer, actual, bindings)) return false;
@@ -1154,6 +1164,7 @@ pub const Resolver = struct {
             const compatible = switch (argument.value) {
                 .type => |pattern| if (bindings.types[raw]) |actual| try self.inferInputType(module_index, pattern, actual, bindings) else true,
                 .comptime_int => |pattern| if (bindings.ints[raw]) |actual| try self.inferIntExpression(module_index, pattern, actual, bindings) else true,
+                .comptime_value => |pattern| if (bindings.values[raw]) |actual| try self.generics.inferValue(module_index, pattern, actual, bindings) else true,
                 .definition => |pattern| if (bindings.definitions[raw]) |actual| try self.generics.inferDefinitionValue(module_index, pattern, actual, bindings) else true,
                 .projection => true,
             };
@@ -1167,6 +1178,9 @@ pub const Resolver = struct {
             switch (parameter.kind) {
                 .type => if (bindings.types[raw]) |old| {
                     if (value != .type or !global_types.equal(self.graph, old, value.type)) return false;
+                },
+                .comptime_value => if (bindings.values[raw]) |old| {
+                    if (value != .comptime_value or !std.mem.eql(u8, self.graph.text(old), self.graph.text(value.comptime_value))) return false;
                 },
                 .comptime_int => if (bindings.ints[raw]) |old| {
                     if (value != .comptime_int or old != value.comptime_int) return false;
@@ -1244,6 +1258,7 @@ pub const Resolver = struct {
             const to = function.parameters.start + index;
             inferred.types[to] = bindings.types[from];
             inferred.ints[to] = bindings.ints[from];
+            inferred.values[to] = bindings.values[from];
             inferred.definitions[to] = bindings.definitions[from];
         }
         const own_parameters: primitives.Range(ir.ComptimeParameterId) = .{
@@ -1264,6 +1279,7 @@ pub const Resolver = struct {
             const to = captures.start + index;
             bindings.types[to] = inferred.types[from];
             bindings.ints[to] = inferred.ints[from];
+            bindings.values[to] = inferred.values[from];
             bindings.definitions[to] = inferred.definitions[from];
         }
         if (operation.instantiate_associated) {
@@ -1389,6 +1405,7 @@ pub const Resolver = struct {
                 before += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .comptime_value => @intFromBool(bindings.values[raw] != null),
                     .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
@@ -1417,6 +1434,7 @@ pub const Resolver = struct {
                 after += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .comptime_value => @intFromBool(bindings.values[raw] != null),
                     .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
@@ -1450,6 +1468,7 @@ pub const Resolver = struct {
             if (switch (parameter.kind) {
                 .type => bindings.types[raw] == null,
                 .comptime_int => bindings.ints[raw] == null,
+                .comptime_value => bindings.values[raw] == null,
                 .definition => bindings.definitions[raw] == null,
             }) return false;
         }
@@ -1648,6 +1667,8 @@ pub const Resolver = struct {
         // across candidates, resetting them before each independent match.
         var binding_types: std.ArrayList(?global_sg.GlobalTypeId) = .empty;
         defer binding_types.deinit(self.allocator);
+        var binding_values: std.ArrayList(?primitives.StringRange) = .empty;
+        defer binding_values.deinit(self.allocator);
         var binding_ints: std.ArrayList(?i64) = .empty;
         defer binding_ints.deinit(self.allocator);
         var binding_definitions: std.ArrayList(?global_sg.DefinitionValue) = .empty;
@@ -1674,13 +1695,16 @@ pub const Resolver = struct {
             const parameter_count = candidate_module.semantic.parameterized_storage.comptime_parameters.items.len;
             try binding_types.resize(self.allocator, parameter_count);
             try binding_ints.resize(self.allocator, parameter_count);
+            try binding_values.resize(self.allocator, parameter_count);
             try binding_definitions.resize(self.allocator, parameter_count);
             @memset(binding_types.items, null);
             @memset(binding_ints.items, null);
+            @memset(binding_values.items, null);
             @memset(binding_definitions.items, null);
             var bindings: generic_mod.Resolver.Bindings = .{
                 .types = binding_types.items,
                 .ints = binding_ints.items,
+                .values = binding_values.items,
                 .definitions = binding_definitions.items,
             };
             if (selected_definition) |definition| _ = try self.generics.bindDefinitionCaptures(candidate_index, parameterized.parameters, definition, &bindings);
@@ -2009,6 +2033,9 @@ pub const Resolver = struct {
                     const wanted = storage.generic_arguments.items[arguments.pattern.start + position];
                     const given = self.graph.generic_arguments.items[arguments.actual.start + position];
                     switch (wanted.value) {
+                        .comptime_value => |expression| {
+                            if (given.value != .comptime_value or !try self.generics.inferValue(module_index, expression, given.value.comptime_value, bindings)) return false;
+                        },
                         .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), given.value)) return false,
                         .definition => |definition| {
                             if (given.value != .definition) return false;
@@ -2125,6 +2152,9 @@ pub const Resolver = struct {
                         };
                         const concrete = self.generics.findGlobalArgument(name, value.arguments, position) orelse return false;
                         switch (argument.value) {
+                            .comptime_value => |expression| {
+                                if (concrete.value != .comptime_value or !try self.generics.inferValue(module_index, expression, concrete.value.comptime_value, bindings)) return false;
+                            },
                             .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), concrete.value)) return false,
                             .definition => |definition_value| {
                                 if (concrete.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, concrete.value.definition, bindings)) return false;
@@ -2165,10 +2195,7 @@ pub const Resolver = struct {
         return switch (storage.int_expressions.items[@intFromEnum(expression)]) {
             .literal => |value| value == actual,
             .parameter => |parameter| blk: {
-                const slot = &bindings.ints[@intFromEnum(parameter)];
-                if (slot.*) |previous| {
-                    if (previous != actual) return error.ConflictingGenericArgument;
-                } else slot.* = actual;
+                if (!try self.generics.inferIntegerParameter(module_index, parameter, actual, bindings)) return error.ConflictingGenericArgument;
                 break :blk true;
             },
             // Composite expressions are constraints rather than invertible
@@ -2195,7 +2222,7 @@ pub const Resolver = struct {
             if (!std.mem.eql(u8, self.graph.text(argument.name), "to")) continue;
             target_type = switch (argument.value) {
                 .type => |ty| ty,
-                .comptime_int, .definition => return error.ReferenceTargetMustBeType,
+                .comptime_int, .comptime_value, .definition => return error.ReferenceTargetMustBeType,
             };
             break;
         }
@@ -2922,6 +2949,7 @@ pub const Resolver = struct {
         for (self.graph.captured_expression_bindings.items[recipe.bindings.start..][0..recipe.bindings.len], 0..) |binding, index| {
             substitutions.types[index] = binding.ty;
             substitutions.ints[index] = binding.integer;
+            substitutions.values[index] = binding.value;
             substitutions.definitions[index] = binding.definition;
         }
         var instance = InstanceContext.init(self, recipe.module_index, .{
@@ -3929,6 +3957,12 @@ pub const Resolver = struct {
             if (definition.kind == .definition) {
                 const entity = self.substitutions.definitions[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
                 return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try global_types.definitionClass(self.resolver.allocator, self.resolver.graph, entity.origin), .content = .{ .definition_literal = entity } };
+            }
+            if (definition.kind == .comptime_value) {
+                const encoded = self.substitutions.values[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
+                const ty = try self.resolver.generics.instantiateParameterizedType(self.module_index, definition.value_type.?, self.substitutions);
+                const node = try @import("comptime_values.zig").materialize(self.resolver.generics, encoded, ty, self.resolver.sourceFor(self.module_index, value.source));
+                return self.resolver.graph.node(node);
             }
             const number = self.substitutions.ints[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
             const ty = if (definition.value_type) |parameterized_type|

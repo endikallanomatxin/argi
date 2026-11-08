@@ -130,6 +130,7 @@ pub const GenericArgument = struct {
         },
         type: ParameterizedTypeId,
         comptime_int: ParameterizedIntExprId,
+        comptime_value: ParameterizedNodeId,
     };
 };
 

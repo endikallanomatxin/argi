@@ -39,11 +39,18 @@ pub const Scheduler = struct {
         module: usize,
         expression: ir.ParameterizedNodeId,
         bindings: Generics.Bindings,
+        value_bytes: []?[]u8 = &.{},
+
         node: ?g.GlobalNodeId = null,
         kind: Kind = .integer,
         value: ?Value = null,
         type_recipe: ?u32 = null,
         types_published: bool = true,
+        fn deinit(request: *Request, allocator: std.mem.Allocator) void {
+            for (request.value_bytes) |bytes| if (bytes) |owned| allocator.free(owned);
+            allocator.free(request.value_bytes);
+            request.bindings.deinit(allocator);
+        }
     };
 
     const Kind = enum { integer, boolean };
@@ -63,7 +70,7 @@ pub const Scheduler = struct {
             };
         }
         for (self.requests.items) |request| {
-            try result.enqueue(request.module, request.expression, &request.bindings, request.kind);
+            try result.enqueueOwned(request.module, request.expression, &request.bindings, request.kind, request.value_bytes);
             const retained = &result.requests.items[result.requests.items.len - 1];
             retained.node = request.node;
             retained.value = request.value;
@@ -75,7 +82,7 @@ pub const Scheduler = struct {
     }
 
     pub fn deinit(self: *Scheduler) void {
-        for (self.requests.items) |*request| request.bindings.deinit(self.allocator);
+        for (self.requests.items) |*request| request.deinit(self.allocator);
         self.requests.deinit(self.allocator);
         for (self.type_recipes.items) |*recipe| recipe.deinit(self.allocator);
         self.type_recipes.deinit(self.allocator);
@@ -101,7 +108,7 @@ pub const Scheduler = struct {
                 @memset(request.bindings.definitions, null);
             }
         }
-        for (self.requests.items[saved.requests..]) |*request| request.bindings.deinit(self.allocator);
+        for (self.requests.items[saved.requests..]) |*request| request.deinit(self.allocator);
         self.requests.shrinkRetainingCapacity(saved.requests);
         for (self.type_recipes.items[saved.recipes..]) |*recipe| recipe.deinit(self.allocator);
         self.type_recipes.shrinkRetainingCapacity(saved.recipes);
@@ -132,7 +139,7 @@ pub const Scheduler = struct {
         var first_recipe = self.type_recipes.items.len;
         for (self.requests.items[saved..]) |*request| {
             std.debug.assert(request.node == null);
-            request.bindings.deinit(self.allocator);
+            request.deinit(self.allocator);
             if (request.type_recipe) |id| first_recipe = @min(first_recipe, id);
         }
         for (self.type_recipes.items[first_recipe..]) |*recipe| recipe.deinit(self.allocator);
@@ -153,6 +160,20 @@ pub const Scheduler = struct {
         for (self.requests.items) |request| {
             if (request.module != module or request.expression != expression or request.kind != kind) continue;
             if (!std.mem.eql(?i64, request.bindings.ints, bindings.ints)) continue;
+            if (request.value_bytes.len != bindings.values.len) continue;
+            var same_values = true;
+            for (request.value_bytes, bindings.values) |saved, current| {
+                if (saved) |bytes| {
+                    if (current == null or !std.mem.eql(u8, bytes, self.functions.graph.text(current.?))) {
+                        same_values = false;
+                        break;
+                    }
+                } else if (current != null) {
+                    same_values = false;
+                    break;
+                }
+            }
+            if (!same_values) continue;
             if (request.type_recipe) |id| {
                 if (!try self.type_recipes.items[id].matches(self.allocator, self.functions.graph, bindings.types)) continue;
                 if (!try self.type_recipes.items[id].matchesDefinitions(self.allocator, self.functions.graph, bindings.definitions)) continue;
@@ -201,13 +222,30 @@ pub const Scheduler = struct {
     }
 
     fn enqueue(self: *Scheduler, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings, kind: Kind) !void {
+        return self.enqueueOwned(module, expression, bindings, kind, null);
+    }
+
+    fn enqueueOwned(self: *Scheduler, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings, kind: Kind, saved: ?[]const ?[]u8) !void {
+        const values = try self.allocator.alloc(?@import("../primitives/schema.zig").StringRange, bindings.values.len);
+        errdefer self.allocator.free(values);
+        @memset(values, null);
+        const value_bytes = try self.allocator.alloc(?[]u8, bindings.values.len);
+        @memset(value_bytes, null);
+        errdefer {
+            for (value_bytes) |bytes| if (bytes) |owned| self.allocator.free(owned);
+            self.allocator.free(value_bytes);
+        }
+        for (bindings.values, value_bytes, 0..) |value, *out, index| {
+            const bytes: ?[]const u8 = if (saved) |snapshots| snapshots[index] else if (value) |range| self.functions.graph.text(range) else null;
+            out.* = if (bytes) |v| try self.allocator.dupe(u8, v) else null;
+        }
         const types = try self.allocator.dupe(?g.GlobalTypeId, bindings.types);
         errdefer self.allocator.free(types);
         const ints = try self.allocator.dupe(?i64, bindings.ints);
         errdefer self.allocator.free(ints);
         const definitions = try self.allocator.dupe(?g.DefinitionValue, bindings.definitions);
         errdefer self.allocator.free(definitions);
-        try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .kind = kind, .bindings = .{ .types = types, .ints = ints, .definitions = definitions } });
+        try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .kind = kind, .value_bytes = value_bytes, .bindings = .{ .types = types, .ints = ints, .definitions = definitions, .values = values } });
     }
 
     pub fn materialize(self: *Scheduler) !bool {
@@ -259,6 +297,9 @@ pub const Scheduler = struct {
                 .ints = &.{},
             };
             defer bindings.deinit(self.allocator);
+            bindings.values = try self.allocator.alloc(?@import("../primitives/schema.zig").StringRange, request.value_bytes.len);
+            @memset(bindings.values, null);
+            for (request.value_bytes, bindings.values) |bytes, *out| out.* = if (bytes) |value| try self.functions.graph.addString(self.allocator, value) else null;
             bindings.ints = try self.allocator.dupe(?i64, request.bindings.ints);
             bindings.definitions = try self.allocator.dupe(?g.DefinitionValue, request.bindings.definitions);
             const node = self.functions.instantiateComptimeExpression(request.module, request.expression, &bindings) catch |err| switch (err) {
@@ -602,4 +643,27 @@ test "staged request session rollback restores completed requests types and stab
             try std.testing.expect(copy.requests.items[0].bindings.types[0] == null);
         }
     }.run, .{});
+}
+
+test "staged requests own value bindings across speculative string rollback" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var functions: Functions = undefined;
+    functions.graph = &graph;
+    var scheduler: Scheduler = .{ .allocator = a, .functions = &functions, .stable_type_count = 0 };
+    defer scheduler.deinit();
+    var bindings = try Generics.Bindings.init(a, 1);
+    defer bindings.deinit(a);
+    bindings.values[0] = try graph.addString(a, "original metadata");
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
+    graph.strings.shrinkRetainingCapacity(0);
+    _ = try graph.addString(a, "overwritten speculative bytes");
+    try std.testing.expectEqualStrings("original metadata", scheduler.requests.items[0].value_bytes[0].?);
+    bindings.values[0] = try graph.addString(a, "original metadata");
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
+    try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
+    var cloned = try scheduler.clone(a, &functions);
+    defer cloned.deinit();
+    try std.testing.expectEqualStrings("original metadata", cloned.requests.items[0].value_bytes[0].?);
 }

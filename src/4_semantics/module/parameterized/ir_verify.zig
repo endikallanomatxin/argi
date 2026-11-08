@@ -63,6 +63,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
                 },
                 .type => |id| try require(verify.idFits(id, storage.types.items.len)),
                 .comptime_int => |id| try require(verify.idFits(id, storage.int_expressions.items.len)),
+                .comptime_value => |id| try require(verify.idFits(id, storage.nodes.items.len)),
                 .projection => |projection| {
                     try require(verify.idFits(projection.base, storage.types.items.len));
                     try require(verify.stringFits(projection.member, graph.strings.items));
@@ -119,6 +120,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
             },
             .type => |id| try require(verify.idFits(id, storage.types.items.len)),
             .comptime_int => |id| try require(verify.idFits(id, storage.int_expressions.items.len)),
+            .comptime_value => |id| try require(verify.idFits(id, storage.nodes.items.len)),
         }
     }
     for (storage.unresolved_binding_types.items, 0..) |binding, marker_index| {

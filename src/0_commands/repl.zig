@@ -973,3 +973,26 @@ test "REPL structural reflection retains types across submissions" {
     try session.submitStatements("number = 7\nnext_pair ::= construct_record#(Pair, field)(.context = &number)");
     try session.submitStatements("if next_pair.first != 7 or pair.first != 42 { abort }");
 }
+
+test "REPL compile-time value parameters survive submissions and failed specialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&a, std.testing.io, .{ .fallback_core_dir = "core" });
+    defer sf.freeList(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(files.items);
+    var session: interactive.Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Label := #(.label: StringView) (.value: Int32)");
+    try session.submitDefinitions("read_label := #(.label: StringView) (.self: &Label#(label)) -> (.text: StringView) { text = label }");
+    try session.submitStatements("first ::= Label#(\"retained\")(.value = 1)");
+    try session.submitStatements("if read_label(&first) != \"retained\" { abort }");
+    try std.testing.expectError(error.Reported, session.submitStatements("invalid ::= Label#(.label = true)(.value = 0)"));
+    try session.submitStatements("second ::= Label#(\"other\")(.value = 2)");
+    try session.submitStatements("if read_label(&first) != \"retained\" or read_label(&second) != \"other\" { abort }");
+}

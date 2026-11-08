@@ -15,6 +15,33 @@ also hold other compile-time values, such as array lengths.
 Array#(.n = 4, .t = Int32)
 ```
 
+## Immutable value parameters
+
+Value parameters can contain strings, booleans, numeric literals, arrays,
+public records and choice values, including nullable defaults. They can be
+forwarded through generic functions, type aliases and conformance templates.
+Their immutable values contribute to specialization identity, not instance layout:
+
+```rg
+Option := #(.T: Type, .help: StringView = "", .default_value: ?T = ..none) (.value: T)
+Output := Option#(StringView, .help = "Output file", .default_value = ..some(.value = "app"))
+```
+
+Values are checked against their declared parameter type, including integer
+ranges and generic-dependent types such as `?T`. Reference values, runtime
+storage, noncopyable values and private record fields/choice alternatives are rejected.
+String literals are allowed as immutable StringView values. Record field spelling
+order is canonicalized. The same specialization and stored layout are used by
+native execution, the VM and the REPL.
+
+> [!IMPLEMENTATION]
+> Non-integer value arguments currently accept literal trees and forwarded value
+> parameters. Arbitrary calls, field projections and computed expressions are not
+> yet evaluated as value arguments. Integer expressions retain their existing
+> staged evaluator. Record metadata literals currently supply every field rather
+> than evaluating omitted record-field defaults. This restriction does not affect
+> defaults on the generic parameter declarations themselves.
+
 `type_of(.value = expression)` obtains the type of an expression as a
 compile-time value. Type queries do not execute the expression for its
 runtime effects.

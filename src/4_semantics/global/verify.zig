@@ -20,8 +20,10 @@ pub fn verifyUnit(graph: *const graph_mod.GlobalSemanticGraph, unit: ?*const @im
         try require(recipe.module_index < graph.modules.items.len);
         try require(verify.rangeFits(recipe.bindings, graph.captured_expression_bindings.items.len));
     }
-    for (graph.captured_expression_bindings.items) |binding|
+    for (graph.captured_expression_bindings.items) |binding| {
         try require(verify.optionalIdFits(binding.ty, graph.types.items.len));
+        if (binding.value) |bytes| try require(verify.stringFits(bytes, graph.strings.items));
+    }
     for (graph.argument_default_temporaries.items) |temporary| {
         try require(verify.idFits(temporary.expression, graph.nodes.items.len));
         try require(verify.idFits(temporary.declaration, graph.nodes.items.len));
@@ -339,6 +341,7 @@ fn genericArgumentRangesEqual(
                 .type => |right_ty| if (left_ty != right_ty) return false,
                 else => return false,
             },
+            .comptime_value => |bytes| if (right.value != .comptime_value or !std.mem.eql(u8, graph.text(bytes), graph.text(right.value.comptime_value))) return false,
             .comptime_int => |left_int| switch (right.value) {
                 .comptime_int => |right_int| if (left_int != right_int) return false,
                 else => return false,

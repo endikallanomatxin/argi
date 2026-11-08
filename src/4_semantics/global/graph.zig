@@ -181,7 +181,7 @@ pub const unresolved_type_poison_definition: GlobalTypeDefinitionId = @enumFromI
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
 pub const ArgumentDefaultTemporary = struct { expression: GlobalNodeId, declaration: GlobalNodeId };
-pub const CapturedExpressionBinding = struct { ty: ?GlobalTypeId, integer: ?i64, definition: ?DefinitionValue = null };
+pub const CapturedExpressionBinding = struct { ty: ?GlobalTypeId, integer: ?i64, value: ?primitives.StringRange = null, definition: ?DefinitionValue = null };
 pub const CapturedExpression = struct {
     module_index: usize,
     expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId,

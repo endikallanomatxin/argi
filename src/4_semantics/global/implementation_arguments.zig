@@ -76,6 +76,9 @@ pub const Resolver = struct {
                 if (actual.value != .definition or definition.origin != actual.value.definition.origin or
                     !types.genericArgumentsEqual(self.graph, definition.captures, actual.value.definition.captures)) return false;
             }
+            if (supplied.values[raw]) |value| {
+                if (actual.value != .comptime_value or !std.mem.eql(u8, self.graph.text(value), self.graph.text(actual.value.comptime_value))) return false;
+            }
             if (supplied.ints[raw]) |integer| {
                 if (actual.value != .comptime_int or integer != actual.value.comptime_int) return false;
             }
@@ -108,6 +111,7 @@ pub const Resolver = struct {
                         .definition => |v| inferred.definitions[raw] = v,
                         .type => |v| inferred.types[raw] = v,
                         .comptime_int => |v| inferred.ints[raw] = v,
+                        .comptime_value => |v| inferred.values[raw] = v,
                     }
                 },
                 .type => |ty| inferred.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
@@ -116,6 +120,10 @@ pub const Resolver = struct {
                 },
                 .definition => |definition| inferred.definitions[raw] = self.generics.instantiateDefinitionValue(module_index, definition, bindings) catch |err| switch (err) {
                     error.UnboundDefinitionParameter => null,
+                    else => return err,
+                },
+                .comptime_value => |expression| inferred.values[raw] = @import("comptime_values.zig").encode(self.generics, module_index, expression, bindings) catch |err| switch (err) {
+                    error.UnboundComptimeParameter => null,
                     else => return err,
                 },
                 .comptime_int => |expression| inferred.ints[raw] = self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
@@ -145,6 +153,7 @@ pub const Resolver = struct {
                         .definition => .{ .definition = actual.definitions[raw] orelse return false },
                         .type => .{ .type = actual.types[raw] orelse return false },
                         .comptime_int => .{ .comptime_int = actual.ints[raw] orelse return false },
+                        .comptime_value => .{ .comptime_value = actual.values[raw] orelse return false },
                     };
                     if (!types.genericArgumentValuesEqual(self.graph, value, bound_value)) return false;
                 },
@@ -153,6 +162,9 @@ pub const Resolver = struct {
                 },
                 .definition => |definition| if (actual.definitions[raw]) |value| {
                     if (!try self.generics.inferDefinitionValue(module_index, definition, value, bindings)) return false;
+                },
+                .comptime_value => |expression| if (actual.values[raw]) |bytes| {
+                    if (!try self.generics.inferValue(module_index, expression, bytes, bindings)) return false;
                 },
                 .comptime_int => |expression| if (actual.ints[raw]) |value| {
                     if (!try self.contracts.inferConstraintIntPattern(module_index, expression, value, bindings)) return false;

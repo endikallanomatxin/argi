@@ -423,6 +423,7 @@ pub fn GenericArgument(comptime Ids: type) type {
             definition: DefinitionValue(Ids),
             type: Ids.TypeId,
             comptime_int: i64,
+            comptime_value: StringRange,
         };
     };
 }

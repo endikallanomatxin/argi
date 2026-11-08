@@ -546,6 +546,7 @@ pub const Resolver = struct {
                     if (!global_types.equal(self.graph, actual, wanted.types[raw].?)) return false;
                 },
                 .comptime_int => if ((bindings.ints[raw] orelse return false) != wanted.ints[raw].?) return false,
+                .comptime_value => if (!std.mem.eql(u8, self.graph.text(bindings.values[raw] orelse return false), self.graph.text(wanted.values[raw].?))) return false,
             }
         }
         return true;
@@ -1075,9 +1076,11 @@ pub const Resolver = struct {
 
     const SymbolicPattern = struct { module: usize, ty: ir.ParameterizedTypeId };
     const SymbolicIntPattern = struct { module: usize, expression: ir.ParameterizedIntExprId };
+    const SymbolicValuePattern = struct { module: usize, expression: ir.ParameterizedNodeId };
     const PatternSubstitutions = struct {
         types: std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern),
         integers: std.AutoHashMap(ir.ComptimeParameterId, SymbolicIntPattern),
+        values: std.AutoHashMap(ir.ComptimeParameterId, SymbolicValuePattern),
     };
 
     fn symbolicIntsEqual(self: *Resolver, a: SymbolicIntPattern, b: SymbolicIntPattern) bool {
@@ -1100,13 +1103,52 @@ pub const Resolver = struct {
         return self.symbolicIntsEqual(general, specific);
     }
 
+    fn valueParameter(self: *Resolver, pattern: SymbolicValuePattern) ?ir.ComptimeParameterId {
+        const storage = &self.modules[pattern.module].semantic.parameterized_storage.ir;
+        const node = storage.nodes.items[@intFromEnum(pattern.expression)];
+        if (node != .pending) return null;
+        const pending = storage.pending.items[@intFromEnum(node.pending)];
+        if (pending != .resolve_expression or pending.resolve_expression.detail != .comptime_parameter) return null;
+        return pending.resolve_expression.detail.comptime_parameter;
+    }
+
+    fn symbolicValuesEqual(self: *Resolver, a: SymbolicValuePattern, b: SymbolicValuePattern) !bool {
+        if (self.valueParameter(a)) |left| return a.module == b.module and self.valueParameter(b) == left;
+        if (self.valueParameter(b) != null) return false;
+        var left = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[a.module].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer left.deinit(self.allocator);
+        var right = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[b.module].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer right.deinit(self.allocator);
+        const x = @import("comptime_values.zig").encode(self.generics, a.module, a.expression, &left) catch |err| switch (err) {
+            error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        const y = @import("comptime_values.zig").encode(self.generics, b.module, b.expression, &right) catch |err| switch (err) {
+            error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        return std.mem.eql(u8, self.graph.text(x), self.graph.text(y));
+    }
+
+    fn patternValueCovers(self: *Resolver, general: SymbolicValuePattern, specific: SymbolicValuePattern, substitutions: *PatternSubstitutions) !bool {
+        if (self.valueParameter(general)) |parameter| {
+            if (substitutions.values.get(parameter)) |previous| return self.symbolicValuesEqual(previous, specific);
+            try substitutions.values.put(parameter, specific);
+            return true;
+        }
+        // TODO: Prove coverage for compound value patterns containing parameters.
+        return self.symbolicValuesEqual(general, specific);
+    }
+
     pub fn patternTupleCovers(self: *Resolver, general_module: usize, general: parameterized_storage.ContractConformance, specific_module: usize, specific: parameterized_storage.ContractConformance) !bool {
         var substitutions = PatternSubstitutions{
             .types = std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern).init(self.allocator),
             .integers = std.AutoHashMap(ir.ComptimeParameterId, SymbolicIntPattern).init(self.allocator),
+            .values = std.AutoHashMap(ir.ComptimeParameterId, SymbolicValuePattern).init(self.allocator),
         };
         defer substitutions.types.deinit();
         defer substitutions.integers.deinit();
+        defer substitutions.values.deinit();
         const left = self.modules[general_module].semantic.parameterized_storage.ir.generic_arguments.items[general.participants.start..][0..general.participants.len];
         const right = self.modules[specific_module].semantic.parameterized_storage.ir.generic_arguments.items[specific.participants.start..][0..specific.participants.len];
         for (left, right) |a, b| {
@@ -1134,6 +1176,12 @@ pub const Resolver = struct {
                 if (substitutions) |mapping| {
                     if (!try self.patternTypeCovers(lp, rp, mapping)) return false;
                 } else if (!try self.symbolicTypesEqual(lp, rp)) return false;
+            } else if (l.value == .comptime_value and r.value == .comptime_value) {
+                const lp: SymbolicValuePattern = .{ .module = a.module, .expression = l.value.comptime_value };
+                const rp: SymbolicValuePattern = .{ .module = b.module, .expression = r.value.comptime_value };
+                if (substitutions) |mapping| {
+                    if (!try self.patternValueCovers(lp, rp, mapping)) return false;
+                } else if (!try self.symbolicValuesEqual(lp, rp)) return false;
             } else if (l.value == .comptime_int and r.value == .comptime_int) {
                 const lp: SymbolicIntPattern = .{ .module = a.module, .expression = l.value.comptime_int };
                 const rp: SymbolicIntPattern = .{ .module = b.module, .expression = r.value.comptime_int };
@@ -1234,6 +1282,7 @@ pub const Resolver = struct {
             try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[module_index].text(parameter.name)), .value = switch (parameter.kind) {
                 .type => .{ .type = bindings.types[raw].? },
                 .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                .comptime_value => .{ .comptime_value = bindings.values[raw].? },
                 .definition => .{ .definition = bindings.definitions[raw].? },
             } });
         }
@@ -1340,6 +1389,7 @@ pub const Resolver = struct {
                     .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
                     .type => .{ .type = bindings.types[raw].? },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                    .comptime_value => .{ .comptime_value = bindings.values[raw].? },
                 },
             });
         }
@@ -2613,12 +2663,14 @@ pub const Resolver = struct {
                             .definition => .{ .definition = selected.definitions[raw] orelse return false },
                             .type => .{ .type = selected.types[raw] orelse return false },
                             .comptime_int => .{ .comptime_int = selected.ints[raw] orelse return false },
+                            .comptime_value => .{ .comptime_value = selected.values[raw] orelse return false },
                         };
                         if (!global_types.genericArgumentValuesEqual(self.graph, value, actual)) return false;
                     },
                     .definition => |pattern| if (!try self.generics.inferDefinitionValue(module_index, pattern, selected.definitions[raw] orelse return false, bindings)) return false,
                     .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
                     .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
+                    .comptime_value => |expression| if (!try self.generics.inferValue(module_index, expression, selected.values[raw] orelse return false, bindings)) return false,
                 }
             }
         }
@@ -2666,6 +2718,9 @@ pub const Resolver = struct {
                     const wanted = ir_storage.generic_arguments.items[arguments.pattern.start + position];
                     const given = self.graph.generic_arguments.items[arguments.actual.start + position];
                     switch (wanted.value) {
+                        .comptime_value => |expression| {
+                            if (given.value != .comptime_value or !try self.generics.inferValue(module_index, expression, given.value.comptime_value, bindings)) return false;
+                        },
                         .projection => |projection| if (!global_types.genericArgumentValuesEqual(self.graph, try self.generics.instantiateArgumentProjection(module_index, projection, bindings), given.value)) return false,
                         .definition => |definition_value| {
                             if (given.value != .definition or !try self.generics.inferDefinitionValue(module_index, definition_value, given.value.definition, bindings)) return false;
@@ -2739,6 +2794,8 @@ pub const Resolver = struct {
                             if (!try self.inferConstraintTypePattern(module_index, wanted.value.type, given.value.type, bindings)) return false;
                         } else if (wanted.value == .comptime_int and given.value == .comptime_int) {
                             if (!try self.inferConstraintIntPattern(module_index, wanted.value.comptime_int, given.value.comptime_int, bindings)) return false;
+                        } else if (wanted.value == .comptime_value and given.value == .comptime_value) {
+                            if (!try self.generics.inferValue(module_index, wanted.value.comptime_value, given.value.comptime_value, bindings)) return false;
                         } else if (wanted.value == .definition and given.value == .definition) {
                             if (!try self.generics.inferDefinitionValue(module_index, wanted.value.definition, given.value.definition, bindings)) return false;
                         } else return false;
@@ -2776,12 +2833,7 @@ pub const Resolver = struct {
         const ir_storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         return switch (ir_storage.int_expressions.items[@intFromEnum(pattern)]) {
             .literal => |value| value == actual,
-            .parameter => |parameter| blk: {
-                const slot = &bindings.ints[@intFromEnum(parameter)];
-                if (slot.*) |previous| break :blk previous == actual;
-                slot.* = actual;
-                break :blk true;
-            },
+            .parameter => |parameter| self.generics.inferIntegerParameter(module_index, parameter, actual, bindings),
             .binary, .projection, .execution => (self.generics.evalInt(module_index, pattern, bindings) catch |err| switch (err) {
                 error.ComptimeExecutionPending, error.OutOfMemory => return err,
                 else => return false,
@@ -2985,6 +3037,7 @@ pub const Resolver = struct {
                     .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
                     .type => .{ .type = bindings.types[raw] orelse return error.UnboundGenericTypeParameter },
                     .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.UnboundComptimeParameter },
+                    .comptime_value => .{ .comptime_value = bindings.values[raw] orelse return error.UnboundComptimeParameter },
                 },
             });
         }
@@ -3030,6 +3083,7 @@ pub const Resolver = struct {
                 before += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .comptime_value => @intFromBool(bindings.values[raw] != null),
                     .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
@@ -3049,6 +3103,7 @@ pub const Resolver = struct {
                 after += switch (parameter.kind) {
                     .type => @intFromBool(bindings.types[raw] != null),
                     .comptime_int => @intFromBool(bindings.ints[raw] != null),
+                    .comptime_value => @intFromBool(bindings.values[raw] != null),
                     .definition => @intFromBool(bindings.definitions[raw] != null),
                 };
             }
@@ -3064,6 +3119,7 @@ pub const Resolver = struct {
             const is_bound = switch (parameter.kind) {
                 .type => bindings.types[raw] != null,
                 .comptime_int => bindings.ints[raw] != null,
+                .comptime_value => bindings.values[raw] != null,
                 .definition => bindings.definitions[raw] != null,
             };
             if (!is_bound) return false;

@@ -355,11 +355,12 @@ const Context = struct {
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 _ = field.type_node orelse return error.InvalidGenericParameter;
                 const kind: parameterized_storage.ComptimeParameterKind =
-                    if (self.tree.parameterizedDefinition(field.type_node.?) != null or parameterized_lowerer.isFunctionBuiltin(self.tree, self.source, field.type_node.?)) .definition else if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                    if (self.tree.parameterizedDefinition(field.type_node.?) != null or parameterized_lowerer.isFunctionBuiltin(self.tree, self.source, field.type_node.?)) .definition else if (parameterized_lowerer.isTypeParameter(self.tree, self.source, field)) .type else if (parameterized_lowerer.isIntegerParameterType(self.tree, self.source, field.type_node.?)) .comptime_int else .comptime_value;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
                     .kind = kind,
+                    .source = self.sourceRef(field_node),
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = kind });
             }
@@ -385,7 +386,7 @@ const Context = struct {
                             self.graph.semantic.parameterized_storage.comptime_parameters.items[start + @as(u32, @intCast(offset))].family_parameters = signature;
                         }
                     },
-                    .comptime_int => parameter_record.value_type = try lowerer.lowerType(value_type_node, false),
+                    .comptime_int, .comptime_value => parameter_record.value_type = try lowerer.lowerType(value_type_node, false),
                     .type => {
                         if (!isTypeName(self.tree, self.source, value_type_node, "Type"))
                             parameter_record.constraint = try lowerer.lowerContractConstraint(value_type_node);

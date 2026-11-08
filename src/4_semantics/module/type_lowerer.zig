@@ -234,6 +234,17 @@ pub const Context = struct {
             return self.lowerComputedType(owner);
         }
         const arguments_literal = self.tree.specializationArguments(generic.arguments) orelse return error.InvalidGenericArguments;
+        for (arguments_literal.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node) orelse continue;
+            if (field.default_value) |value_node| {
+                if (self.tree.structValueLiteral(value_node) != null or self.tree.choiceLiteral(value_node) != null or self.tree.listLiteral(value_node) != null) return self.lowerComputedType(owner);
+                if (self.tree.literal(value_node)) |literal| switch (self.tree.tokenContent(literal.token).literal) {
+                    .string_literal, .bool_literal, .regular_float_literal, .scientific_float_literal, .char_literal => return self.lowerComputedType(owner),
+                    else => {},
+                };
+            }
+        }
+
         // A positional or named type-shaped argument may denote a function
         // definition or a definition-valued alias. Retain the expression until
         // global resolution can classify its compile-time value.

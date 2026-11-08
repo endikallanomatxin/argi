@@ -1044,10 +1044,11 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             try writer.writeAll("#(");
             for (graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len], 0..) |argument, index| {
                 if (index != 0) try writer.writeAll(", ");
-                try writer.print(".{s} {s} ", .{ graph.text(argument.name), if (argument.value == .comptime_int) "=" else ":" });
+                try writer.print(".{s} {s} ", .{ graph.text(argument.name), if (argument.value == .comptime_int or argument.value == .comptime_value) "=" else ":" });
                 switch (argument.value) {
                     .type => |value| try writeType(writer, graph, value),
                     .comptime_int => |value| try writer.print("{d}", .{value}),
+                    .comptime_value => try writer.writeAll("<value>"),
                     .definition => |value| try writer.writeAll(graph.familyDefinitionName(value.origin)),
                 }
             }

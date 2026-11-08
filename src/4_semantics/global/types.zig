@@ -538,6 +538,7 @@ pub fn genericArgumentValuesEqual(graph: *const graph_mod.GlobalSemanticGraph, l
         .definition => |value| right == .definition and value.origin == right.definition.origin and genericArgumentsEqual(graph, value.captures, right.definition.captures),
         .type => |value| right == .type and identityEqual(graph, value, right.type),
         .comptime_int => |value| right == .comptime_int and value == right.comptime_int,
+        .comptime_value => |value| right == .comptime_value and std.mem.eql(u8, graph.text(value), graph.text(right.comptime_value)),
     };
 }
 

@@ -97,6 +97,13 @@ feature first.
   fields/alternatives and reject CUnion layouts through aliases. Keep CLI policy
   in the library; reflection hooks must remain general.
 
+- Immutable generic value arguments use self-contained descriptions in
+  `global/comptime_values.zig`. Preserve value equality, type checking and
+  parameter forwarding through aliases, contracts, captured defaults and REPL
+  sessions. Staged requests own snapshots independently of speculative string
+  pools. Metadata parameters never become runtime instance fields. Reject
+  noncopyable values, runtime references and private/overlapping representations.
+
 - Construct borrowed virtual handles with `Virtual#(Contract)(reference)`.
   Aliases of virtual types use the same checked construction path; do not
   reintroduce a separate public conversion function.

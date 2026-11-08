@@ -34,11 +34,12 @@ fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, membe
     const wrong_kind = if (kind) |expected| switch (expected) {
         .type => "associated element is not a type",
         .comptime_int => "associated element is not an integer constant",
+        .comptime_value => "associated element is not a compile-time value",
         .definition => "associated element is not a type family",
     } else "invalid associated element";
     const unknown_member = if (kind) |expected| switch (expected) {
         .type => "unknown associated type",
-        .comptime_int => "unknown associated constant",
+        .comptime_int, .comptime_value => "unknown associated constant",
         .definition => "unknown associated type family",
     } else "unknown associated element";
     if (self.graph.isTypeUnresolved(base)) return error.UnresolvedAssociatedType;

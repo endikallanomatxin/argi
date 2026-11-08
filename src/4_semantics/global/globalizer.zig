@@ -275,6 +275,7 @@ fn appendGenericArguments(allocator: std.mem.Allocator, result: *global_sg.Globa
                 } },
                 .type => |id| .{ .type = globalType(o, id) },
                 .comptime_int => |number| .{ .comptime_int = number },
+                .comptime_value => |bytes| .{ .comptime_value = try relocateString(module, bytes, o.string_base) },
             },
         });
     }

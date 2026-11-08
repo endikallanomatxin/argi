@@ -18,7 +18,7 @@ const Node = union(enum) {
     shape: p.SemanticType(Ids),
     nominal: struct { origin: g.GlobalTypeDefinitionId, arguments: p.Range(Ids.GenericArgId), representation: Ids.TypeId },
 };
-const DefaultBinding = struct { ty: ?Ids.TypeId, integer: ?i64, definition: ?p.DefinitionValue(Ids) = null };
+const DefaultBinding = struct { ty: ?Ids.TypeId, integer: ?i64, value: ?p.StringRange = null, definition: ?p.DefinitionValue(Ids) = null };
 const DefaultField = struct { name: p.StringRange, value: Ids.NodeId };
 const PendingDefault = struct {
     module_index: usize,
@@ -230,6 +230,8 @@ pub const Recipe = struct {
                     if (expression.module_index != v.module_index or expression.expression != v.expression or expression.bindings.len != v.bindings.len) break :pending false;
                     for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], self.graph.captured_expression_bindings.items[expression.bindings.start..][0..expression.bindings.len]) |saved_binding, current_binding| {
                         if (saved_binding.integer != current_binding.integer) break :pending false;
+                        if ((saved_binding.value == null) != (current_binding.value == null)) break :pending false;
+                        if (saved_binding.value) |bytes| if (!std.mem.eql(u8, self.recipe.text(bytes), self.graph.text(current_binding.value.?))) break :pending false;
                         if (saved_binding.definition) |definition| {
                             const current_definition = current_binding.definition orelse break :pending false;
                             if (definition.origin != current_definition.origin or !try self.argumentsEqual(definition.captures, current_definition.captures)) break :pending false;
@@ -251,6 +253,7 @@ pub const Recipe = struct {
                     .definition => |definition| if (definition.origin != right.value.definition.origin or !try self.argumentsEqual(definition.captures, right.value.definition.captures)) return false,
                     .type => |ty| if (!try self.typeId(ty, right.value.type)) return false,
                     .comptime_int => |value| if (value != right.value.comptime_int) return false,
+                    .comptime_value => |value| if (!std.mem.eql(u8, self.recipe.text(value), self.graph.text(right.value.comptime_value))) return false,
                 }
             }
             return true;
@@ -311,6 +314,7 @@ pub const Recipe = struct {
                             .definition => |definition| if (definition.origin != y.value.definition.origin or !try self.argumentsEqual(definition.captures, y.value.definition.captures)) break :blk false,
                             .type => |ty| if (!try self.typeId(ty, y.value.type)) break :blk false,
                             .comptime_int => |n| if (n != y.value.comptime_int) break :blk false,
+                            .comptime_value => |v| if (!std.mem.eql(u8, self.recipe.text(v), self.graph.text(y.value.comptime_value))) break :blk false,
                         }
                     }
                     break :blk true;
@@ -442,7 +446,7 @@ pub const Recipe = struct {
                         const bindings = try self.a.alloc(DefaultBinding, expression.bindings.len);
                         defer self.a.free(bindings);
                         for (self.graph.captured_expression_bindings.items[expression.bindings.start..][0..expression.bindings.len], bindings) |binding, *out| {
-                            out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty, depth + 1) else null, .integer = binding.integer, .definition = if (binding.definition) |definition| .{ .origin = try self.familyDefinition(definition.origin), .captures = try self.captureArguments(definition.captures, depth + 1) } else null };
+                            out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty, depth + 1) else null, .integer = binding.integer, .value = if (binding.value) |bytes| try self.string(bytes) else null, .definition = if (binding.definition) |definition| .{ .origin = try self.familyDefinition(definition.origin), .captures = try self.captureArguments(definition.captures, depth + 1) } else null };
                         }
                         const start = std.math.cast(u32, self.recipe.default_bindings.items.len) orelse return error.SemanticGraphTooLarge;
                         try self.recipe.default_bindings.appendSlice(self.a, bindings);
@@ -483,6 +487,7 @@ pub const Recipe = struct {
                 .definition => |definition| .{ .definition = .{ .origin = try self.familyDefinition(definition.origin), .captures = try self.captureArguments(definition.captures, depth + 1) } },
                 .type => |ty| .{ .type = try self.typeId(ty, depth) },
                 .comptime_int => |n| .{ .comptime_int = n },
+                .comptime_value => |bytes| .{ .comptime_value = try self.string(bytes) },
             } };
             const start = std.math.cast(u32, self.recipe.arguments.items.len) orelse return error.SemanticGraphTooLarge;
             try self.recipe.arguments.appendSlice(self.a, values);
@@ -576,7 +581,7 @@ pub const Recipe = struct {
                             const bindings = try self.a.alloc(g.CapturedExpressionBinding, v.bindings.len);
                             defer self.a.free(bindings);
                             for (self.recipe.default_bindings.items[v.bindings.start..][0..v.bindings.len], bindings) |binding, *out| {
-                                out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty) else null, .integer = binding.integer, .definition = if (binding.definition) |definition| .{ .origin = definition.origin, .captures = try self.publishArguments(definition.captures) } else null };
+                                out.* = .{ .ty = if (binding.ty) |ty| try self.typeId(ty) else null, .integer = binding.integer, .value = if (binding.value) |bytes| try self.string(bytes) else null, .definition = if (binding.definition) |definition| .{ .origin = definition.origin, .captures = try self.publishArguments(definition.captures) } else null };
                             }
                             const graph = self.generics.graph;
                             const start = std.math.cast(u32, graph.captured_expression_bindings.items.len) orelse return error.SemanticGraphTooLarge;
@@ -618,6 +623,7 @@ pub const Recipe = struct {
                 .definition => |definition| .{ .definition = .{ .origin = definition.origin, .captures = try self.publishArguments(definition.captures) } },
                 .type => |ty| .{ .type = try self.typeId(ty) },
                 .comptime_int => |n| .{ .comptime_int = n },
+                .comptime_value => |bytes| .{ .comptime_value = try self.string(bytes) },
             } };
             const start = std.math.cast(u32, self.generics.graph.generic_arguments.items.len) orelse return error.SemanticGraphTooLarge;
             try self.generics.graph.generic_arguments.appendSlice(self.a, values);

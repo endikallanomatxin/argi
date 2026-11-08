@@ -189,6 +189,13 @@ pub const Context = struct {
             .profile_io = profile_io,
         };
         self.generic_functions.ownership_context = &self.ownership;
+        self.generics.value_ownership_context = &self.ownership;
+        self.generics.value_type_copyable = struct {
+            fn check(context: *anyopaque, ty: global_sg.GlobalTypeId) anyerror!bool {
+                const ownership: *ownership_mod.Resolver = @ptrCast(@alignCast(context));
+                return ownership.canImplicitlyCopy(ty);
+            }
+        }.check;
         self.generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
         self.generic_functions.ownership_checkpoint = ownership_mod.Resolver.parameterizedCheckpoint;
         self.generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;

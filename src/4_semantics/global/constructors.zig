@@ -260,7 +260,7 @@ pub const Resolver = struct {
                     error.TooManyGenericArguments => "too many compile-time arguments in constructor",
                     error.UnknownGenericArgument => "unknown compile-time parameter in constructor",
                     error.DuplicateGenericArgument => "duplicate compile-time argument in constructor",
-                    error.GenericArgumentKindMismatch => "compile-time constructor argument has the wrong kind (type or integer)",
+                    error.GenericArgumentKindMismatch => "compile-time constructor argument has the wrong kind (type, definition, integer or immutable value)",
                     else => return err,
                 };
                 try self.reportConstructorError(source, reason);
@@ -509,7 +509,7 @@ pub const Resolver = struct {
             .arguments = arguments,
         } });
         _ = generics.ensureGenericInstance(ty) catch |err| switch (err) {
-            error.OutOfMemory, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+            error.OutOfMemory, error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero, error.InvalidComptimeValueType, error.InvalidComptimeValue, error.ComptimeValueTooDeep => return err,
             error.ComptimeExecutionPending => return deferredInitializer(&scope, err),
             else => return .deferred,
         };

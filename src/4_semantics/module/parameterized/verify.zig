@@ -59,6 +59,9 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.optionalIdFits(parameter.value_type, storage.ir.types.items.len));
         try require(verify.optionalIdFits(parameter.default_type, storage.ir.types.items.len));
         try require(verify.optionalIdFits(parameter.default_integer, storage.ir.int_expressions.items.len));
+        try require(verify.optionalIdFits(parameter.default_value, storage.ir.nodes.items.len));
+        if (parameter.source) |source| try require(verify.sourceFits(source, graph.file_offsets.items.len));
+        try require(parameter.default_value == null or parameter.kind == .comptime_value);
         try require(parameter.default_type == null or parameter.kind == .type);
         try require(parameter.default_integer == null or parameter.kind == .comptime_int);
         try require(parameter.default_definition == null or parameter.kind == .definition);
@@ -75,6 +78,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             },
             .type => |id| try require(verify.idFits(id, storage.ir.types.items.len)),
             .comptime_int => |id| try require(verify.idFits(id, storage.ir.int_expressions.items.len)),
+            .comptime_value => |id| try require(verify.idFits(id, storage.ir.nodes.items.len)),
             .projection => |projection| {
                 try require(verify.idFits(projection.base, storage.ir.types.items.len));
                 try require(verify.stringFits(projection.member, graph.strings.items));

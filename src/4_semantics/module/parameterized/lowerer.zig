@@ -943,11 +943,11 @@ pub const Context = struct {
                 };
                 continue;
             }
-            if (offset < captured) continue;
+            if (offset < captured and self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index].kind != .comptime_value) continue;
             const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[parameter_index];
             switch (parameter_record.kind) {
                 .definition => unreachable,
-                .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
+                .comptime_int, .comptime_value => parameter_record.value_type = try self.lowerType(value_type_node, false),
                 .type => {
                     if (!isTypeBuiltin(self.tree, self.source, value_type_node))
                         parameter_record.constraint = try self.lowerContractConstraint(value_type_node);
@@ -955,13 +955,14 @@ pub const Context = struct {
             }
             // Lower defaults after registering all parameters, keeping their
             // expressions symbolic until explicit/input bindings are known.
-            if (field.default_value) |value| switch (parameter_record.kind) {
+            if (offset >= captured) if (field.default_value) |value| switch (parameter_record.kind) {
                 .definition => unreachable,
                 .type => parameter_record.default_type = switch (try self.lowerGenericValue(value, false)) {
                     .type => |ty| ty,
                     else => return error.InvalidGenericArgumentKind,
                 },
                 .comptime_int => parameter_record.default_integer = try self.lowerIntExpression(value),
+                .comptime_value => parameter_record.default_value = try self.lowerBodyNode(value),
             };
         }
     }
@@ -996,11 +997,12 @@ pub const Context = struct {
                 const name_text = self.tree.tokenTextFromSource(self.source, field.name_token);
                 _ = field.type_node orelse return error.InvalidGenericParameter;
                 const kind: parameterized_storage.ComptimeParameterKind =
-                    if (self.tree.parameterizedDefinition(field.type_node.?) != null or isFunctionBuiltin(self.tree, self.source, field.type_node.?)) .definition else if (isTypeParameter(self.tree, self.source, field)) .type else .comptime_int;
+                    if (self.tree.parameterizedDefinition(field.type_node.?) != null or isFunctionBuiltin(self.tree, self.source, field.type_node.?)) .definition else if (isTypeParameter(self.tree, self.source, field)) .type else if (isIntegerParameterType(self.tree, self.source, field.type_node.?)) .comptime_int else .comptime_value;
                 const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
                 try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
                     .name = try self.writer.addString(name_text),
                     .kind = kind,
+                    .source = self.sourceRef(field_node),
                 });
                 try self.parameters.append(.{ .name = name_text, .id = id, .kind = kind });
             }
@@ -1272,6 +1274,7 @@ pub const Context = struct {
                 .definition => .{ .definition = .{ .parameter = captured.id } },
                 .type => .{ .type = try self.addType(.{ .parameter = captured.id }) },
                 .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = captured.id }) },
+                .comptime_value => .{ .comptime_value = try self.addPending(node, .comptime_parameter, &.{}, null, null, .{ .comptime_parameter = captured.id }) },
             },
         });
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
@@ -1324,6 +1327,7 @@ pub const Context = struct {
             try captures.append(self.allocator, .{ .name = try self.writer.addString(name), .value = switch (binding.kind) {
                 .type => .{ .type = try self.addType(.{ .parameter = binding.id }) },
                 .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = binding.id }) },
+                .comptime_value => .{ .comptime_value = try self.addPending(node, .comptime_parameter, &.{}, null, null, .{ .comptime_parameter = binding.id }) },
                 .definition => .{ .definition = .{ .parameter = binding.id } },
             } });
         }
@@ -1406,6 +1410,7 @@ pub const Context = struct {
                     .definition => .{ .definition = .{ .parameter = binding.id } },
                     .type => .{ .type = try self.addType(.{ .parameter = binding.id }) },
                     .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = binding.id }) },
+                    .comptime_value => .{ .comptime_value = try self.addPending(node, .comptime_parameter, &.{}, null, null, .{ .comptime_parameter = binding.id }) },
                 };
             } else if (self.localFunction(name)) |declaration_id| {
                 const reference: ir.ParameterizedDeclId = @enumFromInt(self.graph.semantic.parameterized_storage.ir.declarations.items.len);
@@ -1428,6 +1433,12 @@ pub const Context = struct {
             if (reference == .name) return .{ .type = try self.lowerNamedType(node, reference.name.name_token, reference.name.qualifier_token, allow_self) };
         }
         if (self.tree.syntaxType(node) != null) return .{ .type = try self.lowerType(node, allow_self) };
+        if (self.tree.structValueLiteral(node) != null or self.tree.choiceLiteral(node) != null or self.tree.listLiteral(node) != null)
+            return .{ .comptime_value = try self.lowerBodyNode(node) };
+        if (self.tree.literal(node)) |literal| switch (self.tree.tokenContent(literal.token).literal) {
+            .string_literal, .bool_literal, .regular_float_literal, .scientific_float_literal, .char_literal => return .{ .comptime_value = try self.lowerBodyNode(node) },
+            else => {},
+        };
         return .{ .comptime_int = try self.lowerIntExpression(node) };
     }
 
@@ -1453,7 +1464,7 @@ pub const Context = struct {
     fn lowerIntExpressionFromToken(self: *Context, owner: syn.NodeIndex, token_index: syn.TokenIndex) !ir.ParameterizedIntExprId {
         const text = self.tree.tokenTextFromSource(self.source, token_index);
         if (self.parameter(text)) |binding| {
-            if (binding.kind != .comptime_int) return error.ExpectedParameterizedComptimeParameter;
+            if (binding.kind != .comptime_int and binding.kind != .comptime_value) return error.ExpectedParameterizedComptimeParameter;
             return self.addInt(.{ .parameter = binding.id });
         }
         if (self.tree.tokens.items(.content)[@intFromEnum(token_index)] == .identifier) {
@@ -1539,6 +1550,7 @@ pub const Context = struct {
                     .definition => .{ .definition = .{ .parameter = parameter_binding.id } },
                     .type => .{ .type = try self.addType(.{ .parameter = parameter_binding.id }) },
                     .comptime_int => .{ .comptime_int = try self.addInt(.{ .parameter = parameter_binding.id }) },
+                    .comptime_value => .{ .comptime_value = try self.addPending(node, .comptime_parameter, &.{}, null, null, .{ .comptime_parameter = parameter_binding.id }) },
                 },
             });
         }
@@ -2055,7 +2067,7 @@ pub const Context = struct {
                         const value = try self.addType(.{ .parameter = parameter_binding.id });
                         return self.addResolvedNode(node, try self.parameterizedBuiltin(.Type), .{ .type_literal = value });
                     },
-                    .comptime_int => {
+                    .comptime_int, .comptime_value => {
                         const parameter_record = self.graph.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter_binding.id)];
                         return self.addPending(
                             node,
@@ -2683,4 +2695,12 @@ fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
 test "module parameterized lowerer stores dependent shapes without syntax references" {
     try std.testing.expect(@sizeOf(ir.ParameterizedTypeId) == 4);
     try std.testing.expect(@sizeOf(ir.ParameterizedNodeId) == 4);
+}
+
+pub fn isIntegerParameterType(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) bool {
+    const name = tree.tokenTextFromSource(source, tree.mainToken(node));
+    inline for (.{ "Int", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "UIntNative", "IntNative" }) |integer| {
+        if (std.mem.eql(u8, name, integer)) return true;
+    }
+    return false;
 }

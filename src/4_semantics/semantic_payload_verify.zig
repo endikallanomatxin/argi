@@ -113,6 +113,7 @@ pub fn genericArgument(comptime Ids: type, value: primitives.GenericArgument(Ids
         },
         .type => |id| try require(verify.idFits(id, bounds.types)),
         .comptime_int => {},
+        .comptime_value => |value_bytes| try require(verify.stringFits(value_bytes, bounds.strings)),
     }
 }
 

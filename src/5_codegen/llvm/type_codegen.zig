@@ -212,6 +212,11 @@ pub const Lowerer = struct {
                 try self.encodeType(buffer, value);
             },
             .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
+            .comptime_value => |value| {
+                try buffer.appendSlice("_v");
+                for (self.graph.text(value)) |byte| try self.appendPrint(buffer, "{x:0>2}", .{byte});
+                try buffer.append('e');
+            },
             .definition => |value| {
                 try self.appendPrint(buffer, "_d{d}c{d}", .{ @intFromEnum(value.origin), value.captures.len });
                 try self.encodeGenericArguments(buffer, value.captures);
