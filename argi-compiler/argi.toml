@@ -1,0 +1,9 @@
+[module]
+name = "argi-compiler"
+minimum_argi_version = "0.4.0"
+
+[executables.argi-compiler]
+path = "source/argi-compiler"
+
+[run]
+default = "argi-compiler"
