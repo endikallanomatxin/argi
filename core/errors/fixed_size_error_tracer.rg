@@ -19,7 +19,9 @@ _error_trace_stride := () -> (.size: UIntNative) {
 
 -- The buffer is initialized caller-owned storage, not an allocation owned by
 -- the tracer. Trailing bytes that do not fit a complete slot are unused.
-FixedSizeErrorTracerInitArgs: Type = (.buffer: MutableArrayView#(.t: UInt8))
+FixedSizeErrorTracerInitArgs: Type = (
+    .buffer: MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+)
 
 implement Init#(FixedSizeErrorTracer, FixedSizeErrorTracerInitArgs) (
     .Result : Type = FixedSizeErrorTracer

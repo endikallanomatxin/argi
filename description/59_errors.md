@@ -210,9 +210,7 @@ input keeps that storage in the caller instead, even under a different local
 `assume error_tracer`:
 
 ```rg
-assume error_tracer ::= FixedSizeErrorTracer(
-    .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-) | Virtual#(ErrorTracer)($&_) | $&_
+assume error_tracer ::= $&Virtual#(ErrorTracer)($&FixedSizeErrorTracer())
 
 run()
 ```
@@ -223,8 +221,10 @@ capability type permits `Virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
 
-`FixedSizeErrorTracer` borrows an initialized byte view supplied by its caller.
-Construction is infallible and does not allocate. Callers may supply a local
+`FixedSizeErrorTracer()` defaults to an independent zeroed 4096-byte buffer
+evaluated in the caller scope, just like `BufferedWriter`. It borrows that
+storage and cannot escape its lifetime. Construction is infallible and does
+not allocate. An explicit `.buffer` overrides the default; callers may supply a local
 array, a slice, or storage obtained from an allocator. The buffer must remain
 valid for the tracer's lifetime; cleanup does not free or invalidate it.
 Headers are copied as bytes, so the buffer requires no additional alignment.
