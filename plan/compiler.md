@@ -4,6 +4,56 @@ REPL guarantees and acceptance evidence are recorded in
 [the acceptance notes](../docs/repl-acceptance.md). Prioritize demonstrated
 correctness or cost issues in the follow-ups below.
 
+## Next: self-hosting prerequisites
+
+Use the [self-hosted CLI prototype](../argi-compiler/README.md) as the next
+sequential workload. Investigate the following in order before expanding its
+frontend. These are targeted prerequisites and design checks, not a claim that
+all five require new language features. Arenas, owning collections, nominal
+IDs, contracts and structural reflection already exist.
+
+1. **Reference dependencies through owning collections.** Reproduce storing,
+   moving and extracting records/choices that borrow source text, using both
+   DynamicArray and HashMap. Opaque extraction currently retains conservative
+   storage-level dependencies instead of reconstructing exact dependencies of
+   stored references. Identify valid compiler operations this rejects and improve
+   precision where demonstrated. Accept independent source-backed values when
+   justified; keep rejection of source destruction, arena reset and genuinely
+   stale collection loans. Preserve cleanup on extraction and failure. See
+   [the documented limitation](../description/34_safety_model.md#physical-validity-of-references).
+2. **Computed compile-time metadata.** Extend non-integer generic value arguments
+   beyond literal trees and forwarded parameters to checked computed expressions,
+   calls and projections; support omitted record-field defaults in metadata
+   literals. Preserve immutable value identity, type checks, privacy, staged
+   ownership and REPL/cache behavior. Cover generated token/operation metadata,
+   equal computed specializations, invalid references and native/VM agreement.
+   See [immutable value parameters](../description/50_comptime.md#immutable-value-parameters).
+3. **AST and type-graph storage.** Start with nominal NodeId/TypeId values and
+   short-lived loans. A small choice-based AST with indexed children was compiled
+   and executed during investigation. DynamicArray growth invalidates outstanding
+   element references even without reallocation; a stale-loan probe was rejected
+   as specified. Do not weaken that contract. Evaluate a stable-storage collection
+   only if real compiler operations need it; this is initially library/design
+   work. See [dynamic-array lifetime rules](../description/161_lists.md).
+4. **Module boundaries.** Sketch source, syntax, semantic graph and phase modules
+   with shared types below their consumers. Imports currently reject cycles;
+   files in one directory share a namespace. Test whether that organization is
+   sufficient before proposing cyclic imports. See
+   [directory modules](../description/02_modules.md#directory-modules).
+5. **LLVM boundary and compiler scale.** No LLVM binding library was found in
+   core/more during investigation. Exercise the existing FFI with a minimal LLVM
+   module, verification, code emission and linking; validate the actual required
+   opaque handles, signatures and callbacks before identifying language gaps.
+   Track compile time, peak memory and specialization growth as the Argi workload
+   grows, separating clean frontend, cached frontend and backend costs. Neither
+   full LLVM compatibility nor compiler-scale performance has been established.
+
+The first implementation focus is reference-bearing collection behavior, followed
+by computed compile-time metadata. Keep investigation fixtures and conclusions
+with each change. Concurrency is a separate workstream; a sequential compiler
+must not depend on completing it. Do not postpone implementation for hypothetical
+features when IDs, ordinary contracts or existing library facilities suffice.
+
 ## Resolution
 
 - Replace temporary resolver communication state with explicit results. Preserve
