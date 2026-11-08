@@ -1112,6 +1112,8 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
         if (tree.valueField(node)) |field| if (field.name_token) |name| try markSyntax(tree, classes, name, TOKEN_INDEX.property, 0);
         if (tree.structFieldAccess(node)) |field| try markSyntax(tree, classes, field.field_token, TOKEN_INDEX.property, 0);
         if (tree.choiceLiteral(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, 0);
+        if (tree.matchCase(node)) |case| try markSyntax(tree, classes, case.variant_token, TOKEN_INDEX.enum_member, 0);
+        if (tree.choicePayloadAccess(node)) |access| try markSyntax(tree, classes, access.variant_token, TOKEN_INDEX.enum_member, 0);
         if (tree.choiceTypeVariant(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, declaration);
         if (tree.functionCall(node)) |call| {
             try markSyntax(tree, classes, call.callee_token, TOKEN_INDEX.function, 0);
@@ -2397,4 +2399,43 @@ test "LSP source paths resolve from process directory with a nested workspace" {
     const expected = try std.Io.Dir.cwd().realPathFileAlloc(std.testing.io, "more/command_line_interface/argument_parsing/typed_fields.rg", std.testing.allocator);
     defer std.testing.allocator.free(expected);
     try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "LSP semantic tokens classify keyword-named match alternatives" {
+    const code =
+        \\Payload := (.test: Int32)
+        \\Command := (..test Payload, ..return)
+        \\test smoke := () -> () {}
+        \\main := () -> () {
+        \\    value: Command = ..test(.test = 1)
+        \\    projected := value..test
+        \\    match value {
+        \\        ..test args { missing(args.test) }
+        \\        ..return {}
+        \\    }
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///keyword-members.rg";
+    try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
+    for ([_]bool{ false, true }) |semantic| {
+        var data = try service.documentTokens(uri, semantic);
+        defer data.deinit();
+        try expectSemanticToken(data.items, code, "test Payload", TOKEN_INDEX.enum_member, 1);
+        try expectSemanticToken(data.items, code, "test(.test", TOKEN_INDEX.enum_member, 0);
+        try expectSemanticToken(data.items, code, "test args", TOKEN_INDEX.enum_member, 0);
+        try expectSemanticToken(data.items, code, "test\n", TOKEN_INDEX.enum_member, 0);
+        try expectSemanticToken(data.items, code, "return {}", TOKEN_INDEX.enum_member, 0);
+        try expectSemanticToken(data.items, code, "test: Int32", TOKEN_INDEX.property, 1);
+        try expectSemanticToken(data.items, code, "test = 1", TOKEN_INDEX.property, 0);
+        try expectSemanticToken(data.items, code, "test) }", TOKEN_INDEX.property, 0);
+        try expectSemanticToken(data.items, code, "test smoke", TOKEN_INDEX.keyword, 0);
+        try expectSemanticToken(data.items, code, "match value", TOKEN_INDEX.keyword, 0);
+    }
 }
