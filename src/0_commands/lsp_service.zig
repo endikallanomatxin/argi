@@ -801,8 +801,11 @@ pub const LanguageService = struct {
 
     fn ownedPath(self: *LanguageService, path: []const u8) ![]u8 {
         if (std.fs.path.isAbsolute(path)) return self.allocator.dupe(u8, path);
-        if (self.root_path) |root| return std.fs.path.join(self.allocator, &.{ root, path });
-        return self.allocator.dupe(u8, path);
+        // Source collection resolves relative paths from the process directory,
+        // independently of the editor workspace root.
+        const absolute = try std.Io.Dir.cwd().realPathFileAlloc(self.io, path, self.allocator);
+        defer self.allocator.free(absolute);
+        return self.allocator.dupe(u8, absolute);
     }
 
     fn definitionForOccurrence(self: *LanguageService, analysis: *const Analysis, occurrence: editor_index.Occurrence) !?Definition {
@@ -2383,4 +2386,15 @@ test "LSP cancellation discards partial analysis and permits a clean retry" {
         try std.testing.expectEqual(@as(usize, 0), recovered.items.len);
         try std.testing.expect(svc.snapshot != null);
     }
+}
+
+test "LSP source paths resolve from process directory with a nested workspace" {
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.initialize("file:///unrelated/nested/workspace");
+    const actual = try service.ownedPath("more/command_line_interface/argument_parsing/typed_fields.rg");
+    defer std.testing.allocator.free(actual);
+    const expected = try std.Io.Dir.cwd().realPathFileAlloc(std.testing.io, "more/command_line_interface/argument_parsing/typed_fields.rg", std.testing.allocator);
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, actual);
 }
