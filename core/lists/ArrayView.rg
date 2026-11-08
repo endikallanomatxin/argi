@@ -45,29 +45,23 @@ single_mutable_array_view := #(.t: Type) (.data: $&t) -> (.array: MutableArrayVi
 _fixed_array_view := #(.n: UIntNative, .t: Type) (.array: &Array#(.n = n, .t: t)) -> (
     .view : ArrayView#(.t: t)
 ) {
-    if n == 0 {
+    #if n == 0 {
         view = (._data = ..none, ._length = 0)
-        return
+    } #else {
+        first ::= &array&[0]
+        view = (._data = ..some(.value = first), ._length = n)
     }
-
-    first ::= trusted_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(
-        .base = array
-    ).reference
-    view = (._data = ..some(.value = first), ._length = n)
 }
 
 _fixed_mutable_array_view := #(.n: UIntNative, .t: Type) (.array: $&Array#(.n = n, .t: t)) -> (
     .view : MutableArrayView#(.t: t)
 ) {
-    if n == 0 {
+    #if n == 0 {
         view = (._data = ..none, ._length = 0)
-        return
+    } #else {
+        first ::= $&array&[0]
+        view = (._data = ..some(.value = first), ._length = n)
     }
-
-    first ::= trusted_mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(
-        .base = array
-    ).reference
-    view = (._data = ..some(.value = first), ._length = n)
 }
 
 -- Reference mutability selects a writable or read-only view. Both forms

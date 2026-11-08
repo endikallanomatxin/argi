@@ -5348,11 +5348,12 @@ pub const Infer = struct {
             .address_of => |value| blk: {
                 if (self.graph.node(value).content == .array_index) {
                     const index = self.graph.node(value).content.array_index;
-                    // An indexed address borrows the storage reached by the
-                    // array pointer, which may itself be stored in an input
-                    // field. The iterator's pointer field is not the root of
-                    // the indexed element.
-                    break :blk .{ .input_place_values = try self.inferInputPaths(function_id, index.array_ptr) };
+                    // Borrow the array pointer's backing lifetime, not the
+                    // loaded array contents. A derived element is not the
+                    // whole referent and does not inherit its ownership.
+                    const base = self.graph.node(index.array_ptr).content;
+                    const pointer = if (base == .dereference) base.dereference.pointer else index.array_ptr;
+                    break :blk try self.validityOnlyEffect(try self.inferExpression(function_id, pointer));
                 }
                 break :blk .{ .input_places = try self.inferInputPaths(function_id, value) };
             },

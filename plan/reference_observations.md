@@ -292,3 +292,66 @@ The original ArrayView/Allocation programs remain open: their offset operations
 have no universal containment certificate, and relations nested in fallible or
 opaque results need their own publication proof. This increment does not make
 those programs safe by assertion or solve owner transfer/protected access.
+
+## Isolated callback audit after 954394eaf
+
+Do not infer a second unknown-call hole merely from the late Safety checker
+checking only known global effects. The earlier `global/once_verify.zig` pass
+checks isolated callback reachability: it rejects foreign/unresolved direct
+callees, indirect function calls, virtual calls and nonplain global storage.
+Ordinary helper calls and selected cleanup are traversed. The later Safety
+pass additionally rejects reads and writes of mutable plain globals.
+
+Compile-only regressions 143X/144X in `c_interop` exercise unknown native and
+virtual calls through helpers. They are rejected before native execution.
+The native example uses `abs` only to keep linking independent of a custom
+runtime; this is a test of the current isolation boundary, not a claim that
+`abs` itself races. This closed-world restriction is conservative, and does
+not establish a general protocol for sharing foreign state.
+
+An isolated worker adapter can still have `unknown_access` in its inferred
+summary: low-level accesses to its certified buffers are not all expressible
+as caller-relative input paths. Therefore rejecting every isolated target
+whose summary has that bit would break existing supported tasks. The bit is
+not itself a proof of global reachability. Conversely, this earlier isolation
+barrier does not authorize unknown calls from the submitting execution while
+loans are pending. That caller-side hole remains the immediate open gate.
+
+The focused isolated Debug run passes five cases (141X, 142, 143X, 144X and
+concurrency/01), with no failures, leaks or error logs. The primary working
+tree's unpublished uniform unknown-call check rejects concurrency/123X as
+intended, but still rejects safe 121 at `code_at(&array, 0)` and the reduced 177
+at the final element dereference. These compile-only results do not close the
+gate: the remaining work is preserving sufficient backing evidence for those
+safe accesses, not adding another blanket isolated-callback rejection.
+
+## Indexed reference lifetime correction
+
+Replacing the fixed-array view's trusted reinterpretation with ordinary checked
+indexing exposed a separate temporal hole. Before this correction, a helper
+returning `&array&[0]` could lose its input backing dependency in its summary.
+Returning that result from a caller-local array was accepted, both directly
+and through a generic helper returning the reference inside a record. These
+programs were compiled only, never executed.
+
+The indexed-address summary used `input_place_values` of the array expression.
+That denotes loaded contents, which need not contain any resource facts; it
+does not preserve the array pointer's backing lifetime. Derive the pointer
+from an immediate array-value dereference and apply the existing
+`validityOnlyEffect` to its inferred effect instead. This retains temporal
+dependencies without claiming whole-referent identity or ownership.
+
+The two fixed-array view factories can consequently use ordinary checked first
+element addresses. Compile-time empty/nonempty branches avoid forming an
+index-zero address for an empty array. No permission class, runtime descriptor
+or additional trusted operation is introduced.
+
+Regressions types/426X and 427X now reject the previously accepted escapes.
+Focused isolated Debug validation passes 304 internal safety tests and 27
+program cases, including empty views, contracts/287X, and concurrency/181 and
+185X--187X. A read-only review found no concrete issues. The isolated full
+ReleaseSafe program suite passes 2,562 cases with 11 skipped, zero failures,
+leaks or error logs. The serial run takes 29 minutes, with 2,358,104 KiB peak RSS
+and no swaps under the 6 GiB process limit. It excludes the unfinished
+unknown-call and loop experiments; staged source and fixtures match that tree.
+This correction does not close the caller unknown-effect gate.
