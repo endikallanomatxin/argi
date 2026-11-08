@@ -120,8 +120,16 @@ is explicit through `write_diagnostic`; parsing never writes or exits the proces
 
 ## Typed records and choices
 
-`parse#(T)` returns `Parsed#(T)`, a choice between `..arguments T` and
-`..help Help`. `Option`, `Positional` and `Flag` store only their `.value`.
+`parse#(T)` returns `Errable#(Parsed#(T), TypedReasons)`. The successful payload
+is a choice between `..arguments T` and `..help Help`. `Option`, `Positional`
+and `Flag` store only their `.value`.
+
+Help is a successful parse outcome, not an error. `parse` never prints, changes
+an exit status, aborts or exits the process. The caller handles help and execution
+explicitly; invalid arguments use the ordinary Errable error branch. There is no
+separate `try_parse` entry point. Return normally from the caller to preserve its
+lexical cleanup.
+
 A record declares the arguments; a choice declares subcommands whose payloads
 are argument records. The field/alternative names become long option/command
 names. Positional fields are consumed in declaration order.
