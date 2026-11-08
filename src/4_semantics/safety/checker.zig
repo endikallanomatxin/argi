@@ -5395,13 +5395,18 @@ pub const SafetyChecker = struct {
             const path = relation.source;
             // The source observation belongs to the evaluated argument, not
             // a load from its target. Stored references have their own frames.
-            const input = if (path.storage_domain == null and path.projections.len == 0)
-                (if (path.input_index < arguments.len) arguments[path.input_index] else facts.ValueFacts{})
-            else
-                try self.load_summary_input_value(path, arguments, state);
+            const input = try self.referenceObservationInput(path, arguments);
             result.lexical_frame = input.lexical_frame;
         }
         return result;
+    }
+
+    /// A relation source selects the evaluated argument value. It does not
+    /// implicitly load a referent because aggregate provenance names storage.
+    fn referenceObservationInput(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts) !facts.ValueFacts {
+        if (path.storage_domain != null or path.input_index >= arguments.len) return .{};
+        for (path.projections) |projection| if (projection == .dereference) return .{};
+        return self.projectValueFacts(arguments[path.input_index], path.projections);
     }
 
     fn instantiateRegionEffect(self: *SafetyChecker, domain_index: u32, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState, observe_handles: bool) !facts.DomainFacts {
@@ -13273,4 +13278,38 @@ test "structural access projections retain backing without loading stored refere
     const unknown_access = try checker.projectAccessPointer(unknown, &element, @enumFromInt(2));
     try std.testing.expectEqual(@as(?u32, null), unknown_access.lexical_frame);
     try std.testing.expectEqual(@as(usize, 0), unknown_access.fields.len);
+}
+
+test "reference relation projections select evaluated values without following container provenance" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const old: facts.ValueFacts = .{ .lexical_frame = 1 };
+    const actual: facts.ValueFacts = .{ .lexical_frame = 9 };
+    try state.setPlace(slot, .initialized, .{ .fields = &.{.{ .index = 0, .value = &old }} });
+    const snapshot: facts.ValueFacts = .{ .referenced_place = slot, .fields = &.{.{ .index = 0, .value = &actual }} };
+    const effect: facts.ValueEffect = .{ .reference_relation = .{ .source = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} } } };
+    const selected = try checker.instantiateOutput(effect, &.{snapshot}, &state);
+    try std.testing.expectEqual(@as(?u32, 9), selected.lexical_frame);
+    const missing = try checker.instantiateOutput(effect, &.{.{ .referenced_place = slot }}, &state);
+    try std.testing.expectEqual(@as(?u32, null), missing.lexical_frame);
+    const paths = [_]facts.InputPath{
+        .{ .input_index = 0, .projections = &.{.dereference} },
+        .{ .input_index = 0, .storage_domain = 0 },
+        .{ .input_index = 1 },
+    };
+    for (paths) |path| {
+        const unsupported = try checker.instantiateOutput(.{ .reference_relation = .{ .source = path } }, &.{snapshot}, &state);
+        try std.testing.expectEqual(@as(?u32, null), unsupported.lexical_frame);
+    }
+    const choice: facts.ValueFacts = .{ .variants = &.{.{ .index = 0, .value = &snapshot }} };
+    const nested = try checker.instantiateOutput(.{ .reference_relation = .{ .source = .{ .input_index = 0, .projections = &.{ .{ .variant = 0 }, .{ .field = 0 } } } } }, &.{choice}, &state);
+    try std.testing.expectEqual(@as(?u32, 9), nested.lexical_frame);
 }

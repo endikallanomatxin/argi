@@ -7662,16 +7662,16 @@ pub const Infer = struct {
             .array => |array| self.typeContainsPointer(array.element),
             .nullable => |child| self.typeContainsPointer(child),
             .inferred_errable => |value| self.typeContainsPointer(value.child),
-            .structural, .nominal, .generic => blk: {
-                const range = types.fields(self.graph, ty) orelse break :blk false;
-                for (self.graph.fields.items[range.start..][0..range.len]) |field|
-                    if (self.typeContainsPointer(field.ty)) break :blk true;
-                break :blk false;
-            },
-            .structural_choice, .inferred_choice => blk: {
-                const range = types.variants(self.graph, ty) orelse break :blk false;
-                for (self.graph.variants.items[range.start..][0..range.len]) |variant|
-                    if (variant.payload_type) |payload| if (self.typeContainsPointer(payload)) break :blk true;
+            .structural, .nominal, .generic, .structural_choice, .inferred_choice => blk: {
+                if (types.arrayElement(self.graph, ty)) |element| break :blk self.typeContainsPointer(element);
+                if (types.fields(self.graph, ty)) |range| {
+                    for (self.graph.fields.items[range.start..][0..range.len]) |field|
+                        if (self.typeContainsPointer(field.ty)) break :blk true;
+                }
+                if (types.variants(self.graph, ty)) |range| {
+                    for (self.graph.variants.items[range.start..][0..range.len]) |variant|
+                        if (variant.payload_type) |payload| if (self.typeContainsPointer(payload)) break :blk true;
+                }
                 break :blk false;
             },
             .builtin, .definition => false,
@@ -9178,4 +9178,33 @@ test "reference substitution preserves only direct immutable input observations"
     graph.bindings.items[0].mutability = .constant;
     graph.nodes.items[0].content = .{ .binding_use = @enumFromInt(1) };
     try std.testing.expect((try infer.substituteOutput(@enumFromInt(0), recipe, &arguments)).reference_relation == null);
+}
+
+test "nominal choices retain reference-bearing payload classification" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .nominal = @enumFromInt(0) },
+        .{ .nominal = @enumFromInt(1) },
+    });
+    try graph.variants.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .payload_type = @enumFromInt(1), .source = source, .value = 0 },
+        .{ .name = .{ .start = 0, .len = 0 }, .payload_type = @enumFromInt(0), .source = source, .value = 1 },
+    });
+    try graph.type_definitions.appendSlice(a, &.{
+        .{ .source = source, .choice_variants = .{ .start = 0, .len = 1 } },
+        .{ .source = source, .choice_variants = .{ .start = 1, .len = 1 } },
+    });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    try std.testing.expect(infer.typeContainsPointer(@enumFromInt(2)));
+    try std.testing.expect(!infer.typeContainsPointer(@enumFromInt(3)));
 }

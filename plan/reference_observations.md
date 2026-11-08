@@ -493,3 +493,31 @@ registered fixture source did not change between these checks. All staged
 compiler and fixture files match the isolated validation tree. This is a full
 program run plus a corrected preparation-check rerun, not an originally clean
 full-suite invocation. The uniform unknown-effect gate remains unpublished.
+
+
+## Evaluated reference selection and choice classification checkpoint
+
+A reference-relation source selects explicit fields/variants in the evaluated
+argument, without implicitly loading a referent named by aggregate provenance.
+A production unit test previously selected an old frame from that storage rather
+than the actual snapshot field. Selection now uses explicit value projections;
+missing fields, dereference paths and abstract domains provide no observation.
+No projected-source producer is introduced by this correction.
+
+The summary reference classifier now consults array elements, fields and choice
+variants for nominal/generic as well as structural aggregate representations.
+Previously nominal choices with reference payloads could be classified as plain
+because they had no record fields. A failing-then-passing unit test covers both
+reference-bearing and numeric-only nominal choices.
+
+Experimental embedded-input relation publication and local post-write propagation
+are excluded. The former exposed a still-accepted helper-retargeting reduction;
+the latter rejected that reduction but broke safe positives. Those experiments
+require further work and do not justify enabling broader observations. The
+uniform unknown-effect gate and unchanged 121/177 acceptance cases remain open.
+
+Validation on the isolated checkpoint tree passes 312 Debug safety unit tests and
+99 filtered program tests (choices and 193/194X/195X/196X), with zero failures,
+skips, leaks or error logs. The compiler build succeeds. Runs are serial under
+a 6 GiB process limit with the local cache on disk. This is focused validation,
+not a new full-program-suite result. Staged compiler sources match that tree.
