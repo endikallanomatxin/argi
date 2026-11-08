@@ -92,3 +92,7 @@ one `.rg` file and prints its formatted contents. The two flags are mutually
 exclusive. Edits are prepared before files are written; files with damaged
 tokens or delimiters are left untouched. The LSP uses the same formatter on
 the editor's current document, including unsaved changes.
+
+Import expressions use call-style spacing, for example
+`ap := import("command_line_interface/argument_parsing")`, without a space
+before the opening parenthesis. The editor highlights `import` as a builtin call.

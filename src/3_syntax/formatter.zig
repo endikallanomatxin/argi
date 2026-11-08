@@ -909,7 +909,7 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .ampersand) return !operandEnd(left) and left != .dollar;
     if (left == .ampersand) return false;
     if (left == .close_bracket and right == .identifier) return false;
-    if (right == .open_parenthesis) return left != .identifier and left != .close_parenthesis and left != .close_bracket;
+    if (right == .open_parenthesis) return left != .identifier and left != .keyword_import and left != .close_parenthesis and left != .close_bracket;
     if (right == .open_bracket) return !operandEnd(left);
     if (left == .open_brace and right == .close_brace) return false;
     if (left == .binary_operator and index >= 2 and !operandEnd(std.meta.activeTag(tokens.contents[index - 2]))) {
@@ -1634,4 +1634,8 @@ test "formatter treats keyword member names as operands" {
         "main := () -> () { value.test = value.test + 1 }\n",
         "main := () -> () { value.test = value.test + 1 }\n",
     );
+}
+
+test "formatter attaches import argument groups like calls" {
+    try expectFormat("ap := import (\"command_line_interface/argument_parsing\")\n", "ap := import(\"command_line_interface/argument_parsing\")\n");
 }

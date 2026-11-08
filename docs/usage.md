@@ -68,7 +68,12 @@ are specified but not implemented yet.
 ## Formatting and editor support
 
 The LSP provides diagnostics, semantic highlighting, hover, completion,
-document symbols, and navigation to definitions.
+document symbols, and navigation to definitions. Resolved local variables with
+no source reads receive warnings, including locals that are only assigned.
+Prefix intentional unused names with `_` to suppress the warning. Assumed
+capabilities, parameters and module declarations are excluded; warnings are
+limited to successfully analyzed bodies in the opened module. These editor
+warnings do not reject CLI builds.
 
 Syntax highlighting, formatting and document outlines do not wait for semantic
 analysis. A single background worker checks documents and publishes diagnostics;

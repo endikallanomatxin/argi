@@ -760,6 +760,10 @@ pub const LanguageService = struct {
             analysis.index = try editor_index.Index.build(analysis_allocator, &analysis.graph);
             try augmentTypeOccurrences(analysis_allocator, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
             analysis.index.sort();
+            if (!declarations_only and diagnostics.list.items.len == 0) {
+                try appendUnusedLocals(work, analysis, files, path, &output);
+                snapshot.diagnostics = output.items;
+            }
         }
         try self.cancellation.check();
         self.snapshot = snapshot;
@@ -1096,6 +1100,7 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
             },
             else => {},
         };
+        if (tree.importStatement(node) != null) try markSyntax(tree, classes, tree.mainToken(node), TOKEN_INDEX.function, 0);
         if (tree.functionDeclaration(node)) |function| try markSyntax(tree, classes, function.name_token, TOKEN_INDEX.function, declaration);
         if (tree.typeDeclaration(node)) |ty| {
             try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
@@ -1204,6 +1209,79 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
         }
         if (occurrence.declaration) classification.modifiers |= @as(u32, 1) << MOD_INDEX.declaration;
         try classes.put(occurrence.source.offset, classification);
+    }
+}
+
+// Warn only about source-written locals with resolved identities. Parameters,
+// public declarations and implicit capabilities have different usage rules.
+fn appendUnusedLocals(allocator: std.mem.Allocator, analysis: *const Analysis, sources: []const sf.SourceFile, entry_path: []const u8, output: *std.ArrayList(Diagnostic)) !void {
+    var local_sources: std.ArrayList(sf.SourceFile) = .empty;
+    for (sources) |source| {
+        if (source.origin == .bundled_core) continue;
+        if (!@import("../1_base/path_identity.zig").equal(std.fs.path.dirname(source.path) orelse ".", std.fs.path.dirname(entry_path) orelse ".")) continue;
+        try local_sources.append(allocator, source);
+    }
+    const files = try editor_syntax.load_files(allocator, local_sources.items);
+    const graph = &analysis.graph;
+    var used: std.AutoHashMap(graph_mod.GlobalBindingId, void) = .init(allocator);
+    for (graph.nodes.items) |node| {
+        if (node.content != .binding_use) continue;
+        const id = node.content.binding_use;
+        const binding = graph.bindings.items[@intFromEnum(id)];
+        if (node.source.file_index == binding.source.file_index and node.source.offset == binding.source.offset) continue;
+        const occurrence: editor_index.Occurrence = .{ .source = node.source, .target = .{ .binding = id }, .len = @intCast(graph.text(binding.name).len) };
+        if (!editor_index.occurrence_matches_source(graph, &analysis.source_db, occurrence)) continue;
+        var write_only = false;
+        for (files) |file| {
+            const source_file = editor_index.sourceFileId(graph, &analysis.source_db, node.source) orelse continue;
+            if (!std.mem.eql(u8, analysis.source_db.path(source_file), file.source.path)) continue;
+            for (0..file.tree.nodes.len) |raw| {
+                const syntax_node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+                if (file.tree.assignment(syntax_node)) |assignment| {
+                    if (file.tree.tokenLocation(assignment.name_token).offset == node.source.offset) write_only = true;
+                }
+            }
+        }
+        if (!write_only) try used.put(id, {});
+    }
+    for (files) |file| {
+        for (0..file.tree.nodes.len) |raw| {
+            const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            const binding = file.tree.symbolDeclaration(node) orelse continue;
+            if (file.tree.functionDeclaration(node) != null or file.tree.typeDeclaration(node) != null) continue;
+            const token_index = @intFromEnum(binding.name_token);
+            if (file.scope_start[token_index] == 0) continue;
+            const name = file.tree.tokenTextFromSource(file.source.code, binding.name_token);
+            if (std.mem.startsWith(u8, name, "_")) continue;
+            var assumed = false;
+            for (0..file.tree.nodes.len) |parent| {
+                if (file.tree.assumedDeclaration(@enumFromInt(@as(u32, @intCast(parent))))) |declaration| {
+                    if (declaration == node) {
+                        assumed = true;
+                        break;
+                    }
+                }
+            }
+            if (assumed) continue;
+            const location = file.tree.tokenLocation(binding.name_token);
+            var found = false;
+            var read = false;
+            for (graph.bindings.items, 0..) |candidate, index| {
+                const source_file = editor_index.sourceFileId(graph, &analysis.source_db, candidate.source) orelse continue;
+                if (candidate.source.offset != location.offset or !std.mem.eql(u8, analysis.source_db.path(source_file), file.source.path)) continue;
+                if (!std.mem.eql(u8, graph.text(candidate.name), name)) continue;
+                found = true;
+                if (used.contains(@enumFromInt(@as(u32, @intCast(index))))) read = true;
+            }
+            if (!found or read) continue;
+            const id = analysis.source_db.findPath(file.source.path) orelse continue;
+            try output.append(allocator, .{
+                .path = try allocator.dupe(u8, file.source.path),
+                .range = tokenRange(&analysis.source_db, .{ .file = id, .offset = location.offset }, @intCast(name.len)),
+                .severity = .warn,
+                .message = try std.fmt.allocPrint(allocator, "unused local variable '{s}'; prefix its name with '_' if intentional", .{name}),
+            });
+        }
     }
 }
 
@@ -1581,7 +1659,8 @@ test "LSP constructor navigation finds selected init bodies and default record d
     const uri = "file:///constructors.rg";
     const diagnostics = try service.openDocument(uri, path, 1, code);
     defer diagnostics.deinit();
-    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    try std.testing.expectEqual(@as(usize, 5), diagnostics.items.len);
+    for (diagnostics.items) |item| try std.testing.expectEqual(Severity.warn, item.severity);
     for ([_]struct { call: []const u8, declaration: []const u8 }{
         .{ .call = "MyType()", .declaration = ".init = MyTypeInitArgs" },
         .{ .call = "MyType(2)", .declaration = ".init = MyTypeInitArgs" },
@@ -2077,7 +2156,8 @@ test "LSP scoped implementation navigation retains written operation names" {
     const uri = "file:///scoped-operations.rg";
     const diagnostics = try service.openDocument(uri, path, 1, code);
     defer diagnostics.deinit();
-    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.items.len);
+    for (diagnostics.items) |item| try std.testing.expectEqual(Severity.warn, item.severity);
     const position = Position{ .line = 7, .character = 29 };
     const definition = (try service.definition(uri, position)).?;
     defer definition.deinit(std.testing.allocator);
@@ -2124,7 +2204,8 @@ test "LSP renames scoped operations independently of shared aliases" {
     const uri = "file:///shared-operations.rg";
     const diagnostics = try service.openDocument(uri, path, 1, code);
     defer diagnostics.deinit();
-    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    try std.testing.expectEqual(@as(usize, 3), diagnostics.items.len);
+    for (diagnostics.items) |item| try std.testing.expectEqual(Severity.warn, item.severity);
     const hover = (try service.hover(uri, .{ .line = 9, .character = 27 })).?;
     defer std.testing.allocator.free(hover.contents);
     try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
@@ -2385,7 +2466,8 @@ test "LSP cancellation discards partial analysis and permits a clean retry" {
         svc.cancellation = .{};
         var recovered = try svc.documentDiagnostics(uri);
         defer recovered.deinit();
-        try std.testing.expectEqual(@as(usize, 0), recovered.items.len);
+        try std.testing.expectEqual(@as(usize, 1), recovered.items.len);
+        for (recovered.items) |item| try std.testing.expectEqual(Severity.warn, item.severity);
         try std.testing.expect(svc.snapshot != null);
     }
 }
@@ -2438,4 +2520,47 @@ test "LSP semantic tokens classify keyword-named match alternatives" {
         try expectSemanticToken(data.items, code, "test smoke", TOKEN_INDEX.keyword, 0);
         try expectSemanticToken(data.items, code, "match value", TOKEN_INDEX.keyword, 0);
     }
+}
+
+test "LSP warns about unused local bindings without rejecting the module" {
+    const code =
+        \\global := 1
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    unused := 1
+        \\    written :: Int32 = 0
+        \\    written = 2
+        \\    used := 3
+        \\    _ignored := 4
+        \\    assume provided := 5
+        \\    status_code = used
+        \\    {
+        \\        used := 6
+        \\    }
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const diagnostics = try service.openDocument("file:///unused-locals.rg", path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 3), diagnostics.items.len);
+    for (diagnostics.items) |item| {
+        try std.testing.expectEqual(Severity.warn, item.severity);
+        try std.testing.expect(std.mem.startsWith(u8, item.message, "unused local variable '"));
+        try std.testing.expect(item.range.start.line == 2 or item.range.start.line == 3 or item.range.start.line == 10);
+    }
+}
+
+test "LSP highlights import as a builtin call" {
+    const code = "ap := import(\"command_line_interface/argument_parsing\")\n";
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///import-call.rg", "/import-call.rg", 1, code));
+    var data = try service.syntaxTokens("file:///import-call.rg");
+    defer data.deinit();
+    try expectSemanticToken(data.items, code, "import(", TOKEN_INDEX.function, 0);
 }
