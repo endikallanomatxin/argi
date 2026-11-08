@@ -98,9 +98,12 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 
 const moduleMainParameterized =
     \\main := (.system: System) -> (.status_code: Int32 = 0) {
-    \\    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
-    \\    assume writer ::= $&BufferedWriter($&system.terminal&.stdout)
-    \\    assume reader ::= $&system.terminal&.stdin
+    \\    assume allocator := Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
+    \\    stdout_writer := $&BufferedWriter($&system.terminal&.stdout)
+    \\    stderr_writer := $&BufferedWriter($&system.terminal&.stderr)
+    \\    assume writer := stderr_writer
+    \\    assume error_tracer ::= $&Virtual#(ErrorTracer)($&FixedSizeErrorTracer())
+    \\    assume reader := $&system.terminal&.stdin
     \\}
     \\
 ;
@@ -293,9 +296,11 @@ test "init executable scaffolds basic layout" {
     try expectFileContains(std.testing.io, manifest, "[run]\n");
     try expectFileContains(std.testing.io, manifest, "default = \"sample_app\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
-    try expectFileContains(std.testing.io, entry_main, "assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))\n");
-    try expectFileOmits(std.testing.io, entry_main, "error_tracer");
-    try expectFileContains(std.testing.io, entry_main, "assume reader ::= $&system.terminal&.stdin");
-    try expectFileContains(std.testing.io, entry_main, "assume writer ::= $&BufferedWriter($&system.terminal&.stdout)");
+    try expectFileContains(std.testing.io, entry_main, "assume allocator := Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))\n");
+    try expectFileContains(std.testing.io, entry_main, "assume error_tracer ::= $&Virtual#(ErrorTracer)($&FixedSizeErrorTracer())");
+    try expectFileContains(std.testing.io, entry_main, "assume reader := $&system.terminal&.stdin");
+    try expectFileContains(std.testing.io, entry_main, "stdout_writer := $&BufferedWriter($&system.terminal&.stdout)");
+    try expectFileContains(std.testing.io, entry_main, "stderr_writer := $&BufferedWriter($&system.terminal&.stderr)");
+    try expectFileContains(std.testing.io, entry_main, "assume writer := stderr_writer");
     try expectFileOmits(std.testing.io, entry_main, "assume ffi");
 }

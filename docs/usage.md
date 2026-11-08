@@ -10,15 +10,24 @@ cd hello
 argi run
 ```
 
+Generated executable entrypoints use constant allocator and stream bindings,
+separate `stdout_writer` and `stderr_writer`, and assume stderr as the default
+writer. Pass `.writer = stdout_writer` for normal program output. A local
+`FixedSizeErrorTracer()` is assumed for traced errors; stdin remains available
+through the assumed reader. No FFI capability is assumed by default.
+
 `argi init` without a name initializes the current directory; `argi init --lib`
 creates a library. Existing files are preserved. The generated entrypoint
 sets up allocator and I/O capabilities:
 
 ```rg
 main := (.system: System) -> (.status_code: Int32 = 0)  {
-    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
-    assume writer ::= $&BufferedWriter($&system.terminal&.stdout)
-    assume reader ::= $&system.terminal&.stdin
+    assume allocator := Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))
+    stdout_writer := $&BufferedWriter($&system.terminal&.stdout)
+    stderr_writer := $&BufferedWriter($&system.terminal&.stderr)
+    assume writer := stderr_writer
+    assume error_tracer ::= $&Virtual#(ErrorTracer)($&FixedSizeErrorTracer())
+    assume reader := $&system.terminal&.stdin
 }
 ```
 

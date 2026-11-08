@@ -303,9 +303,12 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
     try expectEqualStrings(
         "main := (.system: System) -> (.status_code: Int32 = 0) {\n" ++
-            "    assume allocator ::= Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))\n" ++
-            "    assume writer ::= $&BufferedWriter($&system.terminal&.stdout)\n" ++
-            "    assume reader ::= $&system.terminal&.stdin\n" ++
+            "    assume allocator := Virtual#(Allocator)($&GeneralPurposeAllocator(system.page_allocator))\n" ++
+            "    stdout_writer := $&BufferedWriter($&system.terminal&.stdout)\n" ++
+            "    stderr_writer := $&BufferedWriter($&system.terminal&.stderr)\n" ++
+            "    assume writer := stderr_writer\n" ++
+            "    assume error_tracer ::= $&Virtual#(ErrorTracer)($&FixedSizeErrorTracer())\n" ++
+            "    assume reader := $&system.terminal&.stdin\n" ++
             "}\n",
         source_text,
     );
@@ -415,7 +418,7 @@ test "argi init executable package can print from generated main" {
     const generated = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, source_path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(generated);
     const closing_brace = std.mem.lastIndexOfScalar(u8, generated, '}') orelse return error.TestUnexpectedResult;
-    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
+    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\", .writer = stdout_writer)\n    print(\"stderr marker\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
     defer std.testing.allocator.free(runnable);
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = source_path, .data = runnable });
 
@@ -432,6 +435,7 @@ test "argi init executable package can print from generated main" {
     defer std.testing.allocator.free(run_result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
     try expectEqualStrings("Hello, World!\n", run_result.stdout);
+    try expectEqualStrings("stderr marker\n", run_result.stderr);
 }
 
 test "argi build package supports explicit dot and executable flag" {
