@@ -3,8 +3,6 @@
 
 Help := (.command: StringView)
 
-Parsed := #(.T: Type) (..help Help, ..arguments T)
-
 TypedReasons: Type = (
     ..invalid_argument_value,
     ..unexpected_positional,
@@ -202,27 +200,16 @@ _parse_record := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .start      : UIntNative,
     .allocator  : Virtual#(Allocator),
     .diagnostic : ?$&Diagnostic
-) -> (.result: Errable#(Parsed#(T), TypedReasons)) {
+) -> (.result: Errable#(T, TypedReasons)) {
     assume allocator
     fixed_specs ::= collect_fields#(T, _field_info, FieldInfo)(.context = Int32())
     specs ::= DynamicArray#(Spec)(.capacity = 4)!
     for info in fixed_specs {
         if info.positional == false {
-            if info.spec.name == "help" or info.spec.short_name == "h" {
-                result = ..error(.reason = ..invalid_cli_schema)
-                return
-            }
             push(.self = $&specs, .value = info.spec, .allocator = allocator)!
         }
     }
     _validate_specs(view(&specs))!
-    wants_help ::= _wants_typed_help(
-        .source = source, .start = start, .specs = view(&specs), .diagnostic = diagnostic
-    )!
-    if wants_help {
-        result = ..ok ..help(.command = "")
-        return
-    }
     matches ::= parse_specs(
         .source = source, .specs = view(&specs), .start = start, .diagnostic = diagnostic
     )!
@@ -238,7 +225,7 @@ _parse_record := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
         result = ..error(.reason = ..unexpected_positional)
         return
     }
-    result = ..ok ..arguments ~arguments
+    result = ..ok ~arguments
 }
 
 _parse_typed := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
@@ -246,7 +233,7 @@ _parse_typed := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .start      : UIntNative           = 0,
     .allocator  : Virtual#(Allocator),
     .diagnostic : ?$&Diagnostic        = ..none
-) -> (.result: Errable#(Parsed#(T), TypedReasons)) {
+) -> (.result: Errable#(T, TypedReasons)) {
     #if is_choice_type(.type = T) {
         result = _parse_choice#(T)(
             .source = source, .start = start, .allocator = allocator, .diagnostic = diagnostic
@@ -263,7 +250,7 @@ parse := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .start        : UIntNative              = 0,
     .allocator    : Virtual#(Allocator),
     .error_tracer : $&Virtual#(ErrorTracer)
-) -> (.result: Errable#(Parsed#(T), TypedReasons, ErrorWithTrace#(TypedReasons))) {
+) -> (.result: Errable#(T, TypedReasons, ErrorWithTrace#(TypedReasons))) {
     diagnostic ::= Diagnostic()
     diagnostic_ref: ?$&Diagnostic = ..some(.value = $&diagnostic)
     match _parse_typed#(T, Source)(
@@ -312,7 +299,11 @@ _typed_reason_text := (.reason: TypedReasons) -> (.text: StringView) {
 }
 
 _help_record := #(.T: Type, .W: Type: Writer#(W)) (
-    .writer: $&W, .program: StringView, .about: StringView, .parent: StringView = ""
+    .writer         : $&W,
+    .program        : StringView,
+    .about          : StringView,
+    .parent         : StringView  = "",
+    .automatic_help : Bool        = false
 ) -> !() {
     infos ::= collect_fields#(T, _field_info, FieldInfo)(.context = Int32())
     write(writer, about)!
@@ -341,18 +332,19 @@ _help_record := #(.T: Type, .W: Type: Writer#(W)) (
             _write_option(writer, info.spec)!
         }
     }
-    write(writer, "  -h, --help  Show help\n")!
+    if automatic_help { write(writer, "  -h, --help  Show help\n")! }
 }
 
 _ChoiceContext := #(.Source: Type) (
-    .source     : &Source,
-    .start      : UIntNative,
-    .name       : StringView,
-    .allocator  : Virtual#(Allocator),
-    .diagnostic : ?$&Diagnostic,
-    .failed     : Bool                 = false,
-    .help       : Bool                 = false,
-    .reason     : TypedReasons         = ..invalid_argument_value
+    .source      : &Source,
+    .start       : UIntNative,
+    .name        : StringView,
+    .allocator   : Virtual#(Allocator),
+    .diagnostic  : ?$&Diagnostic,
+    .failed      : Bool                 = false,
+    .help        : Bool                 = false,
+    .help_target : StringView           = "",
+    .reason      : TypedReasons         = ..invalid_argument_value
 )
 
 _command_info := #(.Payload: Type) (.name: StringView, .context: Int32) -> (
@@ -382,14 +374,9 @@ _read_payload := #(.Payload: Type, .Source: Type: ArgumentSource#(Source)) (
         .allocator  = context&.allocator
         .diagnostic = context&.diagnostic
     ) {
-        ..ok ~parsed {
-            match parsed {
-                ..arguments ~arguments {
-                    payload = SubcommandPayload#(Payload).wrap(~arguments)
-                    return
-                }
-                ..help _ { context&.help = true }
-            }
+        ..ok ~arguments {
+            payload = SubcommandPayload#(Payload).wrap(~arguments)
+            return
         }
         ..error error {
             context&.failed = true
@@ -454,12 +441,18 @@ _parse_choice := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .start      : UIntNative,
     .allocator  : Virtual#(Allocator),
     .diagnostic : ?$&Diagnostic
-) -> (.result: Errable#(Parsed#(T), TypedReasons)) {
+) -> (.result: Errable#(T, TypedReasons)) {
     _set_diagnostic(diagnostic, .argument = "", .message = "")
     commands ::= collect_variants#(T, _command_info, SubcommandInfo)(.context = Int32())
     defaults :: UIntNative = 0
+    help_count :: UIntNative = 0
+    help_name :: StringView = ""
     for command in commands {
         if command.is_default { defaults = defaults + 1 }
+        if command.is_help {
+            help_count = help_count + 1;
+            help_name = command.name
+        }
         if [
             byte_length(&command.short_alias) > 1
             or _valid_cli_option_name(command.long_alias) == false
@@ -480,7 +473,7 @@ _parse_choice := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
             }
         }
     }
-    if defaults > 1 {
+    if defaults > 1 or help_count > 1 {
         result = ..error(.reason = ..invalid_cli_schema);
         return
     }
@@ -506,10 +499,6 @@ _parse_choice := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
                 and _command_alias(token, command.short_alias, .short = true)
             ] { name = command.name }
         }
-        if name == "" and [token == "--help" or token == "-h"] {
-            result = ..ok ..help(.command = "");
-            return
-        }
         if name == "" {
             _set_diagnostic(diagnostic, .argument = token, .message = "unknown command")
             result = ..error(.reason = ..unknown_command);
@@ -523,13 +512,45 @@ _parse_choice := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
         .allocator  = allocator
         .diagnostic = diagnostic
     )
-    visit_variants#(T, _probe_payload_help)(.context = $&context)
-    if context.failed {
-        result = ..error(.reason = context.reason)
-        return
+    if help_count > 0 {
+        visit_variants#(T, _probe_payload_help)(.context = $&context)
+        if context.failed {
+            result = ..error(.reason = context.reason)
+            return
+        }
+        if context.help {
+            context.help_target = name
+            context.name = help_name
+            result = ..ok construct_choice#(T, _make_help_payload, _choose_payload)(
+                .context = $&context
+            )
+            return
+        }
     }
-    if context.help {
-        result = ..ok ..help(.command = name)
+    if name == help_name {
+        requested ::= _parse_record#(_HelpArguments)(
+            .source     = source
+            .start      = next_start
+            .allocator  = allocator
+            .diagnostic = diagnostic
+        )!
+        target ::= requested.command.value
+        if target != "" {
+            known ::= false
+            for command in commands { if command.name == target { known = true } }
+            if known == false {
+                _set_diagnostic(
+                    diagnostic, .argument = target, .message = "unknown help command"
+                )
+                result = ..error(.reason = ..unknown_command)
+                return
+            }
+        }
+        context.name = help_name
+        context.help_target = target
+        result = ..ok construct_choice#(T, _make_help_payload, _choose_payload)(
+            .context = $&context
+        )
         return
     }
     command ::= construct_choice#(T, _read_payload, _choose_payload)(.context = $&context)
@@ -537,18 +558,21 @@ _parse_choice := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
         result = ..error(.reason = context.reason)
         return
     }
-    if context.help {
-        result = ..ok ..help(.command = name)
-        return
-    }
-    result = ..ok ..arguments ~command
+    result = ..ok ~command
+}
+
+_make_help_payload := #(.Payload: Type, .Source: Type) (
+    .name: StringView, .context: $&_ChoiceContext#(Source)
+) -> (.payload: Payload) {
+    payload = SubcommandPayload#(Payload).from_help(context&.help_target)
 }
 
 _HelpContext := #(.W: Type) (
-    .writer  : $&W,
-    .command : StringView,
-    .program : StringView,
-    .failed  : Bool        = false
+    .writer         : $&W,
+    .command        : StringView,
+    .program        : StringView,
+    .failed         : Bool        = false,
+    .automatic_help : Bool        = false
 )
 
 _write_payload_help := #(.Payload: Type, .W: Type: Writer#(W)) (
@@ -556,7 +580,11 @@ _write_payload_help := #(.Payload: Type, .W: Type: Writer#(W)) (
 ) -> () {
     if name == context&.command {
         _help_record#(SubcommandPayload#(Payload).Arguments)(
-            context&.writer, .program = name, .about = "", .parent = context&.program
+            context&.writer
+            .program        = name
+            .about          = ""
+            .parent         = context&.program
+            .automatic_help = context&.automatic_help
         ) handle error { context&.failed = true }
     }
 }
@@ -587,6 +615,10 @@ write_typed_help := #(.T: Type, .W: Type: Writer#(W)) (
     .writer: $&W, .help: &Help, .program: StringView, .about: StringView = ""
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) {
     #if is_choice_type(.type = T) {
+        infos ::= collect_variants#(T, _command_info, SubcommandInfo)(.context = Int32())
+        automatic_help ::= false
+        for info in infos { if info.is_help { automatic_help = true } }
+
         if byte_length(&help&.command) == 0 {
             write(writer, about)!
             write(writer, "\nUsage: ")!
@@ -598,10 +630,15 @@ write_typed_help := #(.T: Type, .W: Type: Writer#(W)) (
                 result = ..error(.reason = ..stream_write_failed)
                 return
             }
-            write(writer, "\nUse <COMMAND> --help for command help.\n  -h, --help  Show help\n")!
+            if automatic_help {
+                write(writer, "\nUse <COMMAND> --help for command help.\n")!
+            }
         } else {
             context ::= _HelpContext#(W)(
-                .writer = writer, .command = help&.command, .program = program
+                .writer         = writer
+                .command        = help&.command
+                .program        = program
+                .automatic_help = automatic_help
             )
             visit_variants#(T, _write_payload_help)(.context = $&context)
             if context.failed {

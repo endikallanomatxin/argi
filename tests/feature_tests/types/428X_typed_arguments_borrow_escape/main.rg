@@ -3,7 +3,7 @@ ap := import ("command_line_interface/argument_parsing")
 Args := (.input: ap.Positional#(StringView))
 
 escape := (.allocator: Virtual#(Allocator), .error_tracer: $&Virtual#(ErrorTracer)) -> (
-    .result : Errable#(ap.Parsed#(Args), ap.TypedReasons, ErrorWithTrace#(ap.TypedReasons))
+    .result : Errable#(Args, ap.TypedReasons, ErrorWithTrace#(ap.TypedReasons))
 ) {
     values: [1]StringView = ("main.rg")
     source ::= ap.ArgumentViews(view(&values))

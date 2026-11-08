@@ -121,9 +121,9 @@ is explicit through `write_diagnostic`; parsing never writes or exits the proces
 ## Typed records and choices
 
 `parse#(T)` returns
-`Errable#(Parsed#(T), TypedReasons, ErrorWithTrace#(TypedReasons))`.
-The successful payload is a choice between `..arguments T` and `..help Help`. `Option`, `Positional`
-and `Flag` store only their `.value`.
+`Errable#(T, TypedReasons, ErrorWithTrace#(TypedReasons))`.
+The successful payload is exactly the requested record or command choice.
+`Option`, `Positional` and `Flag` store only their `.value`.
 
 Typed `parse` uses the ordinary required `error_tracer` capability. On failure it
 records the reason, argument and supplied value in that tracer, then returns a
@@ -160,32 +160,30 @@ BuildArgs := (
     .verbose: ap.Flag#()
 )
 RunArgs := (.input: ap.Positional#(StringView), .release: ap.Flag#())
-Command: Type = (..build BuildArgs, ..run RunArgs)
+Command: Type = (..build BuildArgs, ..run RunArgs, ..help ap.Help)
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
     assume writer ::= $&system.terminal&.stderr
-    assume error_tracer ::= $&Virtual#(ErrorTracer)(
-        $&FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
-    )
-    parsed ::= ap.parse#(Command)(system.args, .start = 1)!!! { status_code = 1 }
-    match parsed {
+    assume error_tracer ::= $&Virtual#(ErrorTracer)($&FixedSizeErrorTracer())
+    command ::= ap.parse#(Command)(system.args, .start = 1)!!! { status_code = 1 }
+    match command {
         ..help info {
             ap.write_typed_help#(Command)(writer, &info, .program = "example")!!! {
                 status_code = 1
             }
         }
-        ..arguments command { match command {
-            ..build args {
-                if args.verbose.value { print(args.output.value)!!! { status_code = 1 } }
-            }
-            ..run args { print(args.input.value)!!! { status_code = 1 } }
-        } }
+        ..build args {
+            if args.verbose.value { print(args.output.value)!!! { status_code = 1 } }
+        }
+        ..run args { print(args.input.value)!!! { status_code = 1 } }
     }
 }
 ```
 
-For records without subcommands, pass `BuildArgs` instead of `Command`.
+For records without subcommands, pass `BuildArgs` instead of `Command`;
+then `parse` returns that record directly and recognizes only its declared fields.
+Automatic help requires a choice with a declared `Help` payload.
 An `Option` or `Positional` is required unless its configuration supplies a
 default. Flags default to false. Numeric options use the existing checked core
 parsers; an invalid value, including overflow, returns `invalid_argument_value`.
@@ -212,11 +210,12 @@ The lower-level specification API remains available as `parse_specs`; its
 The typed entry supports one occurrence per option, no repeated or variadic
 fields, and a single level of subcommands. Positionals are consumed in declaration
 order; place defaulted positionals last. Extra positionals are rejected.
-`--help`/`-h` are reserved and return before reading required fields. Tokens after `--`, or consumed as
-option values, remain ordinary text. Only the selected subcommand's argument
-values are constructed. Help uses the type again when rendering, so the handle
-contains just a borrowed command name; it does not own a fabricated argument
-record. Config metadata is queried to describe the selected command.
+When a choice declares a `Help` payload, `--help`/`-h` in the selected
+command's arguments construct that alternative before reading required fields.
+These option names are then reserved in command argument records. Tokens after
+`--`, or consumed as option values, remain ordinary text. Help does not construct
+the requested command's argument values. Its payload contains only the borrowed
+command name; rendering discovers the schema from the command type.
 
 Typed StringView values borrow the original argument source. Keep that source
 alive while using the resulting record/choice. Failures preserve their typed reason and attach context to the supplied error
@@ -227,12 +226,11 @@ tracer.
 Command choices can attach optional metadata to a payload:
 
 ```rg
-HelpArgs := (.command: ap.Positional#(StringView, .default_value = ..some(.value = "")))
 EmptyArgs: Type = ()
 Command: Type = (
     ..build BuildArgs,
     ..help ap.Subcommand#(
-        HelpArgs, .is_default = true, .long_alias = "help", .short_alias = "h"
+        ap.Help, .is_default = true
     ),
     ..version ap.Subcommand#(EmptyArgs, .long_alias = "version", .short_alias = "V")
 )
@@ -244,15 +242,29 @@ command remains an error. `--help`, `-h` and `help` select the declared help
 command above; `--version`, `-V` and `version` select its version command.
 The parser contains no reserved version result or version output policy.
 
-Ordinary payloads remain unchanged. A Subcommand payload stores its parsed
-record in `.arguments`, so the help target above is
-`args.arguments.command.value` after matching `..help args`. Metadata is part of
-the specialized type, not stored in each instance. The SubcommandPayload contract
-supplies the record type, metadata and wrapping operation for these payloads.
+Ordinary payloads remain unchanged. A `Subcommand` payload stores its value
+in `.arguments`; after matching `..help info`, the wrapper above exposes the
+help target as `info.arguments.command`. Using `..help ap.Help` directly exposes
+`info.command` and does not choose a default command. Help supplies its standard
+`--help`/`-h` aliases in command position; the wrapper can override those
+command aliases. Selected-command help still uses the standard `--help`/`-h`
+options. Metadata is part of the
+specialized type, not stored in each instance.
 
-Aliases are recognized only in command position. Text consumed as an option
+`help build` and `build --help` construct the same declared help alternative,
+with `command = "build"`. An unknown help target returns `unknown_command`.
+The alternative can have another name, such as `..usage ap.Help`; behavior is
+selected through `SubcommandPayload` evidence, not the alternative's spelling.
+The contract describes the argument record, metadata, normal wrapping and
+construction from a help target. Wrappers forward that evidence.
+
+Help and version are ordinary successful command alternatives at the same level.
+The parser neither prints nor exits. Version needs no special parser result or
+rendering policy: the application handles its declared alternative.
+
+Command aliases are recognized in command position. Text consumed as an option
 value, or following `--` in a command's arguments, keeps its ordinary meaning.
-`build --help` still returns `..help Help` without requiring or constructing
-BuildArgs. If no command claims `--help`/`-h`, they retain the existing top-level
-help behavior. Multiple defaults, duplicate aliases and invalid alias spellings
-are schema errors. The library never prints or exits on these outcomes.
+Without a `Help` payload, the parser does not add help aliases or intercept
+`--help`/`-h`; help rendering also omits automatic help instructions. Multiple
+defaults, multiple Help alternatives, duplicate aliases and invalid alias
+spellings are schema errors.

@@ -21,17 +21,12 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     source ::= ap.ArgumentViews(view(&values))
     parsed ::= ap.parse#(Command)(.source = &source)!!! { status_code = 1 }
     match parsed {
-        ..help _ { status_code = 2 }
-        ..arguments command {
-            match command {
-                ..build args {
-                    if [
-                        args.input.value != "main.rg"
-                        or args.output.value != "output"
-                        or args.jobs.value != 8
-                    ] { abort }
-                }
-            }
+        ..build args {
+            if [
+                args.input.value != "main.rg"
+                or args.output.value != "output"
+                or args.jobs.value != 8
+            ] { abort }
         }
     }
 }

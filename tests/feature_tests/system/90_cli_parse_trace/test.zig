@@ -7,12 +7,12 @@ test "typed CLI errors report through tracer and preserve cleanup" {
     const binary = try support.outputPathFor(path);
     defer std.testing.allocator.free(binary);
     for ([_]struct { args: []const []const u8, code: u8, message: []const u8, argument: []const u8, value: []const u8 }{
-        .{ .args = &.{ "--jobs", "8" }, .code = 0, .message = "", .argument = "", .value = "" },
+        .{ .args = &.{ "run", "--jobs", "8" }, .code = 0, .message = "", .argument = "", .value = "" },
         .{ .args = &.{"--help"}, .code = 0, .message = "", .argument = "", .value = "" },
-        .{ .args = &.{ "--jobs", "256" }, .code = 2, .message = "invalid argument value", .argument = "jobs", .value = "256" },
-        .{ .args = &.{"--unknown"}, .code = 2, .message = "unknown option", .argument = "unknown", .value = "" },
-        .{ .args = &.{"--jobs"}, .code = 2, .message = "missing option value", .argument = "jobs", .value = "" },
-        .{ .args = &.{}, .code = 2, .message = "missing required argument", .argument = "jobs", .value = "" },
+        .{ .args = &.{ "run", "--jobs", "256" }, .code = 2, .message = "invalid argument value", .argument = "jobs", .value = "256" },
+        .{ .args = &.{ "run", "--unknown" }, .code = 2, .message = "unknown option", .argument = "unknown", .value = "" },
+        .{ .args = &.{ "run", "--jobs" }, .code = 2, .message = "missing option value", .argument = "jobs", .value = "" },
+        .{ .args = &.{"run"}, .code = 2, .message = "missing required argument", .argument = "jobs", .value = "" },
     }) |case| {
         var argv: std.ArrayList([]const u8) = .empty;
         defer argv.deinit(std.testing.allocator);
