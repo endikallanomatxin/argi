@@ -172,3 +172,35 @@ internal suite passes 1,506 tests with one skipped, 585,128 KiB peak RSS and no
 swaps. Focused Debug reference/concurrency program validation passes 330 tests,
 with zero failures, leaks or error logs. These checks validate source selection;
 no contained-backing guarantee has been implemented.
+
+## Bounded Zig experiment for relation composition
+
+The test-only [reference observation model](../src/4_semantics/safety/reference_observation_model.zig)
+uses the compiler's InputPath and ValidityRootId vocabulary. It does not add a
+ValueEffect field or change production authorization. Run it with:
+
+```sh
+zig build test-internal -j1 -Dtest-jobs=1 -Dtest-filter="observation model"
+```
+
+Its finite universe has two backings, two generations and the three nonempty
+intervals of a two-byte extent. It exhaustively checks all observation triples
+and pairs of relation grades for composition, and all output alternatives for
+same-source joins. Different source paths lose the relation conservatively;
+their names never prove disjoint backing. Slot loads use independent stored-value
+evidence. Widened extents and retargeted snapshots do not satisfy containment.
+Relation truth is separate from validity: equal ended snapshots still require a
+separate liveness check.
+
+Four tests pass. Three deliberately incorrect variants were also tested and
+failed behavioral assertions: retaining the first join branch's stronger grade,
+retaining identity through a contained derivation, and inheriting a slot's
+relation when loading an unknown reference. Restoring the intended rules passes
+all four tests again. This challenges the rules rather than merely checking
+that a particular helper returns an expected tag.
+
+The model assumes that containment has already been certified. It does not verify
+ArrayView constructors, runtime bounds checks, summary extraction, source-path
+stability across writes, or native physical provenance. Those remain the next
+implementation obligations. It therefore supports the candidate algebra, not a
+soundness or data-race-freedom claim about the compiler.
