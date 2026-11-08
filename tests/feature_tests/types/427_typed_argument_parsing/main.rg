@@ -15,6 +15,7 @@ Command: Type = (..build BuildArgs)
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     assume writer ::= $&system.terminal&.stderr
     values: [4]StringView = ("build", "main.rg", "--jobs", "8")
     source ::= ap.ArgumentViews(view(&values))

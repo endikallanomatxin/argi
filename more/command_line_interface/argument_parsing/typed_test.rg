@@ -9,8 +9,9 @@ _TestBuild := (
     .verbose : Flag#(.short_name = "v")
 )
 
-test typed_record_arguments := (.system: System) -> !() {
+test typed_record_arguments := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     args: [4]StringView = ("main.rg", "-o", "app", "-v")
     source ::= ArgumentViews(view(&args))
     parsed ::= parse#(_TestBuild)(.source = &source)!
@@ -30,8 +31,9 @@ _TestRun := (.input: Positional#(StringView), .release: Flag#())
 
 _TestCommand: Type = (..build _TestBuild, ..run _TestRun)
 
-test typed_choice_arguments := (.system: System) -> !() {
+test typed_choice_arguments := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     args: [3]StringView = ("run", "main.rg", "--release")
     source ::= ArgumentViews(view(&args))
     parsed ::= parse#(_TestCommand)(.source = &source)!
@@ -54,8 +56,9 @@ _EmptyArgs: Type = ()
 
 _TestEmptyCommand: Type = (..empty _EmptyArgs)
 
-test typed_help_defaults_and_values := (.system: System) -> !() {
+test typed_help_defaults_and_values := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     args: [1]StringView = ("main.rg")
     source ::= ArgumentViews(view(&args))
     match parse#(_TestBuild)(.source = &source)! {
@@ -70,16 +73,12 @@ test typed_help_defaults_and_values := (.system: System) -> !() {
         ..help _ { abort }
         ..arguments data { if data.jobs.value != 8 or data.input.value != "main.rg" { abort } }
     }
-    diagnostic ::= Diagnostic()
     invalid: [3]StringView = ("--jobs", "256", "main.rg")
     invalid_source ::= ArgumentViews(view(&invalid))
-    match parse#(_TestNumbers)(
-        .source = &invalid_source, .diagnostic = ..some(.value = $&diagnostic)
-    ) {
+    match parse#(_TestNumbers)(.source = &invalid_source) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..invalid_argument_value { abort } }
     }
-    if diagnostic.argument != "jobs" or diagnostic.value != "256" { abort }
     missing: [1]StringView = ("--verbose")
     missing_source ::= ArgumentViews(view(&missing))
     match parse#(_TestBuild)(.source = &missing_source) {
@@ -102,8 +101,9 @@ test typed_help_defaults_and_values := (.system: System) -> !() {
     }
 }
 
-test typed_layout_and_help_output := (.system: System) -> !() {
+test typed_layout_and_help_output := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     if size_of(.type = Option#(UInt8)) != size_of(.type = UInt8) { abort }
     if size_of(.type = Flag#()) != size_of(.type = Bool) { abort }
     help_args: [1]StringView = ("--help")
@@ -116,7 +116,7 @@ test typed_layout_and_help_output := (.system: System) -> !() {
         ..help info {
             write_typed_help#(_TestBuild)(
                 $&output, &info, .program = "example", .about = "Compiler"
-            )!
+            )!! "writing CLI help"
         }
     }
     if output.index != byte_length(&expected) { abort }
@@ -129,14 +129,15 @@ test typed_layout_and_help_output := (.system: System) -> !() {
         ..help info {
             write_typed_help#(_TestCommand)(
                 $&command_output, &info, .program = "example", .about = ""
-            )!
+            )!! "writing CLI help"
         }
     }
     if command_output.index != byte_length(&detail) { abort }
 }
 
-test typed_choice_errors_and_literal_help := (.system: System) -> !() {
+test typed_choice_errors_and_literal_help := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     unknown: [2]StringView = ("run", "--unknown")
     unknown_source ::= ArgumentViews(view(&unknown))
     match parse#(_TestCommand)(.source = &unknown_source) {
@@ -174,8 +175,9 @@ _InvalidHelpArgs := (.help: Flag#())
 
 _InvalidHelpCommand: Type = (..run _InvalidHelpArgs)
 
-test typed_command_help_validates_schema := (.system: System) -> !() {
+test typed_command_help_validates_schema := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     args: [2]StringView = ("run", "--help")
     source ::= ArgumentViews(view(&args))
     match parse#(_InvalidHelpCommand)(.source = &source) {
@@ -200,8 +202,9 @@ implement ArgumentSource#(_FailingSource) (
     }
 )
 
-test typed_source_errors_during_construction := (.system: System) -> !() {
+test typed_source_errors_during_construction := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     reads :: UIntNative = 0
     source ::= _FailingSource(.reads = $&reads)
     match parse#(_TestRun)(.source = &source) {
@@ -217,8 +220,9 @@ _TestInlineDefaults := (
     .input   : Positional#(StringView, .default_value = ..some(.value = "main.rg"))
 )
 
-test typed_inline_metadata_and_defaults := (.system: System) -> !() {
+test typed_inline_metadata_and_defaults := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     values: [0]StringView = ()
     source ::= ArgumentViews(view(&values))
     match parse#(_TestInlineDefaults)(.source = &source)! {
@@ -242,8 +246,9 @@ _LongNameArgs := (
     .no_cache    : Flag#(.long_name = "no-cache")
 )
 
-test typed_explicit_long_names := (.system: System) -> !() {
+test typed_explicit_long_names := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     values: [3]StringView = ("--output-file", "app", "--no-cache")
     source ::= ArgumentViews(view(&values))
     match parse#(_LongNameArgs)(.source = &source)! {
@@ -260,12 +265,13 @@ test typed_explicit_long_names := (.system: System) -> !() {
     }
 }
 
-test typed_optional_positional_help := (.system: System) -> !() {
+test typed_optional_positional_help := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     expected ::= "\nUsage: example [input] [OPTIONS]\n\nArguments and options:\n  input  \n  -h, --help  Show help\n"
     output ::= _HelpOutput(.expected = expected)
     info ::= Help(.command = "")
-    write_typed_help#(_DefaultInput)($&output, &info, .program = "example")!
+    write_typed_help#(_DefaultInput)($&output, &info, .program = "example")!! "writing CLI help"
     if output.index != byte_length(&expected) { abort }
 }
 
@@ -277,8 +283,9 @@ _DefaultCommand: Type = (
     ..version Subcommand#(_EmptyArgs, .long_alias = "version", .short_alias = "V")
 )
 
-test typed_default_command_and_aliases := (.system: System) -> !() {
+test typed_default_command_and_aliases := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     empty: [0]StringView = ()
     source ::= ArgumentViews(view(&empty))
     match parse#(_DefaultCommand)(.source = &source)! {
@@ -343,8 +350,9 @@ _RequiredDefault: Type = (..run Subcommand#(_TestRun, .is_default = true))
 
 _WrappedBuild: Type = (..build Subcommand#(_TestBuild, .long_alias = "build"))
 
-test typed_command_metadata_validation := (.system: System) -> !() {
+test typed_command_metadata_validation := (.system: System) -> !!() {
     assume allocator := system.page_allocator
+    assume error_tracer ::= $&noop_error_tracer
     empty: [0]StringView = ()
     source ::= ArgumentViews(view(&empty))
     match parse#(_TwoDefaults)(.source = &source) {
@@ -380,4 +388,91 @@ test typed_command_metadata_validation := (.system: System) -> !() {
         ..arguments ~_ { abort }
         ..help info { if info.command != "build" { abort } }
     }
+}
+
+_ParseTrace := (
+    .message_seen  : Bool       = false,
+    .argument_seen : Bool       = false,
+    .value_seen    : Bool       = false,
+    .count         : UIntNative = 0
+)
+
+implement ErrorTracer#(_ParseTrace) (
+    .add_context = (.self: $&_ParseTrace, .location: SourceLocationId, .context: StringView) -> (
+    ) {
+        self&.count = self&.count + 1
+        if context == "invalid argument value" { self&.message_seen = true }
+        if context == "jobs" { self&.argument_seen = true }
+        if context == "256" { self&.value_seen = true }
+    }
+    .reset_context = (.self: $&_ParseTrace) -> () {
+        self&.message_seen = false
+        self&.argument_seen = false
+        self&.value_seen = false
+        self&.count = 0
+    }
+    .report = (.self: $&_ParseTrace, .writer: $&Virtual#(Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+    ) {}
+)
+
+test typed_parse_records_error_context_only_on_failure := (.system: System) -> !!() {
+    assume allocator := system.page_allocator
+    tracer ::= _ParseTrace()
+    assume error_tracer ::= $&Virtual#(ErrorTracer)($&tracer)
+    values: [3]StringView = ("--jobs", "256", "main.rg")
+    source ::= ArgumentViews(view(&values))
+    match parse#(_TestNumbers)(.source = &source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_argument_value { abort } }
+    }
+    if [
+        tracer.message_seen == false
+        or tracer.argument_seen == false
+        or tracer.value_seen == false
+    ] { abort }
+    ErrorTracer#().reset_context(.self = error_tracer)
+    help_args: [1]StringView = ("--help")
+    help_source ::= ArgumentViews(view(&help_args))
+    help_result ::= parse#(_TestNumbers)(.source = &help_source) handle ignored, recovered {
+        abort
+    }
+    match help_result {
+        ..arguments _ { abort }
+        ..help _ {}
+    }
+    if tracer.count != 0 { abort }
+    valid: [3]StringView = ("--jobs", "8", "main.rg")
+    valid_source ::= ArgumentViews(view(&valid))
+    valid_result ::= parse#(_TestNumbers)(.source = &valid_source) handle ignored, recovered {
+        abort
+    }
+    match valid_result {
+        ..arguments args { if args.jobs.value != 8 { abort } }
+        ..help _ { abort }
+    }
+    if tracer.count != 0 { abort }
+}
+
+_local_parse_failure := (
+    .allocator: Virtual#(Allocator), .error_tracer: $&Virtual#(ErrorTracer)
+) -> (.result: Errable#(Void, TypedReasons, ErrorWithTrace#(TypedReasons))) {
+    values: [3]StringView = ("--jobs", "256", "main.rg")
+    source ::= ArgumentViews(view(&values))
+    match parse#(_TestNumbers)(
+        .source = &source, .allocator = allocator, .error_tracer = error_tracer
+    ) {
+        ..ok ~_ { abort }
+        ..error error { result = ..error error }
+    }
+}
+
+test typed_parse_error_outlives_local_argument_source := (.system: System) -> !() {
+    tracer ::= _ParseTrace()
+    handle ::= Virtual#(ErrorTracer)($&tracer)
+    match _local_parse_failure(.allocator = system.page_allocator, .error_tracer = $&handle) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..invalid_argument_value { abort } }
+    }
+    if tracer.argument_seen == false or tracer.value_seen == false { abort }
 }

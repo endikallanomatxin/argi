@@ -130,7 +130,10 @@ _read_field := #(.Field: Type: ArgumentField#(Field), .Source: Type: ArgumentSou
 }
 
 _wants_typed_help := #(.Source: Type: ArgumentSource#(Source)) (
-    .source: &Source, .start: UIntNative, .specs: ArrayView#(Spec)
+    .source     : &Source,
+    .start      : UIntNative,
+    .specs      : ArrayView#(Spec),
+    .diagnostic : ?$&Diagnostic     = ..none
 ) -> (.result: Errable#(Bool, TypedReasons)) {
     parser ::= Parser(.source = source, .start = start)
     while true {
@@ -161,7 +164,27 @@ _wants_typed_help := #(.Source: Type: ArgumentSource#(Source)) (
                                     or [option.short == false and option.name == spec.name]
                                 ] {
                                     if byte_length(&spec.value_name) > 0 {
-                                        _ ::= take_value($&parser, option)!
+                                        taken ::= take_value($&parser, option) handle error, recovered {
+                                            _set_diagnostic(
+                                                diagnostic
+                                                .argument = spec.name
+                                                .message  = "option requires a value"
+                                            )
+                                            match error.reason {
+                                                ..missing_option_value {
+                                                    result = ..error(
+                                                        .reason = ..missing_option_value
+                                                    )
+                                                }
+                                                ..invalid_utf8 {
+                                                    result = ..error(.reason = ..invalid_utf8)
+                                                }
+                                                ..out_of_bounds {
+                                                    result = ..error(.reason = ..out_of_bounds)
+                                                }
+                                            }
+                                            return
+                                        }
                                     }
                                 }
                             }
@@ -193,7 +216,9 @@ _parse_record := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
         }
     }
     _validate_specs(view(&specs))!
-    wants_help ::= _wants_typed_help(.source = source, .start = start, .specs = view(&specs))!
+    wants_help ::= _wants_typed_help(
+        .source = source, .start = start, .specs = view(&specs), .diagnostic = diagnostic
+    )!
     if wants_help {
         result = ..ok ..help(.command = "")
         return
@@ -216,7 +241,7 @@ _parse_record := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     result = ..ok ..arguments ~arguments
 }
 
-parse := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
+_parse_typed := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .source     : &Source,
     .start      : UIntNative           = 0,
     .allocator  : Virtual#(Allocator),
@@ -230,6 +255,59 @@ parse := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
         result = _parse_record#(T)(
             .source = source, .start = start, .allocator = allocator, .diagnostic = diagnostic
         )
+    }
+}
+
+parse := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
+    .source       : &Source,
+    .start        : UIntNative              = 0,
+    .allocator    : Virtual#(Allocator),
+    .error_tracer : $&Virtual#(ErrorTracer)
+) -> (.result: Errable#(Parsed#(T), TypedReasons, ErrorWithTrace#(TypedReasons))) {
+    diagnostic ::= Diagnostic()
+    diagnostic_ref: ?$&Diagnostic = ..some(.value = $&diagnostic)
+    match _parse_typed#(T, Source)(
+        source, .start = start, .allocator = allocator, .diagnostic = diagnostic_ref
+    ) {
+        ..ok ~parsed { result = ..ok ~parsed }
+        ..error error {
+            tracer ::= capture_error_tracer(
+                .location = error_location_id(), .error_tracer = error_tracer
+            )
+            add_context(.context = "invalid command-line arguments", .error_tracer = tracer)
+            add_context(.context = _typed_reason_text(error.reason), .error_tracer = tracer)
+            if byte_length(&diagnostic.message) > 0 {
+                add_context(.context = diagnostic.message, .error_tracer = tracer)
+            }
+            if byte_length(&diagnostic.argument) > 0 {
+                add_context(.context = "argument:", .error_tracer = tracer)
+                add_context(.context = diagnostic.argument, .error_tracer = tracer)
+            }
+            if byte_length(&diagnostic.value) > 0 {
+                add_context(.context = "value:", .error_tracer = tracer)
+                add_context(.context = diagnostic.value, .error_tracer = tracer)
+            }
+            result = ..error(.reason = error.reason, .tracer = tracer)
+        }
+    }
+}
+
+_typed_reason_text := (.reason: TypedReasons) -> (.text: StringView) {
+    match reason {
+        ..invalid_argument_value { text = "invalid argument value" }
+        ..unexpected_positional { text = "unexpected positional argument" }
+        ..unknown_command { text = "unknown command" }
+        ..missing_command { text = "missing command" }
+        ..invalid_utf8 { text = "invalid UTF-8 in arguments" }
+        ..out_of_bounds { text = "argument source index out of bounds" }
+        ..invalid_option { text = "invalid option syntax" }
+        ..missing_option_value { text = "missing option value" }
+        ..unknown_option { text = "unknown option" }
+        ..duplicate_option { text = "duplicate option" }
+        ..required_option { text = "missing required argument" }
+        ..unexpected_option_value { text = "unexpected option value" }
+        ..invalid_cli_schema { text = "invalid command-line schema" }
+        ..out_of_memory { text = "out of memory while parsing arguments" }
     }
 }
 
@@ -357,7 +435,10 @@ _probe_payload_help := #(.Payload: Type, .Source: Type: ArgumentSource#(Source))
             return
         }
         match _wants_typed_help(
-            .source = context&.source, .start = context&.start, .specs = view(&specs)
+            .source     = context&.source
+            .start      = context&.start
+            .specs      = view(&specs)
+            .diagnostic = context&.diagnostic
         ) {
             ..ok requested { context&.help = requested }
             ..error error {

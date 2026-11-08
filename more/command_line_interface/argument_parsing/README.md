@@ -112,17 +112,28 @@ options are deliberately unsupported; reuse option specifications explicitly.
 the last value, including defaults; flags and absent options return `..none`.
 Use `occurrences` for repeated flags and inspect `matches.options` for all values.
 
-Both parsing APIs optionally accept a borrowed mutable `Diagnostic`. They reset
-it on entry and fill option/command context for user input errors. Context borrows
+The low-level `parse_specs` and `parse_command` APIs optionally accept a borrowed
+mutable `Diagnostic`. They reset it on entry and fill option/command context for user input errors. Context borrows
 the source/schema just like matches. Source, allocation and schema errors may
 leave the message empty: callers must fall back to the returned reason. Rendering
 is explicit through `write_diagnostic`; parsing never writes or exits the process.
 
 ## Typed records and choices
 
-`parse#(T)` returns `Errable#(Parsed#(T), TypedReasons)`. The successful payload
-is a choice between `..arguments T` and `..help Help`. `Option`, `Positional`
+`parse#(T)` returns
+`Errable#(Parsed#(T), TypedReasons, ErrorWithTrace#(TypedReasons))`.
+The successful payload is a choice between `..arguments T` and `..help Help`. `Option`, `Positional`
 and `Flag` store only their `.value`.
+
+Typed `parse` uses the ordinary required `error_tracer` capability. On failure it
+records the reason, argument and supplied value in that tracer, then returns a
+traced error. The caller does not allocate or pass a Diagnostic. Use `!!!` to
+report and return, `!` to preserve the error in a traced result, or `handle` for
+custom recovery. Success and help do not add trace entries. A FixedSizeErrorTracer
+copies context into its own bounded storage, so error text does not borrow the
+caller's Diagnostic or argument-source adapter. The traced error still borrows
+the tracer, which must outlive reporting. Supplying `$&noop_error_tracer` explicitly
+disables context collection without changing the typed reason.
 
 Help is a successful parse outcome, not an error. `parse` never prints, changes
 an exit status, aborts or exits the process. The caller handles help and execution
@@ -154,6 +165,9 @@ Command: Type = (..build BuildArgs, ..run RunArgs)
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
     assume writer ::= $&system.terminal&.stderr
+    assume error_tracer ::= $&Virtual#(ErrorTracer)(
+        $&FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [4096]UInt8)()))
+    )
     parsed ::= ap.parse#(Command)(system.args, .start = 1)!!! { status_code = 1 }
     match parsed {
         ..help info {
@@ -205,8 +219,8 @@ contains just a borrowed command name; it does not own a fabricated argument
 record. Config metadata is queried to describe the selected command.
 
 Typed StringView values borrow the original argument source. Keep that source
-alive while using the resulting record/choice. The optional Diagnostic follows
-the same rules as `parse_specs`; command failures preserve their original reason.
+alive while using the resulting record/choice. Failures preserve their typed reason and attach context to the supplied error
+tracer.
 
 ## Default subcommands and command aliases
 
