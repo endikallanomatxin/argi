@@ -1373,3 +1373,13 @@ passes: 2,542 passed, 11 skipped, zero failures, leaks or error logs; peak RSS i
 2,425,080 KiB with no swaps. A read-only independent review found no outstanding
 issues in this checkpoint. All runs use one worker and a 6 GiB process limit.
 This validation covers the derived-reference correction, not the open gates above.
+
+#### Next gate: checked backing relations
+
+The post-checkpoint reduction in [reference observations](reference_observations.md)
+reproduces the remaining failure using only an ArrayView and an unrelated worker.
+It specifies the distinction between reference identity and a verified backing
+relation, and the must-guarantee joins needed before transporting the latter.
+This proposal adds no runtime descriptor or permission kind. Its positive
+reduction remains unimplemented; heterogeneous Allocation-backed extraction and
+uniform unknown-call authorization remain the acceptance target.
