@@ -1210,6 +1210,8 @@ pub const Resolver = struct {
             if (left.resolved.pointer.mutability != right.resolved.pointer.mutability) return false;
             return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.resolved.pointer.child }, .{ .module = b.module, .ty = right.resolved.pointer.child });
         }
+        if (left == .resolved and right == .resolved and left.resolved == .nullable and right.resolved == .nullable)
+            return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.resolved.nullable }, .{ .module = b.module, .ty = right.resolved.nullable });
         if (left == .resolved and right == .resolved and left.resolved == .structural and right.resolved == .structural) {
             const l = left.resolved.structural.fields;
             const r = right.resolved.structural.fields;
@@ -1258,6 +1260,8 @@ pub const Resolver = struct {
             if (ty.resolved.pointer.mutability != other.resolved.pointer.mutability) return false;
             return self.patternTypeCovers(.{ .module = general.module, .ty = ty.resolved.pointer.child }, .{ .module = specific.module, .ty = other.resolved.pointer.child }, substitutions);
         }
+        if (ty == .resolved and other == .resolved and ty.resolved == .nullable and other.resolved == .nullable)
+            return self.patternTypeCovers(.{ .module = general.module, .ty = ty.resolved.nullable }, .{ .module = specific.module, .ty = other.resolved.nullable }, substitutions);
         if (ty == .resolved and other == .resolved and ty.resolved == .structural and other.resolved == .structural) {
             const a = ty.resolved.structural.fields;
             const b = other.resolved.structural.fields;
@@ -2743,6 +2747,17 @@ pub const Resolver = struct {
                 return true;
             },
             .resolved => |resolved| switch (resolved) {
+                .nullable => |child| {
+                    // Nullable sugar has structural identity; matching its shape
+                    // must not establish conformance for a nominal choice.
+                    switch (self.graph.types.items[@intFromEnum(actual)]) {
+                        .nullable => {},
+                        .structural_choice => |choice| if (choice.layout != .regular) return false,
+                        else => return false,
+                    }
+                    const value = global_types.nullableChild(self.graph, actual) orelse return false;
+                    return self.inferConstraintTypePattern(module_index, child, value, bindings);
+                },
                 .pointer => |pointer| {
                     const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
                         .pointer => |value| value,
