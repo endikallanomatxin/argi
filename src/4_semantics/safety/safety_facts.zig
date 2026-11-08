@@ -158,10 +158,21 @@ pub const FreshExecution = struct {
     input_type: u32,
 };
 
+/// A universal relation to an evaluated input observation. This is not a
+/// lifetime dependency or an access grant. Containment never implies identity.
+pub const ReferenceRelation = struct {
+    source: InputPath,
+    grade: enum { identity, contained } = .identity,
+
+    pub fn eql(a: ReferenceRelation, b: ReferenceRelation) bool {
+        return a.grade == b.grade and a.source.eql(b.source);
+    }
+};
+
 pub const ValueEffect = struct {
-    /// Verified whole-reference identity, not a may-dependency or authority.
-    /// Absent evidence must never be interpreted as an empty access footprint.
-    forwarded_reference: ?InputPath = null,
+    /// Verified identity or containment, never a may-dependency or authority.
+    /// Missing evidence does not describe an empty access footprint.
+    reference_relation: ?ReferenceRelation = null,
     /// Preserves the use-site check for declared dependencies across calls.
     explicit_dependency: bool = false,
     input_dependencies: []const InputDependency = &.{},

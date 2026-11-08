@@ -4,11 +4,8 @@
 const std = @import("std");
 const facts = @import("safety_facts.zig");
 
-const Grade = enum { identity, contained };
-const Relation = struct {
-    source: facts.InputPath,
-    grade: Grade,
-};
+const Relation = facts.ReferenceRelation;
+const Grade = @FieldType(Relation, "grade");
 
 // A snapshot identifies the certified extent, not an allocator's lifetime.
 // There are two independent backings, two generations and two bytes each.

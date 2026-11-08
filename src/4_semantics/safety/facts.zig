@@ -19,6 +19,7 @@ pub const ValidityRoot = base.ValidityRoot;
 pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
+pub const ReferenceRelation = base.ReferenceRelation;
 pub const AccessMode = base.AccessMode;
 
 // Identities name logical executions, not threads or validity generations.

@@ -6,8 +6,9 @@ const primitives = @import("../primitives/schema.zig");
 // Each owning link must move. Reference forwarding may coexist with independent
 // moved owners and operations that do not access its forwarding bindings.
 // Changes to forwarding slots and alternate returns need stronger proofs.
-/// Caller-relative identity already verified by the selected callee summary.
-/// This is compiler proof metadata, never a source-level assertion.
+/// A value-source link certified by a selected summary or checked projection.
+/// Identity proofs must receive only identity links; containment proofs can also
+/// receive checked derivations. This is never a source-level assertion.
 pub const ForwardedCall = struct { call: graph_mod.GlobalNodeId, argument: graph_mod.GlobalNodeId };
 
 pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool) !bool {
@@ -127,8 +128,8 @@ fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.Gl
 
 fn isForwardingLink(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool, calls: []const ForwardedCall) bool {
     var current = id;
-    // Only reference identity composes here. Ownership forwarding retains its
-    // separate requirement that every link explicitly moves its resource.
+    // Reference proofs compose only the certified links supplied by their
+    // caller. Ownership still requires every link to move its resource.
     if (!owning) for (0..calls.len + 1) |_| {
         const argument = for (calls) |call| {
             if (call.call == current) break call.argument;

@@ -195,9 +195,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
-    if (a.forwarded_reference) |path| {
-        if (b.forwarded_reference == null or !inputPathEql(path, b.forwarded_reference.?)) return false;
-    } else if (b.forwarded_reference != null) return false;
+    if (a.reference_relation) |path| {
+        if (b.reference_relation == null or !path.eql(b.reference_relation.?)) return false;
+    } else if (b.reference_relation != null) return false;
     if (a.input_storage_authorizations.len != b.input_storage_authorizations.len) return false;
     for (a.input_storage_authorizations, b.input_storage_authorizations) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_acquisition_origins, b.fresh_acquisition_origins)) return false;
@@ -610,4 +610,15 @@ test "output capability coverage is part of summary equality" {
     try std.testing.expect(!valueEffectEql(recipe, .{}));
     try std.testing.expect(valueEffectEql(recipe, recipe));
     try std.testing.expect(!valueEffectEql(recipe, .{ .input_storage_authorizations = &.{.{ .input_index = 1 }} }));
+}
+
+test "reference relation equality distinguishes identity from contained backing" {
+    const source = facts.InputPath{ .input_index = 0 };
+    const identity = facts.ValueEffect{ .reference_relation = .{ .source = source } };
+    const contained = facts.ValueEffect{ .reference_relation = .{ .source = source, .grade = .contained } };
+    try std.testing.expect(valueEffectEql(identity, identity));
+    try std.testing.expect(valueEffectEql(contained, contained));
+    try std.testing.expect(!valueEffectEql(identity, contained));
+    try std.testing.expect(!valueEffectEql(contained, identity));
+    try std.testing.expect(!valueEffectEql(contained, .{}));
 }

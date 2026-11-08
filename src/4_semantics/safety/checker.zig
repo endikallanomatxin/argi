@@ -5391,9 +5391,10 @@ pub const SafetyChecker = struct {
         result.known_choice_variant = effect.known_choice_variant;
         if (has_referent) result.referenced_place = referenced_place;
         try self.attachAbsentFreshExecutions(effect, &result, state);
-        if (effect.forwarded_reference) |path| {
-            // A whole-reference identity selects the argument value, not a
-            // load from its target. Stored references have their own frames.
+        if (effect.reference_relation) |relation| {
+            const path = relation.source;
+            // The source observation belongs to the evaluated argument, not
+            // a load from its target. Stored references have their own frames.
             const input = if (path.storage_domain == null and path.projections.len == 0)
                 (if (path.input_index < arguments.len) arguments[path.input_index] else facts.ValueFacts{})
             else
@@ -13173,14 +13174,14 @@ test "verified forwarding preserves observations without manufacturing authority
     try std.testing.expectEqual(@as(?u32, null), anchored.lexical_frame);
     const forwarded = try checker.instantiateOutput(.{
         .input_dependencies = &.{dependency},
-        .forwarded_reference = .{ .input_index = 0 },
+        .reference_relation = .{ .source = .{ .input_index = 0 } },
     }, &.{input}, &state);
     try std.testing.expectEqual(@as(?u32, 3), forwarded.lexical_frame);
     try std.testing.expect(!state.tracker.isAlive(root));
     try std.testing.expectEqual(@as(usize, 0), forwarded.storage_capabilities.len);
     try std.testing.expectEqual(@as(usize, 0), forwarded.execution_receipts.len);
     try std.testing.expectEqual(@as(?u32, null), (try checker.instantiateOutput(.{
-        .forwarded_reference = .{ .input_index = 1 },
+        .reference_relation = .{ .source = .{ .input_index = 1 } },
     }, &.{ input, .{} }, &state)).lexical_frame);
 }
 
@@ -13198,13 +13199,13 @@ test "whole-reference forwarding observes the argument rather than its stored co
     try state.setPlace(slot, .initialized, .{ .lexical_frame = 1 });
     const argument = facts.ValueFacts{ .referenced_place = slot, .lexical_frame = 9 };
     const forwarded = try checker.instantiateOutput(.{
-        .forwarded_reference = .{ .input_index = 0 },
+        .reference_relation = .{ .source = .{ .input_index = 0 } },
     }, &.{argument}, &state);
     try std.testing.expectEqual(@as(?u32, 9), forwarded.lexical_frame);
     // Unknown argument observations cannot acquire an older frame by loading
     // a reference held in their target slot.
     const unknown = try checker.instantiateOutput(.{
-        .forwarded_reference = .{ .input_index = 0 },
+        .reference_relation = .{ .source = .{ .input_index = 0 } },
     }, &.{.{ .referenced_place = slot }}, &state);
     try std.testing.expectEqual(@as(?u32, null), unknown.lexical_frame);
 }

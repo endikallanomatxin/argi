@@ -231,7 +231,7 @@ pub const Infer = struct {
                     const summary = self.engine.summaries.getPtr(id).?;
                     if (summary.outputs.len == 1) {
                         const outputs = try self.allocator.dupe(facts.ValueEffect, summary.outputs);
-                        outputs[0].forwarded_reference = .{ .input_index = 0 };
+                        outputs[0].reference_relation = .{ .source = .{ .input_index = 0 } };
                         summary.outputs = outputs;
                     }
                 }
@@ -635,8 +635,8 @@ pub const Infer = struct {
         var result = effect;
         // The erased receiver's provider is not the handle slot. A whole-input
         // forwarding proof cannot substitute the slot's physical observation.
-        if (result.forwarded_reference) |path| if (path.input_index == receiver) {
-            result.forwarded_reference = null;
+        if (result.reference_relation) |relation| if (relation.source.input_index == receiver) {
+            result.reference_relation = null;
         };
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
         var receivers = std.array_list.Managed(facts.InputPath).init(self.allocator);
@@ -1146,17 +1146,25 @@ pub const Infer = struct {
 
         // Publish identity only after proving the complete forwarding body.
         // May-dependencies cannot establish this universal return guarantee.
-        const forwarded_calls = try self.forwardedReferenceCalls(function);
+        const forwarded_calls = try self.forwardedReferenceCalls(function, false);
+        const contained_calls = try self.forwardedReferenceCalls(function, true);
         for (outputs, 0..) |*output, output_index| {
-            output.forwarded_reference = null;
+            output.reference_relation = null;
             if (output_index >= output_fields.len or self.graph.semanticType(output_fields[output_index].ty) != .pointer) continue;
             for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, input_index| {
-                if (!types.equal(self.graph, self.graph.binding(binding).ty, output_fields[output_index].ty)) continue;
-                if (try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, .{
+                if (self.graph.semanticType(self.graph.binding(binding).ty) != .pointer) continue;
+                const relation = primitives.MethodSafetyContract.Dependency{
                     .input_index = @intCast(input_index),
                     .output_index = @intCast(output_index),
-                }, false, forwarded_calls)) {
-                    output.forwarded_reference = .{ .input_index = @intCast(input_index) };
+                };
+                if (types.equal(self.graph, self.graph.binding(binding).ty, output_fields[output_index].ty) and
+                    try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, relation, false, forwarded_calls))
+                {
+                    output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) } };
+                    break;
+                }
+                if (try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, relation, false, contained_calls)) {
+                    output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) }, .grade = .contained };
                     break;
                 }
             }
@@ -1189,7 +1197,33 @@ pub const Infer = struct {
         return summary;
     }
 
-    fn forwardedReferenceCalls(self: *Infer, function: graph_mod.Function) ![]const @import("lexical_forwarding.zig").ForwardedCall {
+    /// Ordinary array indexing checks bounds before address formation. Keep
+    /// the index effect-free for this lexical proof; raw pointer offsets and
+    /// reference-valued element loads are deliberately not derivation sources.
+    fn checkedArrayElementSource(self: *Infer, function: graph_mod.Function, node: graph_mod.GlobalNodeId) ?graph_mod.GlobalNodeId {
+        const expression = self.graph.node(node).content;
+        if (expression != .address_of) return null;
+        const selected = self.graph.node(expression.address_of).content;
+        if (selected != .array_index) return null;
+        const access = selected.array_index;
+        if (types.arrayElement(self.graph, access.array_type) == null) return null;
+        switch (self.graph.node(access.index).content) {
+            .int_literal => {},
+            .binding_use => |binding| {
+                const inputs = self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len];
+                if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, inputs, binding) == null) return null;
+                const ty = self.graph.semanticType(self.graph.binding(binding).ty);
+                if (ty != .builtin or ty.builtin != .UIntNative) return null;
+            },
+            else => return null,
+        }
+        const base = self.graph.node(access.array_ptr).content;
+        // The array-index node can name the dereferenced array value. Its
+        // backing observation belongs to the pointer used for that load.
+        return if (base == .dereference) base.dereference.pointer else access.array_ptr;
+    }
+
+    fn forwardedReferenceCalls(self: *Infer, function: graph_mod.Function, allow_contained: bool) ![]const @import("lexical_forwarding.zig").ForwardedCall {
         const block = self.graph.blocks.items[@intFromEnum(function.body orelse return &.{})];
         var calls: std.ArrayList(@import("lexical_forwarding.zig").ForwardedCall) = .empty;
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
@@ -1199,6 +1233,11 @@ pub const Infer = struct {
                 else => continue,
             };
             for (0..self.graph.nodes.items.len) |_| {
+                if (allow_contained) if (self.checkedArrayElementSource(function, value)) |base| {
+                    try calls.append(self.allocator, .{ .call = value, .argument = base });
+                    value = base;
+                    continue;
+                };
                 const selected = switch (self.graph.node(value).content) {
                     .function_call => |call| blk: {
                         if (call.callee_value != null) break;
@@ -1211,7 +1250,9 @@ pub const Infer = struct {
                     else => break,
                 };
                 if (selected[0].outputs.len != 1) break;
-                const source = selected[0].outputs[0].forwarded_reference orelse break;
+                const relation = selected[0].outputs[0].reference_relation orelse break;
+                if (!allow_contained and relation.grade != .identity) break;
+                const source = relation.source;
                 if (source.storage_domain != null or source.projections.len != 0) break;
                 const arguments = self.structArguments(selected[1]) orelse break;
                 if (source.input_index >= arguments.len) break;
@@ -6772,7 +6813,7 @@ pub const Infer = struct {
 
     fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
         // Sparse tag-only facts still need the existing normalization path.
-        if (effect.forwarded_reference != null) return true;
+        if (effect.reference_relation != null) return true;
         if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
         inline for (.{
             "input_storage_authorizations", "input_domains",     "input_dependencies",             "input_storage_capabilities",  "input_acquisition_origins",
@@ -6832,7 +6873,7 @@ pub const Infer = struct {
         }
         var result = effect;
         // Projected contents are not the forwarded reference value.
-        result.forwarded_reference = null;
+        result.reference_relation = null;
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
         for (effect.input_dependencies, 0..) |dependency, index| {
             dependencies[index] = dependency;
@@ -8719,20 +8760,20 @@ test "forwarded reference evidence is conservative across alternatives and recei
     defer engine.deinit();
     var infer = Infer.init(a, &graph, &engine);
     defer infer.deinit();
-    const first = facts.ValueEffect{ .forwarded_reference = .{ .input_index = 0 } };
-    const second = facts.ValueEffect{ .forwarded_reference = .{ .input_index = 1 } };
+    const first = facts.ValueEffect{ .reference_relation = .{ .source = .{ .input_index = 0 } } };
+    const second = facts.ValueEffect{ .reference_relation = .{ .source = .{ .input_index = 1 } } };
     try std.testing.expect(Infer.requiresOutputSubstitution(first));
     try std.testing.expect(!summaries.valueEffectEql(first, second));
     try std.testing.expect(!summaries.valueEffectEql(first, .{}));
     try std.testing.expect(!summaries.valueEffectEql(.{}, first));
-    try std.testing.expect((try infer.joinStorageAlternatives(null, first, first)).forwarded_reference != null);
+    try std.testing.expect((try infer.joinStorageAlternatives(null, first, first)).reference_relation != null);
     for ([_]facts.ValueEffect{ try infer.joinStorageAlternatives(null, first, .{}), try infer.joinStorageAlternatives(null, .{}, first), try infer.joinStorageAlternatives(null, first, second), try infer.joinStorageAlternatives(null, second, first) }) |joined| {
-        try std.testing.expectEqual(@as(?facts.InputPath, null), joined.forwarded_reference);
+        try std.testing.expectEqual(@as(?facts.ReferenceRelation, null), joined.reference_relation);
     }
-    try std.testing.expectEqual(@as(?facts.InputPath, null), (try infer.projectValueEffect(first, .{ .field = 0 })).forwarded_reference);
-    try std.testing.expectEqual(@as(?facts.InputPath, null), (try infer.bindVirtualReceiverValues(first, 0)).forwarded_reference);
+    try std.testing.expectEqual(@as(?facts.ReferenceRelation, null), (try infer.projectValueEffect(first, .{ .field = 0 })).reference_relation);
+    try std.testing.expectEqual(@as(?facts.ReferenceRelation, null), (try infer.bindVirtualReceiverValues(first, 0)).reference_relation);
     const forwarded = try infer.bindVirtualReceiverValues(second, 0);
-    try std.testing.expectEqual(@as(u32, 1), forwarded.forwarded_reference.?.input_index);
+    try std.testing.expectEqual(@as(u32, 1), forwarded.reference_relation.?.source.input_index);
 }
 
 test "unknown choice alternatives cannot preserve another branch's reference proof" {
@@ -8745,21 +8786,21 @@ test "unknown choice alternatives cannot preserve another branch's reference pro
     defer engine.deinit();
     var infer = Infer.init(a, &graph, &engine);
     defer infer.deinit();
-    const reference = facts.ValueEffect{ .forwarded_reference = .{ .input_index = 0 } };
+    const reference = facts.ValueEffect{ .reference_relation = .{ .source = .{ .input_index = 0 } } };
     const known = facts.ValueEffect{
         .known_choice_variant = 0,
         .variants = &.{.{ .index = 0, .value = &reference }},
     };
     for ([_]facts.ValueEffect{ .{}, .{ .known_choice_variant = 0 } }) |unknown| {
         const joined = try infer.joinStorageAlternatives(null, known, unknown);
-        try std.testing.expect(joined.variants[0].value.forwarded_reference == null);
+        try std.testing.expect(joined.variants[0].value.reference_relation == null);
         const reverse = try infer.joinStorageAlternatives(null, unknown, known);
-        try std.testing.expect(reverse.variants[0].value.forwarded_reference == null);
+        try std.testing.expect(reverse.variants[0].value.reference_relation == null);
     }
     // A branch known to return another case cannot supply this payload.
     const other_case = facts.ValueEffect{ .known_choice_variant = 1 };
     const joined = try infer.joinStorageAlternatives(null, known, other_case);
-    try std.testing.expect(joined.variants[0].value.forwarded_reference != null);
+    try std.testing.expect(joined.variants[0].value.reference_relation != null);
 }
 
 test "unknown choice alternatives cannot grant storage authorization" {

@@ -1,7 +1,9 @@
 # Reference observations through checked views
 
-Next implementation gate after b0ca339b6. This is a candidate extension of the
-existing reference-summary relation, not an implemented guarantee. Keep the
+Implementation gate following b0ca339b6. The rules below specify a candidate
+extension of the reference-summary relation. The initial checked-array output
+implementation and its validation status are recorded at the end; general
+physical-backing transport remains open. Keep the
 unchanged concurrency/121 heterogeneous DynamicArray program as the acceptance
 target with uniform unknown-call authorization enabled. A precomputed view is a
 reduction, not a replacement API requirement.
@@ -146,7 +148,7 @@ program suite does not register an expected-success case before implementing it.
 Compile the directory with `argi build plan/examples/reference_backing` to
 reproduce the rejection. It must become a positive compiler fixture when fixed.
 
-No compiler behavior is changed by this proposal. Dynamic conformances, arbitrary
+The specification alone grants no compiler authority. Dynamic conformances, arbitrary
 precise alias histories, general effect ordering and scheduler changes remain
 outside this gate.
 
@@ -242,3 +244,51 @@ isolated Debug reference/concurrency program suite passes 333 tests, with zero
 failures, leaks or error logs, including 182/183X/184X. The isolated source excludes
 the unfinished unknown-call and loop experiments; staged compiler and fixture
 files match that validation tree. This is not a new full-program-suite result.
+
+## Initial checked output derivation implementation
+
+The candidate replaces the exact-only forwarded_reference metadata with one
+ReferenceRelation containing an InputPath source and an identity/contained grade.
+The bounded experiment uses that same relation vocabulary. Contract refers_to
+still publishes identity; no new source clause or runtime descriptor is added.
+Summary equality includes the grade and source. Cache format 149 invalidates
+previous semantic publications.
+
+A contained relation can now be inferred from taking the address of an ordinary
+checked array element. Its index must be a literal or a scalar UIntNative input
+for this initial lexical proof, so index evaluation cannot hide additional calls
+or reference retargeting. The semantic array-index node already checks bounds.
+When it denotes a dereferenced array value, the observation source is the pointer
+used for that dereference, not the loaded aggregate value.
+
+Publication reuses the existing complete lexical forwarding proof. Identity
+proofs see only identity call links and still require identical pointer types.
+Contained proofs may additionally use certified array-address links and callee
+relations. Ordinary wrappers compose these links at the summary fixed point.
+Unknown/conditional return bodies that the proof cannot establish publish no
+relation. Projection of loaded contents clears the relation. Returning a pointer
+from a reference-valued element is not an array-address derivation.
+
+Fixture 181 now builds and runs through an ordinary accessor, its wrapper and a
+generic accessor during an unrelated loan. 185X lends the actual backing and
+rejects; 186X loads a retargeted reference from the older array and rejects;
+187X mixes the checked derivation with a conflicting unknown return alternative
+and rejects. Existing shifted/widened-loan negatives 169X/170X/172X/173X still
+reject unauthenticated targets. A contained relation preserves an observation,
+not an exact loan target or direct access authority.
+
+Focused primary safety validation passes 279 tests. The full primary Debug
+internal run passes 1,513 tests with one skipped (578,192 KiB peak RSS, no swaps).
+The isolated full ReleaseSafe program suite passes 2,558 tests with 11 skipped,
+zero failures, leaks or error logs (620,632 KiB peak RSS, no swaps). It runs
+serially under a 6 GiB process limit and excludes the unfinished unknown-call
+and loop experiments. Staged compiler and fixture files match that tree. A
+separate read-only review found no issues in this increment.
+Uniform authorization of unknown call effects remains the immediate soundness
+checkpoint. This observation increment does not close that hole, and recovering
+more view precision must not replace checking unknown effects at every call
+boundary, including isolated worker reachability and native calls.
+The original ArrayView/Allocation programs remain open: their offset operations
+have no universal containment certificate, and relations nested in fallible or
+opaque results need their own publication proof. This increment does not make
+those programs safe by assertion or solve owner transfer/protected access.
