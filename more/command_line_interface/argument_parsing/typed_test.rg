@@ -1,0 +1,217 @@
+_output := () -> (.config: OptionConfig#(StringView)) {
+    config = (
+        .short_name    = "o"
+        .help          = "Output file"
+        .default_value = ..some(.value = "output")
+    )
+}
+
+_verbose := () -> (.config: OptionConfig#(Bool)) { config = (.short_name = "v") }
+
+_TestBuild := (
+    .input   : Positional#(StringView),
+    .output  : Option#(StringView, _output),
+    .verbose : Flag#(_verbose)
+)
+
+test typed_record_arguments := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    args: [4]StringView = ("main.rg", "-o", "app", "-v")
+    source ::= ArgumentViews(view(&args))
+    parsed ::= parse_as#(_TestBuild)(.source = &source)!
+    match parsed {
+        ..help ~_ { abort }
+        ..arguments data {
+            if [
+                data.input.value != "main.rg"
+                or data.output.value != "app"
+                or data.verbose.value == false
+            ] { abort }
+        }
+    }
+}
+
+_TestRun := (.input: Positional#(StringView), .release: Flag#())
+
+_TestCommand: Type = (..build _TestBuild, ..run _TestRun)
+
+test typed_choice_arguments := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    args: [3]StringView = ("run", "main.rg", "--release")
+    source ::= ArgumentViews(view(&args))
+    parsed ::= parse_as#(_TestCommand)(.source = &source)!
+    match parsed {
+        ..help _ { abort }
+        ..arguments command {
+            match command {
+                ..build _ { abort }
+                ..run data {
+                    if data.input.value != "main.rg" or data.release.value == false { abort }
+                }
+            }
+        }
+    }
+}
+
+_TestNumbers := (.jobs: Option#(UInt8), .input: Positional#(StringView))
+
+_EmptyArgs: Type = ()
+
+_TestEmptyCommand: Type = (..empty _EmptyArgs)
+
+test typed_help_defaults_and_values := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    args: [1]StringView = ("main.rg")
+    source ::= ArgumentViews(view(&args))
+    match parse_as#(_TestBuild)(.source = &source)! {
+        ..help _ { abort }
+        ..arguments data {
+            if data.output.value != "output" or data.verbose.value { abort }
+        }
+    }
+    before: [3]StringView = ("--jobs", "8", "main.rg")
+    before_source ::= ArgumentViews(view(&before))
+    match parse_as#(_TestNumbers)(.source = &before_source)! {
+        ..help _ { abort }
+        ..arguments data { if data.jobs.value != 8 or data.input.value != "main.rg" { abort } }
+    }
+    diagnostic ::= Diagnostic()
+    invalid: [3]StringView = ("--jobs", "256", "main.rg")
+    invalid_source ::= ArgumentViews(view(&invalid))
+    match parse_as#(_TestNumbers)(
+        .source = &invalid_source, .diagnostic = ..some(.value = $&diagnostic)
+    ) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_argument_value { abort } }
+    }
+    if diagnostic.argument != "jobs" or diagnostic.value != "256" { abort }
+    missing: [1]StringView = ("--verbose")
+    missing_source ::= ArgumentViews(view(&missing))
+    match parse_as#(_TestBuild)(.source = &missing_source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..required_option { abort } }
+    }
+    help_args: [2]StringView = ("build", "--help")
+    help_source ::= ArgumentViews(view(&help_args))
+    match parse_as#(_TestCommand)(.source = &help_source)! {
+        ..arguments _ { abort }
+        ..help info {
+            if info.command != "build" { abort }
+        }
+    }
+    empty_args: [1]StringView = ("empty")
+    empty_source ::= ArgumentViews(view(&empty_args))
+    match parse_as#(_TestEmptyCommand)(.source = &empty_source)! {
+        ..help _ { abort }
+        ..arguments command { match command { ..empty _ {} } }
+    }
+}
+
+test typed_layout_and_help_output := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    if size_of(.type = Option#(UInt8)) != size_of(.type = UInt8) { abort }
+    if size_of(.type = Flag#()) != size_of(.type = Bool) { abort }
+    help_args: [1]StringView = ("--help")
+    help_source ::= ArgumentViews(view(&help_args))
+    parsed ::= parse_as#(_TestBuild)(.source = &help_source)!
+    expected ::= "Compiler\nUsage: example <input> [OPTIONS]\n\nArguments and options:\n  input  \n  -o, --output <VALUE>  Output file\n  -v, --verbose  \n  -h, --help  Show help\n"
+    output ::= _HelpOutput(.expected = expected)
+    match parsed {
+        ..arguments _ { abort }
+        ..help info {
+            write_typed_help#(_TestBuild)(
+                $&output, &info, .program = "example", .about = "Compiler"
+            )!
+        }
+    }
+    if output.index != byte_length(&expected) { abort }
+    commands: [2]StringView = ("build", "--help")
+    command_source ::= ArgumentViews(view(&commands))
+    detail ::= "\nUsage: example build <input> [OPTIONS]\n\nArguments and options:\n  input  \n  -o, --output <VALUE>  Output file\n  -v, --verbose  \n  -h, --help  Show help\n"
+    command_output ::= _HelpOutput(.expected = detail)
+    match parse_as#(_TestCommand)(.source = &command_source)! {
+        ..arguments _ { abort }
+        ..help info {
+            write_typed_help#(_TestCommand)(
+                $&command_output, &info, .program = "example", .about = ""
+            )!
+        }
+    }
+    if command_output.index != byte_length(&detail) { abort }
+}
+
+test typed_choice_errors_and_literal_help := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    unknown: [2]StringView = ("run", "--unknown")
+    unknown_source ::= ArgumentViews(view(&unknown))
+    match parse_as#(_TestCommand)(.source = &unknown_source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..unknown_option { abort } }
+    }
+    missing: [1]StringView = ("run")
+    missing_source ::= ArgumentViews(view(&missing))
+    match parse_as#(_TestCommand)(.source = &missing_source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..required_option { abort } }
+    }
+    literal: [3]StringView = ("run", "--", "--help")
+    literal_source ::= ArgumentViews(view(&literal))
+    match parse_as#(_TestCommand)(.source = &literal_source)! {
+        ..help _ { abort }
+        ..arguments command {
+            match command {
+                ..build _ { abort }
+                ..run data { if data.input.value != "--help" { abort } }
+            }
+        }
+    }
+    value_args: [3]StringView = ("--output", "--help", "main.rg")
+    value_source ::= ArgumentViews(view(&value_args))
+    match parse_as#(_TestBuild)(.source = &value_source)! {
+        ..help _ { abort }
+        ..arguments data {
+            if data.output.value != "--help" or data.input.value != "main.rg" { abort }
+        }
+    }
+}
+
+_InvalidHelpArgs := (.help: Flag#())
+
+_InvalidHelpCommand: Type = (..run _InvalidHelpArgs)
+
+test typed_command_help_validates_schema := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    args: [2]StringView = ("run", "--help")
+    source ::= ArgumentViews(view(&args))
+    match parse_as#(_InvalidHelpCommand)(.source = &source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_cli_schema { abort } }
+    }
+}
+
+_FailingSource := (.reads: $&UIntNative)
+
+implement ArgumentSource#(_FailingSource) (
+    .length = (.self: &_FailingSource) -> (.count: UIntNative = 1) {}
+    .get    = (.self: &_FailingSource, .index: UIntNative) -> (
+        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
+    ) {
+        self&.reads&= self&.reads&+ 1
+        if self&.reads&>= 3 {
+            result = ..error(.reason = ..invalid_utf8)
+            return
+        }
+        result = ..ok "main.rg"
+    }
+)
+
+test typed_source_errors_during_construction := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    reads :: UIntNative = 0
+    source ::= _FailingSource(.reads = $&reads)
+    match parse_as#(_TestRun)(.source = &source) {
+        ..ok ~_ { abort }
+        ..error error { if error.reason != ..invalid_utf8 { abort } }
+    }
+    if reads != 3 { abort }
+}

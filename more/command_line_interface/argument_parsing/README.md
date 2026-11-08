@@ -117,3 +117,81 @@ it on entry and fill option/command context for user input errors. Context borro
 the source/schema just like matches. Source, allocation and schema errors may
 leave the message empty: callers must fall back to the returned reason. Rendering
 is explicit through `write_diagnostic`; parsing never writes or exits the process.
+
+## Typed records and choices
+
+`parse_as#(T)` returns `Parsed#(T)`, a choice between `..arguments T` and
+`..help Help`. `Option`, `Positional` and `Flag` store only their `.value`.
+A record declares the arguments; a choice declares subcommands whose payloads
+are argument records. The field/alternative names become long option/command
+names. Positional fields are consumed in declaration order.
+
+```rg
+ap := import("command_line_interface/argument_parsing")
+
+output_config := () -> (.config: ap.OptionConfig#(StringView)) {
+    config = (
+        .short_name = "o",
+        .help = "Output file",
+        .default_value = ..some(.value = "output")
+    )
+}
+
+BuildArgs := (
+    .input: ap.Positional#(StringView),
+    .output: ap.Option#(StringView, output_config),
+    .verbose: ap.Flag#()
+)
+RunArgs := (.input: ap.Positional#(StringView), .release: ap.Flag#())
+Command: Type = (..build BuildArgs, ..run RunArgs)
+
+main := (.system: System) -> (.status_code: Int32 = 0) {
+    assume allocator := system.page_allocator
+    assume writer ::= $&system.terminal&.stderr
+    parsed ::= ap.parse_as#(Command)(system.args, .start = 1)!!! { status_code = 1 }
+    match parsed {
+        ..help info {
+            ap.write_typed_help#(Command)(writer, &info, .program = "example")!!! {
+                status_code = 1
+            }
+        }
+        ..arguments command { match command {
+            ..build args {
+                if args.verbose.value { print(args.output.value)!!! { status_code = 1 } }
+            }
+            ..run args { print(args.input.value)!!! { status_code = 1 } }
+        } }
+    }
+}
+```
+
+For records without subcommands, pass `BuildArgs` instead of `Command`.
+An `Option` or `Positional` is required unless its configuration supplies a
+default. Flags default to false. Numeric options use the existing checked core
+parsers; an invalid value, including overflow, returns `invalid_argument_value`.
+Built-in value support covers StringView, Bool, signed/unsigned 8/16/32/64-bit
+integers, UIntNative, Float32 and Float64. Implement `ArgumentValue#(T)` for
+additional value types; its `empty` operation supplies an unpublished placeholder
+for error cleanup, not an argument default. Owning custom values need particular
+care: failed partial results undergo ordinary cleanup.
+
+Configuration currently uses function identities because Argi's value generic
+parameters do not yet support arbitrary strings/records. The function is a type
+parameter and metadata is never stored in each wrapper instance. Providers are
+ordinary callable functions, not a promise of compile-time execution; keep them
+pure and stable, returning constants/default values without side effects. The
+parser may query metadata more than once. This API does not add comptime-only
+instance fields or change representation between native, VM and REPL execution.
+
+The typed entry supports one occurrence per option, no repeated or variadic
+fields, and a single level of subcommands. Positionals are consumed in declaration
+order; place defaulted positionals last. Extra positionals are rejected.
+`--help`/`-h` are reserved and return before reading required fields. Tokens after `--`, or consumed as
+option values, remain ordinary text. Only the selected subcommand's argument
+values are constructed. Help uses the type again when rendering, so the handle
+contains just a borrowed command name; it does not own a fabricated argument
+record. Config metadata is queried to describe the selected command.
+
+Typed StringView values borrow the original argument source. Keep that source
+alive while using the resulting record/choice. The optional Diagnostic follows
+the same rules as `parse`; command failures preserve their original reason.

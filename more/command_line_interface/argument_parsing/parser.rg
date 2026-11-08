@@ -1,11 +1,11 @@
 ..invalid_option
 ..missing_option_value
 
-Option := (.name: StringView, .value: ?StringView, .short: Bool)
+OptionToken := (.name: StringView, .value: ?StringView, .short: Bool)
 
-implement ImplicitlyCopyable#(Option) ()
+implement ImplicitlyCopyable#(OptionToken) ()
 
-Argument: Type = (..option Option, ..positional StringView)
+Argument: Type = (..option OptionToken, ..positional StringView)
 
 implement ImplicitlyCopyable#(Argument) ()
 
@@ -110,7 +110,7 @@ next := #(.t: Type: ArgumentSource#(t)) (.self: $&Parser#(.t: t)) -> (
     result = ..ok ..none
 }
 
-take_value := #(.t: Type: ArgumentSource#(t)) (.self: $&Parser#(.t: t), .option: Option) -> (
+take_value := #(.t: Type: ArgumentSource#(t)) (.self: $&Parser#(.t: t), .option: OptionToken) -> (
     .result : Errable#(StringView, (..missing_option_value, ..invalid_utf8, ..out_of_bounds))
 ) {
 

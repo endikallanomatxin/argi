@@ -17,33 +17,37 @@ _write_options := #(.W: Type: Writer#(W)) (.writer: $&W, .specs: ArrayView#(Spec
 
     while index < length(&specs).count {
         spec ::= get(&specs, .index = index) handle ignored, value { abort }
-        write(writer, .value = "  ")!
-        if byte_length(&spec.short_name).count > 0 {
-            write(writer, .value = "-")!
-            write(writer, .value = spec.short_name)!
-            write(writer, .value = ", ")!
-        }
-        write(writer, .value = "--")!
-        write(writer, .value = spec.name)!
-        if byte_length(&spec.value_name).count > 0 {
-            write(writer, .value = " <")!
-            write(writer, .value = spec.value_name)!
-            write(writer, .value = ">")!
-        }
-        if spec.required { write(writer, .value = " (required)")! }
-        if spec.repeatable { write(writer, .value = " (repeatable)")! }
-        write(writer, .value = "  ")!
-        write(writer, .value = spec.help)!
-        match spec.default_value {
-            ..none {} ..some entry {
-                write(writer, .value = " [default: ")!
-                write(writer, .value = entry.value)!
-                write(writer, .value = "]")!
-            }
-        }
-        write(writer, .value = "\n")!
+        _write_option(writer, spec)!
         index = index + 1
     }
+}
+
+_write_option := #(.W: Type: Writer#(W)) (.writer: $&W, .spec: Spec) -> !() {
+    write(writer, .value = "  ")!
+    if byte_length(&spec.short_name).count > 0 {
+        write(writer, .value = "-")!
+        write(writer, .value = spec.short_name)!
+        write(writer, .value = ", ")!
+    }
+    write(writer, .value = "--")!
+    write(writer, .value = spec.name)!
+    if byte_length(&spec.value_name).count > 0 {
+        write(writer, .value = " <")!
+        write(writer, .value = spec.value_name)!
+        write(writer, .value = ">")!
+    }
+    if spec.required { write(writer, .value = " (required)")! }
+    if spec.repeatable { write(writer, .value = " (repeatable)")! }
+    write(writer, .value = "  ")!
+    write(writer, .value = spec.help)!
+    match spec.default_value {
+        ..none {} ..some entry {
+            write(writer, .value = " [default: ")!
+            write(writer, .value = entry.value)!
+            write(writer, .value = "]")!
+        }
+    }
+    write(writer, .value = "\n")!
 }
 
 write_command_help := #(.W: Type: Writer#(W)) (
