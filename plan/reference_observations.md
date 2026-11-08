@@ -355,3 +355,141 @@ leaks or error logs. The serial run takes 29 minutes, with 2,358,104 KiB peak RS
 and no swaps under the 6 GiB process limit. It excludes the unfinished
 unknown-call and loop experiments; staged source and fixtures match that tree.
 This correction does not close the caller unknown-effect gate.
+
+
+## Reference relations across abstractions: consolidation checkpoint
+
+### Implemented prototype
+
+`ReferenceRelation` now distinguishes `identity`, `contained` and the weaker
+`backing` relation. Backing means the same physical backing and generation,
+without claiming containment in the source referent's extent. It grants no
+liveness, initialization, ownership, authority or exact execution-loan target.
+The production relation owns common-strength, implication and composition rules;
+the bounded physical oracle tests those same operations instead of duplicating
+them. A common guarantee survives alternative joins only when both sources
+agree. Unknown alternatives or different sources discard it.
+
+The weaker grade is produced only by registered address-preserving
+reinterpretations when stronger guarantees are unavailable, with a statically
+known nonempty source referent. `Any`'s ABI placeholder size supplies no such
+extent and is excluded. The trusted operation's existing validity and alignment
+obligations remain necessary. This does not verify a widened cast's bounds.
+General offsets publish no new backing relation: the earlier broader experiment
+was withdrawn because arithmetic and overflow checks do not prove allocation
+membership. Raw address establishment and anchors cannot assert the relation.
+
+Whole-output wrappers still use the complete lexical forwarding proof. Links
+must imply the grade being proved; backing-only links cannot establish identity,
+containment or a virtual `refers_to` promise. Cache format 150 separates these
+semantic publications.
+
+Output substitution preserves a relation only when its whole source is supplied
+directly by a constant reference input of the caller. Local aliases, projected
+sources and symbolic-input overrides remain unsupported. Nested record/choice
+publication uses the existing alternative-aware return flow and requires no
+unknown accesses or writes to inputs/globals. It introduces neither an ordered
+effect interpreter nor another permission ledger. Direct pointer outputs retain
+their stricter lexical publication proof.
+
+The resource flow previously combined possible local alias targets using a
+may-effect union. A unit test demonstrated that a known aggregate child's
+relation could then survive another unknown target. Binding-alias and explicit
+dereference loads now use the existing alternative join, seeded with a real
+target. Tests cover both target orders, uniform evidence and singleton targets.
+
+### End-to-end checks and remaining composition boundary
+
+| Case | Required behavior |
+| --- | --- |
+| 190 | Retyped ordinary wrapper preserves an early observation during an independent later loan |
+| 191X | Lending the actual backing still rejects the returned-reference read |
+| 192X | Retyping wrappers cannot prove a virtual `refers_to` contract |
+| 193 | A fallible retyping result preserves its successful payload when explicitly matched |
+| 194X | Indirectly retargeting a local reference cannot retain its old observation |
+| 195X | The fallible payload remains unavailable during a real-backing loan |
+| 196X | An incompatible successful return alternative cannot borrow another branch's guarantee |
+
+Existing 169X/170X/172X/173X offset/extent loan negatives remain required.
+The original 193 reduction using `unwrap_or_abort` still rejects. That helper
+projects a reference from a by-value choice; this must not be confused with
+loading a reference from pointer-reached storage. The current generic summary
+loader supports both with implicit loading conventions. Do not preserve an
+observation through it until the selected evaluated value is unambiguous.
+Explicit `match` is a reduced composition test, not a replacement API requirement.
+
+### Uniform authorization remains the immediate soundness gate
+
+The primary tree's unpublished check rejects unknown ordinary, virtual, foreign,
+callback and cleanup effects against pending loans before applying completion
+postconditions. It still rejects safe 121 at `code_at(&array, 0)` and 177 at the
+returned reference dereference; it is not ready to publish. A focused matrix
+passes 41 cases, including 181, await, inline/delegated execution and callbacks,
+but that count includes unrelated numeric-filter matches and excludes 121/177.
+
+Temporary instrumentation locates the first unknown footprint in `code_at` at
+the dereference of `holder`, returned by collection `get_reference`: neither
+caller-relative pointee paths nor local addressed targets are available. It is
+not imported from an unknown callee summary in that helper. The virtual method's
+`no_access()` bound cannot authorize the preceding handle-slot load. Traces have
+been removed. Do not drop that load or infer physical separation from lifetime.
+
+Cleanup pair 188X/189 belongs to the pending authorization change: the published
+compiler accepts the unsafe cleanup (compile only, never executed); the primary
+check rejects it. The same cleanup after await builds and runs. Earlier isolated
+worker reachability already rejects foreign, indirect and virtual calls; a plain
+worker adapter can nevertheless have an unknown caller-relative summary because
+of its certified native buffers. Another blanket worker rejection is unnecessary.
+
+### Physical storage construction obligations
+
+A future checked backing observation must be independent of establishment
+permission and reuse existing temporal dependencies. The following distinctions
+are mandatory before publishing a representation invariant through erasure:
+
+| Producer or operation | Evidence obligation |
+| --- | --- |
+| Native heap/page acquisition | Tie the actual acquired extent to its address; consuming establishment permission must not erase the observation |
+| Allocation establishment | Fresh temporal ownership is not physical freshness; retained origin metadata is not reusable permission |
+| Arena suballocation | Direct Allocation construction must retain the original block backing and a restricted range |
+| Page and typed allocation restriction | Preserve the same backing when restricting size or advancing past metadata |
+| Public data/size mutation | Authenticated private backing is distinct from the mutable public view; validate each selection against it |
+| Slot/view selection | Checked bounds and alignment must bind the result to that backing, not merely to its lifetime anchor |
+| Stored-reference load | Use the stored reference's own observation, never its container's construction frame |
+| Abstract factory result | Prove the representation invariant for every producer; a nominal type or private layout is insufficient |
+
+Fixture 428X redirects public `Allocation.data` to another live allocation. It
+aborts in the private range guard before reference establishment, as required;
+408X covers inflated public size. Generic wrapped-slot pair 429X/430 demonstrates
+that existing lifetime facts reject use after allocation cleanup while allowing
+use before it, even with a static anchor. No second liveness table is needed.
+Receipt-forgery regressions 382X/383X/415X pass, but prove no general physical
+invariant for erased results. The original 121/177 acceptance gates remain open.
+
+### Validation and resource use
+
+The isolated Debug safety suite passes 310 tests; the complete Debug internal
+suite passes 1,518 with one skip (584,956 KiB peak RSS, no swaps). Focused program
+runs cover the new relations, alias alternatives, acquisition permissions and
+cleanup boundaries. These results do not validate the primary tree's separate
+unknown-call and loop experiments.
+
+Validation runs serially under a 6 GiB process limit. A temporary-storage quota
+failure produced no usable test result. Obsolete generated objects were removed
+only after the process ended; sources and logs were retained. The validation
+cache now lives under `~/.cache/argi-validation` on disk rather than `/tmp`.
+
+Broad program validation initially failed fixture inventory because experimental
+177/188X copies were left without registered tests. They are preserved outside
+the isolated fixture tree under `~/.cache/argi-validation/pending-fixtures`;
+primary workspace versions are unchanged. The full run and focused inventory
+recheck must be reported separately, rather than calling the original run clean.
+
+The broad ReleaseSafe program run finishes with 2,572 passed, 11 skipped and one
+fixture-inventory failure, zero leaks and zero error logs (2,435,512 KiB peak RSS,
+no swaps). After relocating only the two unregistered experiment copies, the
+focused inventory rerun passes (one test, exit status zero). Compiler and
+registered fixture source did not change between these checks. All staged
+compiler and fixture files match the isolated validation tree. This is a full
+program run plus a corrected preparation-check rerun, not an originally clean
+full-suite invocation. The uniform unknown-effect gate remains unpublished.

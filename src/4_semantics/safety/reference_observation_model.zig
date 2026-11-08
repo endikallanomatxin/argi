@@ -21,25 +21,17 @@ fn holds(grade: Grade, source: Observation, output: Observation) bool {
     return switch (grade) {
         .identity => source.start == output.start and source.end == output.end,
         .contained => source.start <= output.start and output.end <= source.end,
+        .backing => true,
     };
 }
 
-fn weaker(a: Grade, b: Grade) Grade {
-    return if (a == .identity and b == .identity) .identity else .contained;
-}
-
-// Alternatives retain a common universal guarantee, never one known branch.
+// The bounded oracle below now checks the production relation algebra.
 fn join(a: ?Relation, b: ?Relation) ?Relation {
-    const left = a orelse return null;
-    const right = b orelse return null;
-    if (!left.source.eql(right.source)) return null;
-    return .{ .source = left.source, .grade = weaker(left.grade, right.grade) };
+    return Relation.common(a, b);
 }
 
-// Substitution has already resolved the middle observation to the selected
-// argument value. This operation neither loads its referent nor changes source.
 fn compose(source_to_middle: Relation, middle_to_output: Grade) Relation {
-    return .{ .source = source_to_middle.source, .grade = weaker(source_to_middle.grade, middle_to_output) };
+    return source_to_middle.then(middle_to_output);
 }
 
 fn loadReference(slot: ?Relation, stored_reference: ?Relation) ?Relation {
@@ -122,4 +114,25 @@ test "observation model rejects widened extents and cannot reuse retargeted snap
     // Relation truth alone does not establish liveness. An ended source/output
     // pair can still have equal snapshots; validity must be checked separately.
     try std.testing.expect(holds(.identity, scalar, scalar));
+}
+
+test "backing relation cannot establish containment in the source view" {
+    const first = Observation{ .backing = 0, .generation = @enumFromInt(0), .start = 0, .end = 1 };
+    const second = Observation{ .backing = 0, .generation = @enumFromInt(0), .start = 1, .end = 2 };
+    try std.testing.expect(holds(.backing, first, second));
+    try std.testing.expect(!holds(.contained, first, second));
+    try std.testing.expect(!holds(.identity, first, second));
+    var stale = second;
+    stale.generation = @enumFromInt(1);
+    try std.testing.expect(!holds(.backing, first, stale));
+    var external = second;
+    external.backing = 1;
+    try std.testing.expect(!holds(.backing, first, external));
+}
+
+test "equal addresses of empty observations do not establish shared backing" {
+    const empty = Observation{ .backing = 0, .generation = @enumFromInt(0), .start = 0, .end = 0 };
+    const other = Observation{ .backing = 1, .generation = @enumFromInt(0), .start = 0, .end = 1 };
+    try std.testing.expectEqual(empty.start, other.start);
+    try std.testing.expect(!holds(.backing, empty, other));
 }

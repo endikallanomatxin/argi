@@ -162,7 +162,34 @@ pub const FreshExecution = struct {
 /// lifetime dependency or an access grant. Containment never implies identity.
 pub const ReferenceRelation = struct {
     source: InputPath,
-    grade: enum { identity, contained } = .identity,
+    grade: Grade = .identity,
+
+    pub const Grade = enum { identity, contained, backing };
+
+    /// Common strength for alternatives and transitive reference derivations.
+    pub fn weaker(a: Grade, b: Grade) Grade {
+        if (a == .backing or b == .backing) return .backing;
+        if (a == .contained or b == .contained) return .contained;
+        return .identity;
+    }
+
+    pub fn implies(actual: Grade, required: Grade) bool {
+        return weaker(actual, required) == required;
+    }
+
+    pub fn common(a: ?ReferenceRelation, b: ?ReferenceRelation) ?ReferenceRelation {
+        const left = a orelse return null;
+        const right = b orelse return null;
+        if (!left.source.eql(right.source)) return null;
+        return .{ .source = left.source, .grade = weaker(left.grade, right.grade) };
+    }
+
+    /// The intermediate observation must already be resolved by the caller.
+    /// This operation neither follows reference contents nor proves liveness.
+    pub fn then(self: ReferenceRelation, next: Grade) ReferenceRelation {
+        return .{ .source = self.source, .grade = weaker(self.grade, next) };
+    }
+
 
     pub fn eql(a: ReferenceRelation, b: ReferenceRelation) bool {
         return a.grade == b.grade and a.source.eql(b.source);
@@ -170,7 +197,7 @@ pub const ReferenceRelation = struct {
 };
 
 pub const ValueEffect = struct {
-    /// Verified identity or containment, never a may-dependency or authority.
+    /// Verified reference relation, never a may-dependency or authority.
     /// Missing evidence does not describe an empty access footprint.
     reference_relation: ?ReferenceRelation = null,
     /// Preserves the use-site check for declared dependencies across calls.
