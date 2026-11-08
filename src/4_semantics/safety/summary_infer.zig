@@ -1771,7 +1771,7 @@ pub const Infer = struct {
         entries = right.bindings.iterator();
         while (entries.next()) |entry| {
             const value = if (joined.bindings.get(entry.key_ptr.*)) |previous|
-                try self.joinStorageAlternatives(previous, entry.value_ptr.*)
+                try self.joinStorageAlternatives(self.graph.binding(entry.key_ptr.*).ty, previous, entry.value_ptr.*)
             else
                 entry.value_ptr.*;
             try joined.bindings.put(entry.key_ptr.*, value);
@@ -1879,6 +1879,10 @@ pub const Infer = struct {
             },
             .address_of, .move_value, .denied_implicit_copy => |value| self.capability_value(function, value, flow),
             .struct_field_access => |field| self.projectValueEffect(try self.capability_value(function, field.value, flow), .{ .field = field.field_index }),
+            .array_index => |index| self.projectValueEffect(
+                try self.capability_value(function, index.array_ptr, flow),
+                if (self.staticIndex(index.index)) |selected| .{ .static_index = selected } else .dynamic_index,
+            ),
             .choice_payload_access => |access| blk: {
                 const ty = self.graph.node(access.value).ty orelse break :blk .{};
                 const index = self.variantIndex(ty, access.variant) orelse break :blk .{};
@@ -6903,10 +6907,15 @@ pub const Infer = struct {
         return false;
     }
 
+    fn explicitFieldEffect(value: facts.ValueEffect, index: u32) facts.ValueEffect {
+        for (value.fields) |field| if (field.index == index) return field.value.*;
+        return .{};
+    }
+
     /// A join of alternative values differs from aggregating independent fields.
     /// Possible capability identities remain useful for consumption checks, but
     /// cannot prove presence if another returning alternative has no evidence.
-    fn joinStorageAlternatives(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
+    fn joinStorageAlternatives(self: *Infer, value_type: ?graph_mod.GlobalTypeId, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
         var result = try self.mergeValueEffects(left, right);
         if (result.fields.len == 0 and result.variants.len == 0 and
             mayCarryStoragePermission(left) != mayCarryStoragePermission(right))
@@ -6917,18 +6926,24 @@ pub const Infer = struct {
         }
         const fields = try self.allocator.dupe(facts.OutputFieldEffect, result.fields);
         for (fields) |*child| {
-            var a: facts.ValueEffect = .{};
-            var b: facts.ValueEffect = .{};
-            for (left.fields) |candidate| if (candidate.index == child.index) {
-                a = candidate.value.*;
-                break;
-            };
-            for (right.fields) |candidate| if (candidate.index == child.index) {
-                b = candidate.value.*;
-                break;
-            };
+            const element = if (value_type) |ty| types.arrayElement(self.graph, ty) else null;
+            const record_fields = if (value_type) |ty| types.fields(self.graph, ty) else null;
+            const child_type: ?graph_mod.GlobalTypeId = element orelse if (record_fields) |range|
+                (if (child.index < range.len) self.graph.fields.items[range.start + child.index].ty else null)
+            else
+                null;
+            const projection: ?facts.Projection = if (element != null)
+                .{ .static_index = child.index }
+            else if (child_type != null)
+                .{ .field = child.index }
+            else
+                null;
+            // Unknown layouts may retain explicit child facts, but cannot
+            // invent a field path for a symbolic array (or the reverse).
+            const a = if (projection) |selected| try self.projectValueEffect(left, selected) else explicitFieldEffect(left, child.index);
+            const b = if (projection) |selected| try self.projectValueEffect(right, selected) else explicitFieldEffect(right, child.index);
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.joinStorageAlternatives(a, b);
+            value.* = try self.joinStorageAlternatives(child_type, a, b);
             child.value = value;
         }
         result.fields = fields;
@@ -6944,11 +6959,21 @@ pub const Infer = struct {
                 b = candidate.value.*;
                 break;
             };
-            if (a != null and b != null) {
-                const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.joinStorageAlternatives(a.?, b.?);
-                child.value = value;
-            }
+            // A missing payload is unreachable only when the other case is
+            // known. Sparse or unknown choice facts cannot prove exclusion.
+            const excludes_a = a == null and left.known_choice_variant != null and left.known_choice_variant.? != child.index;
+            const excludes_b = b == null and right.known_choice_variant != null and right.known_choice_variant.? != child.index;
+            if (excludes_a or excludes_b) continue;
+            const left_payload = a orelse try self.projectValueEffect(left, .{ .variant = child.index });
+            const right_payload = b orelse try self.projectValueEffect(right, .{ .variant = child.index });
+            const variants_range = if (value_type) |ty| types.variants(self.graph, ty) else null;
+            const child_type: ?graph_mod.GlobalTypeId = if (variants_range) |range|
+                (if (child.index < range.len) self.graph.variants.items[range.start + child.index].payload_type else null)
+            else
+                null;
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.joinStorageAlternatives(child_type, left_payload, right_payload);
+            child.value = value;
         }
         result.variants = variants;
         return result;
@@ -7357,6 +7382,21 @@ pub const Infer = struct {
             }
             result.input_dependencies = validity;
             return result;
+        }
+        if (types.arrayElement(self.graph, ty)) |element| {
+            // Overlay represented elements only; array length is not an excuse
+            // to expand a sparse summary into every physical slot.
+            const fields = try self.allocator.alloc(facts.OutputFieldEffect, result.fields.len);
+            for (result.fields, fields) |field, *output| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.overlay_capability_outputs(
+                    field.value.*,
+                    try self.projectValueEffect(origin, .{ .static_index = field.index }),
+                    element,
+                );
+                output.* = .{ .index = field.index, .value = value };
+            }
+            result.fields = fields;
         }
         if (types.fields(self.graph, ty)) |range| {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
@@ -8614,19 +8654,19 @@ test "return alternatives preserve capability coverage without poisoning distinc
     const other: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{2} };
     const combined = try infer.mergeValueEffects(acquired, .{});
     try std.testing.expect(!combined.storage_capability_incomplete);
-    const partial = try infer.joinStorageAlternatives(acquired, .{});
+    const partial = try infer.joinStorageAlternatives(null, acquired, .{});
     try std.testing.expect(partial.storage_capability_incomplete);
     try std.testing.expectEqual(@as(usize, 1), partial.fresh_storage_capabilities.len);
-    try std.testing.expect((try infer.joinStorageAlternatives(.{}, acquired)).storage_capability_incomplete);
-    try std.testing.expect(!(try infer.joinStorageAlternatives(acquired, other)).storage_capability_incomplete);
+    try std.testing.expect((try infer.joinStorageAlternatives(null, .{}, acquired)).storage_capability_incomplete);
+    try std.testing.expect(!(try infer.joinStorageAlternatives(null, acquired, other)).storage_capability_incomplete);
     const success: facts.ValueEffect = .{ .variants = &.{.{ .index = 0, .value = &acquired }}, .known_choice_variant = 0 };
     const failure: facts.ValueEffect = .{ .variants = &.{.{ .index = 1, .value = &.{} }}, .known_choice_variant = 1 };
-    const outcomes = try infer.joinStorageAlternatives(success, failure);
+    const outcomes = try infer.joinStorageAlternatives(null, success, failure);
     try std.testing.expect(!outcomes.storage_capability_incomplete);
     try std.testing.expect(!(try infer.projectValueEffect(outcomes, .{ .variant = 0 })).storage_capability_incomplete);
     const record: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &acquired }} };
     const missing: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &.{} }} };
-    const records = try infer.joinStorageAlternatives(record, missing);
+    const records = try infer.joinStorageAlternatives(null, record, missing);
     try std.testing.expect((try infer.projectValueEffect(records, .{ .field = 0 })).storage_capability_incomplete);
 }
 
@@ -8680,12 +8720,114 @@ test "forwarded reference evidence is conservative across alternatives and recei
     try std.testing.expect(!summaries.valueEffectEql(first, second));
     try std.testing.expect(!summaries.valueEffectEql(first, .{}));
     try std.testing.expect(!summaries.valueEffectEql(.{}, first));
-    try std.testing.expect((try infer.joinStorageAlternatives(first, first)).forwarded_reference != null);
-    for ([_]facts.ValueEffect{ try infer.joinStorageAlternatives(first, .{}), try infer.joinStorageAlternatives(.{}, first), try infer.joinStorageAlternatives(first, second), try infer.joinStorageAlternatives(second, first) }) |joined| {
+    try std.testing.expect((try infer.joinStorageAlternatives(null, first, first)).forwarded_reference != null);
+    for ([_]facts.ValueEffect{ try infer.joinStorageAlternatives(null, first, .{}), try infer.joinStorageAlternatives(null, .{}, first), try infer.joinStorageAlternatives(null, first, second), try infer.joinStorageAlternatives(null, second, first) }) |joined| {
         try std.testing.expectEqual(@as(?facts.InputPath, null), joined.forwarded_reference);
     }
     try std.testing.expectEqual(@as(?facts.InputPath, null), (try infer.projectValueEffect(first, .{ .field = 0 })).forwarded_reference);
     try std.testing.expectEqual(@as(?facts.InputPath, null), (try infer.bindVirtualReceiverValues(first, 0)).forwarded_reference);
     const forwarded = try infer.bindVirtualReceiverValues(second, 0);
     try std.testing.expectEqual(@as(u32, 1), forwarded.forwarded_reference.?.input_index);
+}
+
+test "unknown choice alternatives cannot preserve another branch's reference proof" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const reference = facts.ValueEffect{ .forwarded_reference = .{ .input_index = 0 } };
+    const known = facts.ValueEffect{
+        .known_choice_variant = 0,
+        .variants = &.{.{ .index = 0, .value = &reference }},
+    };
+    for ([_]facts.ValueEffect{ .{}, .{ .known_choice_variant = 0 } }) |unknown| {
+        const joined = try infer.joinStorageAlternatives(null, known, unknown);
+        try std.testing.expect(joined.variants[0].value.forwarded_reference == null);
+        const reverse = try infer.joinStorageAlternatives(null, unknown, known);
+        try std.testing.expect(reverse.variants[0].value.forwarded_reference == null);
+    }
+    // A branch known to return another case cannot supply this payload.
+    const other_case = facts.ValueEffect{ .known_choice_variant = 1 };
+    const joined = try infer.joinStorageAlternatives(null, known, other_case);
+    try std.testing.expect(joined.variants[0].value.forwarded_reference != null);
+}
+
+test "unknown choice alternatives cannot grant storage authorization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const permission = facts.ValueEffect{ .input_storage_capabilities = &.{.{ .input_index = 0 }} };
+    const known = facts.ValueEffect{
+        .known_choice_variant = 0,
+        .variants = &.{.{ .index = 0, .value = &permission }},
+    };
+    for ([_]facts.ValueEffect{ .{}, .{ .known_choice_variant = 0 } }) |unknown| {
+        const joined = try infer.joinStorageAlternatives(null, known, unknown);
+        const payload = joined.variants[0].value;
+        try std.testing.expect(payload.storage_capability_incomplete);
+        // Keep the possible identity for consumption/alias checking.
+        try std.testing.expectEqual(@as(usize, 1), payload.input_storage_capabilities.len);
+        const reverse = try infer.joinStorageAlternatives(null, unknown, known);
+        try std.testing.expect(reverse.variants[0].value.storage_capability_incomplete);
+    }
+    const other_case = facts.ValueEffect{ .known_choice_variant = 1 };
+    const joined = try infer.joinStorageAlternatives(null, known, other_case);
+    try std.testing.expect(!joined.variants[0].value.storage_capability_incomplete);
+
+    // A symbolic input is conditional evidence: require its selected payload,
+    // rather than declaring it absent or borrowing another branch's permission.
+    const input = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} };
+    const from_input = try infer.joinStorageAlternatives(null, known, input);
+    const payload = from_input.variants[0].value;
+    try std.testing.expect(!payload.storage_capability_incomplete);
+    var requires_payload = false;
+    for (payload.input_storage_authorizations) |path| {
+        if (path.input_index == 1 and path.projections.len == 1 and path.projections[0] == .variant and path.projections[0].variant == 0)
+            requires_payload = true;
+    }
+    try std.testing.expect(requires_payload);
+}
+
+test "alternative joins retain canonical symbolic array element paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UIntNative },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 1 } },
+    });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const permission = facts.ValueEffect{ .input_storage_capabilities = &.{.{ .input_index = 0 }} };
+    const known = facts.ValueEffect{ .fields = &.{.{ .index = 0, .value = &permission }} };
+    const input = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} };
+    const joined = try infer.joinStorageAlternatives(@enumFromInt(1), known, input);
+    const reverse = try infer.joinStorageAlternatives(@enumFromInt(1), input, known);
+    for ([_]facts.ValueEffect{ joined, reverse }) |alternative| {
+        const element = alternative.fields[0].value;
+        try std.testing.expect(!element.storage_capability_incomplete);
+        var requires_element = false;
+        for (element.input_storage_authorizations) |path| if (path.input_index == 1) {
+            try std.testing.expectEqual(@as(usize, 1), path.projections.len);
+            try std.testing.expect(path.projections[0] == .static_index);
+            try std.testing.expectEqual(@as(usize, 0), path.projections[0].static_index);
+            requires_element = true;
+        };
+        try std.testing.expect(requires_element);
+    }
 }
