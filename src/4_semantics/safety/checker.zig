@@ -4269,6 +4269,19 @@ pub const SafetyChecker = struct {
         return self.diagnostics.list.items.len == before;
     }
 
+    fn projectAccessPointer(self: *SafetyChecker, value: facts.ValueFacts, projections: []const facts.Projection, argument_type: ?graph_mod.GlobalTypeId) !facts.ValueFacts {
+        // Access summaries describe storage, not values loaded from it.
+        // Structural subobjects stay inside the referent's physical backing.
+        // A stored-reference traversal or by-value aggregate needs its own facts.
+        if (argument_type) |ty| if (self.graph.semanticType(ty) == .pointer) {
+            const embedded = for (projections) |projection| {
+                if (projection == .dereference) break false;
+            } else true;
+            if (embedded) return value.referenceCopy();
+        };
+        return self.projectValueFacts(value, projections);
+    }
+
     fn validateSummaryExecutionAccess(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -4338,7 +4351,11 @@ pub const SafetyChecker = struct {
                 try self.requireExecutionAccess(source, storage, null, access.mode, state);
             } else if (access.target.input_index < arguments.len) {
                 // Conservatively cover unknown referents carried in records.
-                const value = try self.projectValueFacts(arguments[access.target.input_index], access.target.projections);
+                const argument_type = if (access.target.input_index < argument_ids.len)
+                    self.graph.node(self.graph.value_fields.items[@intFromEnum(argument_ids[access.target.input_index])].value).ty
+                else
+                    null;
+                const value = try self.projectAccessPointer(arguments[access.target.input_index], access.target.projections, argument_type);
                 try self.requireExecutionPointerAccess(source, value, access.mode, state);
             }
         }
@@ -13223,4 +13240,36 @@ fn includeReferenceAlternative(target: *?facts.Place, seen: *bool, candidate: ?f
         target.* = null;
     }
     seen.* = true;
+}
+
+test "structural access projections retain backing without loading stored reference facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 2 } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } },
+    });
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    const pointer = facts.ValueFacts{ .lexical_frame = 3 };
+    const element = [_]facts.Projection{.{ .static_index = 1 }};
+    const access = try checker.projectAccessPointer(pointer, &element, @enumFromInt(2));
+    try std.testing.expectEqual(@as(?u32, 3), access.lexical_frame);
+    try std.testing.expect(access.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 0), access.storage_capabilities.len);
+    const loaded = try checker.projectValueFacts(pointer, &element);
+    try std.testing.expectEqual(@as(?u32, null), loaded.lexical_frame);
+    const indirect = try checker.projectAccessPointer(pointer, &.{ .{ .static_index = 1 }, .dereference }, @enumFromInt(2));
+    try std.testing.expectEqual(@as(?u32, null), indirect.lexical_frame);
+    const by_value = try checker.projectAccessPointer(pointer, &element, @enumFromInt(1));
+    try std.testing.expectEqual(@as(?u32, null), by_value.lexical_frame);
+    const stored = facts.ValueFacts{ .lexical_frame = 1 };
+    const unknown = facts.ValueFacts{ .fields = &.{.{ .index = 1, .value = &stored }} };
+    const unknown_access = try checker.projectAccessPointer(unknown, &element, @enumFromInt(2));
+    try std.testing.expectEqual(@as(?u32, null), unknown_access.lexical_frame);
+    try std.testing.expectEqual(@as(usize, 0), unknown_access.fields.len);
 }

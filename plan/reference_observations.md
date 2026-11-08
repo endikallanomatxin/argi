@@ -204,3 +204,41 @@ ArrayView constructors, runtime bounds checks, summary extraction, source-path
 stability across writes, or native physical provenance. Those remain the next
 implementation obligations. It therefore supports the candidate algebra, not a
 soundness or data-race-freedom claim about the compiler.
+
+## Structural access authorization before output relations
+
+The checked-array reduction (local concurrency/181) initially failed at the call
+to its accessor wrapper, before using the returned reference. Call authorization
+used projectValueFacts for an unresolved input access. That operation describes
+loaded contents and correctly forgets the containing pointer's frame; it is the
+wrong operation for an access to embedded storage.
+
+The candidate uses the evaluated argument's reference facts as a conservative
+footprint when the argument type is a pointer and every summary projection is
+structural (no stored-reference dereference). These accesses stay inside the
+referent. Known Places still use their existing precise overlap checks. By-value
+records, unknown argument types, named virtual domains and paths crossing stored
+references do not receive this fallback. Loaded values keep their separate facts.
+No exact target, initialization, acquisition permission or containment summary is
+created. In particular, a missing source frame cannot be replaced by a frame from
+one of its stored fields.
+
+The positive fixture 182 reads a checked array element through an accessor and
+ordinary wrapper while a later unrelated writer is pending. Published 69959b74e
+rejects it at call entry; the candidate builds and runs it. 183X lends the actual
+array backing instead and rejects. 184X stores a reference to the later borrowed
+local inside the older array and rejects the accessor that dereferences it.
+The checker unit reproduces the lost source observation before correction and
+checks the content-load, stored-traversal, by-value and missing-source boundaries.
+
+This isolates the remaining output problem: local 181 now gets past the call but
+still rejects the later element-reference read. Thus embedded-access authorization
+needs no new summary relation, while returned-reference observation transport
+remains a distinct obligation. The original ArrayView/Allocation gates remain open.
+
+Validation of structural-access authorization: the primary full Debug internal
+suite passes 1,512 tests with one skipped (587,612 KiB peak RSS, no swaps). The
+isolated Debug reference/concurrency program suite passes 333 tests, with zero
+failures, leaks or error logs, including 182/183X/184X. The isolated source excludes
+the unfinished unknown-call and loop experiments; staged compiler and fixture
+files match that validation tree. This is not a new full-program-suite result.
