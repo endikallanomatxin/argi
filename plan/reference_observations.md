@@ -155,3 +155,20 @@ and 180 pass their focused program-test run, with no failures, leaks or error
 logs. Direct fresh-frontend checks using the isolated b0ca339b6 compiler also
 confirm the outcomes listed above, including the pending positive rejection.
 No new full-suite result or implemented backing guarantee is claimed here.
+
+## Whole-reference source selection prerequisite
+
+A focused checker unit exposes a source-selection error before adding contained
+relations: a zero-projection forwarded_reference was instantiated using the
+summary loader, which implicitly loads the argument's referent. Forwarding an
+argument observed at frame 9 could therefore copy frame 1 from the reference
+stored in its target slot. The unit observes the incorrect value before the fix;
+it also checks that an unknown argument frame cannot acquire stored evidence.
+
+Whole-reference identity now selects the evaluated argument itself. Nonempty
+paths retain their existing projection/loading rules; the change grants no new
+containment or authority. The primary safety-module run passes 273 tests. The isolated full Debug
+internal suite passes 1,506 tests with one skipped, 585,128 KiB peak RSS and no
+swaps. Focused Debug reference/concurrency program validation passes 330 tests,
+with zero failures, leaks or error logs. These checks validate source selection;
+no contained-backing guarantee has been implemented.

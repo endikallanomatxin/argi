@@ -5375,7 +5375,12 @@ pub const SafetyChecker = struct {
         if (has_referent) result.referenced_place = referenced_place;
         try self.attachAbsentFreshExecutions(effect, &result, state);
         if (effect.forwarded_reference) |path| {
-            const input = try self.load_summary_input_value(path, arguments, state);
+            // A whole-reference identity selects the argument value, not a
+            // load from its target. Stored references have their own frames.
+            const input = if (path.storage_domain == null and path.projections.len == 0)
+                (if (path.input_index < arguments.len) arguments[path.input_index] else facts.ValueFacts{})
+            else
+                try self.load_summary_input_value(path, arguments, state);
             result.lexical_frame = input.lexical_frame;
         }
         return result;
@@ -13160,6 +13165,31 @@ test "verified forwarding preserves observations without manufacturing authority
     try std.testing.expectEqual(@as(?u32, null), (try checker.instantiateOutput(.{
         .forwarded_reference = .{ .input_index = 1 },
     }, &.{ input, .{} }, &state)).lexical_frame);
+}
+
+test "whole-reference forwarding observes the argument rather than its stored contents" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const slot = facts.Place{ .root = @enumFromInt(0) };
+    try state.setPlace(slot, .initialized, .{ .lexical_frame = 1 });
+    const argument = facts.ValueFacts{ .referenced_place = slot, .lexical_frame = 9 };
+    const forwarded = try checker.instantiateOutput(.{
+        .forwarded_reference = .{ .input_index = 0 },
+    }, &.{argument}, &state);
+    try std.testing.expectEqual(@as(?u32, 9), forwarded.lexical_frame);
+    // Unknown argument observations cannot acquire an older frame by loading
+    // a reference held in their target slot.
+    const unknown = try checker.instantiateOutput(.{
+        .forwarded_reference = .{ .input_index = 0 },
+    }, &.{.{ .referenced_place = slot }}, &state);
+    try std.testing.expectEqual(@as(?u32, null), unknown.lexical_frame);
 }
 
 test "summary reference alternatives cannot hide an unknown target behind a known one" {
