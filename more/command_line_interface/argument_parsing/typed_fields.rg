@@ -1,19 +1,20 @@
--- Configuration functions are specialized identities. Their returned metadata
--- is shared parser input, never part of an argument wrapper's stored layout.
-OptionConfig := #(.T: Type) (
+-- Metadata participates in type specialization; instances store only the value.
+Option := #(
+    .T             : Type,
     .short_name    : StringView = "",
     .help          : StringView = "",
     .value_name    : StringView = "VALUE",
     .default_value : ?T         = ..none
-)
+) (.value: T)
 
-_default_config := #(.T: Type) () -> (.config: OptionConfig#(T)) { config = () }
+Positional := #(
+    .T             : Type,
+    .help          : StringView = "",
+    .value_name    : StringView = "VALUE",
+    .default_value : ?T         = ..none
+) (.value: T)
 
-Option := #(.T: Type, .config: Function = _default_config#(T)) (.value: T)
-
-Positional := #(.T: Type, .config: Function = _default_config#(T)) (.value: T)
-
-Flag := #(.config: Function = _default_config#(Bool)) (.value: Bool)
+Flag := #(.short_name: StringView = "", .help: StringView = "") (.value: Bool)
 
 FieldInfo := (.spec: Spec, .positional: Bool = false)
 
@@ -39,23 +40,31 @@ implement ArgumentValue#(StringView) (
     .empty = () -> (.value: StringView) { value = "" }
 )
 
-implement#(.T: Type: ArgumentValue#(T), .config: Function) ArgumentField#(Option#(T, config)) (
+implement#(
+    .T             : Type: ArgumentValue#(T),
+    .short_name    : StringView,
+    .help          : StringView,
+    .value_name    : StringView,
+    .default_value : ?T
+) ArgumentField#(Option#(T, short_name, help, value_name, default_value)) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
-        metadata ::= invoke#(config)(.args = ())
         required ::= false
-        match metadata.default_value { ..none { required = true } ..some _ {} }
+        match default_value { ..none { required = true } ..some _ {} }
         info = (
             .spec = Spec(
                 .name       = name
-                .short_name = metadata.short_name
-                .help       = metadata.help
-                .value_name = metadata.value_name
+                .short_name = short_name
+                .help       = help
+                .value_name = value_name
                 .required   = required
             )
         )
     }
     .read = (.text: ?StringView, .present: Bool) -> (
-        .result : Errable#(Option#(T, config), (..invalid_argument_value, ..required_option))
+        .result : Errable#(
+            Option#(T, short_name, help, value_name, default_value),
+            (..invalid_argument_value, ..required_option)
+        )
     ) {
         match text {
             ..some entry {
@@ -65,31 +74,30 @@ implement#(.T: Type: ArgumentValue#(T), .config: Function) ArgumentField#(Option
             }
             ..none {}
         }
-        metadata ::= invoke#(config)(.args = ())
-        match metadata.default_value {
+        match default_value {
             ..some entry { result = ..ok(.value = entry.value) }
             ..none { result = ..error(.reason = ..required_option) }
         }
     }
-    .empty = () -> (.field: Option#(T, config)) {
+    .empty = () -> (.field: Option#(T, short_name, help, value_name, default_value)) {
         field = (.value = ArgumentValue#(T).empty())
     }
 )
 
-implement#(.T: Type: ArgumentValue#(T), .config: Function) ArgumentField#(
-    Positional#(T, config)
-) (
+implement#(
+    .T: Type: ArgumentValue#(T), .help: StringView, .value_name: StringView, .default_value: ?T
+) ArgumentField#(Positional#(T, help, value_name, default_value)) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
-        metadata ::= invoke#(config)(.args = ())
         info = (
-            .spec = Spec(
-                .name = name, .help = metadata.help, .value_name = metadata.value_name
-            )
+            .spec       = Spec(.name = name, .help = help, .value_name = value_name)
             .positional = true
         )
     }
     .read = (.text: ?StringView, .present: Bool) -> (
-        .result : Errable#(Positional#(T, config), (..invalid_argument_value, ..required_option))
+        .result : Errable#(
+            Positional#(T, help, value_name, default_value),
+            (..invalid_argument_value, ..required_option)
+        )
     ) {
         match text {
             ..some entry {
@@ -99,30 +107,28 @@ implement#(.T: Type: ArgumentValue#(T), .config: Function) ArgumentField#(
             }
             ..none {}
         }
-        metadata ::= invoke#(config)(.args = ())
-        match metadata.default_value {
+        match default_value {
             ..some entry { result = ..ok(.value = entry.value) }
             ..none { result = ..error(.reason = ..required_option) }
         }
     }
-    .empty = () -> (.field: Positional#(T, config)) {
+    .empty = () -> (.field: Positional#(T, help, value_name, default_value)) {
         field = (.value = ArgumentValue#(T).empty())
     }
 )
 
-implement#(.config: Function) ArgumentField#(Flag#(config)) (
+implement#(.short_name: StringView, .help: StringView) ArgumentField#(Flag#(short_name, help)) (
     .describe = (.name: StringView) -> (.info: FieldInfo) {
-        metadata ::= invoke#(config)(.args = ())
-        info = (
-            .spec = Spec(.name = name, .short_name = metadata.short_name, .help = metadata.help)
-        )
+        info = (.spec = Spec(.name = name, .short_name = short_name, .help = help))
     }
     .read = (.text: ?StringView, .present: Bool) -> (
-        .result : Errable#(Flag#(config), (..invalid_argument_value, ..required_option))
+        .result : Errable#(
+            Flag#(short_name, help), (..invalid_argument_value, ..required_option)
+        )
     ) {
         result = ..ok(.value = present)
     }
-    .empty = () -> (.field: Flag#(config)) { field = (.value = false) }
+    .empty = () -> (.field: Flag#(short_name, help)) { field = (.value = false) }
 )
 
 _numeric_argument := #(.T: Type, .F: Function) (.text: StringView) -> (

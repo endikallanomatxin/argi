@@ -15,7 +15,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         ap.Spec(.name = "help", .short_name = "h", .help = "Show help"),
         ap.Spec(.name = "output", .short_name = "o", .value_name = "FILE"),
     )
-    matches ::= ap.parse(
+    matches ::= ap.parse_specs(
         .source = system.args, .specs = view(&specs), .start = 1
     )!!! { status_code = 1 }
     for option in matches.options {
@@ -44,7 +44,7 @@ value conversion remain the caller's responsibility. The command API supports on
   `take_value` consumes the next token verbatim, including negative numbers.
 - `Spec` describes option names, aliases, help, value labels, requirements,
   repetition and defaults. A nonempty `value_name` marks an option taking a value.
-- `parse` validates the schema, matches options and returns `Matches`. Short aliases
+- `parse_specs` validates the schema, matches options and returns `Matches`. Short aliases
   are normalized to long names. Flags carry no value; value options carry one.
 - `write_help` writes usage and option descriptions to an ordinary Writer.
 
@@ -120,7 +120,7 @@ is explicit through `write_diagnostic`; parsing never writes or exits the proces
 
 ## Typed records and choices
 
-`parse_as#(T)` returns `Parsed#(T)`, a choice between `..arguments T` and
+`parse#(T)` returns `Parsed#(T)`, a choice between `..arguments T` and
 `..help Help`. `Option`, `Positional` and `Flag` store only their `.value`.
 A record declares the arguments; a choice declares subcommands whose payloads
 are argument records. The field/alternative names become long option/command
@@ -129,17 +129,12 @@ names. Positional fields are consumed in declaration order.
 ```rg
 ap := import("command_line_interface/argument_parsing")
 
-output_config := () -> (.config: ap.OptionConfig#(StringView)) {
-    config = (
-        .short_name = "o",
-        .help = "Output file",
-        .default_value = ..some(.value = "output")
-    )
-}
-
 BuildArgs := (
     .input: ap.Positional#(StringView),
-    .output: ap.Option#(StringView, output_config),
+    .output: ap.Option#(
+        StringView, .short_name = "o", .help = "Output file",
+        .value_name = "FILE", .default_value = ..some(.value = "output")
+    ),
     .verbose: ap.Flag#()
 )
 RunArgs := (.input: ap.Positional#(StringView), .release: ap.Flag#())
@@ -148,7 +143,7 @@ Command: Type = (..build BuildArgs, ..run RunArgs)
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
     assume writer ::= $&system.terminal&.stderr
-    parsed ::= ap.parse_as#(Command)(system.args, .start = 1)!!! { status_code = 1 }
+    parsed ::= ap.parse#(Command)(system.args, .start = 1)!!! { status_code = 1 }
     match parsed {
         ..help info {
             ap.write_typed_help#(Command)(writer, &info, .program = "example")!!! {
@@ -172,16 +167,22 @@ parsers; an invalid value, including overflow, returns `invalid_argument_value`.
 Built-in value support covers StringView, Bool, signed/unsigned 8/16/32/64-bit
 integers, UIntNative, Float32 and Float64. Implement `ArgumentValue#(T)` for
 additional value types; its `empty` operation supplies an unpublished placeholder
-for error cleanup, not an argument default. Owning custom values need particular
-care: failed partial results undergo ordinary cleanup.
+for error cleanup, not an argument default. The current compile-time default
+parameter requires an implicitly copyable value type; noncopyable owning custom
+values are not supported by these wrappers.
 
-Configuration currently uses function identities because Argi's value generic
-parameters do not yet support arbitrary strings/records. The function is a type
-parameter and metadata is never stored in each wrapper instance. Providers are
-ordinary callable functions, not a promise of compile-time execution; keep them
-pure and stable, returning constants/default values without side effects. The
-parser may query metadata more than once. This API does not add comptime-only
-instance fields or change representation between native, VM and REPL execution.
+Configuration is supplied directly as compile-time parameters of each field's
+type. `Option` accepts `T`, `short_name`, `help`, `value_name`, and
+`default_value: ?T`. `Positional` accepts `T`, `help`, `value_name`, and
+`default_value`; `Flag` accepts `short_name` and `help`. Parameter values are
+immutable literals or forwarded compile-time value parameters. Strings and
+compound defaults participate in type identity, without occupying instance
+storage. Each wrapper contains only `.value`; the parser specializes for the
+containing record or choice and discovers its fields through structural callbacks.
+No configuration provider functions or comptime-only instance fields are needed.
+
+The lower-level specification API remains available as `parse_specs`; its
+`Spec`, `Matches`, and query helpers can be used for runtime-defined schemas.
 
 The typed entry supports one occurrence per option, no repeated or variadic
 fields, and a single level of subcommands. Positionals are consumed in declaration
@@ -194,4 +195,4 @@ record. Config metadata is queried to describe the selected command.
 
 Typed StringView values borrow the original argument source. Keep that source
 alive while using the resulting record/choice. The optional Diagnostic follows
-the same rules as `parse`; command failures preserve their original reason.
+the same rules as `parse_specs`; command failures preserve their original reason.

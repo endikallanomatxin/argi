@@ -151,7 +151,7 @@ parse_command := #(.Source: Type: ArgumentSource#(Source)) (
                 result = ..ok(.command = name, .help = true, .matches = ~matches)
                 return
             }
-            matches ::= parse(
+            matches ::= parse_specs(
                 .source     = source
                 .specs      = command.specs
                 .start      = start + 1

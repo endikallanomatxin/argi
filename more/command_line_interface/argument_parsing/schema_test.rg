@@ -14,7 +14,7 @@ test cli_schema_validation := (.system: System) -> !() {
     )
     args :: [4]StringView = ("-vv", "-o=result", "input", "--")
     source ::= ArgumentViews(.values = view(.self = &args))
-    parsed ::= parse#(.t: ArgumentViews)(
+    parsed ::= parse_specs#(.t: ArgumentViews)(
         .source = &source, .specs = view(.self = &specs), .allocator = allocator
     )!
     if length(.self = &parsed.options).count != 4 { abort }
@@ -25,19 +25,19 @@ test cli_schema_validation := (.system: System) -> !() {
     }
     empty :: [0]StringView = ()
     empty_source ::= ArgumentViews(.values = view(.self = &empty))
-    match parse#(.t: ArgumentViews)(
+    match parse_specs#(.t: ArgumentViews)(
         .source = &empty_source, .specs = view(.self = &specs), .allocator = allocator
     ) { ..ok ~_ { abort } ..error&err { if [err&.reason != ..required_option] { abort } } }
     bad :: [1]StringView = ("--unknown")
     bad_source ::= ArgumentViews(.values = view(.self = &bad))
-    match parse#(.t: ArgumentViews)(
+    match parse_specs#(.t: ArgumentViews)(
         .source = &bad_source, .specs = view(.self = &specs), .allocator = allocator
     ) {
         ..ok ~_ { abort } ..error&err { if [err&.reason != ..unknown_option] { abort } }
     }
     duplicate :: [2]StringView = ("--output=a", "--output=b")
     duplicate_source ::= ArgumentViews(.values = view(.self = &duplicate))
-    match parse#(.t: ArgumentViews)(
+    match parse_specs#(.t: ArgumentViews)(
         .source = &duplicate_source, .specs = view(.self = &specs), .allocator = allocator
     ) { ..ok ~_ { abort } ..error&err { if [err&.reason != ..duplicate_option] { abort } } }
     invalid :: [4]Spec = (
@@ -47,7 +47,7 @@ test cli_schema_validation := (.system: System) -> !() {
     )
     for spec in invalid {
         schema :: [1]Spec = (spec)
-        match parse(.source = &empty_source, .specs = view(&schema), .allocator = allocator) {
+        match parse_specs(.source = &empty_source, .specs = view(&schema), .allocator = allocator) {
             ..ok ~_ { abort }
             ..error error { if error.reason != ..invalid_cli_schema { abort } }
         }

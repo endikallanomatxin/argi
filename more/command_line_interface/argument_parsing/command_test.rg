@@ -35,7 +35,7 @@ test cli_commands_and_diagnostics := (.system: System) -> !() {
 
     missing_args: [2]StringView = ("build", "--output")
     missing_source ::= ArgumentViews(view(&missing_args))
-    match parse(
+    match parse_specs(
         .source     = &missing_source
         .start      = 1
         .specs      = view(&specs)
@@ -98,7 +98,7 @@ test cli_diagnostic_failures_and_reset := (.system: System) -> !() {
     diagnostic ::= Diagnostic()
     duplicate: [2]StringView = ("-v", "--verbose")
     duplicate_source ::= ArgumentViews(view(&duplicate))
-    match parse(
+    match parse_specs(
         &duplicate_source, .specs = view(&specs), .diagnostic = ..some(.value = $&diagnostic)
     ) {
         ..ok ~_ { abort }
@@ -107,7 +107,7 @@ test cli_diagnostic_failures_and_reset := (.system: System) -> !() {
     if diagnostic.argument != "verbose" { abort }
     flag: [1]StringView = ("--verbose=yes")
     flag_source ::= ArgumentViews(view(&flag))
-    match parse(
+    match parse_specs(
         &flag_source, .specs = view(&specs), .diagnostic = ..some(.value = $&diagnostic)
     ) {
         ..ok ~_ { abort }
@@ -116,7 +116,7 @@ test cli_diagnostic_failures_and_reset := (.system: System) -> !() {
     if diagnostic.value != "yes" { abort }
     empty: [0]StringView = ()
     empty_source ::= ArgumentViews(view(&empty))
-    match parse(
+    match parse_specs(
         &empty_source, .specs = view(&specs), .diagnostic = ..some(.value = $&diagnostic)
     ) {
         ..ok ~_ { abort }
@@ -125,7 +125,7 @@ test cli_diagnostic_failures_and_reset := (.system: System) -> !() {
     if diagnostic.argument != "output" or diagnostic.value != "" { abort }
     good: [1]StringView = ("--output=app")
     good_source ::= ArgumentViews(view(&good))
-    matches ::= parse(
+    matches ::= parse_specs(
         &good_source, .specs = view(&specs), .diagnostic = ..some(.value = $&diagnostic)
     )!
     if diagnostic.message != "" or diagnostic.argument != "" { abort }

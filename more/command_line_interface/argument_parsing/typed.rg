@@ -198,7 +198,7 @@ _parse_record := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
         result = ..ok ..help(.command = "")
         return
     }
-    matches ::= parse(
+    matches ::= parse_specs(
         .source = source, .specs = view(&specs), .start = start, .diagnostic = diagnostic
     )!
     reader ::= _ReadContext#(Source)(
@@ -216,7 +216,7 @@ _parse_record := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     result = ..ok ..arguments ~arguments
 }
 
-parse_as := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
+parse := #(.T: Type, .Source: Type: ArgumentSource#(Source)) (
     .source     : &Source,
     .start      : UIntNative           = 0,
     .allocator  : Virtual#(Allocator),

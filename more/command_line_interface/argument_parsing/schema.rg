@@ -81,7 +81,7 @@ _validate_specs := (.specs: ArrayView#(Spec)) -> (
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
 -- Names exclude ASCII controls, spaces and '='. Defaults require value options.
-parse := #(.t: Type: ArgumentSource#(t)) (
+parse_specs := #(.t: Type: ArgumentSource#(t)) (
     .source     : &t,
     .specs      : ArrayView#(.t: Spec),
     .start      : UIntNative            = 0,

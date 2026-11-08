@@ -1,24 +1,19 @@
-_output := () -> (.config: OptionConfig#(StringView)) {
-    config = (
-        .short_name    = "o"
-        .help          = "Output file"
-        .default_value = ..some(.value = "output")
-    )
-}
-
-_verbose := () -> (.config: OptionConfig#(Bool)) { config = (.short_name = "v") }
-
 _TestBuild := (
-    .input   : Positional#(StringView),
-    .output  : Option#(StringView, _output),
-    .verbose : Flag#(_verbose)
+    .input  : Positional#(StringView),
+    .output : Option#(
+        StringView,
+        .short_name    = "o",
+        .help          = "Output file",
+        .default_value = ..some(.value = "output")
+    ),
+    .verbose : Flag#(.short_name = "v")
 )
 
 test typed_record_arguments := (.system: System) -> !() {
     assume allocator := system.page_allocator
     args: [4]StringView = ("main.rg", "-o", "app", "-v")
     source ::= ArgumentViews(view(&args))
-    parsed ::= parse_as#(_TestBuild)(.source = &source)!
+    parsed ::= parse#(_TestBuild)(.source = &source)!
     match parsed {
         ..help ~_ { abort }
         ..arguments data {
@@ -39,7 +34,7 @@ test typed_choice_arguments := (.system: System) -> !() {
     assume allocator := system.page_allocator
     args: [3]StringView = ("run", "main.rg", "--release")
     source ::= ArgumentViews(view(&args))
-    parsed ::= parse_as#(_TestCommand)(.source = &source)!
+    parsed ::= parse#(_TestCommand)(.source = &source)!
     match parsed {
         ..help _ { abort }
         ..arguments command {
@@ -63,7 +58,7 @@ test typed_help_defaults_and_values := (.system: System) -> !() {
     assume allocator := system.page_allocator
     args: [1]StringView = ("main.rg")
     source ::= ArgumentViews(view(&args))
-    match parse_as#(_TestBuild)(.source = &source)! {
+    match parse#(_TestBuild)(.source = &source)! {
         ..help _ { abort }
         ..arguments data {
             if data.output.value != "output" or data.verbose.value { abort }
@@ -71,14 +66,14 @@ test typed_help_defaults_and_values := (.system: System) -> !() {
     }
     before: [3]StringView = ("--jobs", "8", "main.rg")
     before_source ::= ArgumentViews(view(&before))
-    match parse_as#(_TestNumbers)(.source = &before_source)! {
+    match parse#(_TestNumbers)(.source = &before_source)! {
         ..help _ { abort }
         ..arguments data { if data.jobs.value != 8 or data.input.value != "main.rg" { abort } }
     }
     diagnostic ::= Diagnostic()
     invalid: [3]StringView = ("--jobs", "256", "main.rg")
     invalid_source ::= ArgumentViews(view(&invalid))
-    match parse_as#(_TestNumbers)(
+    match parse#(_TestNumbers)(
         .source = &invalid_source, .diagnostic = ..some(.value = $&diagnostic)
     ) {
         ..ok ~_ { abort }
@@ -87,13 +82,13 @@ test typed_help_defaults_and_values := (.system: System) -> !() {
     if diagnostic.argument != "jobs" or diagnostic.value != "256" { abort }
     missing: [1]StringView = ("--verbose")
     missing_source ::= ArgumentViews(view(&missing))
-    match parse_as#(_TestBuild)(.source = &missing_source) {
+    match parse#(_TestBuild)(.source = &missing_source) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..required_option { abort } }
     }
     help_args: [2]StringView = ("build", "--help")
     help_source ::= ArgumentViews(view(&help_args))
-    match parse_as#(_TestCommand)(.source = &help_source)! {
+    match parse#(_TestCommand)(.source = &help_source)! {
         ..arguments _ { abort }
         ..help info {
             if info.command != "build" { abort }
@@ -101,7 +96,7 @@ test typed_help_defaults_and_values := (.system: System) -> !() {
     }
     empty_args: [1]StringView = ("empty")
     empty_source ::= ArgumentViews(view(&empty_args))
-    match parse_as#(_TestEmptyCommand)(.source = &empty_source)! {
+    match parse#(_TestEmptyCommand)(.source = &empty_source)! {
         ..help _ { abort }
         ..arguments command { match command { ..empty _ {} } }
     }
@@ -113,7 +108,7 @@ test typed_layout_and_help_output := (.system: System) -> !() {
     if size_of(.type = Flag#()) != size_of(.type = Bool) { abort }
     help_args: [1]StringView = ("--help")
     help_source ::= ArgumentViews(view(&help_args))
-    parsed ::= parse_as#(_TestBuild)(.source = &help_source)!
+    parsed ::= parse#(_TestBuild)(.source = &help_source)!
     expected ::= "Compiler\nUsage: example <input> [OPTIONS]\n\nArguments and options:\n  input  \n  -o, --output <VALUE>  Output file\n  -v, --verbose  \n  -h, --help  Show help\n"
     output ::= _HelpOutput(.expected = expected)
     match parsed {
@@ -129,7 +124,7 @@ test typed_layout_and_help_output := (.system: System) -> !() {
     command_source ::= ArgumentViews(view(&commands))
     detail ::= "\nUsage: example build <input> [OPTIONS]\n\nArguments and options:\n  input  \n  -o, --output <VALUE>  Output file\n  -v, --verbose  \n  -h, --help  Show help\n"
     command_output ::= _HelpOutput(.expected = detail)
-    match parse_as#(_TestCommand)(.source = &command_source)! {
+    match parse#(_TestCommand)(.source = &command_source)! {
         ..arguments _ { abort }
         ..help info {
             write_typed_help#(_TestCommand)(
@@ -144,19 +139,19 @@ test typed_choice_errors_and_literal_help := (.system: System) -> !() {
     assume allocator := system.page_allocator
     unknown: [2]StringView = ("run", "--unknown")
     unknown_source ::= ArgumentViews(view(&unknown))
-    match parse_as#(_TestCommand)(.source = &unknown_source) {
+    match parse#(_TestCommand)(.source = &unknown_source) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..unknown_option { abort } }
     }
     missing: [1]StringView = ("run")
     missing_source ::= ArgumentViews(view(&missing))
-    match parse_as#(_TestCommand)(.source = &missing_source) {
+    match parse#(_TestCommand)(.source = &missing_source) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..required_option { abort } }
     }
     literal: [3]StringView = ("run", "--", "--help")
     literal_source ::= ArgumentViews(view(&literal))
-    match parse_as#(_TestCommand)(.source = &literal_source)! {
+    match parse#(_TestCommand)(.source = &literal_source)! {
         ..help _ { abort }
         ..arguments command {
             match command {
@@ -167,7 +162,7 @@ test typed_choice_errors_and_literal_help := (.system: System) -> !() {
     }
     value_args: [3]StringView = ("--output", "--help", "main.rg")
     value_source ::= ArgumentViews(view(&value_args))
-    match parse_as#(_TestBuild)(.source = &value_source)! {
+    match parse#(_TestBuild)(.source = &value_source)! {
         ..help _ { abort }
         ..arguments data {
             if data.output.value != "--help" or data.input.value != "main.rg" { abort }
@@ -183,7 +178,7 @@ test typed_command_help_validates_schema := (.system: System) -> !() {
     assume allocator := system.page_allocator
     args: [2]StringView = ("run", "--help")
     source ::= ArgumentViews(view(&args))
-    match parse_as#(_InvalidHelpCommand)(.source = &source) {
+    match parse#(_InvalidHelpCommand)(.source = &source) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..invalid_cli_schema { abort } }
     }
@@ -209,9 +204,35 @@ test typed_source_errors_during_construction := (.system: System) -> !() {
     assume allocator := system.page_allocator
     reads :: UIntNative = 0
     source ::= _FailingSource(.reads = $&reads)
-    match parse_as#(_TestRun)(.source = &source) {
+    match parse#(_TestRun)(.source = &source) {
         ..ok ~_ { abort }
         ..error error { if error.reason != ..invalid_utf8 { abort } }
     }
     if reads != 3 { abort }
+}
+
+_TestInlineDefaults := (
+    .count   : Option#(UInt8, .help = "Worker count", .default_value = ..some(.value = 7)),
+    .enabled : Option#(Bool, .default_value = ..some(.value = true)),
+    .input   : Positional#(StringView, .default_value = ..some(.value = "main.rg"))
+)
+
+test typed_inline_metadata_and_defaults := (.system: System) -> !() {
+    assume allocator := system.page_allocator
+    values: [0]StringView = ()
+    source ::= ArgumentViews(view(&values))
+    match parse#(_TestInlineDefaults)(.source = &source)! {
+        ..help _ { abort }
+        ..arguments data {
+            if [
+                data.count.value != 7
+                or data.enabled.value == false
+                or data.input.value != "main.rg"
+            ] { abort }
+        }
+    }
+    if [
+        size_of(.type = Option#(UInt8, .help = "metadata", .default_value = ..some(.value = 7)))
+        != size_of(.type = UInt8)
+    ] { abort }
 }

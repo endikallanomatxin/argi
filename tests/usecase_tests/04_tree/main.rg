@@ -33,7 +33,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         }
     }
 
-    parsed ::= ap.parse(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+    parsed ::= ap.parse_specs(.source = system.args, .specs = view(&specs), .start = 1)!!! {
         status_code = 1
     }
 

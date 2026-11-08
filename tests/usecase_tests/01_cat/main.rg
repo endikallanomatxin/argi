@@ -15,7 +15,7 @@ main := (.system: System, .error_tracer: $&Virtual#(ErrorTracer)) -> (.status_co
     }
 
     specs ::= (ap.Spec("help", "h", "Show help"),)
-    arguments ::= ap.parse(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+    arguments ::= ap.parse_specs(.source = system.args, .specs = view(&specs), .start = 1)!!! {
         status_code = 1
     }
 
