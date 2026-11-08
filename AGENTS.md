@@ -90,6 +90,13 @@ feature first.
   native/borrowed adapters with that library. Use public string/view operations
   there; library code has no bundled-core private-field privileges.
 
+- Structural reflection in `global/structural_reflection.zig` expands callbacks
+  into ordinary calls and lexical value sequences. Evaluate context once,
+  preserve lexical assumptions, require implicit-copy permission for shared
+  context values, and move owned constructed choice results. Respect private
+  fields/alternatives and reject CUnion layouts through aliases. Keep CLI policy
+  in the library; reflection hooks must remain general.
+
 - Construct borrowed virtual handles with `Virtual#(Contract)(reference)`.
   Aliases of virtual types use the same checked construction path; do not
   reintroduce a separate public conversion function.

@@ -296,3 +296,52 @@ private adapters behind ordinary public resource contracts.
 > corresponding `#insert` could splice such values, but inserting raw strings
 > would make expansion and diagnostics difficult to trace. Neither mechanism
 > has defined semantics yet.
+
+## Structural callbacks
+
+`is_choice_type(.type = T)` is a type query that returns Bool. The structural
+callback operations specialize ordinary functions for public record fields or
+choice alternatives:
+
+```rg
+make_field := #(.Field: Type) (.name: StringView, .context: &Int32) -> (.result: Field) {
+    result = context&
+}
+Pair := (.left: Int32, .right: Int32)
+
+make_pair := (.number: &Int32) -> (.result: Pair) {
+    result = construct_record#(Pair, make_field)(.context = number)
+}
+```
+
+Each callback receives its member type as the first comptime argument and
+ordinary `.name` and `.context` inputs. The context is evaluated once. It must
+be implicitly copyable; pass a reference when sharing an owner. Additional
+callback inputs follow ordinary defaults and lexical assumptions. The callbacks
+are ordinary checked calls with ordinary effects, lifetimes and cleanup; this
+is specialization, not unrestricted access to compiler data or source syntax.
+
+- `visit_fields#(T, F)` invokes `F` for each field, in declaration order;
+  each call must return Void.
+- `collect_fields#(T, F, Result)` produces an array of callback results. All
+  callbacks return Result. The third argument can be omitted for a nonempty
+  record, where it is inferred from the first callback result.
+- `construct_record#(T, F)` invokes one callback per field and constructs a T.
+  Each callback returns exactly that field's type. All fields are supplied;
+  field defaults are not evaluated. It obeys the same public representation
+  boundary as an explicitly typed record literal.
+- `visit_variants` and `collect_variants` perform the corresponding operations
+  for choice alternatives. Payloadless alternatives supply Void as member type.
+- `construct_choice#(T, F, Select)` tests selectors in declaration order. Each
+  selector returns Bool; the first true selector invokes its payload builder F.
+  Only that builder executes. An unmatched selection aborts. The returned choice
+  transfers ownership of its constructed payload under ordinary cleanup rules.
+
+Canonical named comptime arguments are T, F, Result and Select. All operations
+have one ordinary `.context` argument. Callbacks cannot inspect private fields
+or alternatives, even through aliases, and field operations reject overlapping
+CUnion storage. Collection and construction allocate no language heap storage
+on their own. The same expanded graph executes natively and in the VM, subject
+to the VM's ordinary supported operations. It can execute in #run and remain
+available across REPL submissions. They do not introduce runtime Type values or
+comptime-only instance fields.

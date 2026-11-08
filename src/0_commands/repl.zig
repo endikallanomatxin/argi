@@ -951,3 +951,25 @@ test "REPL cancels pending input without publishing or resetting accepted state"
     try std.testing.expectEqualStrings("_0 = 42\n_1 = 42\n", output.written());
     try std.testing.expect(session.closed);
 }
+
+test "REPL structural reflection retains types across submissions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files = try sf.collectCoreWithOptions(&a, std.testing.io, .{ .fallback_core_dir = "core" });
+    defer sf.freeList(&a, &files);
+    var diagnostics = try diag.Diagnostics.init(&a, files.items);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const prepared = try pipeline.prepareSessionFiles(files.items);
+    var session: interactive.Interactive = undefined;
+    try session.initPrepared(std.testing.allocator, diagnostics.source_files, prepared, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Pair := (.first: Int32, .second: Int32)");
+    try session.submitDefinitions("field := #(.T: Type) (.name: StringView, .context: &Int32) -> (.result: T) { result = context& }");
+    try session.submitStatements("number :: Int32 = 42\npair ::= construct_record#(Pair, field)(.context = &number)");
+    try session.submitStatements("if pair.first != 42 or pair.second != 42 { abort }");
+    try session.submitStatements("number = 7\nnext_pair ::= construct_record#(Pair, field)(.context = &number)");
+    try session.submitStatements("if next_pair.first != 7 or pair.first != 42 { abort }");
+}

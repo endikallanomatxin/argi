@@ -600,6 +600,22 @@ pub const Resolver = struct {
         const arguments = try self.generics.resolveCallArguments(module_index, reference);
         const name = module.text(reference.name);
         const input = globalizer.globalNode(o, value.input);
+        if (reference.module_path == null and std.mem.eql(u8, name, "is_choice_type")) {
+            const node = self.makeIsChoiceType(input, self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+                error.DeferredGenericFunction, error.ComptimeExecutionPending => return .deferred,
+                else => return err,
+            };
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
+            return .resolved;
+        }
+        if (reference.module_path == null and arguments != null and (std.mem.eql(u8, name, "collect_fields") or std.mem.eql(u8, name, "collect_variants") or std.mem.eql(u8, name, "visit_fields") or std.mem.eql(u8, name, "visit_variants") or std.mem.eql(u8, name, "construct_record") or std.mem.eql(u8, name, "construct_choice"))) {
+            const node = @import("structural_reflection.zig").resolve(self, module_index, reference, arguments.?, input, CallContext.fromModule(o, value.owner_function), self.sourceFor(module_index, reference.source), name) catch |err| switch (err) {
+                error.DeferredGenericFunction, error.ComptimeExecutionPending => return .deferred,
+                else => return err,
+            };
+            try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), node);
+            return .resolved;
+        }
         if (reference.module_path == null and arguments != null and (std.mem.eql(u8, name, "invoke") or std.mem.eql(u8, name, "prepare_args"))) {
             const node = self.makePackedInvocation(arguments orelse .{ .start = 0, .len = 0 }, input, CallContext.fromModule(o, value.owner_function), self.sourceFor(module_index, reference.source), std.mem.eql(u8, name, "prepare_args")) catch |err| switch (err) {
                 error.DeferredGenericFunction => return .deferred,
@@ -2329,6 +2345,21 @@ pub const Resolver = struct {
             return true;
         }
         return false;
+    }
+
+    fn makeIsChoiceType(self: *Resolver, input: global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {
+        const content = self.graph.node(input).content;
+        if (content != .struct_value_literal or content.struct_value_literal.fields.len != 1) {
+            self.generics.comptime_failure = .{ .source = source, .reason = "is_choice_type requires one '.type = T' argument" };
+            return error.InvalidGenericCallArguments;
+        }
+        const value = self.core.recordFieldValue(content.struct_value_literal, 0, "type") orelse {
+            self.generics.comptime_failure = .{ .source = source, .reason = "is_choice_type requires '.type = T'" };
+            return error.InvalidGenericCallArguments;
+        };
+        const target = global_types.typeValue(self.graph, value) orelse return error.DeferredGenericFunction;
+        _ = try self.generics.ensureGenericInstance(target);
+        return .{ .source = source, .ty = try self.core.builtin(.Bool), .content = .{ .bool_literal = global_types.variants(self.graph, target) != null } };
     }
 
     fn makeSizeOf(
@@ -4061,6 +4092,13 @@ pub const Resolver = struct {
         ) anyerror!global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
+            if (module_path == null and std.mem.eql(u8, name, "is_choice_type")) {
+                return self.resolver.makeIsChoiceType(input, self.resolver.sourceFor(self.module_index, source));
+            }
+            if (module_path == null and (std.mem.eql(u8, name, "collect_variants") or std.mem.eql(u8, name, "collect_fields") or std.mem.eql(u8, name, "visit_fields") or std.mem.eql(u8, name, "visit_variants") or std.mem.eql(u8, name, "construct_record") or std.mem.eql(u8, name, "construct_choice"))) {
+                const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name_range, .source = source };
+                return @import("structural_reflection.zig").resolve(self.resolver, self.module_index, reference, arguments, input, try self.operatorContext(null), self.resolver.sourceFor(self.module_index, source), name);
+            }
             if (module_path == null and arguments.len != 0 and (std.mem.eql(u8, name, "invoke") or std.mem.eql(u8, name, "prepare_args")))
                 return self.resolver.makePackedInvocation(arguments, input, try self.operatorContext(null), self.resolver.sourceFor(self.module_index, source), std.mem.eql(u8, name, "prepare_args"));
             if (module_path == null) if (standard_contracts.scalarComparisonPrimitive(name)) |operator| {
