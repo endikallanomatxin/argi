@@ -154,3 +154,8 @@ storage. See [C interoperability](20_c.md).
 > `value.field`. Dynamic collections could still use their explicit `get` and
 > `set` operations. The boundary between field access and indexing needs a
 > separate design.
+
+Member names after `.` may use reserved words, such as `.test` or `.return`,
+both in declarations and at access sites. Choice names after `..` follow the
+same rule, including literals, payload access and match cases. These prefixes
+make the member context explicit; the words remain reserved in other contexts.

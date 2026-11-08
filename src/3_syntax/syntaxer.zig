@@ -241,6 +241,16 @@ pub const Syntaxer = struct {
         return .{ .token = token_index, .text = try self.parseIdentifier() };
     }
 
+    // A dot prefix already establishes a member-name context, so keywords
+    // cannot be confused with statements or declarations here.
+    fn parseMemberName(self: *Syntaxer) SyntaxerError!ParsedName {
+        if (tok.lexicalClass(self.currentContent()) != .keyword) return self.parseName();
+        const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        const text = self.file.tokenTextFromSource(self.source, token_index);
+        self.advanceOne();
+        return .{ .token = token_index, .text = text };
+    }
+
     fn parseOperatorName(self: *Syntaxer, operator_token: syn.TokenIndex) SyntaxerError!ParsedName {
         switch (self.currentContent()) {
             .identifier => {
@@ -384,7 +394,7 @@ pub const Syntaxer = struct {
         var name_token = name.token;
         while (self.tokenIs(.dot)) {
             self.advanceOne();
-            const rhs = try self.parseName();
+            const rhs = try self.parseMemberName();
             qualifier_token = name.token;
             name_token = rhs.token;
         }
@@ -399,7 +409,7 @@ pub const Syntaxer = struct {
             const instance = try self.addNode(.specialization, open_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
             if (self.tokenIs(.dot)) {
                 self.advanceOne();
-                const member = try self.parseName();
+                const member = try self.parseMemberName();
                 const projection = try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
                 if (self.tokenIs(.hash)) {
                     self.advanceOne();
@@ -519,7 +529,7 @@ pub const Syntaxer = struct {
         const base = try self.addNode(.type_name, name, .{ .token_and_optional_token = .{ .token = name, .optional = syn.OptionalTokenIndex.init(qualifier) } });
         const instance = try self.addNode(.specialization, self.file.mainToken(literal), .{ .node_and_node = .{ .first = base, .second = literal } });
         self.advanceOne();
-        const member = try self.parseName();
+        const member = try self.parseMemberName();
         return self.addNode(.associated_type_projection, member.token, .{ .node = instance });
     }
 
@@ -540,7 +550,7 @@ pub const Syntaxer = struct {
         while (!self.tokenIs(.close_parenthesis)) {
             if (self.tokenIs(.dot)) {
                 self.advanceOne();
-                const member = try self.parseName();
+                const member = try self.parseMemberName();
                 if (self.tokenIs(.hash)) {
                     try self.diags.add(self.tokenLocation(), .syntax, "operation-local generic parameters are not supported in contracts; declare associated members in the contract body", .{});
                     return SyntaxerError.ExpectedStructField;
@@ -764,7 +774,7 @@ pub const Syntaxer = struct {
         while (cursor < self.tokens.len and (self.contentAt(cursor) == .new_line or self.contentAt(cursor) == .comment)) : (cursor += 1) {}
         if (cursor >= self.tokens.len or self.contentAt(cursor) != .dot) return false;
         cursor += 1;
-        if (cursor >= self.tokens.len or self.contentAt(cursor) != .identifier) return false;
+        if (cursor >= self.tokens.len or (self.contentAt(cursor) != .identifier and tok.lexicalClass(self.contentAt(cursor)) != .keyword)) return false;
         cursor += 1;
         while (cursor < self.tokens.len and (self.contentAt(cursor) == .new_line or self.contentAt(cursor) == .comment)) : (cursor += 1) {}
         return cursor < self.tokens.len and self.contentAt(cursor) == .colon;
@@ -800,7 +810,7 @@ pub const Syntaxer = struct {
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedStructField;
             self.advanceOne();
-            const member = try self.parseName();
+            const member = try self.parseMemberName();
             const kind: ?syn.NodeIndex = if (self.tokenIs(.colon)) blk: {
                 self.advanceOne();
                 break :blk try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
@@ -894,7 +904,7 @@ pub const Syntaxer = struct {
                 const output = try self.parseName();
                 if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
                 self.advanceOne();
-                const variant = try self.parseName();
+                const variant = try self.parseMemberName();
                 self.skipNewLinesAndComments();
                 const body = try self.parseSafetyContract();
                 try self.scratch.append(self.allocator, try self.addNode(.contract_outcome, start, .{ .extra = try self.addExtra(syn.ContractOutcomeExtra{ .output = output.token, .variant = variant.token, .body = body }) }));
@@ -995,7 +1005,7 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
-            const fname = try self.parseName();
+            const fname = try self.parseMemberName();
 
             var ftype: ?syn.NodeIndex = null;
             if (self.tokenIs(.colon)) {
@@ -1074,7 +1084,7 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
-            const fname = try self.parseName();
+            const fname = try self.parseMemberName();
 
             var ftype: ?syn.NodeIndex = null;
             if (self.tokenIs(.colon)) {
@@ -1181,7 +1191,7 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedIdentifier;
             }
             self.advanceOne();
-            const vname = try self.parseName();
+            const vname = try self.parseMemberName();
             var payload_type: ?syn.NodeIndex = null;
             if (self.tokenStartsChoicePayloadType()) {
                 payload_type = (try self.parseType()).?;
@@ -1296,7 +1306,7 @@ pub const Syntaxer = struct {
     fn currentSentenceStartsChoiceOptionDeclaration(self: *Syntaxer) bool {
         if (!self.tokenIs(.double_dot)) return false;
         if (self.index + 1 >= self.file.tokens.len) return false;
-        if (std.meta.activeTag(self.contentAt(self.index + 1)) != .identifier) return false;
+        if (std.meta.activeTag(self.contentAt(self.index + 1)) != .identifier and tok.lexicalClass(self.contentAt(self.index + 1)) != .keyword) return false;
 
         var idx = self.index + 2;
         while (idx < self.file.tokens.len) : (idx += 1) {
@@ -1356,22 +1366,20 @@ pub const Syntaxer = struct {
                 .dot => {
                     idx += 1;
                     while (idx < self.file.tokens.len) : (idx += 1) {
-                        switch (self.contentAt(idx)) {
-                            .new_line, .comment => continue,
-                            .identifier => {
-                                idx += 1;
-                                while (idx < self.file.tokens.len) : (idx += 1) {
-                                    switch (self.contentAt(idx)) {
-                                        .new_line, .comment => continue,
-                                        .colon => return true,
-                                        .equal => return false,
-                                        else => return false,
-                                    }
+                        if (self.contentAt(idx) == .new_line or self.contentAt(idx) == .comment) continue;
+                        if (self.contentAt(idx) == .identifier or tok.lexicalClass(self.contentAt(idx)) == .keyword) {
+                            idx += 1;
+                            while (idx < self.file.tokens.len) : (idx += 1) {
+                                switch (self.contentAt(idx)) {
+                                    .new_line, .comment => continue,
+                                    .colon => return true,
+                                    .equal => return false,
+                                    else => return false,
                                 }
-                                return false;
-                            },
-                            else => return false,
+                            }
+                            return false;
                         }
+                        return false;
                     }
                     return false;
                 },
@@ -1404,7 +1412,7 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.dot)) {
                 has_named = true;
                 self.advanceOne();
-                const fname = try self.parseName();
+                const fname = try self.parseMemberName();
 
                 if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                 self.advanceOne();
@@ -1468,7 +1476,7 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.dot)) {
                 const dot_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                const fname = try self.parseName();
+                const fname = try self.parseMemberName();
                 node = try self.addNode(.struct_field_access, dot_token, .{ .token_and_node = .{ .token = fname.token, .node = node } });
                 continue;
             }
@@ -1476,7 +1484,7 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.double_dot)) {
                 const dd_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                const vname = try self.parseName();
+                const vname = try self.parseMemberName();
                 node = try self.addNode(.choice_payload_access, dd_token, .{ .token_and_node = .{ .token = vname.token, .node = node } });
                 continue;
             }
@@ -1772,7 +1780,7 @@ pub const Syntaxer = struct {
             .double_dot => blk: {
                 const dots_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                const variant = try self.parseName();
+                const variant = try self.parseMemberName();
                 var payload: ?syn.NodeIndex = null;
                 if (self.tokenStartsChoicePayloadExpr()) {
                     payload = try self.parseExpression();
@@ -2274,7 +2282,7 @@ pub const Syntaxer = struct {
         if (self.currentSentenceStartsChoiceOptionDeclaration()) {
             const decl_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
-            const option_name = try self.parseName();
+            const option_name = try self.parseMemberName();
             return try self.addNode(.choice_option_declaration, decl_token, .{ .token = option_name.token });
         }
 
@@ -2620,7 +2628,7 @@ pub const Syntaxer = struct {
         while (!self.tokenIs(.close_brace)) {
             if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
             self.advanceOne();
-            const variant_name = try self.parseName();
+            const variant_name = try self.parseMemberName();
 
             var payload_name_token: ?syn.TokenIndex = null;
             var case_tag: syn.Node.Tag = .match_case_value;

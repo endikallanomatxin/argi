@@ -912,7 +912,12 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (right == .open_parenthesis) return left != .identifier and left != .close_parenthesis and left != .close_bracket;
     if (right == .open_bracket) return !operandEnd(left);
     if (left == .open_brace and right == .close_brace) return false;
-    if (left == .binary_operator and index >= 2 and !operandEnd(std.meta.activeTag(tokens.contents[index - 2]))) return false;
+    if (left == .binary_operator and index >= 2 and !operandEnd(std.meta.activeTag(tokens.contents[index - 2]))) {
+        const member_operand = index >= 3 and
+            (tokens.contents[index - 3] == .dot or tokens.contents[index - 3] == .double_dot) and
+            tok.lexicalClass(tokens.contents[index - 2]) == .keyword;
+        if (!member_operand) return false;
+    }
     return true;
 }
 
@@ -1621,5 +1626,12 @@ test "formatter preserves error handling on completed pipe stages" {
     try expectFormat(
         "result:=value|call(.value=_,.other=fallible()!)!!\"context\"\n",
         "result := value | call(.value = _, .other = fallible()!)!! \"context\"\n",
+    );
+}
+
+test "formatter treats keyword member names as operands" {
+    try expectFormat(
+        "main := () -> () { value.test = value.test + 1 }\n",
+        "main := () -> () { value.test = value.test + 1 }\n",
     );
 }
