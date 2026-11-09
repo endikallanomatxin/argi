@@ -16,18 +16,20 @@ It is the compact review surface before further implementation; the investigatio
 below supply detail rather than another independent safety model.
 [Concurrency research](concurrency.md), [virtual execution investigations](virtual_execution_safety.md)
 and [contract projections](contract_members.md) use the same model. They must not
-introduce independent permission systems. The compiler still has known
-unknown-call authorization and native-buffer provenance gaps. Existing checked
-loans and delegated projections do not close those gaps.
+introduce independent permission systems. Uniform unknown-call authorization
+now enforces the pending-loan boundary while preserving the 121/177 positives;
+see [the implemented checkpoint](unknown_call_authorization.md). General physical
+provenance, owning transfer and protected-access protocols remain incomplete.
 
 Captured-observation validity is now checked independently of the search for
 concurrent access targets. Known intermediate-reference changes remain rejected
 even without a pending execution. When no storage loans remain, the authority
 phase no longer requires an exact captured target merely to prove separation;
 the after-completion heterogeneous collection case can use its interface.
-This does not prove physical independence while loans are active or complete
-uniform authorization of unknown calls. See the abstraction checkpoint for the
-positive/negative contrasts and the production Zig tests.
+Captured-domain validity alone does not prove physical independence. The uniform
+authorization checkpoint combines it with explicit reference observations and
+conservative access bounds; it is not a general proof of concurrent soundness.
+See the abstraction checkpoint for the invariants and production Zig tests.
 
 ## Architecture review: lending and certified reclaim
 

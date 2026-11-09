@@ -38,6 +38,8 @@ Allocation := (
     ._release_size : UIntNative
     ._slot_extent  : ?_AllocationSlotExtent
     ._slot_state   : UIntNative             = 0
+    -- Private physical observation; it does not certify byte initialization.
+    ._storage_reference: ?&UInt8 = ..none
 )
 
 -- Compiler-owned temporal boundary used after a physical allocator has
@@ -71,6 +73,7 @@ trusted_establish_allocation := (
         ._storage_alignment = alignment
         ._release_size      = size
         ._slot_extent       = ..none
+        ._storage_reference = _observe_allocation_storage(.address = storage, .size = size)
     )
 }
 
@@ -139,4 +142,15 @@ _typed_allocation_result := (
         }
         ..error ~failure { result = ..error ~failure }
     }
+}
+
+-- Called only after acquisition or arena range validation. This observation
+-- describes backing without reading its bytes or authorizing their use.
+_observe_allocation_storage := (.address: UIntNative, .size: UIntNative) -> (.reference: ?&UInt8) {
+    if size == 0 { reference = ..none; return }
+    raw ::= raw_pointer#(.t: UInt8)(.address = address).raw
+    observed ::= trusted_establish_inherited_reference#(.t: UInt8)(
+        .raw = raw, .root = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference
+    ).reference
+    reference = ..some(.value = read_reference#(.t: UInt8)(.base = observed).reference)
 }

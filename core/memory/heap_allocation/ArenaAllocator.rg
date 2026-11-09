@@ -187,6 +187,7 @@ implement Allocator#(ArenaAllocator) (
             ._storage_alignment = alignment
             ._release_size      = size
             ._slot_extent       = ..none
+            ._storage_reference = _observe_allocation_storage(.address = address, .size = size)
         )
         self&._current_block_offset = aligned_offset + required
 

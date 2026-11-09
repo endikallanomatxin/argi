@@ -231,7 +231,7 @@ fn effectPathEqual(a: facts.InputPath, b: facts.InputPath) bool {
 }
 
 fn effectEqual(comptime T: type, a: T, b: T) bool {
-    if (T == facts.InputAccess) return a.mode == b.mode and effectPathEqual(a.target, b.target);
+    if (T == facts.InputAccess) return a.mode == b.mode and a.backing == b.backing and effectPathEqual(a.target, b.target);
     if (T == facts.InputPath) return effectPathEqual(a, b);
     if (T == facts.InputDomain) return a.domain_index == b.domain_index and effectPathEqual(a.path, b.path);
     if (T == Contract.Relocation) return effectPathEqual(a.source, b.source) and effectPathEqual(a.destination, b.destination);
@@ -675,6 +675,7 @@ pub fn checkAccessBounds(contract: Contract, summary: facts.SafetySummary) ?Fail
     if (!contract.bounded_access) return null;
     if (summary.unknown_access or summary.global_accesses.len != 0) return .{ .kind = .unknown_access };
     for (summary.input_accesses) |access| {
+        if (access.backing) return .{ .kind = .unknown_access };
         var permitted = false;
         for (contract.access_bounds) |bound| {
             if (bound.target.input_index != access.target.input_index or bound.target.storage_domain != access.target.storage_domain) continue;

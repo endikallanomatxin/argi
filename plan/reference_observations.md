@@ -1,5 +1,14 @@
 # Reference observations through checked views
 
+Implementation checkpoint (2026-11-09): uniform unknown-call authorization is
+implemented, including native imports and selected cleanup. The unchanged 121
+and 177 programs remain positive gates. See
+[the closure and validation record](unknown_call_authorization.md) for the
+private backing observation, explicit snapshot selection, native assumptions and
+remaining limits. Earlier experiment sections below record historical states;
+they are not the current status of this authorization rule. General owner
+transfer and protected-access protocols remain unimplemented.
+
 Implementation gate following b0ca339b6. The rules below specify a candidate
 extension of the reference-summary relation. The initial checked-array output
 implementation and its validation status are recorded at the end; general

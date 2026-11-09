@@ -148,7 +148,7 @@ pub const Engine = struct {
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.unknown_access != b.unknown_access or a.input_accesses.len != b.input_accesses.len or a.global_accesses.len != b.global_accesses.len) return false;
     for (a.input_accesses, b.input_accesses) |left, right|
-        if (left.mode != right.mode or !inputPathEql(left.target, right.target)) return false;
+        if (left.mode != right.mode or left.backing != right.backing or !inputPathEql(left.target, right.target)) return false;
     for (a.global_accesses, b.global_accesses) |left, right|
         if (left.binding != right.binding or left.mode != right.mode) return false;
     if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
@@ -621,4 +621,11 @@ test "reference relation equality distinguishes identity from contained backing"
     try std.testing.expect(!valueEffectEql(identity, contained));
     try std.testing.expect(!valueEffectEql(contained, identity));
     try std.testing.expect(!valueEffectEql(contained, .{}));
+}
+
+test "cached summaries distinguish a direct slot access from its backing" {
+    const direct: facts.SafetySummary = .{ .input_accesses = &.{.{ .target = .{ .input_index = 0 }, .mode = .read }} };
+    const backing: facts.SafetySummary = .{ .input_accesses = &.{.{ .target = .{ .input_index = 0 }, .mode = .read, .backing = true }} };
+    try std.testing.expect(!summaryEql(direct, backing));
+    try std.testing.expect(!summaryEql(backing, direct));
 }

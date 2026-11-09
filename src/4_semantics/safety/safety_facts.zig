@@ -111,7 +111,12 @@ pub const InputRoute = struct {
 /// May-access effects are independent of lifetime requirements and final
 /// post-values: writing the same value still requires write authority.
 pub const AccessMode = enum { read, write };
-pub const InputAccess = struct { target: InputPath, mode: AccessMode };
+pub const InputAccess = struct {
+    target: InputPath,
+    mode: AccessMode,
+    /// Access within observed backing, not necessarily within the witness.
+    backing: bool = false,
+};
 pub const GlobalAccess = struct {
     /// Indexed module binding identity in the retained graph. Summary caches
     /// are graph-local; this is not a native address or a validity root.
@@ -189,7 +194,6 @@ pub const ReferenceRelation = struct {
     pub fn then(self: ReferenceRelation, next: Grade) ReferenceRelation {
         return .{ .source = self.source, .grade = weaker(self.grade, next) };
     }
-
 
     pub fn eql(a: ReferenceRelation, b: ReferenceRelation) bool {
         return a.grade == b.grade and a.source.eql(b.source);

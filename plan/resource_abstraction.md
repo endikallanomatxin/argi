@@ -11,6 +11,11 @@ how precisely the compiler can recover every concrete identity. Keep sequential
 mutable aliasing. Between executions, require compatible authority and authentic
 protocol transitions. Soundness and modular usability are both acceptance gates.
 
+The [uniform authorization checkpoint](unknown_call_authorization.md) implements
+one bounded part of these requirements, preserving the original collection/view
+positives. The wider model and internally acquired authority remain proposals;
+that checkpoint is not a proof of the full five-invariant system.
+
 ## Five invariants
 
 | Invariant | Required property |

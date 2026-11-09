@@ -99,7 +99,10 @@ Effects propagate through ordinary calls using caller-relative input paths,
 including references stored inside by-value records. Global access and selected
 cleanup effects are transitive. Calls whose effects are not bounded, including
 virtual calls with only lifetime contracts, retain unknown access effects;
-an empty lifetime contract does not establish absence of memory access.
+an empty lifetime contract does not establish absence of memory access. Such
+unknown calls are rejected while any pending execution retains caller storage
+loans, before applying completion postconditions. A pending task with no borrowed
+storage does not impose this restriction.
 
 The compiler infers conservative may-access effects in safety summaries and
 rejects mutable-global access from isolated callbacks. Task loans use the declared

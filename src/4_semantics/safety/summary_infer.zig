@@ -93,17 +93,24 @@ pub const Infer = struct {
         inputs: std.array_list.Managed(facts.InputAccess),
         globals: std.array_list.Managed(facts.GlobalAccess),
         unknown: bool = false,
+        has_loops: bool = false,
+        unstable_targets: bool = false,
+        reference_writes: bool = false,
 
         fn init(allocator: std.mem.Allocator) AccessEffects {
             return .{ .inputs = .init(allocator), .globals = .init(allocator) };
         }
 
         fn addInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode) !void {
-            for (self.inputs.items) |*existing| if (summaries.inputPathEql(existing.target, target)) {
+            return self.addBackingInput(target, mode, false);
+        }
+
+        fn addBackingInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode, backing: bool) !void {
+            for (self.inputs.items) |*existing| if (existing.backing == backing and summaries.inputPathEql(existing.target, target)) {
                 if (mode == .write) existing.mode = .write;
                 return;
             };
-            try self.inputs.append(.{ .target = target, .mode = mode });
+            try self.inputs.append(.{ .target = target, .mode = mode, .backing = backing });
         }
 
         fn addGlobal(self: *AccessEffects, binding: u32, mode: facts.AccessMode) !void {
@@ -1134,7 +1141,12 @@ pub const Infer = struct {
         const returned_bindings = if (capability_exits) |exit| exit.bindings else capability_flow.bindings;
         const output_bindings = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
         const output_fields = self.graph.fields.items[function.output.start..][0..function.output.len];
-        var stable_reference_sources = !accesses.unknown;
+        if (accesses.reference_writes) {
+            for (accesses.inputs.items) |access| for (access.target.projections) |projection| {
+                if (projection == .dereference) accesses.unknown = true;
+            };
+        }
+        var stable_reference_sources = !accesses.unknown and !accesses.reference_writes;
         for (accesses.inputs.items) |access| if (access.mode == .write) {
             stable_reference_sources = false;
         };
@@ -1160,7 +1172,12 @@ pub const Infer = struct {
         const contained_calls = try self.forwardedReferenceCalls(function, .contained);
         const backing_calls = try self.forwardedReferenceCalls(function, .backing);
         for (outputs, 0..) |*output, output_index| {
+            const embedded_relation = output.reference_relation;
             output.reference_relation = null;
+            if (stable_reference_sources) if (embedded_relation) |relation| {
+                if (relation.source.projections.len != 0 and self.embeddedInputReference(function_id, relation.source))
+                    output.reference_relation = relation;
+            };
             if (output_index >= output_fields.len or self.graph.semanticType(output_fields[output_index].ty) != .pointer) continue;
             for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], 0..) |binding, input_index| {
                 if (self.graph.semanticType(self.graph.binding(binding).ty) != .pointer) continue;
@@ -1188,7 +1205,7 @@ pub const Infer = struct {
         var summary: facts.SafetySummary = .{
             .input_accesses = try accesses.inputs.toOwnedSlice(),
             .global_accesses = try accesses.globals.toOwnedSlice(),
-            .unknown_access = accesses.unknown,
+            .unknown_access = accesses.unknown or (accesses.has_loops and accesses.unstable_targets),
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
@@ -1212,9 +1229,9 @@ pub const Infer = struct {
         return summary;
     }
 
-    /// Address-preserving views retain the source backing when their result
-    /// satisfies the existing trusted validity obligations. This proves no
-    /// subrange extent. General offsets do not establish this relation.
+    /// Audited views retain backing under their existing physical preconditions.
+    /// An offset must remain in the same allocation and generation; this
+    /// relation proves neither containment in the source view nor exact identity.
     fn primitiveReferenceRelation(self: *Infer, function: graph_mod.Function) ?facts.ReferenceRelation {
         if (function.input.len == 0 or function.output.len != 1) return null;
         if (self.graph.semanticType(self.graph.fields.items[function.input.start].ty) != .pointer or
@@ -1224,7 +1241,8 @@ pub const Infer = struct {
         else if (primitive_transfer.preservesReferenceStorage(self.graph, function))
             .contained
         else switch (function.safety_primitive) {
-            .reinterpret_reference, .mutable_reinterpret_reference => .backing,
+            .reinterpret_reference, .mutable_reinterpret_reference, .reference_offset, .mutable_reference_offset => .backing,
+            .depend_on, .restrict_reference => if (types.equal(self.graph, self.graph.fields.items[function.input.start].ty, self.graph.fields.items[function.output.start].ty)) @as(@FieldType(facts.ReferenceRelation, "grade"), .identity) else return null,
             else => return null,
         };
         if (grade == .backing) {
@@ -1679,7 +1697,8 @@ pub const Infer = struct {
                         for (summary.input_post_states, values) |post, *value|
                             value.* = if (post.initialization == .definite and post.initializedness == .initialized)
                                 try self.substituteOutput(function_id, post.value, arguments)
-                            else .{};
+                            else
+                                .{};
                         for (summary.input_post_states, values) |post, value| {
                             if (post.initialization != .definite or post.initializedness != .initialized or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
                             const signature = self.graph.function(call.callee);
@@ -1688,11 +1707,19 @@ pub const Infer = struct {
                             const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
                             if (!self.typeContainsPointer(selected.ty)) continue;
                             const targets = try self.localAddressTargets(arguments[post.target.input_index].value);
-                            // Strong replacement requires one definite local
-                            // destination. Multiple possible aliases need a weak
-                            // update rather than overwriting every alternative.
-                            if (targets.len != 1) continue;
-                            try self.storeSelectedValueEffect(function_id, targets[0], post.target.projections, value, outputs, .locals_and_outputs);
+                            for (targets) |target| {
+                                var updated = value;
+                                if (targets.len != 1) {
+                                    // Only one alternative is changed at runtime.
+                                    // Retain both the old and replacement value,
+                                    // never the old reference's exact identity.
+                                    var previous = try self.inferExpression(function_id, target);
+                                    for (post.target.projections) |projection|
+                                        previous = try self.projectValueEffect(previous, projection);
+                                    updated = try self.joinStorageAlternatives(selected.ty, previous, value);
+                                }
+                                try self.storeSelectedValueEffect(function_id, target, post.target.projections, updated, outputs, .locals_and_outputs);
+                            }
                         }
                     };
                     if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
@@ -1950,6 +1977,70 @@ pub const Infer = struct {
         }
     }
 
+    /// Observe reference leaves, never recursively observe their referents.
+    fn inputReferenceObservations(self: *Infer, effect: facts.ValueEffect, ty: graph_mod.GlobalTypeId, path: facts.InputPath, depth: usize) anyerror!facts.ValueEffect {
+        if (depth > 64 or !self.typeContainsPointer(ty)) return effect;
+        var result = effect;
+        if (self.graph.semanticType(ty) == .pointer) {
+            result.reference_relation = .{ .source = path };
+            return result;
+        }
+        if (types.fields(self.graph, ty)) |fields| {
+            const children = try self.allocator.alloc(facts.OutputFieldEffect, fields.len);
+            for (self.graph.fields.items[fields.start..][0..fields.len], children, 0..) |field, *child, index| {
+                const projection: facts.Projection = .{ .field = @intCast(index) };
+                var selected = path;
+                selected.projections = try self.appendProjection(path.projections, projection);
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.inputReferenceObservations(try self.projectValueEffect(effect, projection), field.ty, selected, depth + 1);
+                child.* = .{ .index = @intCast(index), .value = value };
+            }
+            result.fields = children;
+        }
+        if (types.variants(self.graph, ty)) |variants| {
+            const children = try self.allocator.alloc(facts.OutputVariantEffect, variants.len);
+            for (self.graph.variants.items[variants.start..][0..variants.len], children, 0..) |variant, *child, index| {
+                const projection: facts.Projection = .{ .variant = @intCast(index) };
+                var selected = path;
+                selected.projections = try self.appendProjection(path.projections, projection);
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = if (variant.payload_type) |payload| try self.inputReferenceObservations(try self.projectValueEffect(effect, projection), payload, selected, depth + 1) else .{};
+                child.* = .{ .index = @intCast(index), .value = value };
+            }
+            result.variants = children;
+        }
+        return result;
+    }
+
+    fn embeddedInputReference(self: *Infer, function_id: graph_mod.GlobalFunctionId, path: facts.InputPath) bool {
+        const signature = self.graph.function(function_id);
+        if (path.storage_domain != null or path.input_index >= signature.input_bindings.len) return false;
+        const binding = self.graph.binding(self.graph.binding_refs.items[signature.input_bindings.start + path.input_index]);
+        if (binding.mutability != .constant) return false;
+        var ty = binding.ty;
+        for (path.projections) |projection| {
+            if (projection == .dereference and self.graph.semanticType(ty) == .pointer) {
+                ty = self.graph.semanticType(ty).pointer.child;
+                continue;
+            }
+            if (self.graph.semanticType(ty) == .pointer) return false;
+            ty = switch (projection) {
+                .field => |index| blk: {
+                    const fields = types.fields(self.graph, ty) orelse return false;
+                    if (index >= fields.len) return false;
+                    break :blk self.graph.fields.items[fields.start + index].ty;
+                },
+                .variant => |index| blk: {
+                    const variants = types.variants(self.graph, ty) orelse return false;
+                    if (index >= variants.len) return false;
+                    break :blk self.graph.variants.items[variants.start + index].payload_type orelse return false;
+                },
+                else => return false,
+            };
+        }
+        return self.graph.semanticType(ty) == .pointer;
+    }
+
     fn capability_value(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) anyerror!facts.ValueEffect {
         const saved = self.bindings;
         self.bindings = flow.bindings;
@@ -1972,7 +2063,13 @@ pub const Infer = struct {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
                 break :blk try self.capability_value(function, value, flow);
             },
-            .binding_use => |binding| if (flow.bindings.get(binding)) |value| value else self.inferExpression(function, node),
+            .binding_use => |binding| blk: {
+                if (flow.bindings.get(binding)) |value| break :blk value;
+                const value = try self.inferExpression(function, node);
+                if (self.inputIndex(function, binding)) |input| if (self.graph.binding(binding).mutability == .constant)
+                    break :blk try self.inputReferenceObservations(value, self.graph.binding(binding).ty, .{ .input_index = input }, 0);
+                break :blk value;
+            },
             .dereference => |read| blk: {
                 const local = try self.capability_address_targets(read.pointer, flow);
                 if (local.len != 0) {
@@ -1983,6 +2080,12 @@ pub const Infer = struct {
                     break :blk current;
                 }
                 const value = try self.capability_value(function, read.pointer, flow);
+                if (value.reference_relation) |relation| if (relation.grade == .identity and relation.source.projections.len == 0) {
+                    const projected = try self.projectValueEffect(value, .dereference);
+                    var path = relation.source;
+                    path.projections = &.{.dereference};
+                    break :blk try self.inputReferenceObservations(projected, self.graph.node(node).ty orelse return projected, path, 0);
+                };
                 if (value.fields.len != 0 or value.variants.len != 0) break :blk value;
                 break :blk try self.projectValueEffect(value, .dereference);
             },
@@ -4864,13 +4967,22 @@ pub const Infer = struct {
             else => null,
         };
         if (stored) |value| if (self.graph.node(value).ty) |ty| {
-            // TODO: substitute access targets through reference-field writes
-            // in source order, including callees that retarget borrowed slots.
-            if (self.typeContainsPointer(ty)) sink.unknown = true;
+            // Replacing a reference slot has a known storage footprint. Later
+            // traversals through reference slots still need conservative alias
+            // handling; do not publish stale observation relations either.
+            if (self.typeContainsPointer(ty)) sink.reference_writes = true;
         };
         switch (self.graph.node(node).content) {
             .binding_use => |binding| try self.recordGlobalAccess(binding, .read),
-            .assignment => |write| try self.recordGlobalAccess(write.binding, .write),
+            .assignment => |write| {
+                try self.recordGlobalAccess(write.binding, .write);
+                if (self.typeContainsPointer(self.graph.binding(write.binding).ty)) sink.unstable_targets = true;
+            },
+            .move_value => |value| {
+                if (self.graph.node(value).ty) |ty| {
+                    if (self.typeContainsPointer(ty)) sink.unstable_targets = true;
+                }
+            },
             .dereference => |read| try self.recordPointeeAccess(function, read.pointer, null, .read),
             .array_index => |read| try self.recordPointeeAccess(function, read.array_ptr, if (self.staticIndex(read.index)) |index| .{ .static_index = index } else .dynamic_index, .read),
             .pointer_assignment => |write| try self.recordPointeeAccess(function, write.pointer, null, .write),
@@ -4878,7 +4990,7 @@ pub const Infer = struct {
             .array_store => |write| try self.recordPointeeAccess(function, write.array_ptr, if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index, .write),
             .function_call => |call| {
                 if (self.engine.summaryFor(call.callee)) |summary| {
-                    try self.composeAccesses(function, summary, call.input, null);
+                    try self.composeAccesses(function, summary, call.input, null, call.callee);
                 } else sink.unknown = true;
             },
             .virtual_call => |id| {
@@ -4887,13 +4999,15 @@ pub const Infer = struct {
                     sink.unknown = true;
                     return;
                 };
-                try self.composeAccesses(function, summary, call.input, null);
+                try self.composeAccesses(function, summary, call.input, null, null);
             },
             .captured_expression => sink.unknown = true,
-            // The initial may-target scan does not solve loop-carried alias
-            // assignments to a fixed point. Retain its known effects, but do
-            // not publish a closed access set for those bodies yet.
-            .while_statement, .for_statement => sink.unknown = true,
+            // Numeric induction and bounded array indexing do not change a
+            // reference route. Only close loop footprints when this complete
+            // scan finds no operation that can change a reference-bearing slot.
+            // This deliberately uses a whole-function restriction rather than
+            // guessing loop-carried alias targets from final binding values.
+            .while_statement, .for_statement => sink.has_loops = true,
             else => {},
         }
     }
@@ -4939,7 +5053,22 @@ pub const Infer = struct {
         // addresses do, including aliases whose initializers retain the address.
         const targets = try self.localAddressTargets(pointer);
         for (targets) |target| try self.recordAddressedAccess(function, target, projections, mode);
-        if (paths.len == 0 and targets.len == 0) self.access_sink.?.unknown = true;
+        if (paths.len == 0 and targets.len == 0) {
+            const effect = try self.inferExpression(function, pointer);
+            if (effect.reference_relation) |relation| if (relation.grade == .backing and self.embeddedInputReference(function, relation.source)) {
+                try self.access_sink.?.addBackingInput(relation.source, mode, true);
+                return;
+            };
+            // Array-valued operands address their own structural storage; they
+            // are not unknown pointer targets. Preserve global/subobject reads.
+            if (self.graph.node(pointer).ty) |ty| {
+                if (self.graph.semanticType(ty) == .array) {
+                    try self.recordAddressedAccess(function, pointer, projections, mode);
+                    return;
+                }
+            }
+            self.access_sink.?.unknown = true;
+        }
     }
 
     // Preserve the complete selected subobject when an addressed expression
@@ -4990,13 +5119,56 @@ pub const Infer = struct {
         if (!facts.isEmptyValue(remaining)) sink.unknown = true;
     }
 
-    fn composeAccesses(self: *Infer, function: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, input: graph_mod.GlobalNodeId, override: ?SymbolicInputOverride) !void {
+    /// Conditional post-values can retarget a later loop iteration even when
+    /// the common normal-return post-state leaves the slot unchanged.
+    fn accessTargetsMayChange(self: *Infer, summary: facts.SafetySummary, callee: ?graph_mod.GlobalFunctionId) bool {
+        if (summary.unknown_access or summary.opaque_storage_effects.len != 0 or
+            summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0)
+            return true;
+        if (self.accessPostTargetsMayChange(summary.input_post_states, callee)) return true;
+        for (summary.outcome_post_states) |outcome| {
+            if (outcome.invalidated_domains.len != 0 or outcome.opaque_storage_empties.len != 0 or
+                self.accessPostTargetsMayChange(outcome.input_post_states, callee)) return true;
+        }
+        for (summary.global_accesses) |access| {
+            if (access.mode == .write and self.typeContainsPointer(self.graph.binding(@enumFromInt(access.binding)).ty)) return true;
+        }
+        for (summary.guarded_effects) |guard| {
+            if (!guard.conditions.impossible and self.accessTargetsMayChange(guard.effects.*, callee)) return true;
+        }
+        return false;
+    }
+
+    fn accessPostTargetsMayChange(self: *Infer, posts: []const facts.PlacePostState, callee: ?graph_mod.GlobalFunctionId) bool {
+        if (posts.len == 0) return false;
+        const id = callee orelse return true;
+        for (posts) |post| {
+            const selected = @import("access_bounds.zig").selectedType(self.graph, self.graph.function(id), post.target) catch return true;
+            if (self.typeContainsPointer(selected.ty)) return true;
+        }
+        return false;
+    }
+
+    fn composeAccesses(self: *Infer, function: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, input: graph_mod.GlobalNodeId, override: ?SymbolicInputOverride, callee: ?graph_mod.GlobalFunctionId) !void {
         const previous = self.reading_access_targets;
         self.reading_access_targets = true;
         defer self.reading_access_targets = previous;
         const sink = self.access_sink.?;
         sink.unknown = sink.unknown or summary.unknown_access;
-        for (summary.global_accesses) |access| try sink.addGlobal(access.binding, access.mode);
+        if (self.accessTargetsMayChange(summary, callee)) sink.unstable_targets = true;
+        if (callee) |id| for (summary.input_post_states) |post| {
+            if (post.initialization != .definite or post.initializedness != .initialized) continue;
+            const selected = @import("access_bounds.zig").selectedType(self.graph, self.graph.function(id), post.target) catch {
+                sink.reference_writes = true;
+                continue;
+            };
+            if (self.typeContainsPointer(selected.ty)) sink.reference_writes = true;
+        };
+        for (summary.global_accesses) |access| {
+            try sink.addGlobal(access.binding, access.mode);
+            if (access.mode == .write and self.typeContainsPointer(self.graph.binding(@enumFromInt(access.binding)).ty))
+                sink.unstable_targets = true;
+        }
         const arguments = self.structArguments(input) orelse {
             if (summary.input_accesses.len != 0) sink.unknown = true;
             return;
@@ -5035,8 +5207,12 @@ pub const Infer = struct {
                 }
                 continue;
             }
-            const paths = try self.substituteInputPath(function, access.target, arguments, override, .place);
+            const paths = if (access.backing)
+                try self.substituteReferenceObservationPath(function, access.target, arguments, override)
+            else
+                try self.substituteInputPath(function, access.target, arguments, override, .place);
             const signature = self.graph.function(function);
+            var external = false;
             for (paths) |path| {
                 if (path.input_index >= signature.input.len) {
                     sink.unknown = true;
@@ -5045,9 +5221,25 @@ pub const Infer = struct {
                 const ty = self.graph.fields.items[signature.input.start + path.input_index].ty;
                 // A callee can modify a field in our local copy without touching
                 // caller storage. Crossing a reference leaf retains its effect.
-                if (self.pathReachesReferent(ty, path.projections)) try sink.addInput(path, access.mode);
+                if (access.backing or self.pathReachesReferent(ty, path.projections)) {
+                    external = true;
+                    try sink.addBackingInput(path, access.mode, access.backing);
+                }
             }
-            if (paths.len != 0) continue;
+            if (paths.len != 0) {
+                if (!external and access.mode == .write and access.target.input_index < arguments.len) if (callee) |id| {
+                    const selected = @import("access_bounds.zig").selectedType(self.graph, self.graph.function(id), access.target) catch {
+                        sink.unknown = true;
+                        continue;
+                    };
+                    // A copied aggregate is local storage, but an unresolved
+                    // pointer to it cannot update our later returned facts.
+                    // Losing that destination must not preserve its old value.
+                    if (self.typeContainsPointer(selected.ty) and (try self.localAddressTargets(arguments[access.target.input_index].value)).len == 0)
+                        sink.unknown = true;
+                };
+                continue;
+            }
             if (access.target.input_index >= arguments.len) {
                 sink.unknown = true;
                 continue;
@@ -5308,6 +5500,28 @@ pub const Infer = struct {
         return self.projectEffectInputPaths(function_id, effect, path.projections, purpose);
     }
 
+    // Unlike storage paths, observation routes explicitly load each reference.
+    fn substituteReferenceObservationPath(self: *Infer, function: graph_mod.GlobalFunctionId, source: facts.InputPath, arguments: []const graph_mod.ValueField, override: ?SymbolicInputOverride) ![]const facts.InputPath {
+        if (source.storage_domain != null or source.input_index >= arguments.len) return &.{};
+        if (override) |replacement| if (replacement.input_index == source.input_index) return &.{};
+        const paths = try self.inferInputPaths(function, arguments[source.input_index].value);
+        var result: std.ArrayList(facts.InputPath) = .empty;
+        const signature = self.graph.function(function);
+        for (paths) |path| {
+            if (path.storage_domain != null or path.input_index >= signature.input.len) continue;
+            const input = self.graph.fields.items[signature.input.start + path.input_index].ty;
+            const selected = @import("access_bounds.zig").selectedType(self.graph, signature, path) catch continue;
+            var route: std.ArrayList(facts.Projection) = .empty;
+            if (self.graph.semanticType(input) == .pointer and (path.projections.len == 0 or path.projections[0] != .dereference))
+                try route.append(self.allocator, .dereference);
+            try route.appendSlice(self.allocator, path.projections);
+            const consumed = source.projections.len != 0 and source.projections[0] == .dereference and self.graph.semanticType(selected.ty) != .pointer;
+            try route.appendSlice(self.allocator, source.projections[if (consumed) @as(usize, 1) else 0..]);
+            try result.append(self.allocator, .{ .input_index = path.input_index, .projections = try route.toOwnedSlice(self.allocator) });
+        }
+        return result.toOwnedSlice(self.allocator);
+    }
+
     fn inferAutoDeinitRequiredLiveInputs(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -5328,7 +5542,7 @@ pub const Infer = struct {
             } else try self.inferRequiredLiveInputsNode(function_id, input, required);
             if (cleanup.deinit_fn) |deinit_fn| {
                 if (self.engine.summaryFor(deinit_fn)) |summary| {
-                    if (self.access_sink != null) try self.composeAccesses(function_id, summary, input, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
+                    if (self.access_sink != null) try self.composeAccesses(function_id, summary, input, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null, deinit_fn);
                     for (self.requiredInputPaths(summary)) |path| {
                         if (cleanup.storage == .indirect and path.input_index == cleanup.self_field_index) continue;
                         try self.substituteRequiredLiveInputsWithOverride(
@@ -5374,7 +5588,7 @@ pub const Infer = struct {
                 } else try self.inferRequiredLiveInputsNode(function_id, input, required);
                 if (field.deinit_fn) |deinit_fn| {
                     if (self.engine.summaryFor(deinit_fn)) |summary| {
-                        if (self.access_sink != null) try self.composeAccesses(function_id, summary, input, .{ .input_index = field.self_field_index, .effect = field_effect });
+                        if (self.access_sink != null) try self.composeAccesses(function_id, summary, input, .{ .input_index = field.self_field_index, .effect = field_effect }, deinit_fn);
                         for (self.requiredInputPaths(summary)) |path| {
                             if (guarded_receiver and path.input_index == field.self_field_index) continue;
                             try self.substituteRequiredLiveInputsWithOverride(
@@ -6877,10 +7091,29 @@ pub const Infer = struct {
             }
             result.variants = variants;
         }
-        result.reference_relation = if (effect.reference_relation) |relation|
-            self.directInputReferenceRelation(function_id, relation, arguments, override)
-        else
-            null;
+        result.reference_relation = null;
+        if (effect.reference_relation) |relation| {
+            result.reference_relation = self.directInputReferenceRelation(function_id, relation, arguments, override);
+            if (result.reference_relation == null and relation.source.projections.len != 0) {
+                const mapped = try self.substituteReferenceObservationPath(function_id, relation.source, arguments, override);
+                if (mapped.len == 1 and self.embeddedInputReference(function_id, mapped[0]))
+                    result.reference_relation = .{ .source = mapped[0], .grade = relation.grade };
+            }
+            if (result.reference_relation == null and relation.source.storage_domain == null and relation.source.input_index < arguments.len) {
+                const replaced = if (override) |replacement| replacement.input_index == relation.source.input_index else false;
+                if (!replaced) {
+                    var selected = try context.effect(relation.source.input_index);
+                    for (relation.source.projections, 0..) |projection, index| {
+                        if (projection == .dereference) {
+                            selected = if (index == 0) (try context.pointee(relation.source.input_index)) orelse facts.ValueEffect{} else .{};
+                            continue;
+                        }
+                        selected = try self.projectValueEffect(selected, projection);
+                    }
+                    if (selected.reference_relation) |source| result.reference_relation = source.then(relation.grade);
+                }
+            }
+        }
         return result;
     }
 
@@ -7324,7 +7557,11 @@ pub const Infer = struct {
     /// Symbolic transfer for one primitive invocation, with call-site identity.
     pub fn primitiveValueEffect(self: *Infer, primitive: primitives.SafetyPrimitive, source: facts.FreshEffectSource, callee: ?graph_mod.GlobalFunctionId) !facts.ValueEffect {
         return switch (primitive_transfer.forPrimitive(primitive).value) {
-            .reference_copy => self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{})),
+            .reference_copy => blk: {
+                var result = try self.withoutOwnershipTransfer(try self.inputValueEffect(0, &.{}));
+                if (callee) |id| result.reference_relation = self.primitiveReferenceRelation(self.graph.function(id));
+                break :blk result;
+            },
             // Views retain the base lifetime, not an unchanged slot or extent.
             .reference_view => blk: {
                 var result = if (callee != null and primitive_transfer.preservesReferenceStorage(self.graph, self.graph.function(callee.?)))
@@ -7340,6 +7577,10 @@ pub const Infer = struct {
                     try self.validityOnlyEffect(try self.inputValueEffect(0, &.{.dereference})),
                 );
                 result.input_owned_roots = try self.oneInputPath(0, &.{});
+                result.reference_relation = .{
+                    .source = .{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } },
+                    .grade = .backing,
+                };
                 break :blk result;
             },
             .restrict_reference, .depend_on => |transfer| blk: {
@@ -7351,6 +7592,7 @@ pub const Infer = struct {
                     try self.validityOnlyEffect(try self.inputValueEffect(1, &.{})),
                 );
                 result.explicit_dependency = transfer == .depend_on;
+                if (callee) |id| result.reference_relation = self.primitiveReferenceRelation(self.graph.function(id));
                 break :blk result;
             },
             .empty, .relocate, .opaque_move, .opaque_relocate, .opaque_drop, .opaque_mark_empty, .execution_lend, .execution_complete, .execution_input => .{},
@@ -7376,6 +7618,15 @@ pub const Infer = struct {
         const data = try self.allocator.create(facts.ValueEffect);
         data.* = .{ .fresh_dependencies = try self.oneFresh(source), .input_acquisition_origins = try self.oneInputPath(0, &.{}) };
         fields[shape.data_field].value = data;
+        if (fields.len > shape.backing_reference_field) {
+            const pointer = try self.allocator.create(facts.ValueEffect);
+            pointer.* = .{ .fresh_dependencies = try self.oneFresh(source) };
+            const payload = try self.allocator.create(facts.ValueEffect);
+            payload.* = .{ .fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = pointer }}) };
+            const backing = try self.allocator.create(facts.ValueEffect);
+            backing.* = .{ .variants = try self.allocator.dupe(facts.OutputVariantEffect, &.{.{ .index = 1, .value = payload }}) };
+            fields[shape.backing_reference_field].value = backing;
+        }
         for (shape.borrowed_fields) |borrowed| {
             const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.withoutOwnershipTransfer(try self.inputValueEffect(borrowed.input, &.{}));
@@ -7514,19 +7765,17 @@ pub const Infer = struct {
         if (self.graph.semanticType(ty) == .pointer) {
             result.reference_relation = null;
             if (origin.reference_relation) |relation| {
-                const signature = self.graph.function(function_id);
-                if (relation.source.storage_domain == null and relation.source.projections.len == 0 and relation.source.input_index < signature.input_bindings.len) {
-                    const binding = self.graph.binding_refs.items[signature.input_bindings.start + relation.source.input_index];
-                    if (self.graph.binding(binding).mutability == .constant and self.graph.semanticType(self.graph.binding(binding).ty) == .pointer)
-                        result.reference_relation = relation;
-                }
+                if (self.embeddedInputReference(function_id, relation.source)) result.reference_relation = relation;
             }
             return result;
         }
         if (types.fields(self.graph, ty)) |fields| {
             const children = try self.allocator.alloc(facts.OutputFieldEffect, destination.fields.len);
             for (destination.fields, children) |field, *child| {
-                if (field.index >= fields.len) { child.* = field; continue; }
+                if (field.index >= fields.len) {
+                    child.* = field;
+                    continue;
+                }
                 const value = try self.allocator.create(facts.ValueEffect);
                 value.* = try self.overlayReturnedReferenceRelations(function_id, field.value.*, try self.projectValueEffect(origin, .{ .field = field.index }), self.graph.fields.items[fields.start + field.index].ty);
                 child.* = .{ .index = field.index, .value = value };
@@ -7536,7 +7785,10 @@ pub const Infer = struct {
         if (types.variants(self.graph, ty)) |variants| {
             const children = try self.allocator.alloc(facts.OutputVariantEffect, destination.variants.len);
             for (destination.variants, children) |variant, *child| {
-                const payload = self.graph.variants.items[variants.start + variant.index].payload_type orelse { child.* = variant; continue; };
+                const payload = self.graph.variants.items[variants.start + variant.index].payload_type orelse {
+                    child.* = variant;
+                    continue;
+                };
                 const value = try self.allocator.create(facts.ValueEffect);
                 value.* = try self.overlayReturnedReferenceRelations(function_id, variant.value.*, try self.projectValueEffect(origin, .{ .variant = variant.index }), payload);
                 child.* = .{ .index = variant.index, .value = value };
@@ -9035,7 +9287,7 @@ test "dynamic element selection cannot grant another element's acquisition permi
     try std.testing.expect(!exact.storage_capability_incomplete);
 }
 
-test "only address preserving views publish a backing relation" {
+test "audited reference views preserve backing without claiming containment" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -9059,7 +9311,7 @@ test "only address preserving views publish a backing relation" {
     defer engine.deinit();
     var infer = Infer.init(a, &graph, &engine);
     defer infer.deinit();
-    try std.testing.expect(infer.primitiveReferenceRelation(function) == null);
+    try std.testing.expectEqual(.backing, infer.primitiveReferenceRelation(function).?.grade);
     var view = function;
     view.safety_primitive = .reinterpret_reference;
     view.input.len = 1;
@@ -9121,7 +9373,9 @@ test "alias target alternatives cannot borrow another target's universal referen
     try flow.bindings.put(@enumFromInt(1), .{});
     try flow.addresses.put(@enumFromInt(2), &.{ @enumFromInt(0), @enumFromInt(1) });
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(2), .content = .{ .dereference = .{
-        .pointer = @enumFromInt(2), .ty = @enumFromInt(2), .pointer_type = @enumFromInt(3),
+        .pointer = @enumFromInt(2),
+        .ty = @enumFromInt(2),
+        .pointer_type = @enumFromInt(3),
     } } });
     for ([_]graph_mod.GlobalNodeId{ @enumFromInt(2), @enumFromInt(3) }) |node| {
         for (0..2) |unknown_index| {
@@ -9230,4 +9484,34 @@ test "nominal choices retain reference-bearing payload classification" {
     defer infer.deinit();
     try std.testing.expect(infer.typeContainsPointer(@enumFromInt(2)));
     try std.testing.expect(!infer.typeContainsPointer(@enumFromInt(3)));
+}
+
+test "input snapshot observations stop at reference leaves" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .nominal = @enumFromInt(0) },
+        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_only } },
+    });
+    try graph.variants.append(a, .{ .name = .{ .start = 0, .len = 0 }, .payload_type = @enumFromInt(1), .source = source, .value = 0 });
+    try graph.type_definitions.append(a, .{ .source = source, .choice_variants = .{ .start = 0, .len = 1 } });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const observed = try infer.inputReferenceObservations(.{}, @enumFromInt(2), .{ .input_index = 0 }, 0);
+    const leaf = try infer.projectValueEffect(observed, .{ .variant = 0 });
+    try std.testing.expect(leaf.reference_relation.?.source.eql(.{ .input_index = 0, .projections = &.{.{ .variant = 0 }} }));
+    const pointer = try infer.inputReferenceObservations(.{}, @enumFromInt(3), .{ .input_index = 1 }, 0);
+    try std.testing.expect(pointer.reference_relation.?.source.eql(.{ .input_index = 1 }));
+    try std.testing.expectEqual(@as(usize, 0), pointer.variants.len);
+    try std.testing.expectEqual(@as(usize, 0), pointer.fields.len);
+    try std.testing.expectEqual(@as(usize, 0), pointer.fresh_storage_capabilities.len);
+    try std.testing.expectEqual(@as(usize, 0), pointer.fresh_owned_roots.len);
 }

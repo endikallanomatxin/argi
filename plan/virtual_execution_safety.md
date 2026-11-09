@@ -18,6 +18,15 @@ actual value, its aliases, captured resources and destination execution.
 The rules must apply to ordinary resources. Allocator, String, Future and Executor
 are design examples, not compiler-recognized exceptions.
 
+Implementation checkpoint (2026-11-09): uniform unknown-call authorization is
+implemented, including native imports and selected cleanup. The unchanged 121
+and 177 programs remain positive gates. See
+[the closure and validation record](unknown_call_authorization.md) for the
+private backing observation, explicit snapshot selection, native assumptions and
+remaining limits. Earlier experiment sections below record historical states;
+they are not the current status of this authorization rule. General owner
+transfer and protected-access protocols remain unimplemented.
+
 ## Distinct properties
 
 | Property | Question | Does not establish |
@@ -300,18 +309,19 @@ vtable's implementation identity alone are insufficient answers.
 
 | Existing mechanism | Reuse | Missing information |
 | --- | --- | --- |
-| `InputPath`, `InputAccess`, `GlobalAccess`, `unknown_access` | Caller-relative may-access bounds | Unknown-call authorization; ordered effects deferred |
+| `InputPath`, `InputAccess`, `GlobalAccess`, `unknown_access` | Caller-relative may-access bounds | General physical/interface precision; ordered effects deferred |
 | `DomainFacts`, symbolic pointees and `RegionTraversal` | Captured region and traversal identities | General symbolic/opaque extraction with correlated alternatives |
 | `ValueEffect` dependencies and domain effects | Substitution through values and calls | Latent operation requirements bound to the retained capability occurrence |
 | Selected `Deinit` evidence and cleanup flags | Cleanup selection and unique responsibility, including indirect moves | Execution requirements of latent cleanup and delegated responsibility |
 | Execution receipts and `completed_executions` | Exact pending identity and final completion guarantees | Ordering between completion, accesses and retention |
 
-A build-only investigation at `b5f23c664` confirmed two currently accepted cases
-that the general rules must reject. They were not executed:
+A historical build-only investigation at `b5f23c664` confirmed two accepted
+cases that the general rules must reject. Both authorization gaps are now
+covered by regressions; neither unsafe program was executed:
 
 - An unbounded contract setter, `where {}`, writes a captured mutable reference.
   A wrapper taking only `Virtual#(Contract)` invokes it while a worker has a read
-  loan of that referent. An unknown access summary does not currently prevent
+  loan of that referent. An unknown access summary did not then prevent
   that caller-side conflict. Existing worker-side isolation restrictions do not
   establish safety for arbitrary operations executed by the caller.
 - A wrapper writes through an input reference and only then awaits a future whose
@@ -339,10 +349,10 @@ case 75 verifies completion in a previous call restores entry authority. No
 transition-relative effect representation has been introduced. Keep that simple
 rule until a useful case justifies more precise ordering evidence.
 
-The unknown erased-call case remains an authorization gap. Close it through
-general access rules and a specified native boundary before widening the payload
-or runtime subset. These probes are not supported concurrent programs or
-performance tests.
+The unknown erased-call gap is now closed through uniform entry authorization;
+see [the checkpoint record](unknown_call_authorization.md). This does not widen
+the owning-payload or protected-access subset. These probes are compile-only
+regressions, never concurrent performance tests.
 
 ## Conditional alias obligations across execution-producing helpers
 
@@ -364,7 +374,7 @@ codegen annotations.
 Cases 96X–106 cover caller aliasing, disjoint inputs, shared reads, completion
 before access, independent completion of multiple receipts, copied record
 references, union overlap and rejection at virtual erasure. The same obligation cannot be hidden by a callback signature. The
-unknown erased-call gap remains separate and open.
+unknown erased-call gap is covered by the uniform authorization checkpoint.
 
 ## Next boundary: unknown calls
 
@@ -499,9 +509,11 @@ and C interop 158X reject overlapping ordinary writes, second task loans and
 bounded native writes; the native access fixture retains a positive independent
 record-field case.
 
-## Next checkpoint: unknown call authorization
+## Historical integration: unknown call authorization
 
-The unknown erased-call authorization gap remains open. An experiment rejected
+This section records the earlier integration obstacles, superseded by
+[the completed authorization checkpoint](unknown_call_authorization.md).
+The unknown erased-call authorization gap was open at this point. An experiment rejected
 all summaries with `unknown_access` while any execution retained a storage loan.
 It also rejected valid `await` paths: native result-buffer references currently
 carry lifetime evidence without an authenticated access-region identity. The
@@ -632,7 +644,7 @@ implementation-owned anonymous operation bodies can fail materialization with
 NoMatchingGenericFunction. Ordinary helpers work and preserve the same effects;
 keep this separate callable-resolution diagnostic issue from access authorization.
 
-## Authorization integration checkpoint
+## Historical authorization integration checkpoint
 
 Unknown may-access summaries must eventually reject calls while incompatible
 caller-storage loans are pending, before applying completion postconditions.
@@ -654,3 +666,14 @@ The integration experiment is not part of the implemented safety guarantees.
 The next implementation checkpoint should close these representation gaps as
 one validated change, including borrowed await and forwarding executors, rather
 than publishing the unknown-access gate with known positive regressions.
+
+
+## Implemented uniform authorization checkpoint
+
+Unknown ordinary, virtual, indirect, native and selected cleanup calls are checked
+against pending caller loans before completion postconditions. `where {}` stays
+unknown. Certified native completion remains separate from an access bound.
+The original 121/177 positives, borrowed await and inline/delegated executors
+remain validation gates. Physical observations and evaluated snapshot routes
+supply the required evidence; no executor or collection name grants authority.
+See [the implementation and validation record](unknown_call_authorization.md).

@@ -35,7 +35,8 @@ trusted_establish_inherited_storage := (.address: UIntNative, .root: &Any) -> (
 }
 
 -- Prevent arithmetic wrap before establishing an offset reference. The caller
--- still proves that the resulting element belongs to the same live region.
+-- still proves that the resulting element belongs to the same physical
+-- allocation and generation. A lifetime dependency alone cannot prove this.
 _reference_offset_address := (
     .address: UIntNative, .elements: UIntNative, .element_size: UIntNative
 ) -> (.result: UIntNative) {

@@ -1845,10 +1845,8 @@ pub const SafetyChecker = struct {
             return self.evaluatePrimitive(caller, call.callee, callee.safety_primitive, argument_nodes, values, state, input_node.source);
         }
         if (callee.body == null) {
-            if (callee.declared_access != null) {
-                const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
-                if (!try self.validateSummaryExecutionAccess(input_node.source, summary, argument_nodes, values, state)) return .{};
-            }
+            const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
+            if (!try self.validateSummaryExecutionAccess(input_node.source, summary, argument_nodes, values, state)) return .{};
             // Argument evaluation is still part of the successful call and is
             // committed by the outer transaction. Foreign pointers themselves
             // do not become safe references implicitly.
@@ -3040,7 +3038,9 @@ pub const SafetyChecker = struct {
                 const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, callee));
                 for (fields, 0..) |*field, index| {
                     const value = try self.allocator.create(facts.ValueFacts);
-                    value.* = if (index == shape.data_field)
+                    value.* = if (index == shape.backing_reference_field)
+                        .{ .variants = try self.allocator.dupe(facts.VariantFacts, &.{.{ .index = 1, .value = try self.allocationBackingReference(root) }}) }
+                    else if (index == shape.data_field)
                         .{ .dependencies = try self.oneDependency(root), .acquisition_origins = if (values.len != 0) try self.acquisitionOrigins(values[0]) else &.{} }
                     else
                         .{};
@@ -3053,6 +3053,8 @@ pub const SafetyChecker = struct {
                 var result: facts.ValueFacts = .{ .owned_roots = try self.oneRoot(root) };
                 for (fields) |field| result = try self.mergeValueFacts(result, field.value.*);
                 result.fields = fields;
+                result.variants = &.{};
+                result.known_choice_variant = null;
                 result.explicit_dependency = false;
                 break :blk result;
             },
@@ -3089,7 +3091,8 @@ pub const SafetyChecker = struct {
                     }
                 }
                 for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
-                break :blk .{ .dependencies = try dependencies.toOwnedSlice() };
+                const observation = try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } }, values, state);
+                break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = observation.lexical_frame };
             },
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
@@ -3111,6 +3114,14 @@ pub const SafetyChecker = struct {
             // communicated explicitly by mark_empty and by summaries.
             .opaque_drop => .{},
         };
+    }
+
+    fn allocationBackingReference(self: *SafetyChecker, root: facts.ValidityRootId) !*facts.ValueFacts {
+        const pointer = try self.allocator.create(facts.ValueFacts);
+        pointer.* = .{ .dependencies = try self.oneDependency(root) };
+        const payload = try self.allocator.create(facts.ValueFacts);
+        payload.* = .{ .dependencies = pointer.dependencies, .fields = try self.allocator.dupe(facts.FieldFacts, &.{.{ .index = 0, .value = pointer }}) };
+        return payload;
     }
 
     fn acquisitionOrigins(self: *SafetyChecker, value: facts.ValueFacts) ![]const facts.StorageCapabilityId {
@@ -4302,7 +4313,15 @@ pub const SafetyChecker = struct {
         // May-access effects span the call. A final completion postcondition
         // cannot establish that any particular access happened after it.
         const before = self.diagnostics.list.items.len;
+        if (summary.unknown_access) {
+            if (!try self.requireUnknownExecutionAccess(source, "call", .write, state)) return false;
+        }
         for (summary.input_accesses) |access| {
+            if (access.backing) {
+                const observed = try self.referenceObservationInput(access.target, arguments, state);
+                try self.requireExecutionPointerAccess(source, observed.derivedReference(), access.mode, state);
+                continue;
+            }
             if (access.target.storage_domain) |domain| {
                 if (access.target.input_index >= arguments.len) continue;
                 const receiver_value = if (access.target.projections.len == 0) arguments[access.target.input_index] else try self.load_summary_input_value(access.target, arguments, state);
@@ -5395,18 +5414,24 @@ pub const SafetyChecker = struct {
             const path = relation.source;
             // The source observation belongs to the evaluated argument, not
             // a load from its target. Stored references have their own frames.
-            const input = try self.referenceObservationInput(path, arguments);
+            const input = try self.referenceObservationInput(path, arguments, state);
             result.lexical_frame = input.lexical_frame;
         }
         return result;
     }
 
-    /// A relation source selects the evaluated argument value. It does not
-    /// implicitly load a referent because aggregate provenance names storage.
-    fn referenceObservationInput(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts) !facts.ValueFacts {
+    /// Select evaluated fields first; only an explicit dereference can load
+    /// storage. Aggregate provenance alone never replaces a snapshot's value.
+    fn referenceObservationInput(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         if (path.storage_domain != null or path.input_index >= arguments.len) return .{};
-        for (path.projections) |projection| if (projection == .dereference) return .{};
-        return self.projectValueFacts(arguments[path.input_index], path.projections);
+        var value = arguments[path.input_index];
+        for (path.projections) |projection| {
+            value = if (projection == .dereference)
+                try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{.dereference} }, &.{value}, state)
+            else
+                try self.projectValueFacts(value, &.{projection});
+        }
+        return value;
     }
 
     fn instantiateRegionEffect(self: *SafetyChecker, domain_index: u32, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState, observe_handles: bool) !facts.DomainFacts {
@@ -12722,6 +12747,42 @@ test "erased ownership and lifetime output guarantees do not manufacture acquisi
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(origin));
 }
 
+test "unknown call effects require completion before access authority is restored" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (std.meta.tags(facts.AccessMode)) |mode| {
+        var state = SafetyChecker.FunctionState.init(a);
+        defer state.deinit();
+        const loan: facts.ExecutionLoan = .{ .storage = .{ .root = @enumFromInt(0) }, .mode = mode };
+        const id = try state.establishExecution(&.{loan});
+        try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, .{ .unknown_access = true }, &.{}, &.{}, &state));
+        // A verified empty footprint remains compatible with either loan mode.
+        try std.testing.expect(try checker.validateSummaryExecutionAccess(source, .{}, &.{}, &.{}, &state));
+        // A completion postcondition cannot authorize earlier unknown effects.
+        try checker.applySummaryEffects(source, .{
+            .unknown_access = true,
+            .completed_executions = &.{.{ .input_index = 0 }},
+        }, &.{}, &.{.{ .execution_receipts = &.{id} }}, &state);
+        try std.testing.expect(state.executionPending(id));
+        state.completeExecution(id);
+        try std.testing.expect(try checker.validateSummaryExecutionAccess(source, .{ .unknown_access = true }, &.{}, &.{}, &state));
+    }
+    try std.testing.expectEqual(@as(usize, 4), diags.list.items.len);
+    var plain = SafetyChecker.FunctionState.init(a);
+    defer plain.deinit();
+    _ = try plain.establishExecution(&.{});
+    // A task without borrowed storage imposes no caller memory restriction.
+    try std.testing.expect(try checker.validateSummaryExecutionAccess(source, .{ .unknown_access = true }, &.{}, &.{}, &plain));
+}
+
 test "unknown reference targets preserve read compatibility without bypassing execution loans" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -13312,4 +13373,56 @@ test "reference relation projections select evaluated values without following c
     const choice: facts.ValueFacts = .{ .variants = &.{.{ .index = 0, .value = &snapshot }} };
     const nested = try checker.instantiateOutput(.{ .reference_relation = .{ .source = .{ .input_index = 0, .projections = &.{ .{ .variant = 0 }, .{ .field = 0 } } } } }, &.{choice}, &state);
     try std.testing.expectEqual(@as(?u32, 9), nested.lexical_frame);
+}
+
+test "backing footprints cannot use a witness slot as exact accessed storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    _ = try state.establishExecution(&.{.{ .storage = .{ .root = @enumFromInt(1) }, .mode = .write }});
+    const witness = facts.ValueFacts{ .referenced_place = .{ .root = @enumFromInt(0) } };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    // The backing may extend beyond the witness's individual byte/slot.
+    try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, .{
+        .input_accesses = &.{.{ .target = .{ .input_index = 0 }, .mode = .read, .backing = true }},
+    }, &.{}, &.{witness}, &state));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "backing access selects evaluated fields instead of reloading aggregate provenance" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const later: facts.Place = .{ .root = @enumFromInt(1) };
+    try state.beginLexicalStorage(slot);
+    const old: facts.ValueFacts = .{ .lexical_frame = state.lexicalFrame() };
+    try state.setPlace(slot, .initialized, .{ .fields = &.{.{ .index = 0, .value = &old }} });
+    try state.beginLexicalStorage(later);
+    const actual: facts.ValueFacts = .{ .lexical_frame = state.lexicalFrame() };
+    const snapshot: facts.ValueFacts = .{ .referenced_place = slot, .fields = &.{.{ .index = 0, .value = &actual }} };
+    _ = try state.establishExecution(&.{.{ .storage = later, .mode = .write }});
+    try std.testing.expect(!try checker.validateSummaryExecutionAccess(.{ .file_index = 0, .offset = 0 }, .{
+        .input_accesses = &.{.{ .target = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} }, .mode = .read, .backing = true }},
+    }, &.{}, &.{snapshot}, &state));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
