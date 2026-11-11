@@ -5751,6 +5751,11 @@ pub const SafetyChecker = struct {
                 try symbolic_pointees.append(self.allocator, identity);
         }
         const symbolic = try self.allocator.dupe(facts.SymbolicPointeeId, symbolic_pointees.items);
+        var mutation_places = std.array_list.Managed(facts.Place).init(self.allocator);
+        for ([_]facts.ValueFacts{ left, right }) |alternative| {
+            for (alternative.mutation_places) |place| try appendPlaceFact(&mutation_places, place);
+            if (alternative.referenced_place) |place| try appendPlaceFact(&mutation_places, place);
+        }
         var origins = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
         try origins.appendSlice(left.acquisition_origins);
         for (right.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
@@ -5758,6 +5763,7 @@ pub const SafetyChecker = struct {
             .acquisition_origins = try origins.toOwnedSlice(),
             .lexical_frame = if (left.lexical_frame != null and right.lexical_frame != null) @max(left.lexical_frame.?, right.lexical_frame.?) else null,
             .symbolic_pointees = symbolic,
+            .mutation_places = try mutation_places.toOwnedSlice(),
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
             .owned_roots = try owned.toOwnedSlice(),
@@ -7312,6 +7318,23 @@ pub const SafetyChecker = struct {
     }
 
     fn projectSymbolicStorage(self: *SafetyChecker, pointer: facts.ValueFacts, projection: facts.Projection, state: *FunctionState) !?facts.ValueFacts {
+        if (pointer.referenced_place == null and pointer.mutation_places.len != 0) {
+            var targets = std.array_list.Managed(facts.Place).init(self.allocator);
+            for (pointer.mutation_places) |place| try appendPlaceFact(&targets, try self.project(place, projection));
+            var result = pointer.referenceCopy();
+            result.mutation_places = try targets.toOwnedSlice();
+            result.symbolic_pointees = &.{};
+            // Project each symbolic alternative as well; a concrete may-target
+            // must not make the symbolic side disappear or become exclusive.
+            for (pointer.symbolic_pointees) |identity| {
+                var symbolic = pointer.referenceCopy();
+                symbolic.mutation_places = &.{};
+                symbolic.symbolic_pointees = &.{identity};
+                if (try self.projectSymbolicStorage(symbolic, projection, state)) |child|
+                    result = try self.mergeValueFacts(result, child);
+            }
+            return result;
+        }
         if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
         const parent_id = pointer.symbolic_pointees[0];
         const parent = for (state.symbolic_pointees.items) |entry| {
@@ -7393,8 +7416,14 @@ pub const SafetyChecker = struct {
 
     fn storeSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts, definite: bool) !void {
         if (pointer.opaque_provenance.len != 0) return;
+        // A possible concrete alias must not leave the old local unchanged.
+        // These candidates never justify a strong update, even when singleton.
+        for (pointer.mutation_places) |place| {
+            const previous = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
+            try state.setPlace(place, state.initializednessAtPlace(place), try self.mergeValueFacts(previous, value));
+        }
         for (pointer.symbolic_pointees) |identity| {
-            const strong = definite and pointer.symbolic_pointees.len == 1;
+            const strong = definite and pointer.symbolic_pointees.len == 1 and pointer.mutation_places.len == 0;
             const previous = try self.symbolicValueAt(state, identity);
             const next: SymbolicStoredValue = if (strong)
                 .{ .identity = identity, .value = value }
@@ -9263,6 +9292,8 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
 }
 
 fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.mutation_places.len != right.mutation_places.len) return false;
+    for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
     if (left.lexical_frame != right.lexical_frame) return false;
     if (left.explicit_dependency != right.explicit_dependency or left.foreign_storage != right.foreign_storage or left.opaque_provenance.len != 0 or right.opaque_provenance.len != 0) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
@@ -9431,6 +9462,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.mutation_places.len != right.mutation_places.len) return false;
+    for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
     if (left.lexical_frame != right.lexical_frame) return false;
     if (!std.mem.eql(facts.ExecutionId, left.execution_receipts, right.execution_receipts)) return false;
     if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
@@ -13425,4 +13458,86 @@ test "backing access selects evaluated fields instead of reloading aggregate pro
         .input_accesses = &.{.{ .target = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} }, .mode = .read, .backing = true }},
     }, &.{}, &.{snapshot}, &state));
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "possible concrete aliases weakly replace both locals without becoming exact" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first = facts.Place{ .root = @enumFromInt(0) };
+    const second = facts.Place{ .root = @enumFromInt(1) };
+    const old_root = try state.tracker.establish(.fresh);
+    const new_root = try state.tracker.establish(.fresh);
+    const old = facts.ValueFacts{ .dependencies = &.{.{ .root = old_root }} };
+    try state.setPlace(first, .initialized, old);
+    try state.setPlace(second, .initialized, old);
+    const pointer = try checker.mergeValueFacts(.{ .referenced_place = first }, .{ .referenced_place = second });
+    try std.testing.expect(pointer.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 2), pointer.mutation_places.len);
+    try checker.storeSymbolicValue(&state, pointer, .{ .dependencies = &.{.{ .root = new_root }} }, true);
+    for ([_]facts.Place{ first, second }) |place| {
+        const value = checker.valueAtPlace(&state, place).?;
+        try std.testing.expect(valueDependsOnRoot(value, old_root));
+        try std.testing.expect(valueDependsOnRoot(value, new_root));
+    }
+    const unknown = try checker.mergeValueFacts(.{ .referenced_place = first }, .{});
+    try std.testing.expect(unknown.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 1), unknown.mutation_places.len);
+    try std.testing.expectEqual(@as(usize, 0), unknown.owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), unknown.storage_capabilities.len);
+}
+
+test "mixed concrete and symbolic mutation alternatives retain both symbolic values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const local = facts.Place{ .root = @enumFromInt(0) };
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    const old_root = try state.tracker.establish(.fresh);
+    const replacement_root = try state.tracker.establish(.fresh);
+    const old = facts.ValueFacts{ .dependencies = &.{.{ .root = old_root }} };
+    try state.setPlace(local, .initialized, old);
+    try state.setSymbolicValue(.{ .identity = identity, .value = old }, true, true);
+    const pointer = try checker.mergeValueFacts(.{ .referenced_place = local }, .{ .symbolic_pointees = &.{identity} });
+    try checker.storeSymbolicValue(&state, pointer, .{ .dependencies = &.{.{ .root = replacement_root }} }, true);
+    const symbolic = (try checker.symbolicValueAt(&state, identity)).?.value;
+    try std.testing.expect(valueDependsOnRoot(symbolic, old_root));
+    try std.testing.expect(valueDependsOnRoot(symbolic, replacement_root));
+    const concrete = checker.valueAtPlace(&state, local).?;
+    try std.testing.expect(valueDependsOnRoot(concrete, old_root));
+    try std.testing.expect(valueDependsOnRoot(concrete, replacement_root));
+}
+
+test "projecting a mixed mutation reference preserves its symbolic alternative" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .initializedness = .initialized, .generation = generation });
+    const pointer = facts.ValueFacts{ .mutation_places = &.{.{ .root = @enumFromInt(0) }}, .symbolic_pointees = &.{@enumFromInt(0)} };
+    const projected = (try checker.projectSymbolicReference(pointer, 0, &state)).?;
+    try std.testing.expectEqual(@as(usize, 1), projected.mutation_places.len);
+    try std.testing.expectEqual(@as(usize, 1), projected.symbolic_pointees.len);
+    try std.testing.expect(projected.referenced_place == null);
 }

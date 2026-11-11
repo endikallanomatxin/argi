@@ -136,3 +136,53 @@ test "equal addresses of empty observations do not establish shared backing" {
     try std.testing.expectEqual(empty.start, other.start);
     try std.testing.expect(!holds(.backing, empty, other));
 }
+
+// Finite oracle for mutation abstraction, independent of executor protocols.
+// Bits in a cell are possible stored reference values, not access permissions.
+const MutationOracle = struct {
+    candidates: u2,
+    complete: bool,
+    definite: bool,
+
+    fn update(self: @This(), incoming: [2]u2, replacement: u2) [2]u2 {
+        var result = incoming;
+        const affected: u2 = if (self.complete) self.candidates else 3;
+        const strong = self.complete and self.definite and @popCount(affected) == 1;
+        for (0..2) |index| {
+            const bit = @as(u2, 1) << @as(u1, @intCast(index));
+            if (affected & bit != 0)
+                result[index] = if (strong) replacement else incoming[index] | replacement;
+        }
+        return result;
+    }
+};
+
+test "mutation abstraction contains every possible concrete store" {
+    for (0..4) |mask| for ([_]bool{ false, true }) |complete| for ([_]bool{ false, true }) |definite| {
+        const model = MutationOracle{ .candidates = @intCast(mask), .complete = complete, .definite = definite };
+        for (0..4) |a| for (0..4) |b| for (0..4) |written| {
+            const incoming = [2]u2{ @intCast(a), @intCast(b) };
+            const replacement: u2 = @intCast(written);
+            const abstract = model.update(incoming, replacement);
+            if (!definite) for (0..2) |slot|
+                try std.testing.expect(abstract[slot] & incoming[slot] == incoming[slot]);
+            for (0..2) |destination| {
+                if (complete and model.candidates & (@as(u2, 1) << @as(u1, @intCast(destination))) == 0) continue;
+                var concrete = incoming;
+                concrete[destination] = replacement;
+                for (0..2) |slot|
+                    try std.testing.expect(abstract[slot] & concrete[slot] == concrete[slot]);
+            }
+        };
+    };
+}
+
+test "one known mutation candidate is not a complete singleton" {
+    const incoming = [2]u2{ 1, 1 };
+    const incomplete = (MutationOracle{ .candidates = 1, .complete = false, .definite = true }).update(incoming, 2);
+    try std.testing.expectEqual([2]u2{ 3, 3 }, incomplete);
+    const conditional = (MutationOracle{ .candidates = 1, .complete = true, .definite = false }).update(incoming, 2);
+    try std.testing.expectEqual([2]u2{ 3, 1 }, conditional);
+    const exact = (MutationOracle{ .candidates = 1, .complete = true, .definite = true }).update(incoming, 2);
+    try std.testing.expectEqual([2]u2{ 2, 1 }, exact);
+}

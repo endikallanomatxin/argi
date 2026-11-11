@@ -170,6 +170,9 @@ pub const ValueFacts = struct {
     /// evidence only; it grants neither liveness nor access authority.
     lexical_frame: ?u32 = null,
     referenced_place: ?Place = null,
+    /// Known possible destinations retained only for conservative mutation.
+    /// This list is not complete and never grants exact access or ownership.
+    mutation_places: []const Place = &.{},
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
     symbolic_pointees: []const SymbolicPointeeId = &.{},
@@ -196,6 +199,7 @@ pub const ValueFacts = struct {
             .acquisition_origins = self.acquisition_origins,
             .lexical_frame = self.lexical_frame,
             .referenced_place = self.referenced_place,
+            .mutation_places = self.mutation_places,
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
             .opaque_provenance = self.opaque_provenance,
@@ -213,6 +217,7 @@ pub const ValueFacts = struct {
     pub fn derivedReference(self: ValueFacts) ValueFacts {
         var result = self.referenceCopy();
         result.referenced_place = null;
+        result.mutation_places = &.{};
         result.symbolic_pointees = &.{};
         result.virtual_methods = &.{};
         result.domains = &.{};

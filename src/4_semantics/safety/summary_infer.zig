@@ -19,6 +19,12 @@ const primitive_transfer = @import("../primitives/registry.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    const LocalMutationProjection = struct {
+        binding: graph_mod.GlobalBindingId,
+        path: []const facts.Projection,
+        candidates: []const graph_mod.GlobalNodeId,
+    };
+
     cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     cache: ?*const @import("summary_cache.zig").Store = null,
     cache_reused: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, void) = .empty,
@@ -61,6 +67,8 @@ pub const Infer = struct {
     access_place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
     module_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
+    local_mutation_candidates: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
+    local_mutation_projections: std.array_list.Managed(LocalMutationProjection),
     addressed_outputs: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
     domain_invalidations: std.array_list.Managed(facts.InputDomain),
@@ -139,6 +147,8 @@ pub const Infer = struct {
             .access_place_bindings = .init(allocator),
             .module_bindings = .init(allocator),
             .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
+            .local_mutation_candidates = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
+            .local_mutation_projections = .init(allocator),
             .addressed_outputs = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
             .domain_invalidations = std.array_list.Managed(facts.InputDomain).init(allocator),
@@ -158,6 +168,8 @@ pub const Infer = struct {
         self.access_place_bindings.deinit();
         self.module_bindings.deinit();
         self.local_address_bindings.deinit();
+        self.local_mutation_candidates.deinit();
+        self.local_mutation_projections.deinit();
         self.addressed_outputs.deinit();
         self.virtual_summaries.deinit();
         self.domain_invalidations.deinit();
@@ -842,6 +854,8 @@ pub const Infer = struct {
             self.place_bindings.clearRetainingCapacity();
             self.access_place_bindings.clearRetainingCapacity();
             self.local_address_bindings.clearRetainingCapacity();
+            self.local_mutation_candidates.clearRetainingCapacity();
+            self.local_mutation_projections.clearRetainingCapacity();
             self.addressed_outputs.clearRetainingCapacity();
             self.domain_invalidations.clearRetainingCapacity();
             self.unbound_opaque_dependencies = .{};
@@ -898,6 +912,8 @@ pub const Infer = struct {
         self.place_bindings.clearRetainingCapacity();
         self.access_place_bindings.clearRetainingCapacity();
         self.local_address_bindings.clearRetainingCapacity();
+        self.local_mutation_candidates.clearRetainingCapacity();
+        self.local_mutation_projections.clearRetainingCapacity();
         self.addressed_outputs.clearRetainingCapacity();
         self.domain_invalidations.clearRetainingCapacity();
         self.unbound_opaque_dependencies = .{};
@@ -1664,6 +1680,8 @@ pub const Infer = struct {
                 .binding_declaration => |binding| {
                     const initialization = self.graph.binding(binding).initialization orelse continue;
                     const effect = try self.inferExpression(function_id, initialization);
+                    const candidates = try self.localMutationCandidates(initialization, 0);
+                    try self.local_mutation_candidates.put(binding, candidates);
                     try self.local_address_bindings.put(binding, try self.localAddressTargets(initialization));
                     try self.bindings.put(binding, effect);
                     try self.place_bindings.put(binding, try self.inferInputPaths(function_id, initialization));
@@ -1677,6 +1695,11 @@ pub const Infer = struct {
                         else
                             effect;
                     } else {
+                        var candidates = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+                        try candidates.appendSlice(self.local_mutation_candidates.get(assignment.binding) orelse &.{});
+                        for (try self.localMutationCandidates(assignment.value, 0)) |target|
+                            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, candidates.items, target) == null) try candidates.append(target);
+                        try self.local_mutation_candidates.put(assignment.binding, try candidates.toOwnedSlice());
                         const targets = try self.localAddressTargets(assignment.value);
                         var joined = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
                         try joined.appendSlice(self.local_address_bindings.get(assignment.binding) orelse &.{});
@@ -1691,25 +1714,26 @@ pub const Infer = struct {
                 },
                 .function_call => |call| {
                     if (self.engine.summaryFor(call.callee)) |summary| if (self.structArguments(call.input)) |arguments| {
-                        // Only definite reference-slot replacements describe a
-                        // new local value; preserved cleanup facts do not.
+                        // Replacement facts describe possible new local values;
+                        // preserved cleanup facts do not describe replacements.
                         const values = try self.allocator.alloc(facts.ValueEffect, summary.input_post_states.len);
                         for (summary.input_post_states, values) |post, *value|
-                            value.* = if (post.initialization == .definite and post.initializedness == .initialized)
+                            value.* = if (post.initialization != .preserved and (post.initializedness == .initialized or post.initializedness == .maybe_initialized))
                                 try self.substituteOutput(function_id, post.value, arguments)
                             else
                                 .{};
                         for (summary.input_post_states, values) |post, value| {
-                            if (post.initialization != .definite or post.initializedness != .initialized or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
+                            if (post.initialization == .preserved or (post.initializedness != .initialized and post.initializedness != .maybe_initialized) or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
                             const signature = self.graph.function(call.callee);
                             const parameter = self.graph.fields.items[signature.input.start + post.target.input_index].ty;
                             if (self.graph.semanticType(parameter) != .pointer) continue;
                             const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
                             if (!self.typeContainsPointer(selected.ty)) continue;
-                            const targets = try self.localAddressTargets(arguments[post.target.input_index].value);
+                            const exact_targets = try self.localAddressTargets(arguments[post.target.input_index].value);
+                            const targets = try self.localMutationCandidates(arguments[post.target.input_index].value, 0);
                             for (targets) |target| {
                                 var updated = value;
-                                if (targets.len != 1) {
+                                if (exact_targets.len != 1 or targets.len != 1 or post.initialization != .definite or post.initializedness != .initialized) {
                                     // Only one alternative is changed at runtime.
                                     // Retain both the old and replacement value,
                                     // never the old reference's exact identity.
@@ -1736,10 +1760,20 @@ pub const Infer = struct {
                     // a local alias. One selected value feeds every possible
                     // destination; never replay its opaque effects per target.
                     const targets = try self.localAddressTargets(store.struct_ptr);
-                    if (!try self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const reference_value = if (self.graph.node(store.value).ty) |ty| self.typeContainsPointer(ty) else false;
+                    if (!reference_value and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
-                    for (targets) |target|
-                        try self.storeSelectedValueEffect(function_id, target, &.{.{ .field = store.field_index }}, value, outputs, .outputs);
+                    const candidates = if (reference_value) try self.localMutationCandidates(store.value, 0) else &.{};
+                    for (targets) |target| {
+                        const path = &[_]facts.Projection{.{ .field = store.field_index }};
+                        if (reference_value) try self.retainProjectedMutationCandidates(target, path, candidates);
+                        var updated = value;
+                        if (reference_value and targets.len != 1) {
+                            const previous = try self.projectValueEffect(try self.inferExpression(function_id, target), path[0]);
+                            updated = try self.joinStorageAlternatives(self.graph.node(store.value).ty, previous, value);
+                        }
+                        try self.storeSelectedValueEffect(function_id, target, path, updated, outputs, if (reference_value) .locals_and_outputs else .outputs);
+                    }
                 },
                 .array_store => |store| {
                     const targets = try self.arrayStorageTargets(store.array_ptr);
@@ -1751,10 +1785,18 @@ pub const Infer = struct {
                 },
                 .pointer_assignment => |store| {
                     const targets = try self.localAddressTargets(store.pointer);
-                    if (!try self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const reference_value = if (self.graph.node(store.value).ty) |ty| self.typeContainsPointer(ty) else false;
+                    if (!reference_value and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
-                    for (targets) |target|
-                        try self.storeSelectedValueEffect(function_id, target, &.{}, value, outputs, .outputs);
+                    const candidates = if (reference_value) try self.localMutationCandidates(store.value, 0) else &.{};
+                    for (targets) |target| {
+                        if (reference_value) try self.retainProjectedMutationCandidates(target, &.{}, candidates);
+                        const updated = if (reference_value and targets.len != 1)
+                            try self.joinStorageAlternatives(self.graph.node(store.value).ty, try self.inferExpression(function_id, target), value)
+                        else
+                            value;
+                        try self.storeSelectedValueEffect(function_id, target, &.{}, updated, outputs, if (reference_value) .locals_and_outputs else .outputs);
+                    }
                 },
                 .if_statement => |statement| {
                     const alternatives = try OutputAlternatives.init(self.allocator, outputs);
@@ -5157,7 +5199,7 @@ pub const Infer = struct {
         sink.unknown = sink.unknown or summary.unknown_access;
         if (self.accessTargetsMayChange(summary, callee)) sink.unstable_targets = true;
         if (callee) |id| for (summary.input_post_states) |post| {
-            if (post.initialization != .definite or post.initializedness != .initialized) continue;
+            if (post.initialization == .preserved) continue;
             const selected = @import("access_bounds.zig").selectedType(self.graph, self.graph.function(id), post.target) catch {
                 sink.reference_writes = true;
                 continue;
@@ -5353,6 +5395,103 @@ pub const Infer = struct {
             .move_value, .denied_implicit_copy => |value| self.localAddressTargets(value),
             else => &.{},
         };
+    }
+
+    /// May-targets are used only to weaken local values after mutation. They
+    /// never prove a complete destination set, forwarding identity or liveness.
+    fn localMutationCandidates(self: *Infer, node: graph_mod.GlobalNodeId, depth: usize) anyerror![]const graph_mod.GlobalNodeId {
+        if (depth > 64) return &.{};
+        if (self.graph.node(node).content == .binding_use) {
+            const binding = self.graph.node(node).content.binding_use;
+            if (self.local_mutation_candidates.get(binding)) |candidates| return candidates;
+        }
+        const exact = try self.localAddressTargets(node);
+        if (exact.len != 0) return exact;
+        return switch (self.graph.node(node).content) {
+            .binding_use => |binding| blk: {
+                const record = self.graph.binding(binding);
+                // The initializer contributes possible aliases even when the
+                // binding is writable; it is never a strong-update proof.
+                break :blk try self.localMutationCandidates(record.initialization orelse break :blk &.{}, depth + 1);
+            },
+            .value_sequence, .replacement => |block| self.localMutationCandidates(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return &.{}, depth + 1),
+            .move_value, .denied_implicit_copy => |value| self.localMutationCandidates(value, depth + 1),
+            .struct_field_access => |field| self.projectLocalMutationCandidates(field.value, &.{.{ .field = field.field_index }}, depth + 1),
+            .function_call => |call| blk: {
+                const summary = self.engine.summaryFor(call.callee) orelse break :blk &.{};
+                if (summary.outputs.len != 1) break :blk &.{};
+                const args = self.structArguments(call.input) orelse break :blk &.{};
+                var targets = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+                for (summary.outputs[0].input_dependencies) |dependency| {
+                    const path = dependency.path;
+                    if (dependency.validity_only or path.storage_domain != null or path.projections.len != 0 or path.input_index >= args.len) continue;
+                    for (try self.localMutationCandidates(args[path.input_index].value, depth + 1)) |target|
+                        if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, targets.items, target) == null) try targets.append(target);
+                }
+                break :blk try targets.toOwnedSlice();
+            },
+            else => &.{},
+        };
+    }
+
+    // Select only an explicitly represented aggregate member. An aggregate's
+    // other reference fields are not identities for this selected alias.
+    fn projectLocalMutationCandidates(self: *Infer, node: graph_mod.GlobalNodeId, path: []const facts.Projection, depth: usize) anyerror![]const graph_mod.GlobalNodeId {
+        if (depth > 64) return &.{};
+        if (path.len == 0) return self.localMutationCandidates(node, depth + 1);
+        return switch (self.graph.node(node).content) {
+            .binding_use => |binding| blk: {
+                var candidates = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+                if (self.graph.binding(binding).initialization) |initializer|
+                    try candidates.appendSlice(try self.projectLocalMutationCandidates(initializer, path, depth + 1));
+                for (self.local_mutation_projections.items) |entry| {
+                    if (entry.binding != binding or entry.path.len != path.len) continue;
+                    var matches = true;
+                    for (entry.path, path) |a, b| if (!a.eql(b)) {
+                        matches = false;
+                        break;
+                    };
+                    if (!matches) continue;
+                    for (entry.candidates) |candidate|
+                        if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, candidates.items, candidate) == null) try candidates.append(candidate);
+                }
+                break :blk try candidates.toOwnedSlice();
+            },
+            .value_sequence, .replacement => |block| self.projectLocalMutationCandidates(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return &.{}, path, depth + 1),
+            .move_value, .denied_implicit_copy => |value| self.projectLocalMutationCandidates(value, path, depth + 1),
+            .struct_field_access => |field| self.projectLocalMutationCandidates(field.value, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.{ .field = field.field_index }}, path }), depth + 1),
+            .struct_value_literal => |literal| blk: {
+                if (path[0] != .field or path[0].field >= literal.fields.len) break :blk &.{};
+                const value = self.graph.value_fields.items[literal.fields.start + path[0].field].value;
+                break :blk try self.projectLocalMutationCandidates(value, path[1..], depth + 1);
+            },
+            .function_call => |call| blk: {
+                const summary = self.engine.summaryFor(call.callee) orelse break :blk &.{};
+                if (summary.outputs.len != 1) break :blk &.{};
+                const args = self.structArguments(call.input) orelse break :blk &.{};
+                var selected = summary.outputs[0];
+                for (path) |projection| selected = try self.projectValueEffect(selected, projection);
+                var targets = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+                for (selected.input_dependencies) |dependency| {
+                    const source = dependency.path;
+                    if (dependency.validity_only or source.storage_domain != null or source.input_index >= args.len) continue;
+                    for (try self.projectLocalMutationCandidates(args[source.input_index].value, source.projections, depth + 1)) |target|
+                        if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, targets.items, target) == null) try targets.append(target);
+                }
+                break :blk try targets.toOwnedSlice();
+            },
+            else => &.{},
+        };
+    }
+
+    fn retainProjectedMutationCandidates(self: *Infer, target: graph_mod.GlobalNodeId, path: []const facts.Projection, candidates: []const graph_mod.GlobalNodeId) anyerror!void {
+        if (candidates.len == 0) return;
+        switch (self.graph.node(target).content) {
+            .binding_use => |binding| try self.local_mutation_projections.append(.{ .binding = binding, .path = try self.allocator.dupe(facts.Projection, path), .candidates = candidates }),
+            .struct_field_access => |field| try self.retainProjectedMutationCandidates(field.value, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.{ .field = field.field_index }}, path }), candidates),
+            .dereference => |read| for (try self.localAddressTargets(read.pointer)) |local| try self.retainProjectedMutationCandidates(local, path, candidates),
+            else => {},
+        }
     }
 
     fn localPointeeEffect(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) !?facts.ValueEffect {

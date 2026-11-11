@@ -81,3 +81,12 @@ are negative checks, never executed as unsafe programs. All validation is serial
 under a 6 GiB process limit. These results do not establish general concurrent
 soundness. Owner transfer, protected-access protocols and general physical
 containment through erased interfaces remain outside this checkpoint.
+
+
+## Reference-mutation follow-up
+
+[The mutation checkpoint](conditional_reference_mutation.md) addresses a separate
+composition issue found after this gate: stale local reference values could
+escape before lending began. The access gate cannot compensate for an inaccurate
+value summary. Its regression matrix covers conditional replacement, returned
+and stored aliases, reassignment, caller-local updates and mixed target kinds.
