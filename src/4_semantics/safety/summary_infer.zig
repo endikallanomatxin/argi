@@ -5424,8 +5424,10 @@ pub const Infer = struct {
                 var targets = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
                 for (summary.outputs[0].input_dependencies) |dependency| {
                     const path = dependency.path;
-                    if (dependency.validity_only or path.storage_domain != null or path.projections.len != 0 or path.input_index >= args.len) continue;
-                    for (try self.localMutationCandidates(args[path.input_index].value, depth + 1)) |target|
+                    if (dependency.validity_only or path.storage_domain != null or path.input_index >= args.len) continue;
+                    // Returning a stored alias names its input field, not the
+                    // enclosing record. Keep that projection when finding may-targets.
+                    for (try self.projectLocalMutationCandidates(args[path.input_index].value, path.projections, depth + 1)) |target|
                         if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, targets.items, target) == null) try targets.append(target);
                 }
                 break :blk try targets.toOwnedSlice();

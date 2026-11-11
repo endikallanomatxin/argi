@@ -50,6 +50,21 @@ member selection and projected reference writes retain the selected candidates;
 current local ValueEffects use the existing selected-value store operation.
 Candidate queries can weaken values but cannot prove a complete target set.
 
+### Projected helper results
+
+A helper returning a reference stored in an input record publishes a dependency
+on that field, not on the whole input. Mutation-target substitution must follow
+the published projection into the evaluated argument. Dropping nonempty paths
+lost the destination of `select_target(handle)` even when `handle.target` was
+already represented. Both forms now use the same existing projection operation;
+validity-only dependencies and erased storage domains still grant no candidate.
+This supplies may-targets only, never a strong-update or independence proof.
+
+The 215X regression compiled before the correction: a helper returned a stored
+alias, another helper retargeted its referent, and the old returned facts allowed
+a read during a writer loan. It was not executed. The 216 counterpart selects
+an independent replacement and must still build and run successfully.
+
 The finite Zig oracle in reference_observation_model.zig checks strong/weak
 updates against all stores in a two-location, two-reference model. It includes
 conditional and incomplete-singleton contrasts. It is a design oracle; the
@@ -89,3 +104,8 @@ handling, never authority inferred from a partial candidate list. Broad native
 construction assumptions, erased physical extent publication, owning task
 transfer and protected-access protocols remain separate work. Passing these
 regressions does not establish general language soundness.
+
+The projected-helper correction passes 322 Debug safety unit tests and 310
+concurrency/alias program tests, with no failures, skips, leaks or error logs.
+The new failing/passing contrast also passes in isolation. Validation uses one
+worker under a 6 GiB process limit; measured peak RSS is below 450 MiB.
