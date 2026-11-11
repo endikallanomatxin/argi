@@ -149,3 +149,8 @@ missing guarantee. The finite oracle's incomplete-target fallback is a semantic
 requirement, not evidence that every production path already implements it.
 Closing that gap takes priority over adding more special syntax recognizers or
 advancing to owner transfer merely because the current fixtures pass.
+
+The next bounded step is [checking reference-result summaries against body
+witnesses](body_reference_summaries.md). It uses the existing temporal facts to
+widen plain-reference outputs rather than adding another local array recognizer.
+It does not establish general completeness of mutation targets or post-values.

@@ -167,6 +167,8 @@ pub const SafetyChecker = struct {
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
     cancellation: @import("../../1_base/cancellation.zig").Token = .{},
     active_summaries: ?*summary_engine.Engine = null,
+    body_entry_arguments: ?[]const facts.ValueFacts = null,
+    body_output_sink: ?*std.array_list.Managed(summary_infer.Infer.BodyOutputAlternative) = null,
     execution_alias_sink: ?*std.array_list.Managed(facts.StorageObservationConflict) = null,
     seeding_function_inputs: bool = false,
     // Outputs and input post-states of one call share acquisition identities.
@@ -271,6 +273,7 @@ pub const SafetyChecker = struct {
         self.active_summary_inference = &inference;
         defer self.active_summary_inference = null;
         defer self.active_summaries = null;
+        try self.collectBodyOutputAlternatives(&engine, &inference);
         try self.collectExecutionAliasObligations(&engine, &inference);
         try inference.resumeInference();
         try self.validateCallbackAccessEffects(&inference);
@@ -495,8 +498,52 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn bodyOutputReferenceSupported(self: *SafetyChecker, ty: graph_mod.GlobalTypeId) bool {
+        return isPointer(self.graph, ty) and self.plainExecutionStorage(self.graph.semanticType(ty).pointer.child, 0);
+    }
+
+    fn hasSupportedBodyOutput(self: *SafetyChecker, function: graph_mod.Function) bool {
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
+            if (self.bodyOutputReferenceSupported(self.graph.binding(binding).ty)) return true;
+        return false;
+    }
+
+    fn collectBodyOutputAlternatives(self: *SafetyChecker, engine: *summary_engine.Engine, inference: *summary_infer.Infer) !void {
+        // Only add caller-relative alternatives already witnessed by the
+        // temporal body visitor. No exact identities or permissions are added.
+        while (true) {
+            var changed = false;
+            for (self.graph.functions.items, 0..) |function, raw| {
+                if (function.body == null or function.safety_primitive != .none) continue;
+                const id: graph_mod.GlobalFunctionId = @enumFromInt(raw);
+                if (self.unit) |unit| if (!unit.contains(id)) continue;
+                if (self.continuation) |continuation| if (continuation.function == id) continue;
+                if (!self.hasSupportedBodyOutput(function)) continue;
+                var alternatives = std.array_list.Managed(summary_infer.Infer.BodyOutputAlternative).init(self.allocator);
+                defer alternatives.deinit();
+                var diagnostic_arena = std.heap.ArenaAllocator.init(self.state_allocator);
+                defer diagnostic_arena.deinit();
+                const diagnostic_allocator = diagnostic_arena.allocator();
+                var speculative = diagnostics.Diagnostics.initBorrowed(&diagnostic_allocator, self.diagnostics);
+                defer speculative.deinit();
+                const original = self.diagnostics;
+                self.diagnostics = &speculative;
+                defer self.diagnostics = original;
+                self.body_output_sink = &alternatives;
+                defer self.body_output_sink = null;
+                self.checkIndependentBody(id, function, engine) catch |err| {
+                    if (err != error.Reported) return err;
+                };
+                changed = try inference.addBodyOutputAlternatives(id, alternatives.items) or changed;
+            }
+            if (!changed) return;
+            try inference.resumeInference();
+        }
+    }
+
     fn checkIndependentBody(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, engine: *summary_engine.Engine) !void {
-        if (self.execution_alias_sink == null) if (self.body_cache) |cache| {
+        const collecting = self.execution_alias_sink != null or self.body_output_sink != null;
+        if (!collecting) if (self.body_cache) |cache| {
             if (cache.graph != self.graph) return error.ForeignSafetyBodyCache;
             if (cache.lookup(id, engine)) |proof| {
                 if (self.body_publication) |batch| try batch.reused.put(cache.allocator, id, proof.revision);
@@ -519,11 +566,11 @@ pub const SafetyChecker = struct {
         }
         var outer = self.annotations;
         self.annotations = .{};
-        if (self.body_cache != null and self.execution_alias_sink == null) engine.beginInference(id);
+        if (self.body_cache != null and !collecting) engine.beginInference(id);
         defer {
             self.annotations.deinit(self.allocator);
             self.annotations = outer;
-            if (self.body_cache != null and self.execution_alias_sink == null) engine.current = null;
+            if (self.body_cache != null and !collecting) engine.current = null;
         }
         var namespace: facts.Tracker.RootNamespace = .{};
         defer namespace.deinit(self.allocator);
@@ -532,16 +579,25 @@ pub const SafetyChecker = struct {
         defer state.deinit();
         const before = self.diagnostics.list.items.len;
         try self.seedFunctionInputs(id, function, &state);
+        const previous_entry_arguments = self.body_entry_arguments;
+        defer self.body_entry_arguments = previous_entry_arguments;
+        self.body_entry_arguments = null;
+        if (self.hasSupportedBodyOutput(function)) {
+            const entry_arguments = try self.allocator.alloc(facts.ValueFacts, function.input_bindings.len);
+            for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len], entry_arguments) |binding, *value|
+                value.* = self.valueAtPlace(&state, .{ .root = binding }) orelse .{};
+            self.body_entry_arguments = entry_arguments;
+        }
         try self.call_stack.append(id);
         defer _ = self.call_stack.pop();
         try self.validateBlock(id, function.body.?, &state, null);
         if (state.reachable) try self.rejectEscapingOutputBindings(id, &state);
-        if (self.body_cache != null and self.execution_alias_sink == null) try engine.endInference();
-        if (self.execution_alias_sink == null and self.diagnostics.list.items.len == before) if (self.body_publication) |batch| {
+        if (self.body_cache != null and !collecting) try engine.endInference();
+        if (!collecting and self.diagnostics.list.items.len == before) if (self.body_publication) |batch| {
             const cache = self.body_cache orelse return error.MissingSafetyBodyCache;
             if (!function.flags.is_comptime_entry) try cache.stage(batch, id, engine, &self.annotations);
         };
-        if (self.execution_alias_sink == null) {
+        if (!collecting) {
             try outer.merge(parent, &self.annotations);
             self.stats.bodies_checked += 1;
             if (self.collect_stats) self.stats.functions += 1;
@@ -7995,11 +8051,30 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         const record = self.graph.functions.items[@intFromEnum(function)];
-        for (self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len]) |binding| {
+        for (self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len], 0..) |binding, output_index| {
             const storage = facts.Place{ .root = binding };
             const output = self.valueAtPlace(state, storage) orelse continue;
             if (state.initializednessAtPlace(storage) != .initialized) continue;
             const source = self.graph.bindings.items[@intFromEnum(binding)].source;
+            if (self.body_entry_arguments) |inputs| if (self.active_summaries) |engine| if (engine.summaryFor(function)) |summary| {
+                if (output.symbolic_pointees.len != 0 and self.bodyOutputReferenceSupported(self.graph.binding(binding).ty) and output_index < summary.outputs.len and summary.outputs[output_index].fresh_dependencies.len == 0 and summary.outputs[output_index].fresh_owned_roots.len == 0) {
+                    var summary_state = try self.cloneState(state);
+                    defer summary_state.deinit();
+                    const expected = try self.instantiateOutput(summary.outputs[output_index], inputs, &summary_state);
+                    if (expected.symbolic_pointees.len != 0) for (output.symbolic_pointees) |identity| {
+                        if (!symbolicStorageComesFromInput(state, identity)) continue;
+                        if (std.mem.indexOfScalar(facts.SymbolicPointeeId, expected.symbolic_pointees, identity) == null) {
+                            if (self.body_output_sink) |sink| {
+                                for (inputs, 0..) |input, index| {
+                                    const ty = self.graph.fields.items[record.input.start + index].ty;
+                                    try self.collectBodyInputAlternative(@intCast(output_index), identity, input, ty, .{ .input_index = @intCast(index) }, sink, 0);
+                                }
+                            } else try self.report(source, "inferred reference result omits a possible input referent", .{});
+                            break;
+                        }
+                    };
+                }
+            };
             try self.rejectEscapingLocalRoots(function, source, output, state);
             // Field assignments have their own authoritative place records.
             // Returning the parent also returns those updated projections.
@@ -8025,6 +8100,31 @@ pub const SafetyChecker = struct {
                 const value: facts.ValueFacts = .{ .dependencies = &.{.{ .root = root }} };
                 try self.rejectEscapingValue(function, self.graph.declaration(record.declaration).source, value, state, .caller_storage);
             }
+        }
+    }
+
+    fn collectBodyInputAlternative(self: *SafetyChecker, output_index: u32, identity: facts.SymbolicPointeeId, value: facts.ValueFacts, ty: graph_mod.GlobalTypeId, path: facts.InputPath, sink: *std.array_list.Managed(summary_infer.Infer.BodyOutputAlternative), depth: usize) anyerror!void {
+        if (depth > 64) return;
+        if (isPointer(self.graph, ty)) {
+            if (std.mem.indexOfScalar(facts.SymbolicPointeeId, value.symbolic_pointees, identity) == null) return;
+            for (sink.items) |entry| if (entry.output_index == output_index and sameInputPath(entry.source, path)) return;
+            var source = path;
+            source.projections = try sink.allocator.dupe(facts.Projection, path.projections);
+            try sink.append(.{ .output_index = output_index, .source = source });
+            return;
+        }
+        const element = types.arrayElement(self.graph, ty);
+        const fields = types.fields(self.graph, ty);
+        for (value.fields) |field| {
+            const child = element orelse if (fields) |range| (if (field.index < range.len) self.graph.fields.items[range.start + field.index].ty else continue) else continue;
+            const projection: facts.Projection = if (element != null) .{ .static_index = field.index } else .{ .field = field.index };
+            try self.collectBodyInputAlternative(output_index, identity, field.value.*, child, try self.appendInputProjection(path, projection), sink, depth + 1);
+        }
+        const variants = types.variants(self.graph, ty) orelse return;
+        for (value.variants) |variant| {
+            if (variant.index >= variants.len) continue;
+            const payload = self.graph.variants.items[variants.start + variant.index].payload_type orelse continue;
+            try self.collectBodyInputAlternative(output_index, identity, variant.value.*, payload, try self.appendInputProjection(path, .{ .variant = variant.index }), sink, depth + 1);
         }
     }
 

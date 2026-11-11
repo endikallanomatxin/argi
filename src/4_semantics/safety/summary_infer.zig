@@ -19,6 +19,10 @@ const primitive_transfer = @import("../primitives/registry.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    pub const BodyOutputAlternative = struct {
+        output_index: u32,
+        source: facts.InputPath,
+    };
     const LocalMutationProjection = struct {
         binding: graph_mod.GlobalBindingId,
         path: []const facts.Projection,
@@ -85,6 +89,7 @@ pub const Infer = struct {
     extra_capture_observations: std.array_list.Managed(facts.InputPath),
     extra_capture_conflicts: std.array_list.Managed(facts.StorageObservationConflict),
     body_alias_conflicts: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, []const facts.StorageObservationConflict) = .empty,
+    body_output_alternatives: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, []const BodyOutputAlternative) = .empty,
     collecting_capture_sources: bool = false,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
     loop_post_effects: ?*InputPostStateFlow = null,
@@ -176,6 +181,7 @@ pub const Infer = struct {
         self.extra_capture_observations.deinit();
         self.extra_capture_conflicts.deinit();
         self.body_alias_conflicts.deinit(self.allocator);
+        self.body_output_alternatives.deinit(self.allocator);
     }
 
     pub const DeclaredAccess = union(enum) { known: []const facts.InputAccess, failure: []const u8 };
@@ -343,6 +349,47 @@ pub const Infer = struct {
             _ = self.cache_reused.remove(function);
             self.summary_changes += 1;
         }
+    }
+
+    pub fn addBodyOutputAlternatives(self: *Infer, function: graph_mod.GlobalFunctionId, alternatives: []const BodyOutputAlternative) !bool {
+        const previous = self.body_output_alternatives.get(function) orelse &.{};
+        var joined = std.array_list.Managed(BodyOutputAlternative).init(self.storage_allocator);
+        try joined.appendSlice(previous);
+        for (alternatives) |alternative| {
+            const found = for (joined.items) |entry| {
+                if (entry.output_index == alternative.output_index and self.inputPathEqual(entry.source, alternative.source)) break true;
+            } else false;
+            if (found) continue;
+            var stored = alternative;
+            stored.source.projections = try self.storage_allocator.dupe(facts.Projection, alternative.source.projections);
+            try joined.append(stored);
+        }
+        if (joined.items.len == previous.len) {
+            joined.deinit();
+            return false;
+        }
+        try self.body_output_alternatives.put(self.allocator, function, try joined.toOwnedSlice());
+        try self.engine.seed(&.{function});
+        return true;
+    }
+
+    fn withBodyOutputAlternatives(self: *Infer, summary: facts.SafetySummary, alternatives: []const BodyOutputAlternative) anyerror!facts.SafetySummary {
+        var result = summary;
+        const outputs = try self.allocator.dupe(facts.ValueEffect, summary.outputs);
+        for (alternatives) |alternative| {
+            if (alternative.output_index >= outputs.len) continue;
+            const source = try self.inputValueEffect(alternative.source.input_index, alternative.source.projections);
+            outputs[alternative.output_index] = try self.joinStorageAlternatives(null, outputs[alternative.output_index], source);
+        }
+        result.outputs = outputs;
+        const guards = try self.allocator.dupe(facts.GuardedSafetyEffects, summary.guarded_effects);
+        for (guards) |*guard| {
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = try self.withBodyOutputAlternatives(guard.effects.*, alternatives);
+            guard.effects = effects;
+        }
+        result.guarded_effects = guards;
+        return result;
     }
 
     fn withAliasConflicts(self: *Infer, summary: facts.SafetySummary, conflicts: []const facts.StorageObservationConflict, allocator: std.mem.Allocator) anyerror!facts.SafetySummary {
@@ -1241,6 +1288,7 @@ pub const Infer = struct {
         summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
         if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
         try self.mergeCaptureObligations(&summary);
+        if (self.body_output_alternatives.get(function_id)) |alternatives| summary = try self.withBodyOutputAlternatives(summary, alternatives);
         if (self.body_alias_conflicts.get(function_id)) |body_conflicts| summary = try self.withAliasConflicts(summary, body_conflicts, self.allocator);
         return summary;
     }
@@ -9682,4 +9730,51 @@ test "input snapshot observations stop at reference leaves" {
     try std.testing.expectEqual(@as(usize, 0), pointer.fields.len);
     try std.testing.expectEqual(@as(usize, 0), pointer.fresh_storage_capabilities.len);
     try std.testing.expectEqual(@as(usize, 0), pointer.fresh_owned_roots.len);
+}
+
+test "body reference alternatives weaken published identities without creating resources" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    var original = try infer.inputValueEffect(0, &.{});
+    original.reference_relation = .{ .source = .{ .input_index = 0 }, .grade = .identity };
+    const branch: facts.SafetySummary = .{ .outputs = &.{original} };
+    const initial: facts.SafetySummary = .{
+        .outputs = &.{original},
+        .guarded_effects = &.{.{ .conditions = .{}, .effects = &branch }},
+    };
+    const alternatives = &[_]Infer.BodyOutputAlternative{.{ .output_index = 0, .source = .{ .input_index = 1, .projections = &.{.{ .field = 0 }} } }};
+    const widened = try infer.withBodyOutputAlternatives(initial, alternatives);
+    try std.testing.expect(widened.outputs[0].reference_relation == null);
+    try std.testing.expectEqual(@as(usize, 2), widened.outputs[0].input_dependencies.len);
+    for (widened.outputs[0].input_dependencies) |dependency| try std.testing.expect(!dependency.transfers_ownership);
+    try std.testing.expectEqual(@as(usize, 0), widened.outputs[0].fresh_owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), widened.outputs[0].fresh_storage_capabilities.len);
+    try std.testing.expectEqual(@as(usize, 0), widened.outputs[0].fresh_executions.len);
+    try std.testing.expectEqual(@as(usize, 0), widened.completed_executions.len);
+    try std.testing.expect(widened.guarded_effects[0].effects.outputs[0].reference_relation == null);
+    try std.testing.expectEqual(@as(usize, 2), widened.guarded_effects[0].effects.outputs[0].input_dependencies.len);
+    try std.testing.expect(initial.outputs[0].reference_relation != null);
+    const repeated = try infer.withBodyOutputAlternatives(widened, alternatives);
+    try std.testing.expect(summaries.valueEffectEql(widened.outputs[0], repeated.outputs[0]));
+}
+
+test "body reference alternative collection only dirties a function for new sources" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    const alternative: Infer.BodyOutputAlternative = .{ .output_index = 0, .source = .{ .input_index = 1, .projections = &.{.{ .field = 0 }} } };
+    try std.testing.expect(try infer.addBodyOutputAlternatives(@enumFromInt(0), &.{alternative}));
+    try std.testing.expect(!try infer.addBodyOutputAlternatives(@enumFromInt(0), &.{alternative}));
+    try std.testing.expectEqual(@as(usize, 1), infer.body_output_alternatives.get(@enumFromInt(0)).?.len);
 }
