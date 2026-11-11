@@ -1689,6 +1689,10 @@ pub const Infer = struct {
                 },
                 .assignment => |assignment| {
                     const effect = try self.inferExpression(function_id, assignment.value);
+                    var mutation_values = std.array_list.Managed(LocalMutationProjection).init(self.allocator);
+                    defer mutation_values.deinit();
+                    try self.collectProjectedMutationValues(assignment.binding, &.{}, assignment.value, &.{}, self.graph.binding(assignment.binding).ty, &mutation_values, 0);
+                    try self.local_mutation_projections.appendSlice(mutation_values.items);
                     if (self.outputIndex(function_id, assignment.binding)) |output_index| {
                         if (outputs) |values| values[output_index] = if (values[output_index].variants.len != 0 or effect.variants.len != 0)
                             try self.mergeValueEffects(values[output_index], effect)
@@ -1763,10 +1767,9 @@ pub const Infer = struct {
                     const reference_value = if (self.graph.node(store.value).ty) |ty| self.typeContainsPointer(ty) else false;
                     if (!reference_value and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
-                    const candidates = if (reference_value) try self.localMutationCandidates(store.value, 0) else &.{};
                     for (targets) |target| {
                         const path = &[_]facts.Projection{.{ .field = store.field_index }};
-                        if (reference_value) try self.retainProjectedMutationCandidates(target, path, candidates);
+                        if (reference_value) try self.retainProjectedMutationValue(target, path, store.value);
                         var updated = value;
                         if (reference_value and targets.len != 1) {
                             const previous = try self.projectValueEffect(try self.inferExpression(function_id, target), path[0]);
@@ -1788,9 +1791,8 @@ pub const Infer = struct {
                     const reference_value = if (self.graph.node(store.value).ty) |ty| self.typeContainsPointer(ty) else false;
                     if (!reference_value and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
-                    const candidates = if (reference_value) try self.localMutationCandidates(store.value, 0) else &.{};
                     for (targets) |target| {
-                        if (reference_value) try self.retainProjectedMutationCandidates(target, &.{}, candidates);
+                        if (reference_value) try self.retainProjectedMutationValue(target, &.{}, store.value);
                         const updated = if (reference_value and targets.len != 1)
                             try self.joinStorageAlternatives(self.graph.node(store.value).ty, try self.inferExpression(function_id, target), value)
                         else
@@ -5486,12 +5488,37 @@ pub const Infer = struct {
         };
     }
 
-    fn retainProjectedMutationCandidates(self: *Infer, target: graph_mod.GlobalNodeId, path: []const facts.Projection, candidates: []const graph_mod.GlobalNodeId) anyerror!void {
-        if (candidates.len == 0) return;
+    /// Snapshot all represented reference fields before publishing any update.
+    /// Re-reading a replacement expression later would turn value copies into
+    /// live aliases and can recurse through self-replacement indefinitely.
+    fn collectProjectedMutationValues(self: *Infer, binding: graph_mod.GlobalBindingId, destination: []const facts.Projection, source: graph_mod.GlobalNodeId, source_path: []const facts.Projection, ty: graph_mod.GlobalTypeId, values: *std.array_list.Managed(LocalMutationProjection), depth: usize) anyerror!void {
+        if (depth > 64 or !self.typeContainsPointer(ty)) return;
+        if (self.graph.semanticType(ty) == .pointer) {
+            const candidates = try self.projectLocalMutationCandidates(source, source_path, 0);
+            if (candidates.len != 0) try values.append(.{
+                .binding = binding,
+                .path = try self.allocator.dupe(facts.Projection, destination),
+                .candidates = candidates,
+            });
+            return;
+        }
+        const fields = types.fields(self.graph, ty) orelse return;
+        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+            const projection = &[_]facts.Projection{.{ .field = @intCast(index) }};
+            try self.collectProjectedMutationValues(binding, try std.mem.concat(self.allocator, facts.Projection, &.{ destination, projection }), source, try std.mem.concat(self.allocator, facts.Projection, &.{ source_path, projection }), field.ty, values, depth + 1);
+        }
+    }
+
+    fn retainProjectedMutationValue(self: *Infer, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId) anyerror!void {
         switch (self.graph.node(target).content) {
-            .binding_use => |binding| try self.local_mutation_projections.append(.{ .binding = binding, .path = try self.allocator.dupe(facts.Projection, path), .candidates = candidates }),
-            .struct_field_access => |field| try self.retainProjectedMutationCandidates(field.value, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.{ .field = field.field_index }}, path }), candidates),
-            .dereference => |read| for (try self.localAddressTargets(read.pointer)) |local| try self.retainProjectedMutationCandidates(local, path, candidates),
+            .binding_use => |binding| {
+                var values = std.array_list.Managed(LocalMutationProjection).init(self.allocator);
+                defer values.deinit();
+                try self.collectProjectedMutationValues(binding, path, value, &.{}, self.graph.node(value).ty orelse return, &values, 0);
+                try self.local_mutation_projections.appendSlice(values.items);
+            },
+            .struct_field_access => |field| try self.retainProjectedMutationValue(field.value, try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.{ .field = field.field_index }}, path }), value),
+            .dereference => |read| for (try self.localAddressTargets(read.pointer)) |local| try self.retainProjectedMutationValue(local, path, value),
             else => {},
         }
     }

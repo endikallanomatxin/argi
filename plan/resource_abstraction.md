@@ -379,9 +379,13 @@ from concurrent authorization: without pending loans, no exact target is needed
 to prove absence of interference. Known changed traversals remain invalid;
 sequential validity and opaque lifetime requirements remain checked. New cases
 154X and 155X reject retargeting and ending a provider, and the existing nested
-retargeting negatives remain rejected. Case 121 still needs physical independence
-while a loan is active; this change supplies no such proof. Missing evidence is
-never assigned an empty footprint.
+retargeting negatives remain rejected. That increment did not prove physical
+independence for case 121 while a loan is active. The later
+[uniform authorization checkpoint](unknown_call_authorization.md) supplies
+authenticated backing observations for this bounded case and preserves 121/177.
+It does not establish general erased extent publication. Missing evidence is
+never assigned an empty footprint; [reference mutation composition](conditional_reference_mutation.md)
+also has to preserve possible destinations before any loan starts.
 
 ## Correspondence with the existing checker
 
@@ -413,11 +417,13 @@ checks, not a Mutex implementation or a closure of the opaque authorization gate
 Keep the Python experiment as bounded design history; do not build a parallel
 production checker or treat its passing results as implementation evidence.
 
-The isolated publication candidate passes 2,503 program tests with 11 skips and
-no failures, and the Debug internal suite passes 1,480 tests with one skip.
-Unfinished acquisition and unknown-call authorization experiments are excluded
-from that candidate. The green suite establishes this increment's regression
-baseline, not completion of the remaining concurrency guarantees.
+The earlier isolated publication candidate passed 2,503 program tests (11 skipped)
+and 1,480 Debug internal tests (one skipped), with no failures.
+Unfinished acquisition and unknown-call authorization experiments were excluded
+from that candidate; they are not a description of current implementation status.
+The later authorization and mutation checkpoints are linked above. The green
+suite establishes that increment's regression baseline, not completion of the
+remaining concurrency guarantees.
 
 For each contrast above, write down the retained relationship, the public
 requirement and the rule allowing or rejecting it. Then identify which existing

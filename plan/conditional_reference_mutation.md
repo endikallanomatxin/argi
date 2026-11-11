@@ -65,6 +65,28 @@ alias, another helper retargeted its referent, and the old returned facts allowe
 a read during a writer loan. It was not executed. The 216 counterpart selects
 an independent replacement and must still build and run successfully.
 
+### Structural replacement snapshots
+
+Updating one reference field and replacing the record containing that field
+must preserve the same possible mutation destinations. Previously the field
+write retained candidates, but whole-record assignment retained only candidates
+for the aggregate itself, omitting its reference leaves. The 217X reduction
+compiled with stale returned facts before the correction; it was never executed.
+
+Assignments, field stores and pointer stores now snapshot the represented
+reference leaves of record replacements into the existing projected-candidate
+table. Each leaf keeps its own field path. The snapshot is collected completely
+before publication, so a self-replacement reads incoming values rather than a
+partially updated record. No graph expression is retained for later replay,
+and no new authority, runtime metadata or complete-target claim is introduced.
+The original and replacement alternatives remain conservative may-targets.
+
+217X/218 cover whole-record replacement, repeated self-replacement and its
+independent counterpart;
+219X/220 repeat the contrast for replacement of a nested record field. This
+does not establish candidate completeness for arrays, variants, erased storage
+or arbitrary unknown references. Those remain explicit limits of this analysis.
+
 The finite Zig oracle in reference_observation_model.zig checks strong/weak
 updates against all stores in a two-location, two-reference model. It includes
 conditional and incomplete-singleton contrasts. It is a design oracle; the
@@ -94,6 +116,20 @@ safety run passes, as does the final 308-program concurrency/alias selection
 process limit. The full suite predates the final mixed-alternative increment;
 the affected program selection revalidates that increment.
 
+The projected-helper correction passes 322 Debug safety unit tests and 310
+concurrency/alias program tests, with no failures, skips, leaks or error logs.
+The new failing/passing contrast also passes in isolation. Validation uses one
+worker under a 6 GiB process limit; measured peak RSS is below 450 MiB.
+
+The structural snapshot correction passes the complete Debug internal suite
+(1,530 passed, one skipped) and the complete ReleaseSafe program suite
+(2,611 passed, 11 skipped, no failures, leaks or error logs). This includes the
+repeated self-replacement variants. Both suites run serially under the same
+6 GiB process limit; peak RSS is approximately 568 MiB for internal validation
+and 2.66 GiB for the program build/run command. The latter includes rebuilding
+the optimized compiler and runner. It is broader validation than the earlier
+filtered increments, not a proof of candidate completeness.
+
 ## Remaining limits
 
 Known mutation candidates do not describe all possible unknown aliases. This
@@ -105,7 +141,11 @@ construction assumptions, erased physical extent publication, owning task
 transfer and protected-access protocols remain separate work. Passing these
 regressions does not establish general language soundness.
 
-The projected-helper correction passes 322 Debug safety unit tests and 310
-concurrency/alias program tests, with no failures, skips, leaks or error logs.
-The new failing/passing contrast also passes in isolation. Validation uses one
-worker under a 6 GiB process limit; measured peak RSS is below 450 MiB.
+In particular, updating every known candidate is not sufficient justification
+for leaving all other local reference values unchanged. A complete abstraction
+must establish coverage, conservatively invalidate potentially affected facts
+while retaining their validity obligations, or reject operations that need the
+missing guarantee. The finite oracle's incomplete-target fallback is a semantic
+requirement, not evidence that every production path already implements it.
+Closing that gap takes priority over adding more special syntax recognizers or
+advancing to owner transfer merely because the current fixtures pass.
