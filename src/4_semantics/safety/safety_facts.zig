@@ -307,7 +307,7 @@ pub const StorageCapabilityConflict = struct {
 /// Coordinates are caller-relative; distinct inputs do not prove disjointness.
 pub const StorageObservationConflict = struct {
     incompatible: InputPath,
-    kind: enum { lifetime, concurrent_access, capture_update } = .lifetime,
+    kind: enum { lifetime, concurrent_access, capture_update, reference_value_lifetime } = .lifetime,
     observed: InputPath,
     /// Compare captured reachable storage, including initializer sources,
     /// rather than only the receiver's lexical envelope.

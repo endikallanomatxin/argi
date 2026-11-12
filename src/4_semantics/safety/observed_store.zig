@@ -1,5 +1,5 @@
-//! Candidate storage-content domain, separate from access authority. Not yet
-//! wired into the checker. Keys name stable observations of compatible cells;
+//! Storage-content domain, separate from access authority. The checker uses it
+//! for complete symbolic reference-cell writes. Keys name stable observations;
 //! key equality is neither physical freshness nor an execution-loan certificate.
 //! Clients must freeze retargetable paths and supply a sound alias relation.
 //! Payloads describe the evaluated RHS, not a later load from a mutable source.

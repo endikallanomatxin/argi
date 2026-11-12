@@ -312,3 +312,40 @@ Debug internal run passes 1,547 tests (one skipped), with peak RSS of about
 unsafe reductions, confirming that the candidate domain has not silently changed
 production safety behavior. No complete program-suite rerun is claimed for this
 unintegrated experiment.
+
+
+## First checker binding: symbolic reference cells
+
+The observed-write domain now records definite writes to complete symbolic
+reference-valued cells. Loads combine ordinary slot facts with reaching write
+payloads from possible aliases. Separate symbolic input identities remain
+possibly aliased; no physical separation or lending authority follows from a
+write key. Existing slot facts are always retained because aggregate, primitive
+and incomplete-destination write coverage is not yet complete.
+
+When a load can observe an expired payload written through a different input,
+the temporal body visitor publishes a caller-relative nonoverlap obligation.
+The existing alias-obligation summary fixed point transports that condition to
+calls, including an ordinary forwarding wrapper (236X). A caller passing
+the same cell is rejected (235X), while distinct cells
+remain usable (232). A later definite write through the same observed cell
+replaces its old payload (233); histories are not accumulated permanently.
+The implementation reuses `StorageObservationConflict` with a distinct lifetime
+diagnostic, not an execution identity or another permission system.
+
+This is a deliberately partial binding. Unrepresented destinations, exporting
+residual writes to a caller that performs the first read, general aggregate
+write projection and typed partial-overlap handling are not closed. The
+original and caller-read reductions remain compile-only open counterexamples.
+Neither this increment nor the isolated store-domain tests establish general
+temporal soundness or data-race freedom. Owner transfer and protected access
+remain behind this conservation work.
+
+Validation for this binding used serial Debug runs with a 6 GiB process limit:
+1,548 internal tests passed (one skipped); 241 concurrency fixtures passed;
+139 alias-filtered program tests passed. The final conservative caller checks
+were followed by 11 filtered program tests, including 232--236. No program
+failures, leaks or error logs were reported in those program runs. The original
+and caller-read reductions were freshly accepted in compile-only checks; their
+executables were never run. This is focused validation, not a new full-program
+suite result.

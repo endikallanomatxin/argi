@@ -13,6 +13,7 @@ const primitive_transfer = @import("../primitives/registry.zig");
 const initializer_contract = @import("../global/initializer_contract.zig");
 const primitives = @import("../primitives/schema.zig");
 const checked_replacement = @import("../global/replacement.zig");
+const observed_store = @import("observed_store.zig");
 
 /// Indexed temporal checker. Program identity is exclusively Global*Id; no
 /// pointer identity or pointer-based semantic object participates in state.
@@ -464,7 +465,7 @@ pub const SafetyChecker = struct {
     }
 
     // Use the existing temporal interpreter to discover caller-relative alias
-    // preconditions only in bodies that can create executions. The subsequent
+    // preconditions in bodies that lend authority or update reference cells. The subsequent
     // summary fixed point carries them through wrappers before final checking.
     fn collectExecutionAliasObligations(self: *SafetyChecker, engine: *summary_engine.Engine, inference: *summary_infer.Infer) !void {
         var seen = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(self.allocator);
@@ -476,6 +477,27 @@ pub const SafetyChecker = struct {
             try seen.put(id, {});
             try work.append(self.allocator, id);
         };
+        for (self.graph.functions.items, 0..) |function, raw| {
+            if (function.body == null or function.safety_primitive != .none) continue;
+            var reference_storage = false;
+            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |input|
+                if (self.hasReferenceStorageInput(input.ty, 0)) {
+                    reference_storage = true;
+                    break;
+                };
+            if (!reference_storage) continue;
+            const id: graph_mod.GlobalFunctionId = @enumFromInt(raw);
+            if (seen.contains(id)) continue;
+            const summary = engine.summaries.get(id) orelse continue;
+            var writes = summary.unknown_access;
+            for (summary.input_accesses) |access| if (access.mode == .write) {
+                writes = true;
+                break;
+            };
+            if (!writes) continue;
+            try seen.put(id, {});
+            try work.append(self.allocator, id);
+        }
         var next: usize = 0;
         while (next < work.items.len) : (next += 1) {
             if (engine.dependents.get(work.items[next])) |callers| for (callers.items) |caller| {
@@ -2575,6 +2597,12 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot establish access target for caller alias obligation", .{});
             return false;
         };
+        if (conflict.kind == .reference_value_lifetime and
+            ((first.places.len == 0 and first.symbolic.len == 0) or (second.places.len == 0 and second.symbolic.len == 0)))
+        {
+            try self.report(source, "cannot prove independent reference cells for lifetime alias obligation", .{});
+            return false;
+        }
         for (first.places) |left| for (second.places) |right| if (self.storageMayOverlap(left, right)) {
             try self.reportInputAliasConflict(source, conflict, ids);
             return false;
@@ -2600,6 +2628,8 @@ pub const SafetyChecker = struct {
             const first = if (conflict.incompatible.input_index < ids.len) self.graph.text(self.graph.value_fields.items[@intFromEnum(ids[conflict.incompatible.input_index])].name) else "implicit input";
             const second = if (conflict.observed.input_index < ids.len) self.graph.text(self.graph.value_fields.items[@intFromEnum(ids[conflict.observed.input_index])].name) else "implicit input";
             try self.report(source, "concurrent access conflicts through aliased function inputs '{s}' and '{s}'", .{ first, second });
+        } else if (conflict.kind == .reference_value_lifetime) {
+            try self.report(source, "reference read may observe an expired value through aliased function inputs", .{});
         } else if (conflict.kind == .capture_update) {
             try self.report(source, "virtual capture observes storage that may be changed through an aliased input", .{});
         } else try self.report(source, "function observes storage after an aliased participant has consumed its value", .{});
@@ -2607,7 +2637,17 @@ pub const SafetyChecker = struct {
 
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         for (summary.storage_observation_conflicts) |conflict| {
-            if (conflict.kind == .concurrent_access) {
+            if (conflict.kind == .reference_value_lifetime) {
+                // A represented candidate cannot prove separation for an
+                // uncovered alternative at this call boundary.
+                for ([_]facts.InputPath{ conflict.incompatible, conflict.observed }) |path| {
+                    if (path.input_index >= arguments.len or arguments[path.input_index].reference_target_incomplete) {
+                        try self.report(source, "cannot prove independent reference cells for lifetime alias obligation", .{});
+                        return false;
+                    }
+                }
+            }
+            if (conflict.kind == .concurrent_access or conflict.kind == .reference_value_lifetime) {
                 if (!try self.validateConcurrentInputAliasing(source, conflict, ids, arguments, state)) return false;
                 continue;
             }
@@ -2943,18 +2983,22 @@ pub const SafetyChecker = struct {
     }
 
     fn deferExecutionAliasConflict(self: *SafetyChecker, accessed: facts.SymbolicPointeeId, loaned: facts.SymbolicPointeeId, state: *const FunctionState) !bool {
+        return self.deferStorageAliasConflict(accessed, loaned, .concurrent_access, state);
+    }
+
+    fn deferStorageAliasConflict(self: *SafetyChecker, accessed: facts.SymbolicPointeeId, loaned: facts.SymbolicPointeeId, kind: @FieldType(facts.StorageObservationConflict, "kind"), state: *const FunctionState) !bool {
         const first = try self.symbolicInputPath(state, accessed) orelse return false;
         const second = try self.symbolicInputPath(state, loaned) orelse return false;
         if (self.execution_alias_sink) |sink| {
-            for (sink.items) |conflict| if (conflict.kind == .concurrent_access and sameInputPath(conflict.incompatible, first) and sameInputPath(conflict.observed, second)) return true;
+            for (sink.items) |conflict| if (conflict.kind == kind and sameInputPath(conflict.incompatible, first) and sameInputPath(conflict.observed, second)) return true;
             var copy = @import("fact_snapshot.zig").Copy{ .allocator = sink.allocator, .scratch = self.allocator };
             defer copy.deinit();
-            try sink.append(try copy.value(facts.StorageObservationConflict, .{ .incompatible = first, .observed = second, .kind = .concurrent_access }));
+            try sink.append(try copy.value(facts.StorageObservationConflict, .{ .incompatible = first, .observed = second, .kind = kind }));
             return true;
         }
         if (self.call_stack.items.len == 0) return false;
         const summary = (self.active_summaries orelse return false).summaryFor(self.call_stack.getLast()) orelse return false;
-        for (summary.storage_observation_conflicts) |conflict| if (conflict.kind == .concurrent_access and sameInputPath(conflict.incompatible, first) and sameInputPath(conflict.observed, second)) return true;
+        for (summary.storage_observation_conflicts) |conflict| if (conflict.kind == kind and sameInputPath(conflict.incompatible, first) and sameInputPath(conflict.observed, second)) return true;
         return false;
     }
 
@@ -7468,6 +7512,57 @@ pub const SafetyChecker = struct {
         return .{ .dependencies = pointer.dependencies, .domains = domains };
     }
 
+    fn hasReferenceStorageInput(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        if (depth > 32) return false;
+        if (isPointer(self.graph, ty)) return self.typeContainsPointer(self.graph.semanticType(ty).pointer.child);
+        if (types.fields(self.graph, ty)) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
+                if (self.hasReferenceStorageInput(field.ty, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    fn symbolicCellType(_: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) ?graph_mod.GlobalTypeId {
+        for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) return entry.ty;
+        return null;
+    }
+
+    const ReferenceStoreContext = struct {
+        checker: *SafetyChecker,
+        left: ?*const FunctionState = null,
+        right: ?*const FunctionState = null,
+        generations: []const SymbolicGenerationJoin = &.{},
+
+        pub fn relation(_: @This(), _: facts.StorageIdentity, _: facts.StorageIdentity) observed_store.Relation {
+            // Different symbolic input names do not prove physical separation.
+            return .unknown;
+        }
+        pub fn join(self: @This(), a: facts.ValueFacts, b: facts.ValueFacts) !facts.ValueFacts {
+            return self.checker.joinObservedSymbolicValues(a, b, self.left, self.right, self.generations);
+        }
+        pub fn equal(_: @This(), a: facts.ValueFacts, b: facts.ValueFacts) bool {
+            return valueFactsEqual(a, b);
+        }
+    };
+
+    fn readReferenceStore(self: *SafetyChecker, state: *FunctionState, identity: facts.SymbolicPointeeId, initial: facts.ValueFacts) !facts.ValueFacts {
+        const stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
+        const context = ReferenceStoreContext{ .checker = self };
+        const target = facts.StorageIdentity{ .symbolic = identity };
+        // Keep the ordinary slot facts while write coverage is partial. The
+        // observed-write domain may add alternatives, never erase facts from
+        // aggregate, primitive or otherwise unrecorded mutations.
+        var result = initial;
+        for (stores.definitions.items, 0..) |definition, index| {
+            if (!stores.reaches(target, index, context)) continue;
+            if (!definition.target.eql(target) and !state.tracker.dependenciesAreAlive(definition.value)) {
+                if (definition.target == .symbolic and try self.deferStorageAliasConflict(definition.target.symbolic, identity, .reference_value_lifetime, state)) continue;
+            }
+            result = try context.join(result, definition.value);
+        }
+        return result;
+    }
+
     // Reading an input reference slot observes the pointer stored in it, not
     // a pointer to that slot. Intern that initial referent separately so copies
     // share its incarnation without granting ownership of the slot's parent.
@@ -7497,13 +7592,17 @@ pub const SafetyChecker = struct {
             try state.setSymbolicValue(.{ .identity = identity, .value = value }, false, true);
             return value;
         }
-        if (stored == null and value_type != null and isPointer(self.graph, value_type.?))
-            return (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse .{};
-        const value = try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
-        return if (pointer.reference_target_incomplete)
-            self.joinObservedSymbolicValues(value, .{}, null, null, &.{})
+        const value = if (stored == null and value_type != null and isPointer(self.graph, value_type.?))
+            (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse facts.ValueFacts{}
+        else
+            try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+        const observed = if (pointer.reference_target_incomplete)
+            try self.joinObservedSymbolicValues(value, .{}, null, null, &.{})
         else
             value;
+        if (!pointer.reference_target_incomplete and value_type != null and isPointer(self.graph, value_type.?))
+            return self.readReferenceStore(state, identity, observed);
+        return observed;
     }
 
     // Tag refinement does not write the payload or discard descendant facts.
@@ -7541,6 +7640,11 @@ pub const SafetyChecker = struct {
                 break :blk self.typeContainsPointer(ty);
             } else false;
             try state.setSymbolicValue(next, strong, retain_empty);
+            if (strong) if (self.symbolicCellType(state, identity)) |ty| if (isPointer(self.graph, ty)) {
+                var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
+                defer state.reference_writes = stores.definitions;
+                try stores.store(.{ .symbolic = identity }, value, true, ReferenceStoreContext{ .checker = self });
+            };
         }
     }
 
@@ -8562,6 +8666,10 @@ pub const SafetyChecker = struct {
             }
         };
 
+        const left_stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = left.reference_writes };
+        const right_stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = right.reference_writes };
+        const stores = try state_mod.ReferenceStores.join(self.allocator, self.state_allocator, &left_stores, &right_stores, ReferenceStoreContext{ .checker = self, .left = left, .right = right, .generations = generations.items });
+        joined.reference_writes = stores.definitions;
         joined.reachable = true;
         destination.deinit();
         destination.* = joined;
@@ -8854,6 +8962,10 @@ pub const SafetyChecker = struct {
                 retained = true;
                 break;
             };
+            for (joined.reference_writes.items) |stored| if (retainsLoopObservation(stored.value, canonical)) {
+                retained = true;
+                break;
+            };
             for (joined.symbolic_values.items) |stored| if (retainsLoopObservation(stored.value, canonical)) {
                 retained = true;
                 break;
@@ -8863,6 +8975,7 @@ pub const SafetyChecker = struct {
             joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
             for (joined.places.items) |*place| place.value = try facts.replaceValueRoots(self.allocator, place.value, &.{current}, canonical);
             for (joined.symbolic_values.items) |*stored| stored.value = try facts.replaceValueRoots(self.allocator, stored.value, &.{current}, canonical);
+            for (joined.reference_writes.items) |*stored| stored.value = try facts.replaceValueRoots(self.allocator, stored.value, &.{current}, canonical);
             pointee.generation = canonical;
             joined.tracker.end(current);
         }
@@ -9516,6 +9629,8 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
     for (state.symbolic_values.items) |stored|
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+    for (state.reference_writes.items) |stored|
+        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
@@ -9524,6 +9639,14 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
+    const left_stores = @import("state.zig").ReferenceStores{ .fact_allocator = left.tracker.allocator, .definitions = left.reference_writes };
+    const right_stores = @import("state.zig").ReferenceStores{ .fact_allocator = right.tracker.allocator, .definitions = right.reference_writes };
+    const Equal = struct {
+        pub fn equal(_: @This(), a: facts.ValueFacts, b: facts.ValueFacts) bool {
+            return valueFactsEqual(a, b);
+        }
+    };
+    if (!left_stores.eql(&right_stores, Equal{})) return false;
     for (left.executions.items) |execution| if (execution.pending and !right.executionPending(execution.id)) return false;
     for (right.executions.items) |execution| if (execution.pending and !left.executionPending(execution.id)) return false;
     if (left.reachable != right.reachable or
@@ -13936,4 +14059,34 @@ test "observed stores retain reference validity through alias repair and uncover
     try std.testing.expect(returned.eql(&uncovered, disjoint));
     try std.testing.expectEqual(@as(usize, 0), repaired.execution_receipts.len);
     try std.testing.expectEqual(@as(usize, 0), repaired.storage_capabilities.len);
+}
+
+test "symbolic reference loads observe writes through possible aliases and exact repair" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } } });
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first: facts.SymbolicPointeeId = @enumFromInt(0);
+    const second: facts.SymbolicPointeeId = @enumFromInt(1);
+    try state.symbolic_pointees.appendSlice(&.{
+        .{ .identity = first, .ty = @enumFromInt(1), .initializedness = .initialized },
+        .{ .identity = second, .ty = @enumFromInt(1), .initializedness = .initialized },
+    });
+    const temporary = try state.tracker.establish(.fresh);
+    const expired: facts.ValueFacts = .{ .dependencies = &.{.{ .root = temporary }} };
+    try checker.storeSymbolicValue(&state, .{ .symbolic_pointees = &.{first} }, expired, true);
+    state.tracker.end(temporary);
+    const observed = try checker.readReferenceStore(&state, second, .{});
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(observed));
+    // Replacing the same observed cell removes its earlier payload. This is
+    // distinct from clearing another cell that merely might alias it.
+    try checker.storeSymbolicValue(&state, .{ .symbolic_pointees = &.{first} }, .{}, true);
+    const repaired = try checker.readReferenceStore(&state, second, .{});
+    try std.testing.expect(state.tracker.dependenciesAreAlive(repaired));
 }

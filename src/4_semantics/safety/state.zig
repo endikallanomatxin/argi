@@ -8,6 +8,7 @@ const facts = @import("facts.zig");
 const primitives = @import("../primitives/schema.zig");
 const value_state = @import("value_state.zig");
 const fact_snapshot = @import("fact_snapshot.zig");
+pub const ReferenceStores = @import("observed_store.zig").Stores(facts.StorageIdentity, facts.ValueFacts);
 
 pub const StorageCapabilityState = enum {
     absent,
@@ -81,6 +82,9 @@ pub const State = struct {
     // Sparse value facts are separate from slot identity and initialization.
     // Ordinary scalar slots need no entry; immutable aggregates share facts.
     symbolic_values: std.array_list.Managed(SymbolicStoredValue),
+    // Reaching payloads of symbolic reference-cell writes. These add possible
+    // contents across aliases; their keys grant no validity or authority.
+    reference_writes: std.array_list.Managed(ReferenceStores.Definition),
     executions: std.array_list.Managed(facts.ExecutionState),
     storage_capabilities: std.array_list.Managed(StorageCapabilityState),
     storage_generations: std.array_list.Managed(StorageGeneration),
@@ -106,6 +110,7 @@ pub const State = struct {
             .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
             .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
             .symbolic_values = std.array_list.Managed(SymbolicStoredValue).init(allocator),
+            .reference_writes = std.array_list.Managed(ReferenceStores.Definition).init(allocator),
             .executions = std.array_list.Managed(facts.ExecutionState).init(allocator),
             .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
             .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
@@ -122,6 +127,7 @@ pub const State = struct {
         self.places.deinit();
         self.symbolic_pointees.deinit();
         self.symbolic_values.deinit();
+        self.reference_writes.deinit();
         self.executions.deinit();
         self.storage_capabilities.deinit();
         self.storage_generations.deinit();
