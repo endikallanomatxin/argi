@@ -116,3 +116,8 @@ failures, leaks or error logs. All runs use one worker and a 6 GiB process limit
 Peak RSS is approximately 565 MiB for internal validation and 2.68 GiB for the
 program build/run command. After removing unused fixture helpers, the seven new
 cases are checked again with the same optimized compiler.
+
+The next bounded implementation is [reference target coverage](reference_target_coverage.md).
+It preserves an explicit incomplete-alternative fact through bodies and summaries.
+It also documents a confirmed residual-write counterexample that this marker
+alone does not close; collecting known origins cannot replace that obligation.

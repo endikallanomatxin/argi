@@ -264,6 +264,7 @@ pub const State = struct {
     }
 
     pub fn initializeLiveSymbolicTargets(self: *State, pointer: facts.ValueFacts) void {
+        if (pointer.reference_target_incomplete) return;
         for (pointer.symbolic_pointees) |identity| {
             const entry = self.symbolicPointee(identity) orelse continue;
             if (entry.generation) |generation| if (self.tracker.isAlive(generation))
@@ -881,7 +882,7 @@ pub const State = struct {
 
     pub fn renewSymbolicAccess(self: *State, pointer: facts.ValueFacts) !?facts.ValueFacts {
         // A join of possible targets cannot establish one definite destination.
-        if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
+        if (pointer.reference_target_incomplete or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
         const identity = pointer.symbolic_pointees[0];
         for (self.symbolic_pointees.items, 0..) |entry, index| {
             if (entry.identity != identity or entry.initializedness != .deinitialized) continue;
@@ -1584,4 +1585,24 @@ test "lexical reference frames exclude only later storage and survive generation
     try std.testing.expectEqual(namespace.lexical_allocations.count(), copied_namespace.lexical_allocations.count());
     try std.testing.expectEqualSlices(graph_mod.GlobalBindingId, namespace.lexical_allocations.keys(), copied_namespace.lexical_allocations.keys());
     try std.testing.expectEqualSlices(bool, namespace.lexical_allocations.values(), copied_namespace.lexical_allocations.values());
+}
+
+test "Safety incomplete symbolic targets cannot renew or initialize a candidate" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var state = State.init(arena.allocator());
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    try state.symbolic_pointees.append(.{ .identity = identity, .initializedness = .deinitialized, .backing = backing, .generation = generation });
+    const pointer: facts.ValueFacts = .{ .symbolic_pointees = &.{identity}, .dependencies = &.{ .{ .root = backing }, .{ .root = generation } } };
+    var partial = pointer;
+    partial.reference_target_incomplete = true;
+    state.initializeLiveSymbolicTargets(partial);
+    try std.testing.expectEqual(.deinitialized, state.symbolicPointee(identity).?.initializedness);
+    state.tracker.end(generation);
+    try std.testing.expect(try state.renewSymbolicAccess(partial) == null);
+    try std.testing.expect(!state.tracker.isAlive(generation));
+    try std.testing.expect(try state.renewSymbolicAccess(pointer) != null);
 }

@@ -170,6 +170,9 @@ pub const ValueFacts = struct {
     /// evidence only; it grants neither liveness nor access authority.
     lexical_frame: ?u32 = null,
     referenced_place: ?Place = null,
+    /// A represented reference alternative has no retained target identity.
+    /// Keep known may-targets, but do not treat their singleton as exhaustive.
+    reference_target_incomplete: bool = false,
     /// Known possible destinations retained only for conservative mutation.
     /// This list is not complete and never grants exact access or ownership.
     mutation_places: []const Place = &.{},
@@ -199,6 +202,7 @@ pub const ValueFacts = struct {
             .acquisition_origins = self.acquisition_origins,
             .lexical_frame = self.lexical_frame,
             .referenced_place = self.referenced_place,
+            .reference_target_incomplete = self.reference_target_incomplete,
             .mutation_places = self.mutation_places,
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
@@ -217,6 +221,7 @@ pub const ValueFacts = struct {
     pub fn derivedReference(self: ValueFacts) ValueFacts {
         var result = self.referenceCopy();
         result.referenced_place = null;
+        result.reference_target_incomplete = true;
         result.mutation_places = &.{};
         result.symbolic_pointees = &.{};
         result.virtual_methods = &.{};

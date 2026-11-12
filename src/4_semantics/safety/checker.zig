@@ -2844,6 +2844,10 @@ pub const SafetyChecker = struct {
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
         if (semantic == .pointer) {
+            if (value.reference_target_incomplete) {
+                try self.report(source, "borrowed execution requires an authenticated reference target for every alternative", .{});
+                return;
+            }
             try self.requireLive(self.call_stack.getLast(), source, value, state);
             var generations = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             for (value.dependencies) |dependency| try appendRootFact(&generations, dependency.root);
@@ -2996,7 +3000,7 @@ pub const SafetyChecker = struct {
     }
 
     fn requireExecutionPointerAccess(self: *SafetyChecker, source: primitives.SourceRef, pointer: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
-        if (pointer.referenced_place == null and pointer.symbolic_pointees.len == 0) {
+        if (pointer.reference_target_incomplete or (pointer.referenced_place == null and pointer.symbolic_pointees.len == 0)) {
             // A valid lifetime or audited raw-reference construction does not
             // locate these bytes relative to a pending loan. Missing target
             // evidence denotes an unknown footprint, never an empty one.
@@ -3126,6 +3130,7 @@ pub const SafetyChecker = struct {
                         const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
                         const element_type = self.graph.semanticType(input_type).pointer.child;
                         result.referenced_place = try self.offsetArrayPlace(base, offset, element_type);
+                        if (result.referenced_place != null) result.reference_target_incomplete = false;
                     };
                 }
                 break :blk result;
@@ -4496,6 +4501,10 @@ pub const SafetyChecker = struct {
     // retain their incarnations; ordered summary obligations check their actual
     // aliasing at callers. Copies of the same access still share this identity.
     fn endSymbolicGenerations(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !bool {
+        if (value.reference_target_incomplete and hasReferenceTarget(value)) {
+            try self.report(source, "cannot consume storage through an incomplete reference target set", .{});
+            return true;
+        }
         var handled = false;
         for (value.symbolic_pointees) |identity| {
             for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
@@ -4930,10 +4939,16 @@ pub const SafetyChecker = struct {
         }
         if (try self.resolveSummaryInputPath(path, argument_ids, arguments, state)) |storage| return .{ .place = storage };
         if (try self.symbolicConsumptionValue(path, argument_ids, arguments, state)) |value| {
+            if (value.reference_target_incomplete) {
+                const source = self.graph.node(self.graph.value_fields.items[@intFromEnum(argument_ids[path.input_index])].value).source;
+                try self.report(source, "opaque storage selection requires a complete reference target set", .{});
+                return null;
+            }
             if (value.symbolic_pointees.len == 1) return .{ .symbolic = value.symbolic_pointees[0] };
         }
         if (path.input_index >= arguments.len) return null;
         var value = arguments[path.input_index];
+        if (value.reference_target_incomplete and value.symbolic_pointees.len != 0) return error.MissingVirtualStorageDomain;
         if (value.symbolic_pointees.len == 1) {
             for (path.projections) |projection| value = try self.projectSymbolicStorage(value, projection, state) orelse return error.MissingVirtualStorageDomain;
             return .{ .symbolic = value.symbolic_pointees[0] };
@@ -5269,6 +5284,7 @@ pub const SafetyChecker = struct {
         }
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
+        var unknown_reference_source = false;
         for (effect.input_places) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
             includeReferenceAlternative(&referenced_place, &has_referent, target);
@@ -5361,8 +5377,10 @@ pub const SafetyChecker = struct {
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
             // Every copied alternative contributes, including an unknown
             // target. Validity-only anchors never select referenced storage.
-            if (!dependency.validity_only)
-                includeReferenceAlternative(&referenced_place, &has_referent, input.referenced_place);
+            if (!dependency.validity_only) {
+                unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
+                includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
+            }
             if (dependency.validity_only) {
                 var borrowed = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 try borrowed.appendSlice(input.dependencies);
@@ -5381,7 +5399,8 @@ pub const SafetyChecker = struct {
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = try self.load_summary_input_value(path, arguments, state);
-            includeReferenceAlternative(&referenced_place, &has_referent, input.referenced_place);
+            unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
+            includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             result = try self.mergeValueFacts(result, input);
         }
 
@@ -5465,6 +5484,10 @@ pub const SafetyChecker = struct {
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         result.known_choice_variant = effect.known_choice_variant;
         if (has_referent) result.referenced_place = referenced_place;
+        if ((unknown_reference_source or effect.reference_target_incomplete) and hasReferenceTarget(result)) {
+            result.reference_target_incomplete = true;
+            result.referenced_place = null;
+        }
         try self.attachAbsentFreshExecutions(effect, &result, state);
         if (effect.reference_relation) |relation| {
             const path = relation.source;
@@ -5819,6 +5842,7 @@ pub const SafetyChecker = struct {
             .acquisition_origins = try origins.toOwnedSlice(),
             .lexical_frame = if (left.lexical_frame != null and right.lexical_frame != null) @max(left.lexical_frame.?, right.lexical_frame.?) else null,
             .symbolic_pointees = symbolic,
+            .reference_target_incomplete = left.reference_target_incomplete or right.reference_target_incomplete,
             .mutation_places = try mutation_places.toOwnedSlice(),
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
@@ -5831,7 +5855,7 @@ pub const SafetyChecker = struct {
             .storage_capability_incomplete = left.storage_capability_incomplete or right.storage_capability_incomplete,
             .storage_capabilities = try capabilities.toOwnedSlice(),
             .execution_receipts = try executions.toOwnedSlice(),
-            .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
+            .referenced_place = if (!left.reference_target_incomplete and !right.reference_target_incomplete and left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
             .domains = domains,
@@ -6901,6 +6925,10 @@ pub const SafetyChecker = struct {
     ) !void {
         if (self.active_replacement) |active| if (active.plan.cleanup == id) {
             if (active.pointer) |pointer| {
+                if (pointer.reference_target_incomplete and hasReferenceTarget(pointer)) {
+                    try self.report(self.graph.node(active.plan.write).source, "cannot replace owning storage through an incomplete reference target set", .{});
+                    return;
+                }
                 var vacant = false;
                 if (pointer.referenced_place) |place| {
                     vacant = state.initializednessAtPlace(place) == .deinitialized;
@@ -6951,7 +6979,7 @@ pub const SafetyChecker = struct {
         pointer: facts.ValueFacts,
         state: *FunctionState,
     ) anyerror!bool {
-        if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return false;
+        if (pointer.reference_target_incomplete or pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return false;
         const identity = pointer.symbolic_pointees[0];
         const entry = for (state.symbolic_pointees.items) |stored| {
             if (stored.identity == identity) break stored;
@@ -7421,7 +7449,7 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         try dependencies.appendSlice(pointer.dependencies);
         try appendDependencyFact(&dependencies, .{ .root = observation.generation });
-        return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{observation.identity}) };
+        return .{ .dependencies = try dependencies.toOwnedSlice(), .symbolic_pointees = try self.allocator.dupe(facts.SymbolicPointeeId, &.{observation.identity}), .reference_target_incomplete = pointer.reference_target_incomplete };
     }
 
     fn symbolicVirtualValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, ty: graph_mod.GlobalTypeId) !facts.ValueFacts {
@@ -7450,6 +7478,20 @@ pub const SafetyChecker = struct {
         const value_type = ty orelse for (state.symbolic_pointees.items) |entry| {
             if (entry.identity == identity) break entry.ty;
         } else null;
+        const plain_read = if (value_type) |value_ty|
+            self.plainExecutionStorage(value_ty, 0) or
+                (!types.hasDestructor(self.graph, value_ty) and
+                    (@import("../global/c_abi.zig").isRawPointer(self.graph, value_ty) or @import("../global/c_abi.zig").isFunctionPointer(self.graph, value_ty)))
+        else
+            false;
+        if (pointer.reference_target_incomplete and value_type != null and !plain_read) {
+            const source = if (self.call_stack.items.len != 0)
+                self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source
+            else
+                primitives.SourceRef{ .file_index = 0, .offset = 0 };
+            try self.report(source, "cannot read resource or reference-bearing storage through an incomplete reference target set", .{});
+            return .{};
+        }
         if (stored == null and value_type != null and self.graph.semanticType(value_type.?) == .virtual) {
             const value = try self.symbolicVirtualValue(state, pointer, value_type.?);
             try state.setSymbolicValue(.{ .identity = identity, .value = value }, false, true);
@@ -7457,13 +7499,17 @@ pub const SafetyChecker = struct {
         }
         if (stored == null and value_type != null and isPointer(self.graph, value_type.?))
             return (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse .{};
-        return self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+        const value = try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
+        return if (pointer.reference_target_incomplete)
+            self.joinObservedSymbolicValues(value, .{}, null, null, &.{})
+        else
+            value;
     }
 
     // Tag refinement does not write the payload or discard descendant facts.
     // Branch clones own these records; joining different tags removes the proof.
     fn setSymbolicVariant(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, variant: u32) !void {
-        if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return;
+        if (pointer.reference_target_incomplete or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return;
         const identity = pointer.symbolic_pointees[0];
         var stored = (try self.symbolicValueAt(state, identity)) orelse SymbolicStoredValue{ .identity = identity, .value = .{} };
         stored.value.known_choice_variant = variant;
@@ -7472,14 +7518,18 @@ pub const SafetyChecker = struct {
 
     fn storeSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, value: facts.ValueFacts, definite: bool) !void {
         if (pointer.opaque_provenance.len != 0) return;
+        // TODO: retain obligations for an uncovered destination as well. Weak
+        // candidate updates alone cannot describe that part of the write; see
+        // plan/examples/incomplete_reference_write. Clearing a known candidate
+        // must not discharge obligations for an unrepresented target.
         // A possible concrete alias must not leave the old local unchanged.
         // These candidates never justify a strong update, even when singleton.
         for (pointer.mutation_places) |place| {
             const previous = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
-            try state.setPlace(place, state.initializednessAtPlace(place), try self.mergeValueFacts(previous, value));
+            try state.setPlace(place, state.initializednessAtPlace(place), try self.joinObservedSymbolicValues(previous, value, null, null, &.{}));
         }
         for (pointer.symbolic_pointees) |identity| {
-            const strong = definite and pointer.symbolic_pointees.len == 1 and pointer.mutation_places.len == 0;
+            const strong = definite and !pointer.reference_target_incomplete and pointer.symbolic_pointees.len == 1 and pointer.mutation_places.len == 0;
             const previous = try self.symbolicValueAt(state, identity);
             const next: SymbolicStoredValue = if (strong)
                 .{ .identity = identity, .value = value }
@@ -7553,7 +7603,7 @@ pub const SafetyChecker = struct {
 
     fn joinSymbolicStoredValue(self: *SafetyChecker, stored: SymbolicStoredValue, other: ?SymbolicStoredValue) !SymbolicStoredValue {
         const definite = stored.definite and other != null and other.?.definite;
-        var value = try self.mergeValueFacts(stored.value, if (other) |known| known.value else .{});
+        var value = try self.joinObservedSymbolicValues(stored.value, if (other) |known| known.value else .{}, null, null, &.{});
         if (!definite) value = try self.withoutExactSymbolicReferences(value);
         return .{ .identity = stored.identity, .value = value, .definite = definite };
     }
@@ -7561,6 +7611,7 @@ pub const SafetyChecker = struct {
     fn withoutExactSymbolicReferences(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
         var value = original;
         value.referenced_place = null;
+        value.reference_target_incomplete = true;
         value.symbolic_pointees = &.{};
         value.domains = &.{};
         const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
@@ -7893,6 +7944,7 @@ pub const SafetyChecker = struct {
     fn receiverDomainPointees(self: *SafetyChecker, argument: facts.ValueFacts, state: *FunctionState) ![]const facts.SymbolicPointeeId {
         var value = argument;
         for (0..128) |_| {
+            if (value.reference_target_incomplete) return &.{};
             for (value.domains) |domain| if (domain.domain_index == @import("access_bounds.zig").receiver_domain) return domain.symbolic_pointees;
             if (value.symbolic_pointees.len != 0) {
                 if (self.domainFacts(value, @import("access_bounds.zig").receiver_domain, state)) |domain| return domain.symbolic_pointees else |err| {
@@ -7912,6 +7964,7 @@ pub const SafetyChecker = struct {
         var value = argument;
         if (index == @import("access_bounds.zig").receiver_domain) {
             for (0..128) |_| {
+                if (value.reference_target_incomplete) return error.MissingVirtualStorageDomain;
                 for (value.domains) |domain| if (domain.domain_index == index) return self.checkedDomainStorage(domain, state);
                 const storage = value.referenced_place orelse {
                     // Access through these exact symbolic identities is checked
@@ -7965,6 +8018,7 @@ pub const SafetyChecker = struct {
 
     fn domainFacts(self: *SafetyChecker, argument: facts.ValueFacts, index: u32, state: *FunctionState) !facts.DomainFacts {
         const value = try self.virtualValue(argument, state) orelse return error.MissingVirtualStorageDomain;
+        if (value.reference_target_incomplete) return error.MissingVirtualStorageDomain;
         for (value.domains) |domain| if (domain.domain_index == index) return domain;
         return error.MissingVirtualStorageDomain;
     }
@@ -8276,6 +8330,10 @@ pub const SafetyChecker = struct {
     fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: ?*const FunctionState, right_state: ?*const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
         if (generations.len == 0 and valueFactsEqual(left, right)) return left;
         var merged = try self.mergeValueFacts(left, right);
+        if (hasReferenceTarget(left) != hasReferenceTarget(right)) {
+            merged.reference_target_incomplete = true;
+            merged.referenced_place = null;
+        }
         if (merged.fields.len == 0 and merged.variants.len == 0 and
             ((left.storage_capabilities.len == 0) != (right.storage_capabilities.len == 0)))
             merged.storage_capability_incomplete = true;
@@ -9392,6 +9450,7 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
 }
 
 fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
     for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
     if (left.lexical_frame != right.lexical_frame) return false;
@@ -9562,6 +9621,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
     for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
     if (left.lexical_frame != right.lexical_frame) return false;
@@ -13640,4 +13700,163 @@ test "projecting a mixed mutation reference preserves its symbolic alternative" 
     try std.testing.expectEqual(@as(usize, 1), projected.mutation_places.len);
     try std.testing.expectEqual(@as(usize, 1), projected.symbolic_pointees.len);
     try std.testing.expect(projected.referenced_place == null);
+}
+
+test "a symbolic singleton joined with an unknown alternative cannot strongly replace storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    const old_root = try state.tracker.establish(.fresh);
+    const replacement_root = try state.tracker.establish(.fresh);
+    try state.setSymbolicValue(.{ .identity = identity, .value = .{ .dependencies = &.{.{ .root = old_root }} } }, true, true);
+    const known = facts.ValueFacts{ .symbolic_pointees = &.{identity} };
+    const pointer = try checker.joinObservedSymbolicValues(known, .{}, null, null, &.{});
+    try checker.storeSymbolicValue(&state, pointer, .{ .dependencies = &.{.{ .root = replacement_root }} }, true);
+    const stored = (try checker.symbolicValueAt(&state, identity)).?.value;
+    try std.testing.expect(valueDependsOnRoot(stored, old_root));
+    try std.testing.expect(valueDependsOnRoot(stored, replacement_root));
+}
+
+fn hasReferenceTarget(value: facts.ValueFacts) bool {
+    return value.referenced_place != null or value.symbolic_pointees.len != 0 or value.mutation_places.len != 0;
+}
+
+test "summary copies retain uncovered symbolic reference alternatives" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const known: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)} };
+    const effect: facts.ValueEffect = .{ .input_dependencies = &.{
+        .{ .path = .{ .input_index = 0 } }, .{ .path = .{ .input_index = 1 } },
+    } };
+    for ([_][2]facts.ValueFacts{ .{ known, .{} }, .{ .{}, known } }) |inputs| {
+        const result = try checker.instantiateOutput(effect, &inputs, &state);
+        try std.testing.expect(result.reference_target_incomplete);
+        try std.testing.expect(result.referenceCopy().reference_target_incomplete);
+        try std.testing.expectEqual(@as(usize, 1), result.symbolic_pointees.len);
+    }
+    const same = try checker.instantiateOutput(effect, &.{ known, known }, &state);
+    try std.testing.expect(!same.reference_target_incomplete);
+    // Copying a reference with an incomplete target set can still preserve a
+    // universal observation already established for every alternative.
+    const observed = try checker.instantiateOutput(.{
+        .reference_target_incomplete = true,
+        .reference_relation = .{ .source = .{ .input_index = 0 }, .grade = .identity },
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }},
+    }, &.{facts.ValueFacts{ .reference_target_incomplete = true, .lexical_frame = 3 }}, &state);
+    try std.testing.expectEqual(@as(?u32, 3), observed.lexical_frame);
+    try std.testing.expect(observed.reference_target_incomplete);
+    const intrinsic = try checker.instantiateOutput(.{
+        .reference_target_incomplete = true,
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }},
+    }, &.{known}, &state);
+    try std.testing.expect(intrinsic.reference_target_incomplete);
+}
+
+test "incomplete targets preserve the read read authority contrast" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const pointer: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)}, .reference_target_incomplete = true };
+    for ([_]facts.AccessMode{ .read, .write }) |loan_mode| for ([_]facts.AccessMode{ .read, .write }) |access_mode| {
+        var state = SafetyChecker.FunctionState.init(a);
+        defer state.deinit();
+        _ = try state.establishExecution(&.{.{ .symbolic = @enumFromInt(1), .mode = loan_mode }});
+        const before = diags.list.items.len;
+        try checker.requireExecutionPointerAccess(.{ .file_index = 0, .offset = 0 }, pointer, access_mode, &state);
+        try std.testing.expectEqual(before + @intFromBool(loan_mode != .read or access_mode != .read), diags.list.items.len);
+    };
+}
+
+test "an uncovered target cannot establish an execution loan" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } } });
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    var loans = std.array_list.Managed(facts.ExecutionLoan).init(a);
+    defer loans.deinit();
+    try checker.collectExecutionLoans(@enumFromInt(1), .{ .symbolic_pointees = &.{@enumFromInt(0)}, .reference_target_incomplete = true }, &state, &loans, .{ .file_index = 0, .offset = 0 });
+    try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "reading through an uncovered target does not select a known choice value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = primitives.StringRange{ .start = 0, .len = 0 };
+    try graph.types.append(a, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } });
+    try graph.variants.appendSlice(a, &.{ .{ .name = name, .source = source, .value = 0 }, .{ .name = name, .source = source, .value = 1 } });
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    try state.setSymbolicValue(.{ .identity = identity, .value = .{ .known_choice_variant = 0 } }, true, true);
+    const pointer: facts.ValueFacts = .{ .symbolic_pointees = &.{identity} };
+    const exact = try checker.readSymbolicValue(&state, pointer, @enumFromInt(0));
+    try std.testing.expectEqual(@as(?u32, 0), exact.known_choice_variant);
+    var partial = pointer;
+    partial.reference_target_incomplete = true;
+    const unknown = try checker.readSymbolicValue(&state, partial, @enumFromInt(0));
+    try std.testing.expect(unknown.known_choice_variant == null);
+}
+
+test "incomplete candidates cannot consume a generation while unresolved storage uses its own protocol" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    const generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.append(.{ .identity = identity, .initializedness = .initialized, .generation = generation });
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const known: facts.ValueFacts = .{ .symbolic_pointees = &.{identity} };
+    var partial = known;
+    partial.reference_target_incomplete = true;
+    try std.testing.expect(try checker.endSymbolicGenerations(source, partial, &state));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expect(state.tracker.isAlive(generation));
+    try std.testing.expect(!try checker.endSymbolicGenerations(source, .{ .reference_target_incomplete = true }, &state));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expect(state.tracker.isAlive(generation));
+    try std.testing.expect(try checker.endSymbolicGenerations(source, known, &state));
+    try std.testing.expect(!state.tracker.isAlive(generation));
 }

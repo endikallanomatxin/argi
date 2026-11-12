@@ -939,6 +939,7 @@ fn samePath(a: facts.InputPath, b: facts.InputPath) bool {
 /// concrete checker additionally proves direct forwarding before accepting a
 /// declaration. Lifetime-only anchors cannot select an output's storage.
 fn hasExactReferent(actual: facts.ValueEffect, expected: facts.InputPath) bool {
+    if (actual.reference_target_incomplete) return false;
     if (actual.storage_capability_incomplete or actual.input_storage_authorizations.len != 0) return false;
     if (actual.input_place_values.len != 0 or actual.fields.len != 0 or actual.variants.len != 0 or
         actual.fresh_cleanup_obligation or actual.fresh_dependencies.len != 0 or actual.fresh_owned_roots.len != 0 or

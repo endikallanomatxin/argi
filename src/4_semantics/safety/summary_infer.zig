@@ -1688,6 +1688,7 @@ pub const Infer = struct {
         allocator: std.mem.Allocator,
         original: ?[]facts.ValueEffect = null,
         joined: ?[]facts.ValueEffect = null,
+        has_joined: bool = false,
 
         fn init(allocator: std.mem.Allocator, outputs: ?[]facts.ValueEffect) !OutputAlternatives {
             const values = outputs orelse return .{ .allocator = allocator };
@@ -1704,10 +1705,21 @@ pub const Infer = struct {
         fn reset(self: OutputAlternatives, outputs: ?[]facts.ValueEffect) void {
             if (outputs) |values| @memcpy(values, self.original.?);
         }
-        fn retain(self: OutputAlternatives, infer: *Infer, outputs: ?[]facts.ValueEffect) !void {
-            if (outputs) |values| for (self.joined.?, values) |*joined, value| {
-                joined.* = try infer.mergeValueEffects(joined.*, value);
-            };
+        fn retain(self: *OutputAlternatives, infer: *Infer, function: graph_mod.GlobalFunctionId, outputs: ?[]facts.ValueEffect) !void {
+            const values = outputs orelse return;
+            if (!self.has_joined) {
+                @memcpy(self.joined.?, values);
+                self.has_joined = true;
+                return;
+            }
+            const signature = infer.graph.function(function);
+            for (self.joined.?, values, 0..) |*joined, value, index| {
+                const ty = if (index < signature.output_bindings.len)
+                    infer.graph.binding(infer.graph.binding_refs.items[signature.output_bindings.start + index]).ty
+                else
+                    null;
+                joined.* = try infer.joinStorageAlternatives(ty, joined.*, value);
+            }
         }
         fn finish(self: OutputAlternatives, outputs: ?[]facts.ValueEffect) void {
             if (outputs) |values| @memcpy(values, self.joined.?);
@@ -1849,29 +1861,29 @@ pub const Infer = struct {
                     }
                 },
                 .if_statement => |statement| {
-                    const alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    var alternatives = try OutputAlternatives.init(self.allocator, outputs);
                     defer alternatives.deinit();
                     try self.inferBlock(function_id, statement.then_block, outputs);
-                    try alternatives.retain(self, outputs);
+                    try alternatives.retain(self, function_id, outputs);
                     alternatives.reset(outputs);
                     if (statement.else_block) |child| {
                         try self.inferBlock(function_id, child, outputs);
-                        try alternatives.retain(self, outputs);
-                    } else try alternatives.retain(self, outputs);
+                        try alternatives.retain(self, function_id, outputs);
+                    } else try alternatives.retain(self, function_id, outputs);
                     alternatives.finish(outputs);
                 },
                 inline .while_statement, .for_statement => |statement| {
-                    const alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    var alternatives = try OutputAlternatives.init(self.allocator, outputs);
                     defer alternatives.deinit();
-                    try alternatives.retain(self, outputs);
+                    try alternatives.retain(self, function_id, outputs);
                     try self.inferBlock(function_id, statement.body, outputs);
-                    try alternatives.retain(self, outputs);
+                    try alternatives.retain(self, function_id, outputs);
                     alternatives.finish(outputs);
                 },
                 .switch_statement => |switch_id| {
                     const statement = self.graph.switches.items[@intFromEnum(switch_id)];
                     const choice = try self.inferExpression(function_id, statement.expression);
-                    const alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    var alternatives = try OutputAlternatives.init(self.allocator, outputs);
                     defer alternatives.deinit();
                     for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
                         alternatives.reset(outputs);
@@ -1882,14 +1894,14 @@ pub const Infer = struct {
                             try self.bindings.put(binding, payload);
                         }
                         try self.inferBlock(function_id, case.body, outputs);
-                        try alternatives.retain(self, outputs);
+                        try alternatives.retain(self, function_id, outputs);
                     }
                     if (statement.default_block) |child| {
                         alternatives.reset(outputs);
                         try self.inferBlock(function_id, child, outputs);
-                        try alternatives.retain(self, outputs);
+                        try alternatives.retain(self, function_id, outputs);
                     } else if (statement.cases.len == 0) {
-                        try alternatives.retain(self, outputs);
+                        try alternatives.retain(self, function_id, outputs);
                     }
                     alternatives.finish(outputs);
                 },
@@ -7074,6 +7086,7 @@ pub const Infer = struct {
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
             .storage_capability_incomplete = effect.storage_capability_incomplete,
+            .reference_target_incomplete = effect.reference_target_incomplete,
             .input_storage_authorizations = &.{},
             .known_choice_variant = effect.known_choice_variant,
         };
@@ -7498,7 +7511,11 @@ pub const Infer = struct {
     /// Possible capability identities remain useful for consumption checks, but
     /// cannot prove presence if another returning alternative has no evidence.
     fn joinStorageAlternatives(self: *Infer, value_type: ?graph_mod.GlobalTypeId, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
+        if (summaries.valueEffectEql(left, right)) return left;
         var result = try self.mergeValueEffects(left, right);
+        const reference_value = if (value_type) |ty| self.graph.semanticType(ty) == .pointer else true;
+        if (reference_value and hasReferenceTargetRecipe(left) != hasReferenceTargetRecipe(right))
+            result.reference_target_incomplete = true;
         // A universal relation survives only when every alternative agrees on
         // its source. Strength can weaken, but a missing source never becomes
         // an empty alternative or a proof of separation.
@@ -7697,6 +7714,7 @@ pub const Infer = struct {
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
             .storage_capability_incomplete = left.storage_capability_incomplete or right.storage_capability_incomplete,
+            .reference_target_incomplete = left.reference_target_incomplete or right.reference_target_incomplete,
             .input_storage_authorizations = try self.union_input_paths(left.input_storage_authorizations, right.input_storage_authorizations),
             .fresh_storage_capabilities = try fresh_capabilities.toOwnedSlice(),
             .unavailable_fresh_storage = try self.merge_unavailable_fresh_storage(left.unavailable_fresh_storage, right.unavailable_fresh_storage),
@@ -9777,4 +9795,37 @@ test "body reference alternative collection only dirties a function for new sour
     try std.testing.expect(try infer.addBodyOutputAlternatives(@enumFromInt(0), &.{alternative}));
     try std.testing.expect(!try infer.addBodyOutputAlternatives(@enumFromInt(0), &.{alternative}));
     try std.testing.expectEqual(@as(usize, 1), infer.body_output_alternatives.get(@enumFromInt(0)).?.len);
+}
+
+fn hasReferenceTargetRecipe(effect: facts.ValueEffect) bool {
+    if (effect.input_places.len != 0 or effect.input_place_values.len != 0) return true;
+    for (effect.input_dependencies) |dependency| if (!dependency.validity_only) return true;
+    return if (effect.reference_relation) |relation| relation.grade == .identity else false;
+}
+
+test "reference alternative joins preserve uncertainty and do not add requirements to identical values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const known: facts.ValueEffect = .{
+        .reference_relation = .{ .source = .{ .input_index = 0 }, .grade = .identity },
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }},
+    };
+    const same = try infer.joinStorageAlternatives(null, known, known);
+    try std.testing.expect(summaries.valueEffectEql(known, same));
+    try std.testing.expectEqual(@as(usize, 0), same.input_storage_authorizations.len);
+    for ([_][2]facts.ValueEffect{ .{ known, .{} }, .{ .{}, known } }) |alternatives| {
+        const joined = try infer.joinStorageAlternatives(null, alternatives[0], alternatives[1]);
+        try std.testing.expect(joined.reference_target_incomplete);
+        try std.testing.expect(joined.reference_relation == null);
+        const repeated = try infer.mergeValueEffects(joined, known);
+        try std.testing.expect(repeated.reference_target_incomplete);
+        try std.testing.expect(!summaries.valueEffectEql(known, joined));
+    }
 }

@@ -201,6 +201,9 @@ pub const ReferenceRelation = struct {
 };
 
 pub const ValueEffect = struct {
+    /// A possible reference result has no retained target-selection recipe.
+    /// Lifetime dependencies are retained independently of target precision.
+    reference_target_incomplete: bool = false,
     /// Verified reference relation, never a may-dependency or authority.
     /// Missing evidence does not describe an empty access footprint.
     reference_relation: ?ReferenceRelation = null,

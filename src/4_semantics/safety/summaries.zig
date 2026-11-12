@@ -229,7 +229,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         a.fresh_storage_capabilities.len != b.fresh_storage_capabilities.len or
         a.known_choice_variant != b.known_choice_variant or
         a.integer_address != b.integer_address or
-        a.foreign_storage != b.foreign_storage or a.storage_capability_incomplete != b.storage_capability_incomplete) return false;
+        a.foreign_storage != b.foreign_storage or a.storage_capability_incomplete != b.storage_capability_incomplete or
+        a.reference_target_incomplete != b.reference_target_incomplete) return false;
 
     for (a.input_dependencies, b.input_dependencies) |left, right| {
         if (left.transfers_ownership != right.transfers_ownership or
