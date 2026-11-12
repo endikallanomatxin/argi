@@ -183,6 +183,100 @@ abstraction must explain both loss of knowledge and preservation of obligations,
 including calls, branches and loops. Public storage guarantees are a way to
 avoid excessive inference, not an exemption from the ordinary aliasing case.
 
+## Executable write-domain experiment
+
+`src/4_semantics/safety/observed_store.zig` is a candidate shared content domain,
+registered in the existing Zig internal-test harness. It is **not yet connected
+to production reads, writes or call summaries**. The accepted counterexamples
+above remain accepted. This experiment must not be described as their fix.
+
+For each stable observed cell it keeps:
+
+- The current possible written payload, using the existing fact lattice.
+- Whether a write to that cell definitely occurred on every represented path.
+- A set of other current write sources definitely overwritten by that definition.
+
+A definite store replaces its own current payload. A merely possible store joins
+with that source's previous payload. Either invalidates older overwrite proofs
+about that source in other rows. A definite store can establish new overwrite
+proofs over sources that preceded it. A read retains the initial contents unless
+a mandatory same-cell write excludes them. It includes possibly aliasing current
+sources unless a mandatory same-cell definition demonstrably supersedes them.
+
+The candidate preservation argument is local to compatible cells with stable
+keys and a sound alias query. Every actual last write to a read cell has a
+current source definition whose payload covers that write. If the read excludes
+that source, a mandatory same-cell definition must demonstrably follow it, which
+contradicts its being the last write. Excluding initial contents likewise needs
+a mandatory same-cell write. Branch joins retain only universal overwrite proofs.
+Connecting real operations to these hypotheses remains a driver proof obligation;
+the finite tests do not establish it for the compiler.
+
+This keeps the relation needed for repeated replacement through one reference
+without retaining every historical RHS. For a fixed universe of `n` observed
+cells there are at most `n` current definitions and `n * (n - 1)` overwrite
+relationships. There is no per-write timestamp or executor event trace. Payload
+facts still need their ordinary finite abstraction and widening rules.
+
+Branch joins intersect overwrite proofs and mandatory-write guarantees while
+joining possible payloads. A branch without a write is an absent definition, not
+an unknown reference value. Immutable snapshots use the existing fact copier.
+Updates publish only after allocation and payload joins succeed. Repeating an
+unchanged store reaches a metadata fixed point and requires no new allocation.
+
+The same implementation is instantiated with `StorageIdentity`/`ValueFacts` and
+with caller-relative `InputRoute`/`ValueEffect`. Its tests call the actual checker
+and summary alternative-join operations. The validity cases use the existing
+Tracker; publication uses `fact_snapshot.zig`. No parallel permission model,
+Python interpreter, new runtime representation or public annotation is involved.
+
+The finite cell oracle covers three stores, three observed names, two written
+values, optional writes and all 27 concrete address assignments to those names.
+It checks that reads cover every possible concrete execution, and checks exact
+results when aliases and straight-line mandatory stores are fully known. Other
+tests cover opposing branch orders, subsequent replacement, metadata fixed points,
+allocation failure and malformed snapshot keys. These are bounded experiments,
+not a general preservation proof for Argi.
+
+### Integration obligations
+
+The driver still needs to establish stable observed-cell keys. A reference can
+have a stable value identity without a known physical origin, but assigning it a
+name cannot authenticate an execution loan, prove initialization or create fresh
+storage. Retargetable routes and RHS values must be captured at the actual write;
+a later lookup through a mutated slot is not the same observation.
+
+Existing replacement, move and cleanup checks remain prerequisites. Replacing
+an entry in this content domain does not destroy its old owner, complete an
+execution or discharge another resource obligation. Call-entry authorization
+and the conservative completion-before-access policy are unchanged.
+
+Covered reference-cell writes need one source of content facts. Do not leave
+old eager weak updates as the initial value while also recording the same write
+in this domain: that would retain a historical temporary after replacement
+through the same observation. Typed aggregate/field reads must consult the same
+source; updating only indirect reads would repeat the abstraction gap.
+
+The alias query must use typed overlap and existing physical/region evidence.
+Different symbolic names remain unknown rather than disjoint. This cell domain
+does not project partially overlapping byte layouts by itself. Clients must
+supply compatible payloads or conservatively invalidate unsupported projections.
+
+Function substitution must preserve observed-target bindings, reaching values
+and overwrite proofs, including unrepresented destinations. A copied snapshot
+with caller-relative inputs demonstrates a possible representation, not a
+completed binding/substitution implementation. Local proof identities cannot
+escape into cached summaries. Loops and recursion still need bounded key creation
+and conservative widening; the fixed-point unit test does not establish that
+property for arbitrary compiler bodies.
+
+The candidate also loses precision for some branch-dependent alias relations;
+it does not remember every disjunction about which cell was written. Guarded
+interface guarantees may recover useful cases later. Do not compensate by
+assuming aliasing names are distinct or by silently dropping retained resources.
+Integrate against all write-conservation gates before expanding owner transfer
+or protected-access protocols.
+
 ## Validation
 
 Implementation checkpoint `89c75cfb2` passes 1,540 Debug internal tests (one
@@ -210,3 +304,11 @@ The resulting Debug concurrency/alias selection passes all 328 program tests,
 with no failures, skips, leaks or error logs. Runs remain serial under a 6 GiB
 process limit; peak RSS is approximately 414 MiB. These include the unchanged
 229/231 and collection/view positives alongside the new gates.
+
+The observed-cell experiment adds seven passing Zig unit tests. The complete
+Debug internal run passes 1,547 tests (one skipped), with peak RSS of about
+569 MiB under the same serial 6 GiB limit. The compiler is rebuilt and all three
+232/233/234 fixtures pass again. Fresh compile-only checks still accept the three
+unsafe reductions, confirming that the candidate domain has not silently changed
+production safety behavior. No complete program-suite rerun is claimed for this
+unintegrated experiment.

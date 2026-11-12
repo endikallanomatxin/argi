@@ -9829,3 +9829,66 @@ test "reference alternative joins preserve uncertainty and do not add requiremen
         try std.testing.expect(!summaries.valueEffectEql(known, joined));
     }
 }
+
+test "observed stores share summary payloads and survive publication without local identities" {
+    const observed = @import("observed_store.zig");
+    const Stores = observed.Stores(facts.InputRoute, facts.ValueEffect);
+    const Context = struct {
+        infer: *Infer,
+        pub fn relation(_: @This(), _: facts.InputRoute, _: facts.InputRoute) observed.Relation {
+            return .unknown;
+        }
+        pub fn join(self: @This(), a: facts.ValueEffect, b: facts.ValueEffect) !facts.ValueEffect {
+            return self.infer.joinStorageAlternatives(null, a, b);
+        }
+        pub fn equal(_: @This(), a: facts.ValueEffect, b: facts.ValueEffect) bool {
+            return summaries.valueEffectEql(a, b);
+        }
+    };
+    var publication = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer publication.deinit();
+    const a = publication.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    var snapshot: []const Stores.Definition = undefined;
+    {
+        var transient = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer transient.deinit();
+        const temporary = transient.allocator();
+        var source = Stores.init(temporary, std.testing.allocator);
+        defer source.deinit();
+        const selectors = try temporary.dupe(facts.StorageSelector, &.{.{ .projection = .{ .field = 0 } }});
+        const first: facts.InputRoute = .{ .input_index = 0, .selectors = selectors };
+        const other: facts.InputRoute = .{ .input_index = 1, .selectors = selectors };
+        var source_engine = summaries.Engine.init(temporary);
+        defer source_engine.deinit();
+        var source_infer = Infer.init(temporary, &graph, &source_engine);
+        defer source_infer.deinit();
+        const context = Context{ .infer = &source_infer };
+        try source.store(other, .{ .input_dependencies = try temporary.dupe(facts.InputDependency, &.{.{ .path = .{ .input_index = 2 } }}) }, true, context);
+        try source.store(first, .{ .input_dependencies = try temporary.dupe(facts.InputDependency, &.{.{ .path = .{ .input_index = 3 } }}) }, true, context);
+        var copy = @import("fact_snapshot.zig").Copy{ .allocator = a, .scratch = std.testing.allocator };
+        defer copy.deinit();
+        snapshot = try copy.value([]const Stores.Definition, try source.snapshot(temporary));
+    }
+    var restored = try Stores.restore(a, std.testing.allocator, snapshot);
+    defer restored.deinit();
+    const context = Context{ .infer = &infer };
+    const selectors = [_]facts.StorageSelector{.{ .projection = .{ .field = 0 } }};
+    const first: facts.InputRoute = .{ .input_index = 0, .selectors = &selectors };
+    const other: facts.InputRoute = .{ .input_index = 1, .selectors = &selectors };
+    const initial: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 4 } }} };
+    const replaced = try restored.read(first, initial, context);
+    try std.testing.expect(summaries.valueEffectEql(replaced, .{ .input_dependencies = &.{.{ .path = .{ .input_index = 3 } }} }));
+    const unresolved = try restored.read(other, initial, context);
+    try std.testing.expectEqual(@as(usize, 2), unresolved.input_dependencies.len);
+    try std.testing.expectEqual(@as(u32, 2), unresolved.input_dependencies[0].path.input_index);
+    try std.testing.expectEqual(@as(u32, 3), unresolved.input_dependencies[1].path.input_index);
+    try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_storage_capabilities.len);
+    try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_executions.len);
+}

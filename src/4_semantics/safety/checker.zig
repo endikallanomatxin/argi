@@ -13860,3 +13860,80 @@ test "incomplete candidates cannot consume a generation while unresolved storage
     try std.testing.expect(try checker.endSymbolicGenerations(source, known, &state));
     try std.testing.expect(!state.tracker.isAlive(generation));
 }
+
+test "observed stores retain reference validity through alias repair and uncovered writes" {
+    const observed = @import("observed_store.zig");
+    const Stores = observed.Stores(facts.StorageIdentity, facts.ValueFacts);
+    const Context = struct {
+        checker: *SafetyChecker,
+        same_inputs: bool = false,
+        pub fn relation(self: @This(), a: facts.StorageIdentity, b: facts.StorageIdentity) observed.Relation {
+            if (@intFromEnum(a.symbolic) == 2 or @intFromEnum(b.symbolic) == 2) return .unknown;
+            return if (self.same_inputs) .same else .disjoint;
+        }
+        pub fn join(self: @This(), a: facts.ValueFacts, b: facts.ValueFacts) !facts.ValueFacts {
+            return self.checker.joinObservedSymbolicValues(a, b, null, null, &.{});
+        }
+        pub fn equal(_: @This(), a: facts.ValueFacts, b: facts.ValueFacts) bool {
+            return valueFactsEqual(a, b);
+        }
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const original_root = try state.tracker.establish(.fresh);
+    const replacement_root = try state.tracker.establish(.fresh);
+    const temporary_root = try state.tracker.establish(.fresh);
+    const original: facts.ValueFacts = .{ .dependencies = &.{.{ .root = original_root }}, .symbolic_pointees = &.{@enumFromInt(10)} };
+    const replacement: facts.ValueFacts = .{ .dependencies = &.{.{ .root = replacement_root }}, .symbolic_pointees = &.{@enumFromInt(11)} };
+    const temporary: facts.ValueFacts = .{ .dependencies = &.{.{ .root = temporary_root }}, .symbolic_pointees = &.{@enumFromInt(12)} };
+    const first: facts.StorageIdentity = .{ .symbolic = @enumFromInt(0) };
+    const second: facts.StorageIdentity = .{ .symbolic = @enumFromInt(1) };
+    // An opaque observation names one stable reference value, not fresh memory.
+    const erased: facts.StorageIdentity = .{ .symbolic = @enumFromInt(2) };
+    const disjoint = Context{ .checker = &checker };
+    const aliased = Context{ .checker = &checker, .same_inputs = true };
+    var direct = Stores.init(a, std.testing.allocator);
+    defer direct.deinit();
+    try direct.store(first, temporary, true, disjoint);
+    state.tracker.end(temporary_root);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(try direct.read(second, original, aliased)));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(try direct.read(second, original, disjoint)));
+    try direct.store(first, replacement, true, disjoint);
+    const repaired = try direct.read(second, original, aliased);
+    try std.testing.expect(state.tracker.dependenciesAreAlive(repaired));
+    try std.testing.expect(!valueDependsOnRoot(repaired, temporary_root));
+    try std.testing.expect(!valueDependsOnRoot(repaired, original_root));
+
+    var erased_stores = Stores.init(a, std.testing.allocator);
+    defer erased_stores.deinit();
+    const scoped = try state.tracker.establish(.fresh);
+    try erased_stores.store(erased, .{ .dependencies = &.{.{ .root = scoped }} }, true, disjoint);
+    try erased_stores.store(erased, replacement, true, disjoint);
+    state.tracker.end(scoped);
+    const replaced = try erased_stores.read(first, original, disjoint);
+    try std.testing.expect(state.tracker.dependenciesAreAlive(replaced));
+    try std.testing.expect(!valueDependsOnRoot(replaced, scoped));
+
+    var uncovered = Stores.init(a, std.testing.allocator);
+    defer uncovered.deinit();
+    const hidden = try state.tracker.establish(.fresh);
+    try uncovered.store(erased, .{ .dependencies = &.{.{ .root = hidden }} }, true, disjoint);
+    try uncovered.store(first, replacement, true, disjoint);
+    state.tracker.end(hidden);
+    try std.testing.expect(state.tracker.dependenciesAreAlive(try uncovered.read(first, original, disjoint)));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(try uncovered.read(second, original, disjoint)));
+    const snapshot = try uncovered.snapshot(a);
+    var returned = try Stores.restore(a, std.testing.allocator, snapshot);
+    defer returned.deinit();
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(try returned.read(second, original, disjoint)));
+    try std.testing.expect(returned.eql(&uncovered, disjoint));
+    try std.testing.expectEqual(@as(usize, 0), repaired.execution_receipts.len);
+    try std.testing.expectEqual(@as(usize, 0), repaired.storage_capabilities.len);
+}
