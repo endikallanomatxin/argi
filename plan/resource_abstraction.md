@@ -93,6 +93,62 @@ A verified empty footprint allows no memory access; an unknown footprint may
 include shared storage; an invalid observation cannot authorize an access.
 Losing a stale capture must not turn it into a fresh, valid unknown capture.
 
+## Alias-coherent storage facts
+
+The conservative-abstraction invariant also applies to memory contents. It is
+not enough to authorize a write and retain the chosen reference's validity.
+Facts recorded under another storage name must remain valid if both names can
+denote the same physical location. This is a requirement on the abstraction of
+storage, not a fifth permission category.
+
+Let `rho` map logical storage names to concrete locations, and let `H` be the
+heap. Distinct names do not constrain `rho(a) != rho(b)`. For ordinary cells:
+
+```text
+H' = store(H, rho(a), value)
+load(H', rho(a)) = value
+rho(a) != rho(b) implies load(H', rho(b)) = load(H, rho(b))
+```
+
+The inequality premise is essential. This is the read-over-write rule in the
+[SMT-LIB functional array theory](https://smt-lib.org/theories-ArraysEx.shtml),
+used here as a specification principle, not a proposal to introduce an SMT
+solver. Byte ranges and overlapping layouts additionally require the existing
+typed overlap rules; a cell equation alone does not prove spatial safety.
+
+If `Store#` is the abstract write, its result must include every concrete
+successor, including valuations where different logical names alias:
+
+```text
+{ (store(H, rho(a), value), rho) | (H, rho) in Gamma(F) }
+    is a subset of Gamma(Store#(F, a, value))
+```
+
+Updating only `Facts(a)` while retaining an incompatible old assertion about
+`Facts(b)` can silently remove the aliasing successor. A sound implementation
+must update or weaken the possibly affected facts, retain the relevant alias
+condition, or discharge a verified nonoverlap requirement. It must preserve
+possible reference/resource obligations as well as forget unjustified identities,
+initialization and selector proofs. Forgetting a fact does not itself destroy
+storage or end its actual backing generation.
+
+This is observable without threads, native pointer reconstruction or `Virtual`:
+a helper stores a reference to a temporary through one `Slot` input, lets that
+temporary expire, reads the reference through a second input, and finally
+repairs the first input. Passing the same slot twice currently compiles. The
+last repair hides the dependency at return but cannot justify the earlier read.
+The [compile-only reductions](examples/incomplete_reference_write/README.md)
+record this confirmed gap. The execution-loan authorization checkpoint does not
+establish sequential alias coherence.
+
+The same principle applies when a write's destination is not represented by
+any current name, or when its consequence crosses a call boundary. Abstract
+region/retention guarantees may bound that consequence, but lifetime-only
+anchors are not a closed destination set. Neither more `Virtual` special cases
+nor declaring all input references disjoint solves this requirement. The
+[write-conservation gates](reference_target_coverage.md#write-conservation-gates)
+define the next bounded implementation target.
+
 ## What an interface must say
 
 Reuse the existing operation description:
