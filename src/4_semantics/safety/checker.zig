@@ -14044,6 +14044,22 @@ test "observed stores retain reference validity through alias repair and uncover
     try std.testing.expect(state.tracker.dependenciesAreAlive(replaced));
     try std.testing.expect(!valueDependsOnRoot(replaced, scoped));
 
+    var forgotten = Stores.init(a, std.testing.allocator);
+    defer forgotten.deinit();
+    try forgotten.store(first, temporary, true, disjoint);
+    try forgotten.summarizeObservation(first, erased, disjoint);
+    // Reusing this logical current-observation key names a new evaluated
+    // reference. The summary still covers the old reference's retained value.
+    try forgotten.store(first, replacement, true, disjoint);
+    const previous_observation = try forgotten.read(second, original, disjoint);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(previous_observation));
+    try std.testing.expect(valueDependsOnRoot(previous_observation, temporary_root));
+    const current_observation = try forgotten.read(first, original, disjoint);
+    try std.testing.expect(state.tracker.dependenciesAreAlive(current_observation));
+    try std.testing.expect(!valueDependsOnRoot(current_observation, temporary_root));
+    try std.testing.expectEqual(@as(usize, 0), previous_observation.execution_receipts.len);
+    try std.testing.expectEqual(@as(usize, 0), previous_observation.storage_capabilities.len);
+
     var uncovered = Stores.init(a, std.testing.allocator);
     defer uncovered.deinit();
     const hidden = try state.tracker.establish(.fresh);

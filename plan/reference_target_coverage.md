@@ -139,8 +139,9 @@ is the common requirement. The next implementation must cover this matrix:
 | 234: temporarily store and then replace through the same erased reference value | Accept and observe the replacement through the original slot |
 | 229/231 and existing collection/view positives | Preserve acceptance |
 
-The three unsafe reductions are currently accepted in fresh, compile-only
-checks. They are not ordinary expected-success tests and must never run.
+The original incomplete-destination and caller-read reductions remain accepted
+in fresh compile-only checks. The aliased-input reduction is now rejected by
+235X/236X; see the checker binding below. None is an expected-success executable.
 The three new safe gates compile and execute successfully in the ordinary Zig
 fixture harness. No Python oracle, new runtime descriptor or compiler exception
 was introduced for this investigation.
@@ -186,9 +187,10 @@ avoid excessive inference, not an exemption from the ordinary aliasing case.
 ## Executable write-domain experiment
 
 `src/4_semantics/safety/observed_store.zig` is a candidate shared content domain,
-registered in the existing Zig internal-test harness. It is **not yet connected
-to production reads, writes or call summaries**. The accepted counterexamples
-above remain accepted. This experiment must not be described as their fix.
+registered in the existing Zig internal-test harness. At checkpoint `cdaca7dd8`
+it was not connected to production. Checkpoint `589cf2188` adds the partial
+symbolic-cell binding described below; unknown destinations and residual call
+writes remain open. The isolated experiment does not establish their fix.
 
 For each stable observed cell it keeps:
 
@@ -251,11 +253,12 @@ an entry in this content domain does not destroy its old owner, complete an
 execution or discharge another resource obligation. Call-entry authorization
 and the conservative completion-before-access policy are unchanged.
 
-Covered reference-cell writes need one source of content facts. Do not leave
-old eager weak updates as the initial value while also recording the same write
-in this domain: that would retain a historical temporary after replacement
-through the same observation. Typed aggregate/field reads must consult the same
-source; updating only indirect reads would repeat the abstraction gap.
+Once write coverage is complete, reference-cell contents need one authoritative
+source. Retaining eager historical weak updates as well would prevent clearing
+a temporary through the same observation. The partial binding deliberately
+keeps ordinary slot facts and may overretain them: it cannot erase an update
+that its new domain did not record. Typed aggregate/field reads must ultimately
+consult the same source; covering only indirect reads leaves an abstraction gap.
 
 The alias query must use typed overlap and existing physical/region evidence.
 Different symbolic names remain unknown rather than disjoint. This cell domain
@@ -349,3 +352,68 @@ failures, leaks or error logs were reported in those program runs. The original
 and caller-read reductions were freshly accepted in compile-only checks; their
 executables were never run. This is focused validation, not a new full-program
 suite result.
+
+
+## Observation identity across repeated evaluation
+
+A syntax node or producer function is not an evaluated reference identity.
+The [repeated-observation reduction](examples/incomplete_reference_write/repeated_observation/main.rg)
+calls the same virtual operation twice in a loop. Its provider returns `first`
+then `second`. The first store retains a short-lived reference; the second
+repairs only `second`. Reusing the call node as an exact write key would
+incorrectly erase the retained reference in `first`. A fresh compile-only check
+accepts the reduction; it must never execute. Fixture 237 is the safe counterpart:
+each obtained reference is repaired before the next observation, and both
+physical cells contain the replacement at the end.
+
+There is a related established distinction in
+[Balakrishnan and Reps, Recency-Abstraction for Heap-Allocated Storage](https://research.cs.wisc.edu/wpis/papers/sas06-recency.pdf):
+objects grouped by allocation site generally require weak updates, while a
+distinguished nonsummary object can support strong updates. Argi's problem here
+is observation identity, not allocation: a producer can return existing,
+overlapping storage. No freshness or disjointness follows from observing it
+again. The analogy motivates testing loss of exact identity; it does not justify
+adopting a general recency heap analysis.
+
+The existing store domain now has a tested `summarizeObservation` operation:
+
+1. Join a forgotten exact source's current payload into a weak summary source.
+2. Remove the exact source and discard overwrite proofs involving either the
+   forgotten identity or the changed summary.
+3. Mark the summary as such. Strong stores into that source are rejected; joins,
+   equality and snapshots preserve the distinction.
+4. Before reusing the exact key, the driver must rewrite **all** retained aliases
+   and payload observations to their weakened meaning. Merely changing the write
+   table would allow an old alias to name a newly observed reference.
+
+The operation is transactional on allocation failure. It is a content-domain
+forgetting operation, not a new permission, validity root or execution receipt.
+It is not yet used by production evaluation, so it does not close the repeated
+observation, incomplete destination or caller-read counterexamples.
+
+A finite oracle checks six successive observations, two concrete cells and two
+RHS values: all 4,096 traces. Reads cover the concrete memories; replacing through
+the unchanged current observation remains precise. At most two source rows are
+needed for this one producer. Other tests demonstrate why naive key reuse loses
+a payload, reject strong summary updates, check a metadata fixed point and check
+allocation-failure rollback. This is a bounded domain test, not a proof of a
+compiler loop analysis.
+
+The integration decision remains constrained: use existing physical identities
+when available; introduce exact **value** observations only where their scope,
+copying and invalidation can be justified; otherwise retain a weak residual
+source. Call summaries must transport its dependencies or conservatively reject
+a use that cannot be justified. Local observation IDs must not leak into public
+summaries or become authenticated loan targets. Do not connect fresh IDs to every
+call until joins, escaping aliases, loops and summary substitution satisfy these
+rules. A current/summary split is a candidate bounded loss-of-precision operation,
+not a requirement to add another universal heap model.
+
+Validation of the observation-forgetting experiment: 1,552 Debug internal tests
+passed (one skipped), followed by 11 focused domain/checker tests after the final
+assertions. Nine concurrency fixtures around 230--237 passed, including the
+previous alias rejection and repair gates and the new repeated-observation safe
+case. Runs were serial under a 6 GiB process limit; the full internal command
+peaked at 587,752 KiB RSS. The repeated-observation reduction was freshly accepted
+with frontend caching disabled and one frontend worker; it was never executed.
+No full-program-suite result is claimed for this increment.

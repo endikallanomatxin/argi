@@ -18,10 +18,15 @@ See [reference target coverage](../../reference_target_coverage.md).
   one slot at the call site; the body reads its expired reference through the
   second name before repairing through the first. This is now rejected and
   retained as negative concurrency fixture 235X.
+- `repeated_observation/` calls the same virtual producer twice in a loop,
+  retaining a short-lived reference in the first returned cell and repairing only
+  the second. It currently compiles. Fixture 237 repairs each observed reference
+  before the next call and is a safe executable counterpart.
 - `caller_read/` omits the slot read from the helper. The read occurs in its
   caller after the helper returns, so a body-only check cannot close the gap.
 
 These directories are compile-only reductions, never safe executable examples.
-The original and `caller_read/` remain accepted soundness counterexamples.
+The original, `caller_read/` and `repeated_observation/` remain accepted
+soundness counterexamples.
 The safe counterparts are concurrency fixtures 232, 233 and 234; see the
 [write-conservation gates](../../reference_target_coverage.md#write-conservation-gates).

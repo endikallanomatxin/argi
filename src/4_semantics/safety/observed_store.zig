@@ -19,6 +19,8 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             target: Key,
             value: Value,
             must_write: bool,
+            /// This source groups forgotten observations, not one exact cell.
+            summarized: bool = false,
             /// This definition definitely follows these sources' current writes.
             /// A new write to a source invalidates that proof in every other row.
             overwritten: []const Key = &.{},
@@ -59,6 +61,7 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
         /// Merely possible writes retain their previous possible payload.
         pub fn store(self: *Self, target: Key, value: Value, definite: bool, context: anytype) !void {
             const selected = self.index(target);
+            if (definite and selected != null and self.definitions.items[selected.?].summarized) return error.InvalidObservedStore;
             if (selected == null) try self.definitions.ensureUnusedCapacity(1);
             const previous: ?Definition = if (selected) |i| self.definitions.items[i] else null;
             const next_value = if (!definite and previous != null) try context.join(previous.?.value, value) else value;
@@ -94,8 +97,49 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             }
             // Publish only after every allocation and payload join succeeds.
             for (updates.items) |update| self.definitions.items[update.index].overwritten = update.overwritten;
-            const definition: Definition = .{ .target = target, .value = next_value, .must_write = definite or (previous != null and previous.?.must_write), .overwritten = overwritten };
+            const definition: Definition = .{ .target = target, .value = next_value, .must_write = definite or (previous != null and previous.?.must_write), .summarized = previous != null and previous.?.summarized, .overwritten = overwritten };
             if (selected) |i| self.definitions.items[i] = definition else self.definitions.appendAssumeCapacity(definition);
+        }
+
+        /// Forget one exact observation while retaining its writes in a weak
+        /// summary source. The driver must also rewrite every retained alias of
+        /// `source` before reusing that key for another evaluated reference.
+        /// Summary sources cannot be strongly written: they may denote many
+        /// cells. This operation changes content precision, never authority.
+        pub fn summarizeObservation(self: *Self, source: Key, summary: Key, context: anytype) !void {
+            if (source.eql(summary)) return error.InvalidObservedStore;
+            const source_index = self.index(source) orelse return;
+            if (self.index(summary)) |i| if (self.definitions.items[i].must_write) return error.InvalidObservedStore;
+            var candidate = Self.init(self.fact_allocator, self.definitions.allocator);
+            errdefer candidate.deinit();
+            try candidate.definitions.appendSlice(self.definitions.items);
+            try candidate.store(summary, self.definitions.items[source_index].value, false, context);
+            _ = candidate.definitions.orderedRemove(candidate.index(source).?);
+            for (candidate.definitions.items) |*definition| {
+                if (definition.target.eql(summary)) {
+                    definition.must_write = false;
+                    definition.summarized = true;
+                    definition.overwritten = &.{};
+                    continue;
+                }
+                // Neither an exact old source nor an old summary denotes the
+                // newly widened source. Their kill proofs cannot survive.
+                var count: usize = 0;
+                for (definition.overwritten) |key|
+                    if (!key.eql(source) and !key.eql(summary)) {
+                        count += 1;
+                    };
+                if (count == definition.overwritten.len) continue;
+                const keys = try self.fact_allocator.alloc(Key, count);
+                var next: usize = 0;
+                for (definition.overwritten) |key| if (!key.eql(source) and !key.eql(summary)) {
+                    keys[next] = key;
+                    next += 1;
+                };
+                definition.overwritten = keys;
+            }
+            self.definitions.deinit();
+            self.definitions = candidate.definitions;
         }
 
         pub fn needsInitial(self: *const Self, target: Key, context: anytype) bool {
@@ -130,7 +174,8 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             for (left.definitions.items) |a| {
                 const b = if (right.index(a.target)) |i| right.definitions.items[i] else null;
                 var merged = a;
-                merged.must_write = b != null and a.must_write and b.?.must_write;
+                merged.summarized = a.summarized or (b != null and b.?.summarized);
+                merged.must_write = !merged.summarized and b != null and a.must_write and b.?.must_write;
                 merged.overwritten = &.{};
                 if (b) |other| {
                     merged.value = try context.join(a.value, other.value);
@@ -160,7 +205,7 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             if (self.definitions.items.len != other.definitions.items.len) return false;
             for (self.definitions.items) |a| {
                 const b = other.definitions.items[other.index(a.target) orelse return false];
-                if (a.must_write != b.must_write or !sameKeys(a.overwritten, b.overwritten) or !context.equal(a.value, b.value)) return false;
+                if (a.summarized != b.summarized or a.must_write != b.must_write or !sameKeys(a.overwritten, b.overwritten) or !context.equal(a.value, b.value)) return false;
             }
             return true;
         }
@@ -175,6 +220,7 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             var result = Self.init(fact_allocator, state_allocator);
             errdefer result.deinit();
             for (definitions) |definition| {
+                if (definition.summarized and (definition.must_write or definition.overwritten.len != 0)) return error.InvalidObservedStore;
                 if (result.index(definition.target) != null or contains(definition.overwritten, definition.target)) return error.InvalidObservedStore;
                 for (definition.overwritten, 0..) |key, proof_index| {
                     if (contains(definition.overwritten[0..proof_index], key)) return error.InvalidObservedStore;
@@ -335,4 +381,135 @@ test "observed stores reject duplicate and dangling snapshot keys" {
     try std.testing.expectError(error.InvalidObservedStore, Bits.restore(a, std.testing.allocator, &.{.{ .target = testKey(0), .value = 1, .must_write = true, .overwritten = &.{testKey(1)} }}));
     const other: Bits.Definition = .{ .target = testKey(1), .value = 2, .must_write = true };
     try std.testing.expectError(error.InvalidObservedStore, Bits.restore(a, std.testing.allocator, &.{ .{ .target = testKey(0), .value = 1, .must_write = true, .overwritten = &.{ testKey(1), testKey(1) } }, other }));
+}
+
+// The current observation changes its physical target at each simulated call.
+// A summary source can denote any prior target, not a fresh allocation.
+const ReobservedContext = struct {
+    current: u8,
+    pub fn relation(self: @This(), a: TestKey, b: TestKey) Relation {
+        const left = @intFromEnum(a.symbolic);
+        const right = @intFromEnum(b.symbolic);
+        if (left == 1 or right == 1) return .unknown;
+        const x = if (left == 0) self.current else left - 2;
+        const y = if (right == 0) self.current else right - 2;
+        return if (x == y) .same else .disjoint;
+    }
+    pub fn join(_: @This(), a: u8, b: u8) !u8 {
+        return a | b;
+    }
+    pub fn equal(_: @This(), a: u8, b: u8) bool {
+        return a == b;
+    }
+};
+
+test "observed stores cannot reuse a call-site key without retaining prior targets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var naive = Bits.init(arena.allocator(), std.testing.allocator);
+    defer naive.deinit();
+    try naive.store(testKey(0), 2, true, ReobservedContext{ .current = 0 });
+    // The same producer now returns a different cell. Pretending this is the
+    // same observed value loses the first cell's still-retained payload.
+    try naive.store(testKey(0), 4, true, ReobservedContext{ .current = 1 });
+    try std.testing.expectEqual(@as(u8, 0), (try naive.read(testKey(2), 1, ReobservedContext{ .current = 1 })) & 2);
+
+    var retained = Bits.init(arena.allocator(), std.testing.allocator);
+    defer retained.deinit();
+    try retained.store(testKey(0), 2, true, ReobservedContext{ .current = 0 });
+    try retained.summarizeObservation(testKey(0), testKey(1), ReobservedContext{ .current = 0 });
+    try retained.store(testKey(0), 4, true, ReobservedContext{ .current = 1 });
+    try std.testing.expect((try retained.read(testKey(2), 1, ReobservedContext{ .current = 1 })) & 2 != 0);
+    // Replacing through one unchanged current observation is still precise.
+    try std.testing.expectEqual(@as(u8, 4), try retained.read(testKey(0), 1, ReobservedContext{ .current = 1 }));
+}
+
+test "observed stores summarize repeated observations with bounded source rows" {
+    // Six calls, two physical cells and two possible RHS values: all 4096
+    // concrete traces, including repeated and changing targets at one producer.
+    for (0..4096) |trace| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var stores = Bits.init(arena.allocator(), std.testing.allocator);
+        defer stores.deinit();
+        var memory: [2]u8 = .{ 1, 1 };
+        var rest = trace;
+        for (0..6) |_| {
+            const target: u8 = @intCast(rest % 2);
+            const value: u8 = if (rest % 4 < 2) 2 else 4;
+            rest /= 4;
+            const context = ReobservedContext{ .current = target };
+            try stores.summarizeObservation(testKey(0), testKey(1), context);
+            try stores.store(testKey(0), value, true, context);
+            memory[target] = value;
+            for (memory, 0..) |actual, index|
+                try std.testing.expect((try stores.read(testKey(index + 2), 1, context)) & actual != 0);
+            try std.testing.expectEqual(value, try stores.read(testKey(0), 1, context));
+            try std.testing.expect(stores.definitions.items.len <= 2);
+        }
+    }
+}
+
+test "observed store summarization is transactional on allocation failure" {
+    var success = false;
+    for (0..24) |failure| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var stores = Bits.init(arena.allocator(), std.testing.allocator);
+        defer stores.deinit();
+        try stores.store(testKey(0), 2, true, BitContext{});
+        try stores.store(testKey(1), 4, false, BitContext{});
+        try stores.store(testKey(2), 1, true, BitContext{});
+        const before = try stores.snapshot(arena.allocator());
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = failure });
+        var mutation = std.heap.ArenaAllocator.init(failing.allocator());
+        defer mutation.deinit();
+        stores.fact_allocator = mutation.allocator();
+        stores.definitions.allocator = failing.allocator();
+        defer stores.definitions.allocator = std.testing.allocator;
+        stores.summarizeObservation(testKey(0), testKey(1), BitContext{}) catch |err| {
+            if (err != error.OutOfMemory) return err;
+            try std.testing.expectEqualDeep(before, stores.definitions.items);
+            continue;
+        };
+        success = true;
+        try std.testing.expectEqual(@as(usize, 2), stores.definitions.items.len);
+        try std.testing.expectEqual(@as(u8, 7), try stores.read(testKey(1), 1, BitContext{}));
+        break;
+    }
+    try std.testing.expect(success);
+}
+
+test "observed stores reject exact overwrites of summarized observations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var stores = Bits.init(arena.allocator(), std.testing.allocator);
+    defer stores.deinit();
+    try stores.store(testKey(0), 2, true, BitContext{});
+    try std.testing.expectError(error.InvalidObservedStore, stores.summarizeObservation(testKey(0), testKey(0), BitContext{}));
+    try stores.summarizeObservation(testKey(0), testKey(1), BitContext{});
+    const before = try stores.snapshot(arena.allocator());
+    try std.testing.expectError(error.InvalidObservedStore, stores.store(testKey(1), 4, true, BitContext{}));
+    try std.testing.expectEqualDeep(before, stores.definitions.items);
+    var restored = try Bits.restore(arena.allocator(), std.testing.allocator, before);
+    defer restored.deinit();
+    try std.testing.expect(restored.eql(&stores, BitContext{}));
+    try std.testing.expectError(error.InvalidObservedStore, restored.store(testKey(1), 4, true, BitContext{}));
+    var empty = Bits.init(arena.allocator(), std.testing.allocator);
+    defer empty.deinit();
+    var joined = try Bits.join(arena.allocator(), std.testing.allocator, &stores, &empty, BitContext{});
+    defer joined.deinit();
+    try std.testing.expectError(error.InvalidObservedStore, joined.store(testKey(1), 4, true, BitContext{}));
+    var invalid = before[0];
+    invalid.must_write = true;
+    try std.testing.expectError(error.InvalidObservedStore, Bits.restore(arena.allocator(), std.testing.allocator, &.{invalid}));
+    // Once the finite payload has stabilized, repeated observation recycling
+    // reaches the same metadata state instead of adding historical rows.
+    try stores.store(testKey(0), 4, true, BitContext{});
+    try stores.summarizeObservation(testKey(0), testKey(1), BitContext{});
+    try stores.store(testKey(0), 4, true, BitContext{});
+    const fixed = try stores.snapshot(arena.allocator());
+    try stores.summarizeObservation(testKey(0), testKey(1), BitContext{});
+    try stores.store(testKey(0), 4, true, BitContext{});
+    try std.testing.expectEqualDeep(fixed, stores.definitions.items);
 }
