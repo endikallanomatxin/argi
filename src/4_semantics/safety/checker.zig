@@ -1233,7 +1233,21 @@ pub const SafetyChecker = struct {
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
-                        try state.setPlace(try self.project(base, projection), .initialized, value);
+                        const target = try self.project(base, projection);
+                        // Two unknown indices need not identify the same cell.
+                        // The second store cannot discard the first value.
+                        const previous = if (projection == .dynamic_index) state.getPlace(target) else null;
+                        const retained = if (previous) |entry|
+                            try self.joinObservedSymbolicValues(
+                                try self.reconstructPlaceValue(state, target, entry.value),
+                                value,
+                                null,
+                                null,
+                                &.{},
+                            )
+                        else
+                            value;
+                        try state.setPlace(target, .initialized, retained);
                     } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
                 },
                 .pointer_assignment => |assignment| {
@@ -3319,8 +3333,26 @@ pub const SafetyChecker = struct {
             } else {
                 const fallback = try self.projectValueFacts(value, &.{projection});
                 if (storage) |place| {
-                    storage = try self.project(place, projection);
-                    value = try self.reconstructPlaceValue(state, storage.?, self.valueAtPlace(state, storage.?) orelse fallback);
+                    if (projection == .dynamic_index) {
+                        value = fallback;
+                        storage = null;
+                    } else {
+                        const selected = try self.project(place, projection);
+                        storage = selected;
+                        value = try self.reconstructPlaceValue(state, selected, self.valueAtPlace(state, selected) orelse fallback);
+                    }
+                    if (projection == .static_index or projection == .dynamic_index) {
+                        // An unknown-index write can contribute to any element.
+                        // Further projections must select from the joined value.
+                        for (state.places.items) |entry| {
+                            if (entry.storage.projections.len != place.projections.len + 1 or
+                                !place.isPrefixOf(entry.storage) or entry.storage.projections[place.projections.len] != .dynamic_index) continue;
+                            const written = try self.reconstructPlaceValue(state, entry.storage, entry.value);
+                            value = try self.joinObservedSymbolicValues(value, written, null, null, &.{});
+                            storage = null;
+                            break;
+                        }
+                    }
                 } else if (symbolic) |pointer| {
                     const projected = try self.projectSymbolicStorage(pointer, projection, state);
                     symbolic = projected;
@@ -11382,6 +11414,32 @@ test "dynamic projected writes retain newly merged roots" {
     const refreshed = try checker.reconstructPlaceValue(&state, storage, .{});
     try std.testing.expect(valueDependsOnRoot(refreshed, root));
     try std.testing.expect(valueContainsOwnedRoot(refreshed, root));
+}
+
+test "summary loads retain elements not selected by an unknown-index write" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const array: facts.Place = .{ .root = @enumFromInt(0) };
+    const old: facts.Place = .{ .root = @enumFromInt(1) };
+    const new: facts.Place = .{ .root = @enumFromInt(2) };
+    const element: facts.ValueFacts = .{ .referenced_place = old };
+    try state.setPlace(array, .initialized, .{ .fields = &.{
+        .{ .index = 0, .value = &element },
+        .{ .index = 1, .value = &element },
+    } });
+    try state.setPlace(try checker.project(array, .dynamic_index), .initialized, .{ .referenced_place = new });
+    for ([_]facts.Projection{ .dynamic_index, .{ .static_index = 0 } }) |selection| {
+        const loaded = try checker.load_summary_input_value(.{ .input_index = 0, .projections = &.{selection} }, &.{.{ .referenced_place = array }}, &state);
+        try std.testing.expect(loaded.referenced_place == null);
+        try std.testing.expectEqual(@as(usize, 2), loaded.mutation_places.len);
+        try std.testing.expect(loaded.mutation_places[0].eql(old));
+        try std.testing.expect(loaded.mutation_places[1].eql(new));
+    }
 }
 
 test "array concrete projections select and merge element facts" {
