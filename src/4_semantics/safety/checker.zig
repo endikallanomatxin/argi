@@ -3076,6 +3076,7 @@ pub const SafetyChecker = struct {
             return;
         }
         if (pointer.referenced_place) |place| try self.requireExecutionAccess(source, place, null, mode, state);
+        for (pointer.mutation_places) |place| try self.requireExecutionAccess(source, place, null, mode, state);
         for (pointer.symbolic_pointees) |identity| try self.requireExecutionAccess(source, null, identity, mode, state);
     }
 
@@ -13163,6 +13164,30 @@ test "unknown call effects require completion before access authority is restore
     _ = try plain.establishExecution(&.{});
     // A task without borrowed storage imposes no caller memory restriction.
     try std.testing.expect(try checker.validateSummaryExecutionAccess(source, .{ .unknown_access = true }, &.{}, &.{}, &plain));
+}
+
+test "execution access checks each known concrete candidate" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    const pointer: facts.ValueFacts = .{ .referenced_place = first, .mutation_places = &.{second} };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const loan = try state.establishExecution(&.{.{ .storage = second, .mode = .write }});
+    try checker.requireExecutionPointerAccess(source, pointer, .read, &state);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    state.completeExecution(loan);
+    try checker.requireExecutionPointerAccess(source, pointer, .read, &state);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
 test "unknown reference targets preserve read compatibility without bypassing execution loans" {
