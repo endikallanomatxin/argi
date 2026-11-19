@@ -3184,12 +3184,18 @@ pub const SafetyChecker = struct {
                 var result = values[0].derivedReference();
                 if ((primitive == .reference_offset or primitive == .mutable_reference_offset) and argument_ids.len >= 2) {
                     const index_node = self.graph.value_fields.items[@intFromEnum(argument_ids[1])].value;
-                    if (self.staticIndex(index_node)) |offset| if (values[0].referenced_place) |base| {
-                        const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
-                        const element_type = self.graph.semanticType(input_type).pointer.child;
-                        result.referenced_place = try self.offsetArrayPlace(base, offset, element_type);
-                        if (result.referenced_place != null) result.reference_target_incomplete = false;
-                    };
+                    if (self.staticIndex(index_node)) |offset| {
+                        if (offset == 0) break :blk values[0].referenceCopy();
+                        const root = values[0];
+                        if (!root.reference_target_incomplete and root.mutation_places.len == 0 and root.symbolic_pointees.len == 0) {
+                            if (root.referenced_place) |base| {
+                                const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
+                                const element_type = self.graph.semanticType(input_type).pointer.child;
+                                result.referenced_place = try self.offsetArrayPlace(base, offset, element_type);
+                                if (result.referenced_place != null) result.reference_target_incomplete = false;
+                            }
+                        }
+                    }
                 }
                 break :blk result;
             },

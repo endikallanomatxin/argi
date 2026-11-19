@@ -1,0 +1,13 @@
+write := (.value: $&Int32) -> () { value& = 42 }
+
+main := (.system: System) -> () {
+    provider ::= ThreadedExecutor(.ffi = system.ffi)
+    assume executor ::= Virtual#(Executor)($&provider)
+    first: Int32 = 7
+    second :: Int32 = 9
+    selected ::= trusted_reference_offset#(.t: Int32)(.base = &first, .elements = 0).reference
+    future ::= unwrap_or_abort(.value = async#(write)(.args = (.value = $&second)))
+    if selected& != 7 { abort }
+    _ = unwrap_or_abort(.value = await($&future))
+    if second != 42 { abort }
+}
