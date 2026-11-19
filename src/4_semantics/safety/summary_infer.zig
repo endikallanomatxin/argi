@@ -1364,6 +1364,13 @@ pub const Infer = struct {
                 const selected = switch (self.graph.node(value).content) {
                     .function_call => |call| blk: {
                         if (call.callee_value != null) break;
+                        if (self.structArguments(call.input)) |arguments| {
+                            if (self.isZeroReferenceOffset(self.graph.function(call.callee), arguments)) {
+                                try calls.append(self.allocator, .{ .call = value, .argument = arguments[0].value });
+                                value = arguments[0].value;
+                                continue;
+                            }
+                        }
                         break :blk .{ self.engine.summaryFor(call.callee) orelse break, call.input };
                     },
                     .virtual_call => |id| blk: {
@@ -1391,6 +1398,13 @@ pub const Infer = struct {
             }
         }
         return calls.toOwnedSlice(self.allocator);
+    }
+
+    fn isZeroReferenceOffset(self: *Infer, function: graph_mod.Function, arguments: []const graph_mod.ValueField) bool {
+        return switch (function.safety_primitive) {
+            .reference_offset, .mutable_reference_offset => arguments.len == 2 and self.staticIndex(arguments[1].value) == 0,
+            else => false,
+        };
     }
 
     /// Forward exact outputs of one call through a straight-line wrapper.
@@ -5969,7 +5983,10 @@ pub const Infer = struct {
             return self.validityOnlyEffect(try self.inferExpression(function_id, arguments[1].value));
         }
         if (callee_function.safety_primitive != .none) {
-            const effect = try self.primitiveValueEffect(callee_function.safety_primitive, self.freshSource(call_node, 0), callee);
+            const effect = if (self.isZeroReferenceOffset(callee_function, arguments))
+                try self.inputValueEffect(0, &.{})
+            else
+                try self.primitiveValueEffect(callee_function.safety_primitive, self.freshSource(call_node, 0), callee);
             return self.substituteOutput(function_id, effect, arguments);
         }
         const summary = self.engine.summaryFor(callee) orelse return .{};
