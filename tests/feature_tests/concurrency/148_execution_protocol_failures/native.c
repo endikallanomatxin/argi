@@ -66,5 +66,11 @@ int32_t execution_protocol_probe(void) {
     joined = joins;
     task = probe_task_inline(calculate, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
     if (!task || calls != 3 || probe_reclaim(task) || probe_task_destroy(task) || joins != joined) abort();
+
+    /* Discarding an accepted task must still run and join its callback. */
+    run_on_create = 0;
+    task = probe_task_create(calculate, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
+    if (!task || calls != 3 || !pending_start) abort();
+    if (probe_task_destroy(task) || calls != 4 || pending_start || joins != joined + 1) abort();
     return 0;
 }
