@@ -8120,7 +8120,9 @@ pub const SafetyChecker = struct {
 
     fn checkedDomainStorage(self: *SafetyChecker, domain: facts.DomainFacts, state: *FunctionState) ![]const facts.Place {
         for (domain.traversals) |traversal| {
+            if (state.initializednessAtPlace(traversal.slot) != .initialized) return error.MissingVirtualStorageDomain;
             const stored = self.valueAtPlace(state, traversal.slot) orelse return error.MissingVirtualStorageDomain;
+            if (stored.reference_target_incomplete or !state.tracker.dependenciesAreAlive(stored)) return error.MissingVirtualStorageDomain;
             const target = stored.referenced_place orelse return error.MissingVirtualStorageDomain;
             if (!target.eql(traversal.target)) return error.MissingVirtualStorageDomain;
         }
@@ -13527,6 +13529,16 @@ test "capture observations remain checked independently of execution authority" 
     // turning its old target into an unknown but authorized observation.
     try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, summary, &.{}, &.{captured}, &state));
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+
+    const generation = try state.tracker.establish(.fresh);
+    try state.setPlace(slot, .initialized, .{
+        .referenced_place = first,
+        .dependencies = &.{.{ .root = generation }},
+    });
+    try std.testing.expect(try checker.validateSummaryExecutionAccess(source, summary, &.{}, &.{captured}, &state));
+    try std.testing.expect(try checker.endRoot(source, &state, generation));
+    try std.testing.expect(!try checker.validateSummaryExecutionAccess(source, summary, &.{}, &.{captured}, &state));
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
 }
 
 test "lexical reference frames weaken at joins and never flow from a containing slot" {
