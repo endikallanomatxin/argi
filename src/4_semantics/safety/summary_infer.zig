@@ -1814,7 +1814,7 @@ pub const Infer = struct {
                         const arguments = self.structArguments(call.input) orelse continue;
                         if (arguments.len != 2) continue;
                         const value = (try self.localPointeeEffect(function_id, arguments[0].value)) orelse
-                            try self.inferOpaqueRead(function_id, node_id, arguments[0].value, try self.inferExpression(function_id, arguments[0].value));
+                            try self.inferOpaqueRead(function_id, node_id, arguments[0].value, null, try self.inferExpression(function_id, arguments[0].value));
                         for (try self.localAddressTargets(arguments[1].value)) |target|
                             try self.storeSelectedValueEffect(function_id, target, &.{}, try self.withOwnershipTransfer(value), outputs, .locals_and_outputs);
                     }
@@ -5871,6 +5871,7 @@ pub const Infer = struct {
                 function_id,
                 node_id,
                 value.pointer,
+                null,
                 try self.inferExpression(function_id, value.pointer),
             ),
             .struct_value_literal => |literal| try self.inferAggregate(function_id, node_id, literal.fields),
@@ -5891,15 +5892,17 @@ pub const Infer = struct {
                 const payload = try self.projectValueEffect(choice, .{ .variant = variant_index });
                 break :blk try self.inferOpaqueReadFromSyntax(function_id, node_id, payload);
             },
-            .array_index => |index| try self.inferOpaqueRead(
-                function_id,
-                node_id,
-                index.array_ptr,
-                try self.projectValueEffect(
-                    try self.inferExpression(function_id, index.array_ptr),
-                    if (self.staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index,
-                ),
-            ),
+            .array_index => |index| blk: {
+                const projection: facts.Projection = if (self.staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index;
+                const array = try self.inferExpression(function_id, index.array_ptr);
+                break :blk try self.inferOpaqueRead(
+                    function_id,
+                    node_id,
+                    index.array_ptr,
+                    projection,
+                    try self.projectValueEffect(array, projection),
+                );
+            },
             .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
                 try self.inferExpression(function_id, cast.value)
             else
@@ -6729,6 +6732,7 @@ pub const Infer = struct {
         function_id: graph_mod.GlobalFunctionId,
         node_id: graph_mod.GlobalNodeId,
         pointer: graph_mod.GlobalNodeId,
+        projection: ?facts.Projection,
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
         const ty = self.graph.node(node_id).ty orelse return .{};
@@ -6740,7 +6744,10 @@ pub const Infer = struct {
         if (input_paths.len != 0) {
             pointee.input_dependencies = &.{};
             pointee.input_places = &.{};
-            pointee.input_place_values = input_paths;
+            pointee.input_place_values = if (projection) |selected|
+                try self.projectInputPaths(input_paths, selected)
+            else
+                input_paths;
         }
         const direct = try self.inferInputPaths(function_id, pointer);
         const sources = if (direct.len != 0) direct else try self.opaqueGenerationSourcePaths(pointee);
