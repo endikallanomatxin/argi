@@ -3184,6 +3184,8 @@ pub const SafetyChecker = struct {
                     break :blk values[0].referenceCopy();
                 var result = values[0].derivedReference();
                 if ((primitive == .reference_offset or primitive == .mutable_reference_offset) and argument_ids.len >= 2) {
+                    const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
+                    const element_type = self.graph.semanticType(input_type).pointer.child;
                     const index_node = self.graph.value_fields.items[@intFromEnum(argument_ids[1])].value;
                     if (self.staticIndex(index_node)) |offset| {
                         if (offset == 0) break :blk values[0].referenceCopy();
@@ -3192,12 +3194,15 @@ pub const SafetyChecker = struct {
                             root.symbolic_pointees.len == 0 and state.tracker.dependenciesAreAlive(root))
                         {
                             if (root.referenced_place) |base| {
-                                const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
-                                const element_type = self.graph.semanticType(input_type).pointer.child;
                                 result.referenced_place = try self.offsetArrayPlace(base, offset, element_type);
                                 if (result.referenced_place != null) result.reference_target_incomplete = false;
                             }
                         }
+                    }
+                    if (result.referenced_place == null and self.typeContainsPointer(element_type) and
+                        self.arrayBackingRoot(values[0]) != null)
+                    {
+                        try self.report(source, "cannot establish reference-bearing element contents for this offset; use checked array indexing", .{});
                     }
                 }
                 break :blk result;
