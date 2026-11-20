@@ -5481,7 +5481,12 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            const input = try self.load_summary_input_value(path, arguments, state);
+            var selected = path;
+            // An unprojected input place denotes the immediate referent.
+            // A pointer stored there is the value being copied.
+            if (path.projections.len == 0 and path.storage_domain == null)
+                selected.projections = &.{.dereference};
+            const input = try self.load_summary_input_value(selected, arguments, state);
             unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
             includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             result = try self.mergeValueFacts(result, input);

@@ -6929,6 +6929,10 @@ pub const Infer = struct {
     fn inferForwardedInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, call: anytype) anyerror![]const facts.InputPath {
         if (call.callee_value != null) return &.{};
         const callee = self.graph.function(call.callee);
+        if (self.structArguments(call.input)) |arguments| {
+            if (self.isZeroReferenceOffset(callee, arguments))
+                return self.inferInputPaths(function_id, arguments[0].value);
+        }
         if (callee.flags.is_c_abi or callee.safety_primitive != .none or callee.output.len != 1) return &.{};
         const ty = self.graph.fields.items[callee.output.start].ty;
         if (self.graph.semanticType(ty) != .pointer) return &.{};
