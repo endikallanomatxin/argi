@@ -5877,7 +5877,17 @@ pub const Infer = struct {
                     // whole referent and does not inherit its ownership.
                     const base = self.graph.node(index.array_ptr).content;
                     const pointer = if (base == .dereference) base.dereference.pointer else index.array_ptr;
-                    break :blk try self.validityOnlyEffect(try self.inferExpression(function_id, pointer));
+                    var effect = try self.validityOnlyEffect(try self.inferExpression(function_id, pointer));
+                    const source = self.graph.node(pointer).content;
+                    if (source == .binding_use and self.graph.binding(source.binding_use).mutability == .constant) {
+                        if (self.inputIndex(function_id, source.binding_use)) |input| {
+                            if (self.staticIndex(index.index)) |element| {
+                                const projections = try self.allocator.dupe(facts.Projection, &.{.{ .static_index = element }});
+                                effect.input_places = try self.oneInputPath(input, projections);
+                            }
+                        }
+                    }
+                    break :blk effect;
                 }
                 break :blk .{ .input_places = try self.inferInputPaths(function_id, value) };
             },
