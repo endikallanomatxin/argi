@@ -8085,7 +8085,7 @@ pub const SafetyChecker = struct {
 
     /// Offset an identified array element without treating the source element
     /// as the destination. Field adjacency and unknown extents prove nothing.
-    /// A byte offset cannot distinguish zero-sized elements for cleanup.
+    /// A checked element index distinguishes zero-sized slots for cleanup.
     fn offsetArrayPlace(self: *SafetyChecker, base: facts.Place, offset: usize, element: graph_mod.GlobalTypeId) !?facts.Place {
         if (base.projections.len == 0) return null;
         const last = base.projections.len - 1;
@@ -8094,7 +8094,6 @@ pub const SafetyChecker = struct {
         const ty = self.domainStorageType(array) orelse return null;
         const length = types.arrayLength(self.graph, ty) orelse return null;
         if (!types.equal(self.graph, element, types.arrayElement(self.graph, ty) orelse return null)) return null;
-        if ((types.sizeOf(self.graph, element) catch return null) == 0) return null;
         const index = std.math.add(usize, base.projections[last].static_index, offset) catch return null;
         if (index >= length) return null;
         return try self.project(array, .{ .static_index = index });
