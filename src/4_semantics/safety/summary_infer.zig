@@ -6768,6 +6768,9 @@ pub const Infer = struct {
         // its referent rather than copying the field's reference-slot facts.
         const input_paths = try self.inferPointeePaths(function_id, pointer);
         var pointee = effect;
+        // The relation describes the address being loaded. A reference
+        // contained in that slot can designate unrelated storage.
+        pointee.reference_relation = null;
         if (input_paths.len != 0) {
             pointee.input_dependencies = &.{};
             pointee.input_places = &.{};
@@ -8930,6 +8933,41 @@ test "virtual safety contract scalar summaries require no concrete implementatio
     try std.testing.expectEqual(@as(usize, 2), bounded.input_accesses.len);
     try std.testing.expectEqual(facts.AccessMode.read, bounded.input_accesses[0].mode);
     try std.testing.expectEqual(facts.AccessMode.write, bounded.input_accesses[1].mode);
+}
+
+test "reference loads retain the slot recipe without inheriting its backing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const slot_ty: graph_mod.GlobalTypeId = @enumFromInt(2);
+    const value_ty: graph_mod.GlobalTypeId = @enumFromInt(1);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .pointer = .{ .child = value_ty, .mutability = .read_only } },
+    });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = slot_ty, .mutability = .constant });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = slot_ty });
+    try graph.binding_refs.append(a, @enumFromInt(0));
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 0, .len = 1 } });
+    try graph.nodes.appendSlice(a, &.{
+        .{ .source = source, .ty = slot_ty, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = value_ty, .content = .{ .dereference = .{ .pointer = @enumFromInt(0), .ty = value_ty, .pointer_type = slot_ty } } },
+    });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const slot: facts.InputPath = .{ .input_index = 0 };
+    const effect = try infer.inferOpaqueRead(@enumFromInt(0), @enumFromInt(1), @enumFromInt(0), null, .{
+        .reference_relation = .{ .source = slot, .grade = .backing },
+    });
+    try std.testing.expect(effect.reference_relation == null);
+    try std.testing.expectEqual(@as(usize, 1), effect.input_place_values.len);
+    try std.testing.expect(effect.input_place_values[0].eql(slot));
 }
 
 test "validity-only transfer retains loaded input anchor paths" {
