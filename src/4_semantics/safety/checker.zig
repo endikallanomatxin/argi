@@ -4463,6 +4463,12 @@ pub const SafetyChecker = struct {
         for (summary.input_accesses) |access| {
             if (access.backing) {
                 const observed = try self.referenceObservationInput(access.target, arguments, state);
+                if (state.tracker.dependenciesAreAlive(observed)) {
+                    if (self.arrayBackingRoot(observed)) |root| {
+                        try self.requireExecutionAccess(source, root, null, access.mode, state);
+                        continue;
+                    }
+                }
                 try self.requireExecutionPointerAccess(source, observed.derivedReference(), access.mode, state);
                 continue;
             }
@@ -8079,6 +8085,32 @@ pub const SafetyChecker = struct {
         const index = std.math.add(usize, base.projections[last].static_index, offset) catch return null;
         if (index >= length) return null;
         return try self.project(array, .{ .static_index = index });
+    }
+
+    /// A backing-preserving offset may reach any byte of the enclosing
+    /// allocation. Structural fields of a nested array share that allocation
+    /// with their enclosing record, so authorize access against the root.
+    fn arrayBackingRoot(self: *SafetyChecker, reference: facts.ValueFacts) ?facts.Place {
+        if (reference.reference_target_incomplete or reference.mutation_places.len != 0 or reference.symbolic_pointees.len != 0) return null;
+        const element = reference.referenced_place orelse return null;
+        const root: facts.Place = .{ .root = element.root };
+        var ty = self.domainStorageType(root) orelse return null;
+        for (element.projections, 0..) |projection, index| switch (projection) {
+            .field => |field| {
+                if (isPointer(self.graph, ty)) return null;
+                const fields = types.fields(self.graph, ty) orelse return null;
+                if (field >= fields.len) return null;
+                ty = self.graph.fields.items[fields.start + field].ty;
+            },
+            .static_index => |slot| {
+                const length = types.arrayLength(self.graph, ty) orelse return null;
+                if (slot >= length) return null;
+                if (index + 1 == element.projections.len) return root;
+                ty = types.arrayElement(self.graph, ty) orelse return null;
+            },
+            else => return null,
+        };
+        return if ((types.arrayLength(self.graph, ty) orelse 0) != 0) root else null;
     }
 
     fn domainStorageType(self: *SafetyChecker, storage: facts.Place) ?graph_mod.GlobalTypeId {
