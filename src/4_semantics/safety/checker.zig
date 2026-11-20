@@ -3355,10 +3355,13 @@ pub const SafetyChecker = struct {
                     if (projection == .static_index or projection == .dynamic_index) {
                         // An unknown-index write can contribute to any element.
                         // Further projections must select from the joined value.
+                        const depth = place.projections.len;
                         for (state.places.items) |entry| {
-                            if (entry.storage.projections.len != place.projections.len + 1 or
-                                !place.isPrefixOf(entry.storage) or entry.storage.projections[place.projections.len] != .dynamic_index) continue;
-                            const written = try self.reconstructPlaceValue(state, entry.storage, entry.value);
+                            if (entry.storage.projections.len <= depth or
+                                !place.isPrefixOf(entry.storage) or entry.storage.projections[depth] != .dynamic_index) continue;
+                            const weak = facts.Place{ .root = place.root, .projections = entry.storage.projections[0 .. depth + 1] };
+                            const prior = if (state.getPlace(weak)) |exact| exact.value else facts.ValueFacts{};
+                            const written = try self.reconstructPlaceValue(state, weak, prior);
                             value = try self.joinObservedSymbolicValues(value, written, null, null, &.{});
                             storage = null;
                             break;
@@ -11496,6 +11499,32 @@ test "summary loads retain elements not selected by an unknown-index write" {
         try std.testing.expect(loaded.mutation_places[0].eql(old));
         try std.testing.expect(loaded.mutation_places[1].eql(new));
     }
+}
+
+test "summary array loads include nested writes through unknown indices" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const array: facts.Place = .{ .root = @enumFromInt(0) };
+    const original = try state.tracker.establish(.fresh);
+    const written = try state.tracker.establish(.fresh);
+    const field: facts.ValueFacts = .{ .dependencies = &.{.{ .root = original }} };
+    const element: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &field }} };
+    try state.setPlace(array, .initialized, .{ .fields = &.{.{ .index = 0, .value = &element }} });
+    const destination = try checker.project(try checker.project(array, .dynamic_index), .{ .field = 0 });
+    try state.setPlace(destination, .initialized, .{ .dependencies = &.{.{ .root = written }} });
+
+    const result = try checker.load_summary_input_value(.{
+        .input_index = 0,
+        .projections = &.{ .{ .static_index = 0 }, .{ .field = 0 } },
+    }, &.{.{ .referenced_place = array }}, &state);
+    try std.testing.expect(valueDependsOnRoot(result, original));
+    try std.testing.expect(valueDependsOnRoot(result, written));
 }
 
 test "array concrete projections select and merge element facts" {
