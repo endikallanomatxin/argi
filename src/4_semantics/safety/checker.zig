@@ -3188,7 +3188,9 @@ pub const SafetyChecker = struct {
                     if (self.staticIndex(index_node)) |offset| {
                         if (offset == 0) break :blk values[0].referenceCopy();
                         const root = values[0];
-                        if (!root.reference_target_incomplete and root.mutation_places.len == 0 and root.symbolic_pointees.len == 0) {
+                        if (!root.reference_target_incomplete and root.mutation_places.len == 0 and
+                            root.symbolic_pointees.len == 0 and state.tracker.dependenciesAreAlive(root))
+                        {
                             if (root.referenced_place) |base| {
                                 const input_type = self.graph.fields.items[self.graph.function(callee).input.start].ty;
                                 const element_type = self.graph.semanticType(input_type).pointer.child;
@@ -8073,7 +8075,7 @@ pub const SafetyChecker = struct {
 
     /// Offset an identified array element without treating the source element
     /// as the destination. Field adjacency and unknown extents prove nothing.
-    /// Logical indices also distinguish zero-sized elements for cleanup.
+    /// A byte offset cannot distinguish zero-sized elements for cleanup.
     fn offsetArrayPlace(self: *SafetyChecker, base: facts.Place, offset: usize, element: graph_mod.GlobalTypeId) !?facts.Place {
         if (base.projections.len == 0) return null;
         const last = base.projections.len - 1;
@@ -8082,6 +8084,7 @@ pub const SafetyChecker = struct {
         const ty = self.domainStorageType(array) orelse return null;
         const length = types.arrayLength(self.graph, ty) orelse return null;
         if (!types.equal(self.graph, element, types.arrayElement(self.graph, ty) orelse return null)) return null;
+        if ((types.sizeOf(self.graph, element) catch return null) == 0) return null;
         const index = std.math.add(usize, base.projections[last].static_index, offset) catch return null;
         if (index >= length) return null;
         return try self.project(array, .{ .static_index = index });
