@@ -5616,10 +5616,19 @@ pub const SafetyChecker = struct {
         if (path.storage_domain != null or path.input_index >= arguments.len) return .{};
         var value = arguments[path.input_index];
         for (path.projections) |projection| {
-            value = if (projection == .dereference)
-                try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{.dereference} }, &.{value}, state)
-            else
-                try self.projectValueFacts(value, &.{projection});
+            if (projection != .dereference) {
+                value = try self.projectValueFacts(value, &.{projection});
+                continue;
+            }
+            if (value.reference_target_incomplete) return .{};
+            if (value.referenced_place != null) {
+                value = try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{.dereference} }, &.{value}, state);
+            } else {
+                // A frame for an address does not also describe the reference
+                // stored at that address. An unresolved load proves no frame.
+                if (value.symbolic_pointees.len != 1) return .{};
+                value = try self.readSymbolicValue(state, value, null);
+            }
         }
         return value;
     }
@@ -13767,6 +13776,16 @@ test "whole-reference forwarding observes the argument rather than its stored co
         .reference_relation = .{ .source = .{ .input_index = 0 } },
     }, &.{.{ .referenced_place = slot }}, &state);
     try std.testing.expectEqual(@as(?u32, null), unknown.lexical_frame);
+
+    const from_slot: facts.InputPath = .{ .input_index = 0, .projections = &.{.dereference} };
+    for ([_][]const facts.SymbolicPointeeId{ &.{}, &.{@enumFromInt(0)}, &.{ @enumFromInt(0), @enumFromInt(1) } }) |candidates| {
+        const loaded = try checker.referenceObservationInput(from_slot, &.{.{
+            .lexical_frame = 9,
+            .symbolic_pointees = candidates,
+        }}, &state);
+        try std.testing.expectEqual(@as(?u32, null), loaded.lexical_frame);
+        try std.testing.expect(!hasReferenceTarget(loaded));
+    }
 }
 
 test "summary reference alternatives cannot hide an unknown target behind a known one" {
