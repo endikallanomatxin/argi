@@ -1886,12 +1886,9 @@ pub const SafetyChecker = struct {
 
     fn prepareCallArguments(self: *SafetyChecker, caller: graph_mod.GlobalFunctionId, call: anytype, state: *FunctionState) !PreparedCallArguments {
         const callee = self.graph.function(call.callee);
-        var argument_nodes: []const graph_mod.GlobalValueFieldId = &.{};
-        const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
-        if (input_node.content == .struct_value_literal) {
-            const range = input_node.content.struct_value_literal.fields;
-            argument_nodes = self.globalValueFieldIds(range);
-        }
+        const input_node = self.graph.node(call.input);
+        if (input_node.content != .struct_value_literal) return error.InvalidLoweredCallInput;
+        const argument_nodes = self.globalValueFieldIds(input_node.content.struct_value_literal.fields);
 
         var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
         errdefer self.allocator.free(values);
@@ -6931,11 +6928,7 @@ pub const SafetyChecker = struct {
         if (self.collect_stats) self.stats.calls += 1;
         const call = self.graph.virtual_calls.items[@intFromEnum(id)];
         const input_node = self.graph.nodes.items[@intFromEnum(call.input)];
-        if (input_node.content != .struct_value_literal) {
-            _ = try self.evaluate(caller, call.handle, state);
-            _ = try self.evaluate(caller, call.input, state);
-            return .{};
-        }
+        if (input_node.content != .struct_value_literal) return error.InvalidLoweredCallInput;
 
         const range = input_node.content.struct_value_literal.fields;
         const argument_nodes = self.globalValueFieldIds(range);
