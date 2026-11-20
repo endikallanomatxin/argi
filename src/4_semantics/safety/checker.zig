@@ -5492,8 +5492,18 @@ pub const SafetyChecker = struct {
             var selected = path;
             // An unprojected input place denotes the immediate referent.
             // A pointer stored there is the value being copied.
-            if (path.projections.len == 0 and path.storage_domain == null)
-                selected.projections = &.{.dereference};
+            const immediate = selected.projections.len == 0 and selected.storage_domain == null;
+            if (immediate) selected.projections = &.{.dereference};
+            // Input-place projections start at that immediate referent.
+            // The generic loader interprets a leading dereference from the
+            // argument value, so enter its referent before following the path.
+            const projections = if (!immediate and selected.storage_domain == null and
+                selected.projections.len != 0 and selected.projections[0] == .dereference)
+                try std.mem.concat(self.state_allocator, facts.Projection, &.{ &.{.dereference}, selected.projections })
+            else
+                null;
+            defer if (projections) |path_buffer| self.state_allocator.free(path_buffer);
+            if (projections) |path_buffer| selected.projections = path_buffer;
             const input = try self.load_summary_input_value(selected, arguments, state);
             unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
             includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
