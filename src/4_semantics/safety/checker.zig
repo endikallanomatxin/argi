@@ -3386,6 +3386,25 @@ pub const SafetyChecker = struct {
         return value;
     }
 
+    fn loadSummaryInputPlaceContents(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var selected = path;
+        // An unprojected input place denotes the immediate referent.
+        // A pointer stored there is the value being copied.
+        const immediate = selected.projections.len == 0 and selected.storage_domain == null;
+        if (immediate) selected.projections = &.{.dereference};
+        // Input-place projections start at that immediate referent.
+        // The generic loader interprets a leading dereference from the
+        // argument value, so enter its referent before following the path.
+        const projections = if (!immediate and selected.storage_domain == null and
+            selected.projections.len != 0 and selected.projections[0] == .dereference)
+            try std.mem.concat(self.state_allocator, facts.Projection, &.{ &.{.dereference}, selected.projections })
+        else
+            null;
+        defer if (projections) |path_buffer| self.state_allocator.free(path_buffer);
+        if (projections) |path_buffer| selected.projections = path_buffer;
+        return self.load_summary_input_value(selected, arguments, state);
+    }
+
     fn dependencyPrimitive(
         self: *SafetyChecker,
         values: []const facts.ValueFacts,
@@ -5163,12 +5182,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
-            var input = try self.projectValueFacts(arguments[input_path.input_index], input_path.projections);
-            if (arguments[input_path.input_index].referenced_place) |base| {
-                var target = base;
-                for (input_path.projections) |projection| target = try self.project(target, projection);
-                if (self.valueAtPlace(state, target)) |stored| input = stored;
-            }
+            const input = try self.loadSummaryInputPlaceContents(input_path, arguments, state);
             try self.collectOpaqueHiddenDependencies(state, input, hidden);
         }
         for (effect.opaque_generation_dependencies) |input_path| {
@@ -5494,22 +5508,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            var selected = path;
-            // An unprojected input place denotes the immediate referent.
-            // A pointer stored there is the value being copied.
-            const immediate = selected.projections.len == 0 and selected.storage_domain == null;
-            if (immediate) selected.projections = &.{.dereference};
-            // Input-place projections start at that immediate referent.
-            // The generic loader interprets a leading dereference from the
-            // argument value, so enter its referent before following the path.
-            const projections = if (!immediate and selected.storage_domain == null and
-                selected.projections.len != 0 and selected.projections[0] == .dereference)
-                try std.mem.concat(self.state_allocator, facts.Projection, &.{ &.{.dereference}, selected.projections })
-            else
-                null;
-            defer if (projections) |path_buffer| self.state_allocator.free(path_buffer);
-            if (projections) |path_buffer| selected.projections = path_buffer;
-            const input = try self.load_summary_input_value(selected, arguments, state);
+            const input = try self.loadSummaryInputPlaceContents(path, arguments, state);
             unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
             includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             result = try self.mergeValueFacts(result, input);
@@ -12629,6 +12628,37 @@ test "initial symbolic reference reads intern referents independently of slot ow
     try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(repeated));
     try std.testing.expect(checker.symbolicStorageComplete(&state, slot.symbolic_pointees[0]));
+}
+
+test "opaque summaries retain dependencies of values loaded from symbolic slots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const slot: facts.SymbolicPointeeId = @enumFromInt(0);
+    const backing = try state.tracker.establish(.fresh);
+    const retained = try state.tracker.establish(.fresh);
+    try state.symbolic_values.append(.{
+        .identity = slot,
+        .value = .{ .dependencies = &.{.{ .root = retained }} },
+    });
+    const argument: facts.ValueFacts = .{
+        .symbolic_pointees = &.{slot},
+        .dependencies = &.{.{ .root = backing }},
+    };
+    var roots = std.array_list.Managed(facts.ValidityRootId).init(a);
+    defer roots.deinit();
+    var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(a);
+    defer fresh_roots.deinit();
+    try checker.instantiateOpaqueDependencies(.{
+        .input_place_values = &.{.{ .input_index = 0 }},
+    }, &.{argument}, &state, &fresh_roots, &roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{retained}, roots.items);
 }
 
 test "choice output materialization preserves existing symbolic storage lifetimes" {
