@@ -1513,7 +1513,7 @@ pub const SafetyChecker = struct {
                     value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
                 } else if (pointer.symbolic_pointees.len != 0) {
                     value = try self.readSymbolicValue(state, pointer, node.ty);
-                } else if (hasCompleteConcreteAlternatives(pointer)) {
+                } else if (hasConcreteAlternatives(pointer)) {
                     value = try self.readConcreteAlternatives(function, node.source, pointer, state);
                 }
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
@@ -3094,7 +3094,7 @@ pub const SafetyChecker = struct {
     }
 
     fn applyExecutionCompletions(self: *SafetyChecker, paths: []const facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !void {
-        for (paths) |path| self.completeExecutionReceipts(try self.load_summary_input_value(path, arguments, state), state);
+        for (paths) |path| self.completeExecutionReceipts(try self.loadSummaryInputValue(path, arguments, state, true), state);
     }
 
     fn evaluatePrimitive(
@@ -3302,6 +3302,10 @@ pub const SafetyChecker = struct {
     // Both lifetime anchors and storage authorization use that same value;
     // borrowing the field's storage alone loses its referent's lifetime.
     fn load_summary_input_value(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        return self.loadSummaryInputValue(path, arguments, state, false);
+    }
+
+    fn loadSummaryInputValue(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState, exact_for_completion: bool) !facts.ValueFacts {
         if (path.input_index >= arguments.len) return .{};
         var value = arguments[path.input_index];
         var storage: ?facts.Place = null;
@@ -3313,6 +3317,7 @@ pub const SafetyChecker = struct {
             defer visited.deinit();
             while (value.referenced_place) |place| {
                 if (value.virtual_methods.len != 0 or value.domains.len != 0) break;
+                if (exact_for_completion and exactObservedPlace(value) == null) return .{};
                 var seen = false;
                 for (visited.items) |previous| if (previous.eql(place)) {
                     seen = true;
@@ -3330,12 +3335,16 @@ pub const SafetyChecker = struct {
         }
         if (storage == null and value.symbolic_pointees.len == 1) symbolic = value;
         for (path.projections) |projection| {
+            if (exact_for_completion) {
+                if (projection == .dynamic_index or value.reference_target_incomplete or value.mutation_places.len != 0 or
+                    (value.referenced_place != null and exactObservedPlace(value) == null) or value.symbolic_pointees.len > 1) return .{};
+            }
             if (projection == .dereference) {
                 if (value.referenced_place) |place| {
                     storage = place;
                     symbolic = null;
                     value = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
-                } else if (hasCompleteConcreteAlternatives(value)) {
+                } else if (hasConcreteAlternatives(value)) {
                     storage = null;
                     symbolic = null;
                     value = try self.loadConcreteAlternatives(state, value);
@@ -3425,6 +3434,7 @@ pub const SafetyChecker = struct {
                 } else value = fallback;
             }
         }
+        if (exact_for_completion and (value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len > 1)) return .{};
         return value;
     }
 
@@ -3447,9 +3457,8 @@ pub const SafetyChecker = struct {
         return self.load_summary_input_value(selected, arguments, state);
     }
 
-    fn hasCompleteConcreteAlternatives(pointer: facts.ValueFacts) bool {
-        return pointer.referenced_place == null and !pointer.reference_target_incomplete and
-            pointer.symbolic_pointees.len == 0 and pointer.mutation_places.len != 0;
+    fn hasConcreteAlternatives(pointer: facts.ValueFacts) bool {
+        return pointer.referenced_place == null and pointer.symbolic_pointees.len == 0 and pointer.mutation_places.len != 0;
     }
 
     fn loadConcreteAlternatives(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts) !facts.ValueFacts {
@@ -3461,7 +3470,9 @@ pub const SafetyChecker = struct {
             else
                 contents;
         }
-        return loaded.?;
+        const covered = loaded.?;
+        if (!pointer.reference_target_incomplete) return covered;
+        return self.joinObservedSymbolicValues(covered, .{ .reference_target_incomplete = true }, null, null, &.{});
     }
 
     fn readConcreteAlternatives(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, pointer: facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
@@ -5478,10 +5489,15 @@ pub const SafetyChecker = struct {
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
         var unknown_reference_source = false;
+        var place_alternatives = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer place_alternatives.deinit();
         for (effect.input_places) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
             includeReferenceAlternative(&referenced_place, &has_referent, target);
-            if (target) |storage| try appendDependencyFact(&dependencies, .{ .root = try self.observeStorageGeneration(state, storage) });
+            if (target) |storage| {
+                try appendPlaceFact(&place_alternatives, storage);
+                try appendDependencyFact(&dependencies, .{ .root = try self.observeStorageGeneration(state, storage) });
+            } else unknown_reference_source = true;
         }
         for (effect.input_captured_storages) |capture| {
             const path = capture.path;
@@ -5677,7 +5693,11 @@ pub const SafetyChecker = struct {
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         result.known_choice_variant = effect.known_choice_variant;
         if (has_referent) result.referenced_place = referenced_place;
-        if ((unknown_reference_source or effect.reference_target_incomplete) and hasReferenceTarget(result)) {
+        if (place_alternatives.items.len != 0 and (referenced_place == null or unknown_reference_source or effect.reference_target_incomplete)) {
+            for (result.mutation_places) |place| try appendPlaceFact(&place_alternatives, place);
+            result.mutation_places = try place_alternatives.toOwnedSlice();
+        }
+        if ((unknown_reference_source or effect.reference_target_incomplete) and (hasReferenceTarget(result) or effect.input_places.len != 0)) {
             result.reference_target_incomplete = true;
             result.referenced_place = null;
         }
@@ -8014,7 +8034,7 @@ pub const SafetyChecker = struct {
                     .storage = try self.project(base, projection),
                     .pointer = pointer,
                 };
-                if (index != null or hasCompleteConcreteAlternatives(pointer))
+                if (index != null or hasConcreteAlternatives(pointer))
                     if (try self.projectSymbolicStorage(pointer, projection, state)) |projected|
                         break :blk .{ .pointer = projected };
                 break :blk .{ .pointer = pointer };
@@ -8035,7 +8055,7 @@ pub const SafetyChecker = struct {
             try self.requireDescendantsInitialized(function, source, storage, state);
             value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{}), state);
         } else if (access.pointer) |pointer| {
-            if (hasCompleteConcreteAlternatives(pointer)) {
+            if (hasConcreteAlternatives(pointer)) {
                 value = try self.readConcreteAlternatives(function, source, pointer, state);
             } else for (pointer.symbolic_pointees) |identity| {
                 var selected = pointer;
@@ -14277,6 +14297,34 @@ test "whole-reference forwarding observes the argument rather than its stored co
     }
 }
 
+test "a possible receipt location cannot complete multiple executions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    const left = try state.establishExecution(&.{});
+    const right = try state.establishExecution(&.{});
+    try state.setPlace(first, .initialized, .{ .execution_receipts = &.{left} });
+    try state.setPlace(second, .initialized, .{ .execution_receipts = &.{right} });
+    const paths: []const facts.InputPath = &.{.{ .input_index = 0, .projections = &.{.dereference} }};
+    const conditional: facts.ValueFacts = .{ .mutation_places = &.{ first, second } };
+    const contents = try checker.load_summary_input_value(paths[0], &.{conditional}, &state);
+    try std.testing.expectEqual(@as(usize, 2), contents.execution_receipts.len);
+    try checker.applyExecutionCompletions(paths, &.{conditional}, &state);
+    try std.testing.expect(state.executionPending(left));
+    try std.testing.expect(state.executionPending(right));
+    try checker.applyExecutionCompletions(paths, &.{.{ .referenced_place = first }}, &state);
+    try std.testing.expect(!state.executionPending(left));
+    try std.testing.expect(state.executionPending(right));
+}
+
 test "summary reference alternatives cannot hide an unknown target behind a known one" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -14297,6 +14345,21 @@ test "summary reference alternatives cannot hide an unknown target behind a know
     }
     const same = try checker.instantiateOutput(effect, &.{ known, known }, &state);
     try std.testing.expect(same.referenced_place.?.eql(target));
+    const selection: facts.ValueEffect = .{ .input_places = &.{
+        .{ .input_index = 0, .projections = &.{.dynamic_index} },
+        .{ .input_index = 1, .projections = &.{.dynamic_index} },
+    } };
+    const other: facts.Place = .{ .root = @enumFromInt(1) };
+    const covered = try checker.instantiateOutput(selection, &.{ known, .{ .referenced_place = other } }, &state);
+    try std.testing.expect(!covered.reference_target_incomplete);
+    try std.testing.expect(covered.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 2), covered.mutation_places.len);
+    const first = try checker.project(target, .dynamic_index);
+    try std.testing.expect(first.eql(covered.mutation_places[0]));
+    const partial = try checker.instantiateOutput(selection, &.{ known, .{} }, &state);
+    try std.testing.expect(partial.reference_target_incomplete and partial.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 1), partial.mutation_places.len);
+    try std.testing.expect(first.eql(partial.mutation_places[0]));
 }
 
 /// A singleton target is justified only when every represented alternative
