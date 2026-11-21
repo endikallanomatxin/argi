@@ -8203,12 +8203,22 @@ pub const SafetyChecker = struct {
         return self.checkedDomainStorage(try self.domainFacts(value, index, state), state);
     }
 
+    fn exactObservedPlace(value: facts.ValueFacts) ?facts.Place {
+        if (value.reference_target_incomplete or value.symbolic_pointees.len != 0) return null;
+        const place = value.referenced_place orelse return null;
+        for (value.mutation_places) |candidate| if (!candidate.eql(place)) return null;
+        for (place.projections) |projection| {
+            if (projection == .dynamic_index) return null;
+        }
+        return place;
+    }
+
     fn checkedDomainStorage(self: *SafetyChecker, domain: facts.DomainFacts, state: *FunctionState) ![]const facts.Place {
         for (domain.traversals) |traversal| {
             if (state.initializednessAtPlace(traversal.slot) != .initialized) return error.MissingVirtualStorageDomain;
             const stored = self.valueAtPlace(state, traversal.slot) orelse return error.MissingVirtualStorageDomain;
-            if (stored.reference_target_incomplete or !state.tracker.dependenciesAreAlive(stored)) return error.MissingVirtualStorageDomain;
-            const target = stored.referenced_place orelse return error.MissingVirtualStorageDomain;
+            if (!state.tracker.dependenciesAreAlive(stored)) return error.MissingVirtualStorageDomain;
+            const target = exactObservedPlace(stored) orelse return error.MissingVirtualStorageDomain;
             if (!target.eql(traversal.target)) return error.MissingVirtualStorageDomain;
         }
         return domain.storages;
@@ -14385,4 +14395,26 @@ test "symbolic reference loads observe writes through possible aliases and exact
     try checker.storeSymbolicValue(&state, .{ .symbolic_pointees = &.{first} }, .{}, true);
     const repaired = try checker.readReferenceStore(&state, second, .{});
     try std.testing.expect(state.tracker.dependenciesAreAlive(repaired));
+}
+
+test "captured storage requires an exact intermediate reference" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const target: facts.Place = .{ .root = @enumFromInt(1) };
+    const indexed = try checker.project(target, .dynamic_index);
+    const domain: facts.DomainFacts = .{ .domain_index = 0, .storages = &.{target}, .traversals = &.{.{ .slot = slot, .target = target }} };
+    try state.setPlace(slot, .initialized, .{ .referenced_place = target, .mutation_places = &.{target} });
+    try std.testing.expectEqualSlices(facts.Place, &.{target}, try checker.checkedDomainStorage(domain, &state));
+    try state.setPlace(slot, .initialized, .{ .referenced_place = target, .mutation_places = &.{slot} });
+    try std.testing.expectError(error.MissingVirtualStorageDomain, checker.checkedDomainStorage(domain, &state));
+    try state.setPlace(slot, .initialized, .{ .referenced_place = indexed });
+    var ranged = domain;
+    ranged.traversals = &.{.{ .slot = slot, .target = indexed }};
+    try std.testing.expectError(error.MissingVirtualStorageDomain, checker.checkedDomainStorage(ranged, &state));
 }
