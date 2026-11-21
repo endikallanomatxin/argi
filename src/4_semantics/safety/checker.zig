@@ -7752,12 +7752,13 @@ pub const SafetyChecker = struct {
             try state.setPlace(place, state.initializednessAtPlace(place), try self.joinObservedSymbolicValues(previous, value, null, null, &.{}));
         }
         for (pointer.symbolic_pointees) |identity| {
-            const strong = definite and !pointer.reference_target_incomplete and pointer.symbolic_pointees.len == 1 and pointer.mutation_places.len == 0;
+            const strong = definite and !pointer.reference_target_incomplete and pointer.symbolic_pointees.len == 1 and pointer.mutation_places.len == 0 and
+                !state.symbolicStorageHasDynamicIndex(identity);
             const previous = try self.symbolicValueAt(state, identity);
             const next: SymbolicStoredValue = if (strong)
                 .{ .identity = identity, .value = value }
             else
-                try self.joinSymbolicStoredValue(.{ .identity = identity, .value = value }, previous);
+                try self.joinSymbolicStoredValue(.{ .identity = identity, .value = value, .definite = false }, previous);
             const retain_empty = if (facts.isEmptyValue(next.value) and state.exactSymbolicValue(identity) == null) blk: {
                 const entry = state.symbolicPointee(identity) orelse break :blk false;
                 const ty = entry.ty orelse break :blk false;
@@ -11541,6 +11542,50 @@ test "field writes retain the evaluated destination when their RHS retargets its
     try std.testing.expect(checker.valueAtPlace(&state, try checker.project(first, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(!checker.valueAtPlace(&state, try checker.project(second, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(checker.valueAtPlace(&state, .{ .root = @enumFromInt(2) }).?.referenced_place.?.eql(second));
+}
+
+test "symbolic dynamic array writes retain earlier reference dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .array = .{ .element = @enumFromInt(2), .length = 2 } },
+    });
+    try graph.fields.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(1),
+    });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
+    defer namespace.deinit(allocator);
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const array: facts.SymbolicPointeeId = @enumFromInt(0);
+    try state.symbolic_pointees.append(.{
+        .identity = array,
+        .ty = @enumFromInt(3),
+        .initializedness = .initialized,
+        .backing = try state.tracker.establish(.fresh),
+        .generation = try state.tracker.establish(.fresh),
+    });
+    const selected = (try checker.projectSymbolicStorage(.{ .symbolic_pointees = &.{array} }, .dynamic_index, &state)).?;
+    const field = (try checker.projectSymbolicStorage(selected, .{ .field = 0 }, &state)).?;
+    const old_root = try state.tracker.establish(.fresh);
+    const new_root = try state.tracker.establish(.fresh);
+    try checker.storeSymbolicValue(&state, field, .{ .dependencies = &.{.{ .root = old_root }} }, true);
+    try checker.storeSymbolicValue(&state, field, .{ .dependencies = &.{.{ .root = new_root }} }, true);
+    const stored = state.exactSymbolicValue(field.symbolic_pointees[0]).?;
+    try std.testing.expect(!stored.definite);
+    try std.testing.expect(valueDependsOnRoot(stored.value, old_root));
+    try std.testing.expect(valueDependsOnRoot(stored.value, new_root));
 }
 
 test "weak array updates preserve the shape of reference-bearing elements" {

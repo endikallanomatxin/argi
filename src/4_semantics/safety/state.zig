@@ -837,6 +837,17 @@ pub const State = struct {
         return depth;
     }
 
+    pub fn symbolicStorageHasDynamicIndex(self: *const State, identity: facts.SymbolicPointeeId) bool {
+        const namespace = self.tracker.namespace orelse return false;
+        var current = identity;
+        while (self.symbolicProjectionIndex(current)) |index| {
+            const entry = namespace.projected_storage.items[index];
+            if (entry.selector.projection == .dynamic_index) return true;
+            current = entry.parent;
+        }
+        return false;
+    }
+
     pub fn symbolicStorageMayOverlap(self: *const State, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {
         const namespace = self.tracker.namespace orelse return left == right;
         var a = left;
