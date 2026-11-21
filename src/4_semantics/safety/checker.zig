@@ -1511,7 +1511,11 @@ pub const SafetyChecker = struct {
                     try self.requirePlaceInitialized(function, node.source, storage, initializedness, state);
                     try self.requireDescendantsInitialized(function, node.source, storage, state);
                     value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
-                } else if (pointer.symbolic_pointees.len != 0) value = try self.readSymbolicValue(state, pointer, node.ty);
+                } else if (pointer.symbolic_pointees.len != 0) {
+                    value = try self.readSymbolicValue(state, pointer, node.ty);
+                } else if (hasCompleteConcreteAlternatives(pointer)) {
+                    value = try self.readConcreteAlternatives(function, node.source, pointer, state);
+                }
                 break :blk try self.envelopeOpaqueRead(state, value, node.ty, pointer);
             },
             .struct_field_access => try self.readEvaluatedAccess(function, node.source, node.ty, try self.evaluateAccess(function, node_id, state), state),
@@ -3187,16 +3191,19 @@ pub const SafetyChecker = struct {
                     if (self.staticIndex(index_node)) |offset| {
                         if (offset == 0) break :blk values[0].referenceCopy();
                         const root = values[0];
-                        if (!root.reference_target_incomplete and root.mutation_places.len == 0 and
+                        if (!root.reference_target_incomplete and
                             root.symbolic_pointees.len == 0 and state.tracker.dependenciesAreAlive(root))
                         {
-                            if (root.referenced_place) |base| {
-                                result.referenced_place = try self.offsetArrayPlace(base, offset, element_type);
-                                if (result.referenced_place != null) result.reference_target_incomplete = false;
+                            const targets = try self.offsetArrayTargets(root, offset, element_type);
+                            if (targets.len == 1) {
+                                result.referenced_place = targets[0];
+                            } else {
+                                result.mutation_places = targets;
                             }
+                            if (targets.len != 0) result.reference_target_incomplete = false;
                         }
                     }
-                    if (result.referenced_place == null and self.typeContainsPointer(element_type) and
+                    if (!hasReferenceTarget(result) and self.typeContainsPointer(element_type) and
                         self.hasTrackedArrayBacking(values[0]))
                     {
                         try self.report(source, "cannot establish reference-bearing element contents for this offset; use checked array indexing", .{});
@@ -3328,6 +3335,10 @@ pub const SafetyChecker = struct {
                     storage = place;
                     symbolic = null;
                     value = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
+                } else if (hasCompleteConcreteAlternatives(value)) {
+                    storage = null;
+                    symbolic = null;
+                    value = try self.loadConcreteAlternatives(state, value);
                 } else {
                     storage = null;
                     symbolic = if (value.symbolic_pointees.len == 1) value else null;
@@ -3434,6 +3445,31 @@ pub const SafetyChecker = struct {
         defer if (projections) |path_buffer| self.state_allocator.free(path_buffer);
         if (projections) |path_buffer| selected.projections = path_buffer;
         return self.load_summary_input_value(selected, arguments, state);
+    }
+
+    fn hasCompleteConcreteAlternatives(pointer: facts.ValueFacts) bool {
+        return pointer.referenced_place == null and !pointer.reference_target_incomplete and
+            pointer.symbolic_pointees.len == 0 and pointer.mutation_places.len != 0;
+    }
+
+    fn loadConcreteAlternatives(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts) !facts.ValueFacts {
+        var loaded: ?facts.ValueFacts = null;
+        for (pointer.mutation_places) |storage| {
+            const contents = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
+            loaded = if (loaded) |previous|
+                try self.joinObservedSymbolicValues(previous, contents, null, null, &.{})
+            else
+                contents;
+        }
+        return loaded.?;
+    }
+
+    fn readConcreteAlternatives(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, pointer: facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        for (pointer.mutation_places) |storage| {
+            try self.requirePlaceInitialized(function, source, storage, state.initializednessAtPlace(storage), state);
+            try self.requireDescendantsInitialized(function, source, storage, state);
+        }
+        return self.loadConcreteAlternatives(state, pointer);
     }
 
     fn dependencyPrimitive(
@@ -7942,12 +7978,14 @@ pub const SafetyChecker = struct {
             .array_index => |access| blk: {
                 const pointer = try self.evaluateArrayStorage(function, node.source, access.array_ptr, state) orelse break :blk .{ .value = .{} };
                 _ = try self.evaluate(function, access.index, state);
+                const index = self.staticIndex(access.index);
+                const projection: facts.Projection = if (index) |known| .{ .static_index = known } else .dynamic_index;
                 if (pointer.referenced_place) |base| break :blk .{
-                    .storage = try self.project(base, if (self.staticIndex(access.index)) |index| .{ .static_index = index } else .dynamic_index),
+                    .storage = try self.project(base, projection),
                     .pointer = pointer,
                 };
-                if (self.staticIndex(access.index)) |index|
-                    if (try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state)) |projected|
+                if (index != null or hasCompleteConcreteAlternatives(pointer))
+                    if (try self.projectSymbolicStorage(pointer, projection, state)) |projected|
                         break :blk .{ .pointer = projected };
                 break :blk .{ .pointer = pointer };
             },
@@ -7967,7 +8005,9 @@ pub const SafetyChecker = struct {
             try self.requireDescendantsInitialized(function, source, storage, state);
             value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{}), state);
         } else if (access.pointer) |pointer| {
-            for (pointer.symbolic_pointees) |identity| {
+            if (hasCompleteConcreteAlternatives(pointer)) {
+                value = try self.readConcreteAlternatives(function, source, pointer, state);
+            } else for (pointer.symbolic_pointees) |identity| {
                 var selected = pointer;
                 selected.symbolic_pointees = &.{identity};
                 const contents = try self.readSymbolicValue(state, selected, ty);
@@ -8165,7 +8205,15 @@ pub const SafetyChecker = struct {
     /// Offset an identified array element without treating the source element
     /// as the destination. Field adjacency and unknown extents prove nothing.
     /// A checked element index distinguishes zero-sized slots for cleanup.
-    fn offsetArrayPlace(self: *SafetyChecker, base: facts.Place, offset: usize, element: graph_mod.GlobalTypeId) !?facts.Place {
+    const TypedArrayElement = struct {
+        array: facts.Place,
+        index: usize,
+        length: usize,
+    };
+
+    /// A typed array coordinate requires a matching element layout and a
+    /// valid logical index. A shared physical backing alone is insufficient.
+    fn typedArrayElement(self: *SafetyChecker, base: facts.Place, element: graph_mod.GlobalTypeId) ?TypedArrayElement {
         if (base.projections.len == 0) return null;
         const last = base.projections.len - 1;
         if (base.projections[last] != .static_index) return null;
@@ -8173,9 +8221,38 @@ pub const SafetyChecker = struct {
         const ty = self.domainStorageType(array) orelse return null;
         const length = types.arrayLength(self.graph, ty) orelse return null;
         if (!types.equal(self.graph, element, types.arrayElement(self.graph, ty) orelse return null)) return null;
-        const index = std.math.add(usize, base.projections[last].static_index, offset) catch return null;
-        if (index >= length) return null;
-        return try self.project(array, .{ .static_index = index });
+        const index = base.projections[last].static_index;
+        return if (index < length) .{ .array = array, .index = index, .length = length } else null;
+    }
+
+    /// A checked element index also distinguishes zero-sized slots for cleanup.
+    fn offsetArrayPlace(self: *SafetyChecker, base: facts.Place, offset: usize, element: graph_mod.GlobalTypeId) !?facts.Place {
+        const origin = self.typedArrayElement(base, element) orelse return null;
+        return self.selectArraySpanElement(origin, origin.length - origin.index, offset);
+    }
+
+    fn offsetArrayTargets(self: *SafetyChecker, base: facts.ValueFacts, offset: usize, element: graph_mod.GlobalTypeId) ![]const facts.Place {
+        var targets = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer targets.deinit();
+        if (base.referenced_place) |place|
+            try targets.append(try self.offsetArrayPlace(place, offset, element) orelse return &.{});
+        for (base.mutation_places) |place|
+            try appendPlaceFact(&targets, try self.offsetArrayPlace(place, offset, element) orelse return &.{});
+        return targets.toOwnedSlice();
+    }
+
+    /// The caller must establish that a runtime offset is less than count.
+    /// This query checks that the entire span belongs to the typed array.
+    fn selectArraySpanElement(self: *SafetyChecker, origin: TypedArrayElement, count: usize, offset: ?usize) !?facts.Place {
+        if (count == 0 or count > origin.length - origin.index) return null;
+        if (offset) |index| {
+            if (index >= count) return null;
+            return try self.project(origin.array, .{ .static_index = origin.index + index });
+        }
+        if (count == 1) return try self.project(origin.array, .{ .static_index = origin.index });
+        // The existing wildcard represents all elements of this array. It
+        // can cover a narrower span conservatively without selecting a sibling.
+        return try self.project(origin.array, .dynamic_index);
     }
 
     /// A backing-preserving offset may reach any byte of the enclosing
@@ -11558,6 +11635,55 @@ test "field writes retain the evaluated destination when their RHS retargets its
     try std.testing.expect(checker.valueAtPlace(&state, try checker.project(first, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(!checker.valueAtPlace(&state, try checker.project(second, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(checker.valueAtPlace(&state, .{ .root = @enumFromInt(2) }).?.referenced_place.?.eql(second));
+}
+
+test "typed array offsets stay within the selected nested array" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 2 } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 2 } },
+        .{ .builtin = .UInt32 },
+    });
+    try graph.bindings.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(2),
+        .mutability = .variable,
+    });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    const matrix: facts.Place = .{ .root = @enumFromInt(0) };
+    const row = try checker.project(matrix, .{ .static_index = 0 });
+    const first = try checker.project(row, .{ .static_index = 0 });
+    const last = try checker.project(row, .{ .static_index = 1 });
+    try std.testing.expect(last.eql((try checker.offsetArrayPlace(first, 1, @enumFromInt(0))).?));
+    try std.testing.expect((try checker.offsetArrayPlace(first, 2, @enumFromInt(0))) == null);
+    try std.testing.expect((try checker.offsetArrayPlace(last, std.math.maxInt(usize), @enumFromInt(0))) == null);
+    try std.testing.expect((try checker.offsetArrayPlace(first, 1, @enumFromInt(3))) == null);
+    try std.testing.expect(matrix.eql(checker.arrayBackingRootAtPlace(first).?));
+
+    const origin = checker.typedArrayElement(first, @enumFromInt(0)).?;
+    const wildcard = try checker.project(row, .dynamic_index);
+    try std.testing.expect(wildcard.eql((try checker.selectArraySpanElement(origin, 2, null)).?));
+    try std.testing.expect(first.eql((try checker.selectArraySpanElement(origin, 1, null)).?));
+    try std.testing.expect((try checker.selectArraySpanElement(origin, 1, 1)) == null);
+    try std.testing.expect((try checker.selectArraySpanElement(origin, 3, null)) == null);
+    try std.testing.expect((try checker.selectArraySpanElement(origin, 0, null)) == null);
+
+    const other_row = try checker.project(matrix, .{ .static_index = 1 });
+    const other_first = try checker.project(other_row, .{ .static_index = 0 });
+    const other_last = try checker.project(other_row, .{ .static_index = 1 });
+    const alternatives = try checker.offsetArrayTargets(.{ .mutation_places = &.{ first, other_first } }, 1, @enumFromInt(0));
+    try std.testing.expectEqual(@as(usize, 2), alternatives.len);
+    try std.testing.expect(last.eql(alternatives[0]));
+    try std.testing.expect(other_last.eql(alternatives[1]));
+    const incomplete = try checker.offsetArrayTargets(.{ .mutation_places = &.{ first, other_last } }, 1, @enumFromInt(0));
+    try std.testing.expectEqual(@as(usize, 0), incomplete.len);
 }
 
 test "summary writes to dynamic array indices retain earlier payloads" {
