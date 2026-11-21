@@ -3345,12 +3345,43 @@ pub const SafetyChecker = struct {
                 const fallback = try self.projectValueFacts(value, &.{projection});
                 if (storage) |place| {
                     if (projection == .dynamic_index) {
+                        const array = value;
                         value = fallback;
+                        if (self.domainStorageType(place)) |ty| if (types.arrayLength(self.graph, ty)) |length| {
+                            // A live array can have facts for only some elements.
+                            if (array.fields.len < length and self.typeContainsPointer(ty)) {
+                                const unknown: facts.ValueFacts = .{
+                                    .dependencies = array.dependencies,
+                                    .reference_target_incomplete = true,
+                                    .foreign_storage = array.foreign_storage,
+                                };
+                                value = if (array.fields.len != 0)
+                                    try self.joinObservedSymbolicValues(value, unknown, null, null, &.{})
+                                else
+                                    unknown;
+                            }
+                        };
                         storage = null;
                     } else {
                         const selected = try self.project(place, projection);
                         storage = selected;
-                        value = try self.reconstructPlaceValue(state, selected, self.valueAtPlace(state, selected) orelse fallback);
+                        const initial = blk: {
+                            if (projection == .static_index and state.getPlace(selected) == null) {
+                                const ty = self.domainStorageType(place);
+                                if (ty != null and types.arrayLength(self.graph, ty.?) != null and self.typeContainsPointer(ty.?)) {
+                                    const field_present = for (value.fields) |field| {
+                                        if (field.index == projection.static_index) break true;
+                                    } else false;
+                                    if (!field_present) break :blk facts.ValueFacts{
+                                        .dependencies = value.dependencies,
+                                        .reference_target_incomplete = true,
+                                        .foreign_storage = value.foreign_storage,
+                                    };
+                                }
+                            }
+                            break :blk self.valueAtPlace(state, selected) orelse fallback;
+                        };
+                        value = try self.reconstructPlaceValue(state, selected, initial);
                     }
                     if (projection == .static_index or projection == .dynamic_index) {
                         // An unknown-index write can contribute to any element.
@@ -11560,11 +11591,48 @@ test "dynamic projected writes retain newly merged roots" {
     try std.testing.expect(valueContainsOwnedRoot(refreshed, root));
 }
 
+test "summary array loads retain missing alternatives in sparse contents" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 2 } },
+    });
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(2), .mutability = .variable });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const array: facts.Place = .{ .root = @enumFromInt(0) };
+    const tracked = try state.tracker.establish(.fresh);
+    const bound = try state.tracker.establish(.fresh);
+    const element: facts.ValueFacts = .{ .dependencies = &.{.{ .root = tracked }} };
+    try state.setPlace(array, .initialized, .{
+        .fields = &.{.{ .index = 0, .value = &element }},
+        .dependencies = &.{.{ .root = bound }},
+    });
+    const args: []const facts.ValueFacts = &.{.{ .referenced_place = array }};
+    const dynamic = try checker.load_summary_input_value(.{ .input_index = 0, .projections = &.{.dynamic_index} }, args, &state);
+    const missing = try checker.load_summary_input_value(.{ .input_index = 0, .projections = &.{.{ .static_index = 1 }} }, args, &state);
+    try std.testing.expect(dynamic.reference_target_incomplete and missing.reference_target_incomplete);
+    try std.testing.expect(valueDependsOnRoot(dynamic, tracked));
+    try std.testing.expect(valueDependsOnRoot(dynamic, bound));
+    try std.testing.expect(valueDependsOnRoot(missing, bound));
+    try std.testing.expectEqual(@as(usize, 0), missing.fields.len);
+}
+
 test "summary loads retain elements not selected by an unknown-index write" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
     defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
@@ -11590,7 +11658,9 @@ test "summary array loads include nested writes through unknown indices" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
     defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
