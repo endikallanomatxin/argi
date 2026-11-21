@@ -4811,6 +4811,22 @@ pub const SafetyChecker = struct {
                 continue;
             };
 
+            const has_dynamic_index = for (target.projections) |projection| {
+                if (projection == .dynamic_index) break true;
+            } else false;
+            if (has_dynamic_index and
+                post_state.initializedness == .initialized and post_state.initialization != .preserved and
+                !post_state.ends_previous_roots and !post_state.refreshes_storage_generation and !post_state.requires_available_destination)
+            {
+                const value = post_values[post_index] orelse facts.ValueFacts{};
+                // A wildcard place summarizes multiple elements. Preserve
+                // earlier writes even when this call definitely writes one.
+                const previous = try self.reconstructPlaceValue(state, target, self.valueAtPlace(state, target) orelse .{});
+                const merged = try self.joinObservedSymbolicValues(previous, value, null, null, &.{});
+                try state.setPlace(target, state.initializednessAtPlace(target), merged);
+                continue;
+            }
+
             const entry_initializedness = state.initializednessAtPlace(target);
             if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
                 entry_initializedness != .initialized and post_state.initialization == .preserved) continue;
@@ -11542,6 +11558,38 @@ test "field writes retain the evaluated destination when their RHS retargets its
     try std.testing.expect(checker.valueAtPlace(&state, try checker.project(first, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(!checker.valueAtPlace(&state, try checker.project(second, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(checker.valueAtPlace(&state, .{ .root = @enumFromInt(2) }).?.referenced_place.?.eql(second));
+}
+
+test "summary writes to dynamic array indices retain earlier payloads" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const array: facts.Place = .{ .root = @enumFromInt(0) };
+    const first = try state.tracker.establish(.fresh);
+    const second = try state.tracker.establish(.fresh);
+    const post: facts.SafetySummary = .{ .input_post_states = &.{.{
+        .target = .{ .input_index = 0, .projections = &.{ .dynamic_index, .{ .field = 0 } } },
+        .initializedness = .initialized,
+        .initialization = .definite,
+        .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 }, .validity_only = true }} },
+    }} };
+    for ([_]facts.ValidityRootId{ first, second }) |root| {
+        try checker.applySummaryInputPostStates(source, post, &.{}, &.{
+            .{ .referenced_place = array },
+            .{ .dependencies = &.{.{ .root = root }} },
+        }, &state);
+    }
+    const selected = try checker.project(try checker.project(array, .dynamic_index), .{ .field = 0 });
+    const current = state.getPlace(selected).?.value;
+    try std.testing.expect(valueDependsOnRoot(current, first));
+    try std.testing.expect(valueDependsOnRoot(current, second));
 }
 
 test "symbolic dynamic array writes retain earlier reference dependencies" {
