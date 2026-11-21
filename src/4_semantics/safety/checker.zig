@@ -5010,7 +5010,7 @@ pub const SafetyChecker = struct {
             var value = arguments[index];
             for (projections, 0..) |projection, projection_index| {
                 if (projection == .dereference) {
-                    const referent = value.referenced_place orelse return null;
+                    const referent = exactObservedPlace(value) orelse return null;
                     projections = projections[projection_index + 1 ..];
                     break :blk referent;
                 }
@@ -5021,7 +5021,7 @@ pub const SafetyChecker = struct {
         for (projections) |projection| {
             if (projection == .dereference) {
                 if (self.valueAtPlace(state, target)) |stored| {
-                    if (stored.referenced_place) |referent| {
+                    if (exactObservedPlace(stored)) |referent| {
                         target = referent;
                         continue;
                     }
@@ -14417,4 +14417,22 @@ test "captured storage requires an exact intermediate reference" {
     var ranged = domain;
     ranged.traversals = &.{.{ .slot = slot, .target = indexed }};
     try std.testing.expectError(error.MissingVirtualStorageDomain, checker.checkedDomainStorage(ranged, &state));
+}
+
+test "summary dereference requires an exact stored target" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const target: facts.Place = .{ .root = @enumFromInt(1) };
+    const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.dereference} };
+    const arguments: []const facts.ValueFacts = &.{.{ .referenced_place = slot }};
+    try state.setPlace(slot, .initialized, .{ .referenced_place = target, .mutation_places = &.{target} });
+    try std.testing.expect((try checker.resolveSummaryInputPath(path, &.{}, arguments, &state)).?.eql(target));
+    try state.setPlace(slot, .initialized, .{ .referenced_place = target, .mutation_places = &.{slot} });
+    try std.testing.expect((try checker.resolveSummaryInputPath(path, &.{}, arguments, &state)) == null);
 }
