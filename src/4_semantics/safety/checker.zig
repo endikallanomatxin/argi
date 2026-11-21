@@ -6490,7 +6490,11 @@ pub const SafetyChecker = struct {
         storage: StorageIdentity,
         hidden: *std.array_list.Managed(facts.ValidityRootId),
     ) !void {
-        const stored = (self.domainValue(state, storage)) orelse return;
+        const initial = self.domainValue(state, storage) orelse facts.ValueFacts{};
+        const stored = switch (storage) {
+            .place => |place| try self.reconstructPlaceValue(state, place, initial),
+            .symbolic => |identity| try self.reconstructSymbolicValue(state, identity, initial),
+        };
         // Returned owners conservatively carry hidden input provenance as
         // ordinary dependencies until summaries can name returned domains.
         // Extraction must retain those roots, without retaining backing owners
@@ -12628,6 +12632,27 @@ test "initial symbolic reference reads intern referents independently of slot ow
     try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &state));
     try std.testing.expect(!state.tracker.dependenciesAreAlive(repeated));
     try std.testing.expect(checker.symbolicStorageComplete(&state, slot.symbolic_pointees[0]));
+}
+
+test "opaque extraction retains updated field dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const record: facts.Place = .{ .root = @enumFromInt(0) };
+    const field = try checker.project(record, .{ .field = 0 });
+    const before = try state.tracker.establish(.fresh);
+    const after = try state.tracker.establish(.fresh);
+    const initial: facts.ValueFacts = .{ .dependencies = &.{.{ .root = before }} };
+    try state.setPlace(record, .initialized, .{ .fields = &.{.{ .index = 0, .value = &initial }} });
+    try state.setPlace(field, .initialized, .{ .dependencies = &.{.{ .root = after }} });
+    var hidden = std.array_list.Managed(facts.ValidityRootId).init(a);
+    defer hidden.deinit();
+    try checker.collectReturnedStorageDependencies(&state, .{ .place = record }, &hidden);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{after}, hidden.items);
 }
 
 test "opaque summaries retain dependencies of values loaded from symbolic slots" {
