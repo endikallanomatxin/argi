@@ -6114,7 +6114,25 @@ pub const SafetyChecker = struct {
                 }
                 result.variants = try variants.toOwnedSlice();
             },
-            .dynamic_index => result = try self.mergeValueFacts(result, child),
+            .dynamic_index => {
+                // The child has element shape. Joining its fields directly
+                // into the array would treat field numbers as element indices.
+                const fields = try self.allocator.alloc(facts.FieldFacts, original.fields.len);
+                for (original.fields, fields) |element, *updated| {
+                    const value = try self.allocator.create(facts.ValueFacts);
+                    value.* = try self.joinObservedSymbolicValues(element.value.*, child, null, null, &.{});
+                    updated.* = .{ .index = element.index, .value = value };
+                }
+                result = try self.mergeValueFacts(original, child);
+                var child_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer child_roots.deinit();
+                try collectDependencyRoots(child, &child_roots);
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                try dependencies.appendSlice(result.dependencies);
+                for (child_roots.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+                result.dependencies = try dependencies.toOwnedSlice();
+                result.fields = fields;
+            },
             .dereference => {},
         }
         return result;
@@ -11492,6 +11510,35 @@ test "field writes retain the evaluated destination when their RHS retargets its
     try std.testing.expect(checker.valueAtPlace(&state, try checker.project(first, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(!checker.valueAtPlace(&state, try checker.project(second, .{ .field = 0 })).?.foreign_storage);
     try std.testing.expect(checker.valueAtPlace(&state, .{ .root = @enumFromInt(2) }).?.referenced_place.?.eql(second));
+}
+
+test "weak array updates preserve the shape of reference-bearing elements" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var checker = SafetyChecker.init(arena.allocator(), undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(arena.allocator());
+    defer state.deinit();
+    const old_root = try state.tracker.establish(.fresh);
+    const new_root = try state.tracker.establish(.fresh);
+    const old_reference: facts.ValueFacts = .{ .dependencies = &.{.{ .root = old_root }} };
+    const new_reference: facts.ValueFacts = .{ .dependencies = &.{.{ .root = new_root }} };
+    const old_element: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &old_reference }} };
+    const new_element: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &new_reference }} };
+    const array: facts.ValueFacts = .{ .fields = &.{
+        .{ .index = 0, .value = &old_element },
+        .{ .index = 1, .value = &old_element },
+    } };
+    const updated = try checker.replaceProjectedValue(array, .dynamic_index, new_element);
+    try std.testing.expectEqual(@as(usize, 2), updated.fields.len);
+    for (updated.fields) |element| {
+        try std.testing.expectEqual(@as(usize, 1), element.value.fields.len);
+        try std.testing.expect(valueDependsOnRoot(element.value.fields[0].value.*, old_root));
+        try std.testing.expect(valueDependsOnRoot(element.value.fields[0].value.*, new_root));
+    }
+    const sparse = try checker.replaceProjectedValue(.{}, .dynamic_index, new_element);
+    try std.testing.expectEqual(@as(usize, 0), sparse.fields.len);
+    try std.testing.expect(valueDependsOnRoot(sparse, new_root));
 }
 
 test "dynamic projected writes retain newly merged roots" {
