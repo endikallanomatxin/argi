@@ -3197,7 +3197,7 @@ pub const SafetyChecker = struct {
                         }
                     }
                     if (result.referenced_place == null and self.typeContainsPointer(element_type) and
-                        self.arrayBackingRoot(values[0]) != null)
+                        self.hasTrackedArrayBacking(values[0]))
                     {
                         try self.report(source, "cannot establish reference-bearing element contents for this offset; use checked array indexing", .{});
                     }
@@ -8115,6 +8115,22 @@ pub const SafetyChecker = struct {
     fn arrayBackingRoot(self: *SafetyChecker, reference: facts.ValueFacts) ?facts.Place {
         if (reference.reference_target_incomplete or reference.mutation_places.len != 0 or reference.symbolic_pointees.len != 0) return null;
         const element = reference.referenced_place orelse return null;
+        return self.arrayBackingRootAtPlace(element);
+    }
+
+    // An unsupported content load must be rejected even when only one
+    // possible target has a tracked array whose contents would be lost.
+    fn hasTrackedArrayBacking(self: *SafetyChecker, reference: facts.ValueFacts) bool {
+        if (reference.referenced_place) |place| {
+            if (self.arrayBackingRootAtPlace(place) != null) return true;
+        }
+        for (reference.mutation_places) |place| {
+            if (self.arrayBackingRootAtPlace(place) != null) return true;
+        }
+        return false;
+    }
+
+    fn arrayBackingRootAtPlace(self: *SafetyChecker, element: facts.Place) ?facts.Place {
         const root: facts.Place = .{ .root = element.root };
         var ty = self.domainStorageType(root) orelse return null;
         for (element.projections, 0..) |projection, index| switch (projection) {
@@ -8124,9 +8140,9 @@ pub const SafetyChecker = struct {
                 if (field >= fields.len) return null;
                 ty = self.graph.fields.items[fields.start + field].ty;
             },
-            .static_index => |slot| {
+            .static_index, .dynamic_index => {
                 const length = types.arrayLength(self.graph, ty) orelse return null;
-                if (slot >= length) return null;
+                if (length == 0 or (projection == .static_index and projection.static_index >= length)) return null;
                 if (index + 1 == element.projections.len) return root;
                 ty = types.arrayElement(self.graph, ty) orelse return null;
             },
