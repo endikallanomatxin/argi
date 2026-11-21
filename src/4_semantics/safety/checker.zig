@@ -3070,7 +3070,7 @@ pub const SafetyChecker = struct {
                     return;
                 }
             }
-            return;
+            // Excluding the unresolved part does not exempt a retained target.
         }
         if (pointer.referenced_place) |place| try self.requireExecutionAccess(source, place, null, mode, state);
         for (pointer.mutation_places) |place| try self.requireExecutionAccess(source, place, null, mode, state);
@@ -13277,8 +13277,11 @@ test "execution access checks each known concrete candidate" {
     defer diags.deinit();
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
     var state = SafetyChecker.FunctionState.init(a);
     defer state.deinit();
+    state.tracker.namespace = &namespace;
     const first: facts.Place = .{ .root = @enumFromInt(0) };
     const second: facts.Place = .{ .root = @enumFromInt(1) };
     const pointer: facts.ValueFacts = .{ .referenced_place = first, .mutation_places = &.{second} };
@@ -13286,9 +13289,19 @@ test "execution access checks each known concrete candidate" {
     const loan = try state.establishExecution(&.{.{ .storage = second, .mode = .write }});
     try checker.requireExecutionPointerAccess(source, pointer, .read, &state);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try state.beginLexicalStorage(first);
+    const frame = state.lexicalFrame().?;
+    try state.beginLexicalStorage(second);
+    try std.testing.expect(state.frameExcludesStorage(frame, second));
+    try checker.requireExecutionPointerAccess(source, .{
+        .lexical_frame = frame,
+        .mutation_places = &.{second},
+        .reference_target_incomplete = true,
+    }, .read, &state);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
     state.completeExecution(loan);
     try checker.requireExecutionPointerAccess(source, pointer, .read, &state);
-    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
 }
 
 test "unknown reference targets preserve read compatibility without bypassing execution loans" {
