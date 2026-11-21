@@ -5879,12 +5879,18 @@ pub const Infer = struct {
                     const pointer = if (base == .dereference) base.dereference.pointer else index.array_ptr;
                     var effect = try self.validityOnlyEffect(try self.inferExpression(function_id, pointer));
                     const source = self.graph.node(pointer).content;
-                    if (source == .binding_use and self.graph.binding(source.binding_use).mutability == .constant) {
+                    if (types.arrayElement(self.graph, index.array_type) != null and
+                        source == .binding_use and self.graph.binding(source.binding_use).mutability == .constant)
+                    {
                         if (self.inputIndex(function_id, source.binding_use)) |input| {
-                            if (self.staticIndex(index.index)) |element| {
-                                const projections = try self.allocator.dupe(facts.Projection, &.{.{ .static_index = element }});
-                                effect.input_places = try self.oneInputPath(input, projections);
-                            }
+                            // Bounds checking confines the result to this
+                            // input array even when the index is dynamic.
+                            const projection: facts.Projection = if (self.staticIndex(index.index)) |element|
+                                .{ .static_index = element }
+                            else
+                                .dynamic_index;
+                            const projections = try self.allocator.dupe(facts.Projection, &.{projection});
+                            effect.input_places = try self.oneInputPath(input, projections);
                         }
                     }
                     break :blk effect;
