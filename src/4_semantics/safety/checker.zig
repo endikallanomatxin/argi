@@ -5481,7 +5481,7 @@ pub const SafetyChecker = struct {
         for (effect.input_places) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
             includeReferenceAlternative(&referenced_place, &has_referent, target);
-            if (target) |storage| try appendDependencyFact(&dependencies, .{ .root = try state.storageGeneration(storage) });
+            if (target) |storage| try appendDependencyFact(&dependencies, .{ .root = try self.observeStorageGeneration(state, storage) });
         }
         for (effect.input_captured_storages) |capture| {
             const path = capture.path;
@@ -6116,9 +6116,10 @@ pub const SafetyChecker = struct {
     }
 
     fn requireDescendantsInitialized(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, storage: facts.Place, state: *FunctionState) !void {
+        const dynamic = firstDynamicIndex(storage) != null;
         for (state.places.items) |projected| {
-            if (!storage.isPrefixOf(projected.storage) or storage.eql(projected.storage)) continue;
-            if (projected.initializedness != .initialized)
+            if (projected.initializedness == .initialized or projected.storage.isPrefixOf(storage)) continue;
+            if (storage.isPrefixOf(projected.storage) or (dynamic and self.storageMayOverlap(storage, projected.storage)))
                 try self.requirePlaceInitialized(function, source, projected.storage, projected.initializedness, state);
         }
     }
@@ -6892,7 +6893,7 @@ pub const SafetyChecker = struct {
         storage: facts.Place,
     ) !void {
         for (state.storage_generations.items) |entry| {
-            if (storage.isPrefixOf(entry.storage)) {
+            if (self.retirementAffectsObservation(storage, entry.storage)) {
                 _ = try self.endRoot(source, state, entry.generation);
             }
         }
@@ -6922,10 +6923,39 @@ pub const SafetyChecker = struct {
         storage: facts.Place,
     ) !void {
         for (state.storage_generations.items) |entry| {
-            if (!storage.isPrefixOf(entry.storage)) continue;
+            if (!self.retirementAffectsObservation(storage, entry.storage)) continue;
             if (!try self.endRoot(source, state, entry.generation)) return;
         }
         try state.refreshStorageGeneration(storage);
+    }
+
+    fn retirementAffectsObservation(self: *SafetyChecker, storage: facts.Place, observed: facts.Place) bool {
+        if (storage.isPrefixOf(observed)) return true;
+        if (observed.projections.len < storage.projections.len) return false;
+        return firstDynamicIndex(observed) != null and self.storageMayOverlap(storage, observed);
+    }
+
+    fn observeStorageGeneration(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) !facts.ValidityRootId {
+        if (firstDynamicIndex(storage)) |depth| {
+            const array: facts.Place = .{ .root = storage.root, .projections = storage.projections[0..depth] };
+            for (state.storage_generations.items) |*entry| {
+                if (!entry.storage.eql(storage) or state.tracker.isAlive(entry.generation)) continue;
+                // A joined generation or a repaired element is insufficient
+                // by itself. Every candidate must be initialized again.
+                if (try self.storageReadiness(state, array) != .complete) return entry.generation;
+                entry.generation = try state.tracker.establish(.fresh);
+                entry.needs_current_generation = false;
+                return entry.generation;
+            }
+        }
+        return state.storageGeneration(storage);
+    }
+
+    fn firstDynamicIndex(storage: facts.Place) ?usize {
+        for (storage.projections, 0..) |projection, depth| {
+            if (projection == .dynamic_index) return depth;
+        }
+        return null;
     }
 
     fn bindCallInputs(self: *SafetyChecker, function: graph_mod.Function, values: []const facts.ValueFacts, state: *FunctionState) !void {
@@ -8068,7 +8098,7 @@ pub const SafetyChecker = struct {
             if (storage) |target| {
                 if (!self.graph.isModuleBinding(target.root) and self.functionInputIndex(function, target.root) == null)
                     try state.observeLexicalStorage(target.root, true);
-                const generation = try state.storageGeneration(target);
+                const generation = try self.observeStorageGeneration(state, target);
                 try appendDependencyFact(&dependencies, .{ .root = generation });
                 // Taking the address of an input/output slot borrows this
                 // function's physical storage. Summaries can also materialize
@@ -11655,7 +11685,9 @@ test "typed array offsets stay within the selected nested array" {
         .ty = @enumFromInt(2),
         .mutability = .variable,
     });
-    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
     const matrix: facts.Place = .{ .root = @enumFromInt(0) };
     const row = try checker.project(matrix, .{ .static_index = 0 });
@@ -11684,6 +11716,33 @@ test "typed array offsets stay within the selected nested array" {
     try std.testing.expect(other_last.eql(alternatives[1]));
     const incomplete = try checker.offsetArrayTargets(.{ .mutation_places = &.{ first, other_last } }, 1, @enumFromInt(0));
     try std.testing.expectEqual(@as(usize, 0), incomplete.len);
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const wildcard_generation = try state.storageGeneration(wildcard);
+    const sibling_generation = try state.storageGeneration(try checker.project(other_row, .dynamic_index));
+    const sibling_element_generation = try state.storageGeneration(last);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try state.setPlace(matrix, .initialized, .{});
+    try state.setPlace(first, .deinitialized, .{});
+    try checker.endStorageGenerationsUnder(source, &state, first);
+    try std.testing.expect(!state.tracker.isAlive(wildcard_generation));
+    try std.testing.expect(state.tracker.isAlive(sibling_generation));
+    try std.testing.expect(state.tracker.isAlive(sibling_element_generation));
+    try std.testing.expectEqual(wildcard_generation, try checker.observeStorageGeneration(&state, wildcard));
+    try state.setPlace(first, .initialized, .{});
+    const repaired = try checker.observeStorageGeneration(&state, wildcard);
+    try std.testing.expect(repaired != wildcard_generation);
+    try std.testing.expect(state.tracker.isAlive(repaired));
+    try std.testing.expect(!state.tracker.isAlive(wildcard_generation));
+
+    try state.setPlace(first, .deinitialized, .{});
+    const before = diags.list.items.len;
+    const sibling_wildcard = try checker.project(other_row, .dynamic_index);
+    try checker.requireDescendantsInitialized(@enumFromInt(0), source, sibling_wildcard, &state);
+    try std.testing.expectEqual(before, diags.list.items.len);
+    try checker.requireDescendantsInitialized(@enumFromInt(0), source, wildcard, &state);
+    try std.testing.expectEqual(before + 1, diags.list.items.len);
 }
 
 test "summary writes to dynamic array indices retain earlier payloads" {
