@@ -2957,9 +2957,24 @@ pub const SafetyChecker = struct {
     }
 
     fn completeExecutionReceipts(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) void {
-        for (value.execution_receipts) |id| state.completeExecution(id);
-        for (value.fields) |field| self.completeExecutionReceipts(field.value.*, state);
-        for (value.variants) |variant| self.completeExecutionReceipts(variant.value.*, state);
+        _ = self;
+        var selected: ?facts.ExecutionId = null;
+        if (collectUniqueExecutionReceipt(value, &selected)) {
+            if (selected) |identity| state.completeExecution(identity);
+        }
+    }
+
+    fn collectUniqueExecutionReceipt(value: facts.ValueFacts, selected: *?facts.ExecutionId) bool {
+        // A completion certifies one execution. An envelope can repeat the
+        // identity carried in its fields, or retain multiple may-identities.
+        for (value.execution_receipts) |identity| {
+            if (selected.*) |previous| {
+                if (previous != identity) return false;
+            } else selected.* = identity;
+        }
+        for (value.fields) |field| if (!collectUniqueExecutionReceipt(field.value.*, selected)) return false;
+        for (value.variants) |variant| if (!collectUniqueExecutionReceipt(variant.value.*, selected)) return false;
+        return true;
     }
 
     fn hasPendingExecution(value: facts.ValueFacts, state: *const FunctionState) bool {
@@ -14317,6 +14332,13 @@ test "a possible receipt location cannot complete multiple executions" {
     const conditional: facts.ValueFacts = .{ .mutation_places = &.{ first, second } };
     const contents = try checker.load_summary_input_value(paths[0], &.{conditional}, &state);
     try std.testing.expectEqual(@as(usize, 2), contents.execution_receipts.len);
+    // Loading an exact cell does not resolve identities that were already
+    // joined in the value placed into it.
+    try state.setPlace(first, .initialized, contents);
+    try checker.applyExecutionCompletions(paths, &.{.{ .referenced_place = first }}, &state);
+    try std.testing.expect(state.executionPending(left));
+    try std.testing.expect(state.executionPending(right));
+    try state.setPlace(first, .initialized, .{ .execution_receipts = &.{left} });
     try checker.applyExecutionCompletions(paths, &.{conditional}, &state);
     try std.testing.expect(state.executionPending(left));
     try std.testing.expect(state.executionPending(right));
