@@ -7609,7 +7609,19 @@ pub const SafetyChecker = struct {
             return;
         }
         for (children) |field| {
-            if (field.repeat_count == 0) continue;
+            if (field.repeat_count) |count| {
+                if (count == 0) continue;
+                // With materialized element facts, visit the real slots in
+                // runtime order. Their initialization and generations may differ.
+                const contents = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+                if (count <= contents.fields.len) {
+                    for (0..@intCast(count)) |index| {
+                        const element = try self.project(storage, .{ .static_index = @intCast(index) });
+                        try self.evaluateAutoDeinitField(function, field, element, state);
+                    }
+                    continue;
+                }
+            }
             const field_storage = try self.project(storage, if (field.repeat_count != null) .dynamic_index else .{ .field = field.field_index });
             try self.evaluateAutoDeinitField(function, field, field_storage, state);
         }
