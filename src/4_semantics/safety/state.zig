@@ -840,12 +840,15 @@ pub const State = struct {
     pub fn symbolicStorageHasDynamicIndex(self: *const State, identity: facts.SymbolicPointeeId) bool {
         const namespace = self.tracker.namespace orelse return false;
         var current = identity;
-        while (self.symbolicProjectionIndex(current)) |index| {
-            const entry = namespace.projected_storage.items[index];
-            if (entry.selector.projection == .dynamic_index) return true;
+        while (true) {
+            const entry = for (namespace.projected_storage.items) |projected| {
+                if (projected.identity == current) break projected;
+            } else return false;
+            // A stored reference loaded through a wildcard also represents
+            // alternatives, even though the referent is not an embedded child.
+            if (entry.selector == .projection and entry.selector.projection == .dynamic_index) return true;
             current = entry.parent;
         }
-        return false;
     }
 
     pub fn symbolicStorageMayOverlap(self: *const State, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {

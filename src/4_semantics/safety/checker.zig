@@ -7784,11 +7784,15 @@ pub const SafetyChecker = struct {
 
     const ReferenceStoreContext = struct {
         checker: *SafetyChecker,
+        state: ?*const FunctionState = null,
         left: ?*const FunctionState = null,
         right: ?*const FunctionState = null,
         generations: []const SymbolicGenerationJoin = &.{},
 
-        pub fn relation(_: @This(), _: facts.StorageIdentity, _: facts.StorageIdentity) observed_store.Relation {
+        pub fn relation(self: @This(), a: facts.StorageIdentity, b: facts.StorageIdentity) observed_store.Relation {
+            if (a.eql(b) and a == .symbolic) {
+                if (self.state) |state| if (!state.symbolicStorageHasDynamicIndex(a.symbolic)) return .same;
+            }
             // Different symbolic input names do not prove physical separation.
             return .unknown;
         }
@@ -7802,7 +7806,7 @@ pub const SafetyChecker = struct {
 
     fn readReferenceStore(self: *SafetyChecker, state: *FunctionState, identity: facts.SymbolicPointeeId, initial: facts.ValueFacts) !facts.ValueFacts {
         const stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
-        const context = ReferenceStoreContext{ .checker = self };
+        const context = ReferenceStoreContext{ .checker = self, .state = state };
         const target = facts.StorageIdentity{ .symbolic = identity };
         // Keep the ordinary slot facts while write coverage is partial. The
         // observed-write domain may add alternatives, never erase facts from
@@ -7899,7 +7903,7 @@ pub const SafetyChecker = struct {
             if (strong) if (self.symbolicCellType(state, identity)) |ty| if (isPointer(self.graph, ty)) {
                 var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
                 defer state.reference_writes = stores.definitions;
-                try stores.store(.{ .symbolic = identity }, value, true, ReferenceStoreContext{ .checker = self });
+                try stores.store(.{ .symbolic = identity }, value, true, ReferenceStoreContext{ .checker = self, .state = state });
             };
         }
     }
@@ -14778,6 +14782,7 @@ test "observed stores retain reference validity through alias repair and uncover
         checker: *SafetyChecker,
         same_inputs: bool = false,
         pub fn relation(self: @This(), a: facts.StorageIdentity, b: facts.StorageIdentity) observed.Relation {
+            if (a.eql(b)) return .same;
             if (@intFromEnum(a.symbolic) == 2 or @intFromEnum(b.symbolic) == 2) return .unknown;
             return if (self.same_inputs) .same else .disjoint;
         }

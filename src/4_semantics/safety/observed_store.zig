@@ -11,6 +11,8 @@ pub const Relation = enum { same, disjoint, unknown };
 /// rather than a sequence of historical writes. Payloads and proof slices are
 /// immutable in the fact allocator; the mutable table owns its own allocation.
 /// Context provides relation(Key, Key), join(Value, Value) and equal(Value, Value).
+/// Key equality groups definitions. Only the context can prove that two
+/// observations address the same cell, including when their keys are equal.
 /// Partial byte overlaps require typed projection/havoc before joining payloads.
 pub fn Stores(comptime Key: type, comptime Value: type) type {
     return struct {
@@ -52,16 +54,13 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             return true;
         }
 
-        fn relation(left: Key, right: Key, context: anytype) Relation {
-            return if (left.eql(right)) .same else context.relation(left, right);
-        }
-
         /// A definite write needs one stable observed destination, not a
         /// singleton selected from an incomplete set of possible destinations.
         /// Merely possible writes retain their previous possible payload.
         pub fn store(self: *Self, target: Key, value: Value, definite: bool, context: anytype) !void {
             const selected = self.index(target);
-            if (definite and selected != null and self.definitions.items[selected.?].summarized) return error.InvalidObservedStore;
+            if (definite and (context.relation(target, target) != .same or
+                (selected != null and self.definitions.items[selected.?].summarized))) return error.InvalidObservedStore;
             if (selected == null) try self.definitions.ensureUnusedCapacity(1);
             const previous: ?Definition = if (selected) |i| self.definitions.items[i] else null;
             const next_value = if (!definite and previous != null) try context.join(previous.?.value, value) else value;
@@ -144,15 +143,15 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
 
         pub fn needsInitial(self: *const Self, target: Key, context: anytype) bool {
             for (self.definitions.items) |definition|
-                if (definition.must_write and relation(target, definition.target, context) == .same) return false;
+                if (definition.must_write and context.relation(target, definition.target) == .same) return false;
             return true;
         }
 
         pub fn reaches(self: *const Self, target: Key, source_index: usize, context: anytype) bool {
             const source = self.definitions.items[source_index];
-            if (relation(target, source.target, context) == .disjoint) return false;
+            if (context.relation(target, source.target) == .disjoint) return false;
             for (self.definitions.items) |later| {
-                if (!later.must_write or relation(target, later.target, context) != .same) continue;
+                if (!later.must_write or context.relation(target, later.target) != .same) continue;
                 if (contains(later.overwritten, source.target)) return false;
             }
             return true;
@@ -247,6 +246,7 @@ fn testKey(index: usize) TestKey {
 const BitContext = struct {
     aliases: ?[3]u8 = null,
     pub fn relation(self: @This(), a: TestKey, b: TestKey) Relation {
+        if (a.eql(b)) return .same;
         const aliases = self.aliases orelse return .unknown;
         return if (aliases[@intFromEnum(a.symbolic)] == aliases[@intFromEnum(b.symbolic)]) .same else .disjoint;
     }
@@ -323,6 +323,47 @@ test "observed stores join branch proofs conservatively and overwrite after join
     var same = try Bits.join(arena.allocator(), std.testing.allocator, &joined, &joined, BitContext{});
     defer same.deinit();
     try std.testing.expect(joined.eql(&same, BitContext{}));
+}
+
+test "observed store branch joins preserve concrete writes after a further update" {
+    // Zero skips a branch write. Other choices write to one of two symbols.
+    for (0..81) |sequence| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var branches = [2]Bits{
+            Bits.init(arena.allocator(), std.testing.allocator),
+            Bits.init(arena.allocator(), std.testing.allocator),
+        };
+        defer for (&branches) |*branch| branch.deinit();
+        var operations: [2][2]usize = undefined;
+        var remaining = sequence;
+        for (&branches, &operations) |*branch, *writes| {
+            for (writes, 0..) |*write, step| {
+                write.* = remaining % 3;
+                remaining /= 3;
+                if (write.* == 0) continue;
+                try branch.store(testKey(write.* - 1), @as(u8, 2) << @intCast(step), true, BitContext{});
+            }
+        }
+        var joined = try Bits.join(arena.allocator(), std.testing.allocator, &branches[0], &branches[1], BitContext{});
+        defer joined.deinit();
+        try joined.store(testKey(2), 8, true, BitContext{});
+
+        for (0..27) |valuation| {
+            const aliases: [3]u8 = .{ @intCast(valuation % 3), @intCast((valuation / 3) % 3), @intCast(valuation / 9) };
+            for (operations) |writes| {
+                var memory: [3]u8 = .{ 1, 1, 1 };
+                for (writes, 0..) |write, step| {
+                    if (write != 0) memory[aliases[write - 1]] = @as(u8, 2) << @intCast(step);
+                }
+                memory[aliases[2]] = 8;
+                for (0..3) |index| {
+                    const possible = try joined.read(testKey(index), 1, BitContext{ .aliases = aliases });
+                    try std.testing.expect(possible & memory[aliases[index]] != 0);
+                }
+            }
+        }
+    }
 }
 
 test "observed stores keep repeated same-cell writes at a metadata fixed point" {
@@ -402,6 +443,20 @@ const ReobservedContext = struct {
         return a == b;
     }
 };
+
+test "key equality is insufficient for a definite store" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var stores = Bits.init(arena.allocator(), std.testing.allocator);
+    defer stores.deinit();
+    const grouped = testKey(1);
+    const context = ReobservedContext{ .current = 0 };
+    try stores.store(grouped, 2, false, context);
+    try std.testing.expectError(error.InvalidObservedStore, stores.store(grouped, 4, true, context));
+    try std.testing.expectEqual(@as(u8, 3), try stores.read(grouped, 1, context));
+    try stores.store(grouped, 4, false, context);
+    try std.testing.expectEqual(@as(u8, 7), try stores.read(grouped, 1, context));
+}
 
 test "observed stores cannot reuse a call-site key without retaining prior targets" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

@@ -9917,7 +9917,8 @@ test "observed stores share summary payloads and survive publication without loc
     const Stores = observed.Stores(facts.InputRoute, facts.ValueEffect);
     const Context = struct {
         infer: *Infer,
-        pub fn relation(_: @This(), _: facts.InputRoute, _: facts.InputRoute) observed.Relation {
+        pub fn relation(_: @This(), a: facts.InputRoute, b: facts.InputRoute) observed.Relation {
+            if (a.eql(b)) return .same;
             return .unknown;
         }
         pub fn join(self: @This(), a: facts.ValueEffect, b: facts.ValueEffect) !facts.ValueEffect {
