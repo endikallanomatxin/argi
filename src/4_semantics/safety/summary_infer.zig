@@ -778,16 +778,20 @@ pub const Infer = struct {
         for (post_states) |original_state| {
             var state = original_state;
             var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
+            var copied_field = state.target.storage_domain == null and state.target.projections.len != 0 and self.graph.semanticType(ty) != .pointer;
             var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
             for (state.target.projections) |projection| {
+                if (projection != .field or self.graph.semanticType(ty) == .pointer) copied_field = false;
                 if (projection != .dereference and self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
                 switch (projection) {
                     .field => |index| {
                         const fields = types.fields(self.graph, ty) orelse {
+                            copied_field = false;
                             scalar_field = false;
                             break;
                         };
                         if (index >= fields.len) {
+                            copied_field = false;
                             scalar_field = false;
                             break;
                         }
@@ -823,6 +827,13 @@ pub const Infer = struct {
                 },
                 else => false,
             };
+            // A write to an embedded numeric field in a by-value argument
+            // updates the callee's copy. Crossing a reference would make
+            // the destination visible to the caller.
+            if (copied_field and numeric_contents and state.initializedness == .initialized and
+                !state.ends_previous_roots and !state.refreshes_storage_generation and
+                !state.requires_available_destination and state.opaque_ownership == .none and
+                state.opaque_storage == null) continue;
             // Numeric place origins retain selector evidence, not hidden
             // lifetime or acquisition permissions. Keep them on the post-value
             // for identity checking, but exclude them from this occupancy test.
