@@ -3353,6 +3353,20 @@ pub const SafetyChecker = struct {
             if (exact_for_completion) {
                 if (projection == .dynamic_index or value.reference_target_incomplete or value.mutation_places.len != 0 or
                     (value.referenced_place != null and exactObservedPlace(value) == null) or value.symbolic_pointees.len > 1) return .{};
+                switch (projection) {
+                    .field, .static_index => |index| {
+                        for (value.fields) |field| {
+                            if (field.index == index) break;
+                        } else return .{};
+                    },
+                    .variant => |index| {
+                        for (value.variants) |variant| {
+                            if (variant.index == index) break;
+                        } else return .{};
+                    },
+                    .dereference => if (!hasReferenceTarget(value)) return .{},
+                    .dynamic_index => unreachable,
+                }
             }
             if (projection == .dereference) {
                 if (value.referenced_place) |place| {
@@ -14335,6 +14349,9 @@ test "a possible receipt location cannot complete multiple executions" {
     // Loading an exact cell does not resolve identities that were already
     // joined in the value placed into it.
     try state.setPlace(first, .initialized, contents);
+    const missing: []const facts.InputPath = &.{.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }};
+    try checker.applyExecutionCompletions(missing, &.{.{ .execution_receipts = &.{left} }}, &state);
+    try std.testing.expect(state.executionPending(left));
     try checker.applyExecutionCompletions(paths, &.{.{ .referenced_place = first }}, &state);
     try std.testing.expect(state.executionPending(left));
     try std.testing.expect(state.executionPending(right));
