@@ -3757,7 +3757,7 @@ pub const Infer = struct {
             if (self.findInputPostState(right.items, left_state.target)) |right_state| {
                 merged.initialization = if (left_state.initialization == right_state.initialization) left_state.initialization else .possible;
                 merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
-                merged.value = try self.mergeValueEffects(left_state.value, right_state.value);
+                merged.value = try self.joinStorageAlternatives(null, left_state.value, right_state.value);
                 merged.reference_refresh = left_state.reference_refresh and right_state.reference_refresh;
                 merged.reference_targets = if (left_state.reference_targets != null and right_state.reference_targets != null)
                     try self.union_input_paths(left_state.reference_targets.?, right_state.reference_targets.?)
@@ -3780,7 +3780,8 @@ pub const Infer = struct {
                 if (left_state.initializedness != .initialized or left_state.requires_available_destination) {
                     merged.initializedness = .maybe_initialized;
                 } else {
-                    merged.value = try self.mergeValueEffects(
+                    merged.value = try self.joinStorageAlternatives(
+                        null,
                         left_state.value,
                         try self.inputPlaceValueEffect(left_state.target),
                     );
@@ -3803,7 +3804,8 @@ pub const Infer = struct {
             if (right_state.initializedness != .initialized or right_state.requires_available_destination) {
                 merged.initializedness = .maybe_initialized;
             } else {
-                merged.value = try self.mergeValueEffects(
+                merged.value = try self.joinStorageAlternatives(
+                    null,
                     right_state.value,
                     try self.inputPlaceValueEffect(right_state.target),
                 );
@@ -8705,6 +8707,11 @@ test "initialization effects distinguish definite writes from preserved entry va
     try inference.recordInputPostState(&written, &.{target}, .initialized, .{}, false, false, false, false, .definite);
     try std.testing.expectEqual(.definite, written.items[0].initialization);
     try std.testing.expect(written.items[0].refreshes_storage_generation);
+    // Either branch writes the cell, but only one publishes its referent.
+    try untouched.append(written.items[0]);
+    written.items[0].value = .{ .input_places = &.{target} };
+    try inference.joinInputPostStates(&joined, &written, &untouched);
+    try std.testing.expect(joined.items[0].value.reference_target_incomplete);
 }
 
 test "repopulation under an ended ancestor does not survive a summary" {
