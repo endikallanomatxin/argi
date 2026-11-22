@@ -5206,7 +5206,23 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         for (summary.opaque_storage_effects) |effect| {
-            const storage = try self.resolveSummaryOpaqueStoragePath(effect.storage, argument_ids, arguments, state) orelse continue;
+            var destinations = std.array_list.Managed(StorageIdentity).init(self.allocator);
+            defer destinations.deinit();
+            const path = effect.storage;
+            if (path.storage_domain == null and path.projections.len == 0 and path.input_index < arguments.len) {
+                const pointer = arguments[path.input_index];
+                // A retention is a possible write to each candidate. Releasing
+                // contents still requires its own definite destination.
+                if (!pointer.reference_target_incomplete and (pointer.mutation_places.len != 0 or pointer.symbolic_pointees.len > 1)) {
+                    if (pointer.referenced_place) |place| try appendStorageIdentity(&destinations, .{ .place = place });
+                    for (pointer.mutation_places) |place| try appendStorageIdentity(&destinations, .{ .place = place });
+                    for (pointer.symbolic_pointees) |identity| try appendStorageIdentity(&destinations, .{ .symbolic = identity });
+                }
+            }
+            if (destinations.items.len == 0) {
+                const storage = try self.resolveSummaryOpaqueStoragePath(path, argument_ids, arguments, state) orelse continue;
+                try destinations.append(storage);
+            }
             var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer hidden.deinit();
             var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
@@ -5221,18 +5237,20 @@ pub const SafetyChecker = struct {
                 try collectOwnedRoots(value, &hidden_owned);
             }
 
-            var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            defer external.deinit();
-            for (hidden.items) |dependency| {
-                var internal_generation = false;
-                for (arguments) |argument| if (valueContainsOpaqueGeneration(argument, storage, dependency)) {
-                    internal_generation = true;
-                    break;
-                };
-                if (!internal_generation and !containsRoot(hidden_owned.items, dependency))
-                    try appendRootFact(&external, dependency);
+            for (destinations.items) |storage| {
+                var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer external.deinit();
+                for (hidden.items) |dependency| {
+                    var internal_generation = false;
+                    for (arguments) |argument| if (valueContainsOpaqueGeneration(argument, storage, dependency)) {
+                        internal_generation = true;
+                        break;
+                    };
+                    if (!internal_generation and !containsRoot(hidden_owned.items, dependency))
+                        try appendRootFact(&external, dependency);
+                }
+                try self.mergeOpaqueStorage(state, storage, external.items);
             }
-            try self.mergeOpaqueStorage(state, storage, external.items);
         }
     }
 
