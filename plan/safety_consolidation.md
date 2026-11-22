@@ -209,3 +209,45 @@ capability cases. It passed 441 checks with no skips. Only 229 and 231
 failed, with their existing unresolved-destination diagnostics. This
 establishes the tested load migration independently of the remaining
 destination-publication problem. It does not test collection case 115.
+
+### What distinguishes the two repair fixtures
+
+Compile-only controls for 229 and 231 isolate destination lifetime from
+the repair of the original slot. Keeping the whole helper unchanged and
+moving only its replacement referent to static storage allows both builds.
+Keeping the lexical replacement and changing the getter to return a global
+slot rejects both builds. This second implementation satisfies the same
+published lifetime contract as the original getter (see also 258X).
+Repairing the original slot cannot undo a store to a different slot.
+
+A modular caller with only that contract has to account for both
+implementations. Accepting the original lexical replacements therefore
+requires some additional verified restriction on the destination, or
+evidence retained at construction that the caller can instantiate across
+the helper. A better local strong update alone cannot distinguish these
+programs. The existing fixture expectations remain acceptance targets for
+that additional precision.
+
+### Acquired destinations and local reference escape
+
+Execution fixture 255 supplies a useful control independent of view sorting.
+Starting with its typed two-element allocation, writing the borrowed record
+only to the indexed first slot is already rejected. Removing that store
+allows compilation. Writing only to the offset second slot fails with the
+same escape diagnostic. Moving both borrowed integers to global storage
+allows the original two writes to compile. These are compile-only controls.
+
+This separates two proof obligations. At slot establishment the runtime
+checks the address range and, for an explicit index, the expected address.
+The checker should be able to associate that destination with the allocation
+whose contents retain the stored dependencies. A write must constrain any
+later move, return or transfer of the owner. A local binding for the owner
+is insufficient if it subsequently escapes. For a borrowed backing, those
+obligations must instead follow the actual destination storage. The anchor
+supplies a lifetime bound and cannot identify either destination.
+
+Only the second store additionally needs proof that a typed offset stays
+inside the original extent. A raw offset into an adjacent allocation cannot
+inherit the first slot's destination. Collection case 115 needs the same
+range check but starts from a lexical array with an already known identity.
+Test the first-slot case independently before adding offset precision.
