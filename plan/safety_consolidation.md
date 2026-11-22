@@ -39,6 +39,33 @@ contents of the covered slot. Ownership disposal still requires its cleanup
 transition, and reclaim still requires publication for the exact execution.
 Replacing a slot that carries a receipt cannot certify completion.
 
+### Conditional repair at a call boundary
+
+Compile-only probe on the local integration compiler, 22 November 2026.
+Start with two slots holding a live reference. Store a temporary reference in
+the first slot and let the temporary expire. The repair helper is:
+
+```argi
+repair := (.a: $&Slot, .b: $&Slot, .replacement: &Int32, .choose: Bool) -> () {
+    if choose { a&.reference = replacement } else { b&.reference = replacement }
+}
+```
+
+Read the first slot's referent after the following operations, with a live
+replacement and a Boolean parameter in the enclosing function:
+
+| Operation | Required | Observed |
+| --- | --- | --- |
+| Both inline branches assign the replacement to the first slot | Accept | Accept |
+| Call `repair` with the first slot twice | Accept | Reject at the read |
+| Forward both arguments unchanged to `repair` from another helper, passing the first slot twice | Accept | Reject at the read |
+| Call `repair` with distinct slots | Reject | Reject at the read |
+
+The distinct-slot result checks the branch that leaves the expired reference
+in place. The same-slot results isolate loss of a repair proof across a call.
+All three diagnostics report an ended root. Any implementation that removes
+that diagnostic for the same-slot call must retain it for distinct slots.
+
 ## Diagnosis
 
 | Mechanism | What it represents | Where coherence can fail |
