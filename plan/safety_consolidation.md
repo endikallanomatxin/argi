@@ -5,6 +5,40 @@ working tree is a separate candidate. The published unknown-call gate already
 checks interference against pending loans before applying completion. The
 remaining storage problems can occur entirely in sequential code.
 
+## Acceptance criterion for storage summaries
+
+A summary describes a relation between entry and exit stores. For every
+concrete entry represented at a call site, instantiating the summary must
+include every exit the body could produce with those actual arguments.
+Check this separately on each published return outcome. This criterion also
+applies when several formal paths resolve to one cell.
+
+Consider a helper that writes a replacement through either its first or its
+second argument on every normal return. With different actual cells each can
+retain its old contents. With the same stable actual cell its old contents
+are gone on every return. Recording two optional writes is sound for both
+calls, but cannot establish the repair in the second call. Recording two
+definite writes is unsound for the first. A sufficient summary for this
+example is one unconditional whole-cell replacement with a choice of
+destinations. Substitute the evaluated arguments into the choice before
+testing whether every alternative covers the observed cell. An uncovered
+alternative prevents that proof. If payloads differ by branch, retain their
+association with the destination or widen to all possible payloads.
+
+Use this as a differential test for the body visitor and summary consumer.
+Compare an inline branch, one helper and a forwarding helper, with equal,
+distinct and uncertain actual destinations. Check both the repaired read and
+a read that could still observe the old dependency. Re-evaluating a selector
+at the next call supplies a new choice unless stability is proved. Loops can
+forget the correlation while retaining every potential dependency. This test
+justifies preserving a bounded destination choice where a repair needs it.
+It does not require retaining arbitrary branch predicates or call histories.
+
+A definite replacement discharges facts specifically about the previous
+contents of the covered slot. Ownership disposal still requires its cleanup
+transition, and reclaim still requires publication for the exact execution.
+Replacing a slot that carries a receipt cannot certify completion.
+
 ## Diagnosis
 
 | Mechanism | What it represents | Where coherence can fail |
