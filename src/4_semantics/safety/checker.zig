@@ -3074,7 +3074,10 @@ pub const SafetyChecker = struct {
             if (!execution.pending) continue;
             for (execution.loans) |loan| {
                 if (mode == .read and loan.mode == .read) continue;
-                const overlaps = if (storage) |place|
+                // A missing footprint on either side cannot prove independence.
+                const overlaps = if ((storage == null and symbolic == null) or (loan.storage == null and loan.symbolic == null))
+                    true
+                else if (storage) |place|
                     if (loan.storage) |other| self.storageMayOverlap(place, other) or (place.root == other.root and self.abstractVirtualAccessStorage(place) and self.abstractVirtualAccessStorage(other)) else loan.symbolic != null and (self.graph.isModuleBinding(place.root) or self.abstractExternalAccessStorage(place))
                 else if (symbolic) |identity|
                     if (loan.symbolic) |other| state.symbolicStorageMayOverlap(identity, other) else loan.storage != null and (self.graph.isModuleBinding(loan.storage.?.root) or self.abstractExternalAccessStorage(loan.storage.?))
@@ -14819,6 +14822,35 @@ test "incomplete targets preserve the read read authority contrast" {
         try checker.requireExecutionPointerAccess(.{ .file_index = 0, .offset = 0 }, pointer, access_mode, &state);
         try std.testing.expectEqual(before + @intFromBool(loan_mode != .read or access_mode != .read), diags.list.items.len);
     };
+}
+
+test "an unresolved loan footprint cannot establish independent access" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diagnostics_list = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diagnostics_list.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, &diagnostics_list, &graph);
+    defer checker.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const place: facts.Place = .{ .root = @enumFromInt(0) };
+    for ([_]?facts.Place{ null, place }) |pending| {
+        for ([_]?facts.Place{ null, place }) |access| {
+            if (pending != null and access != null) continue;
+            for (std.meta.tags(facts.AccessMode)) |loan_mode| {
+                var state = SafetyChecker.FunctionState.init(allocator);
+                defer state.deinit();
+                _ = try state.establishExecution(&.{.{ .storage = pending, .mode = loan_mode }});
+                for (std.meta.tags(facts.AccessMode)) |mode| {
+                    const before = diagnostics_list.list.items.len;
+                    try checker.requireExecutionAccess(source, access, null, mode, &state);
+                    try std.testing.expectEqual(before + @intFromBool(mode == .write or loan_mode == .write), diagnostics_list.list.items.len);
+                }
+            }
+        }
+    }
 }
 
 test "execution lending retains every concrete and symbolic target alternative" {

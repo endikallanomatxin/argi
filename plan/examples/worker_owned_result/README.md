@@ -85,3 +85,20 @@ and bound its extent. Two existentially hidden backings must still be treated
 as potentially overlapping. Distinct calls, owner roots and executor receipts
 supply no proof of separation. This leaves room to lend an entire backing
 before supporting parallel writes to disjoint indices.
+
+A compile-only experiment admitted the concrete CAllocator slot whenever it
+retained an acquisition origin, leaving the loan's address unspecified. A
+second reference obtained by an independent lookup could read after join.
+Reading before join and destroying the owner before join both failed to
+compile. However, submitting a second writer through that reference compiled:
+submission compared two absent storage identities as independent. The
+experimental admission was discarded. The shared conflict check now treats an
+absent footprint on either side as potentially overlapping for ordinary writes.
+
+Using that conservative overlap rule in the same experiment rejected the
+second writer, but also rejected awaiting the first task at the access to
+the caller's task handle. This distinguishes the two obligations for a heap
+loan. It must cover every possible backing, and the checker needs a verified
+separation between that backing and the caller's lexical task-handle slot.
+Neither accepting any nonempty origin list nor treating all memory as the
+loaned backing meets both conditions.
