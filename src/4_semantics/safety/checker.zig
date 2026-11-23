@@ -2906,13 +2906,22 @@ pub const SafetyChecker = struct {
             for (projections) |projection| place = try self.project(place, projection);
             const stored = self.valueAtPlace(state, place) orelse continue;
             const value = try self.reconstructPlaceValue(state, place, stored);
-            for (value.owned_roots) |root| try appendDependencyFact(dependencies, .{ .root = root });
-            if (include_borrowed) {
-                var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                defer backing.deinit();
-                try collectDependencyRoots(value, &backing);
-                for (backing.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
-            }
+            try self.appendAllocationDependencies(value, dependencies, include_borrowed);
+        }
+        for (pointer.symbolic_pointees) |identity| {
+            const stored = try self.symbolicValueAt(state, identity) orelse continue;
+            const contents = try self.reconstructSymbolicValue(state, identity, stored.value);
+            try self.appendAllocationDependencies(try self.projectValueFacts(contents, projections), dependencies, include_borrowed);
+        }
+    }
+
+    fn appendAllocationDependencies(self: *SafetyChecker, value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
+        for (value.owned_roots) |root| try appendDependencyFact(dependencies, .{ .root = root });
+        if (include_borrowed) {
+            var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer backing.deinit();
+            try collectDependencyRoots(value, &backing);
+            for (backing.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
         }
     }
 
@@ -3387,7 +3396,41 @@ pub const SafetyChecker = struct {
                 }
             }
             if (projection == .dereference) {
-                if (value.referenced_place) |place| {
+                if (value.symbolic_pointees.len != 0 and (value.mutation_places.len != 0 or value.referenced_place != null or value.symbolic_pointees.len > 1)) {
+                    if (exact_for_completion) return .{};
+                    // A projected value may have both concrete and symbolic sources.
+                    // Load each before selecting fields from their joined contents.
+                    var combined: ?facts.ValueFacts = null;
+                    var concrete = value;
+                    concrete.symbolic_pointees = &.{};
+                    if (concrete.referenced_place) |place| {
+                        combined = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
+                        concrete.referenced_place = null;
+                    }
+                    if (concrete.mutation_places.len != 0) {
+                        const possible = try self.loadConcreteAlternatives(state, concrete);
+                        combined = if (combined) |prior| try self.joinObservedSymbolicValues(prior, possible, null, null, &.{}) else possible;
+                    }
+                    for (value.symbolic_pointees) |identity| {
+                        var single = value;
+                        single.referenced_place = null;
+                        single.mutation_places = &.{};
+                        single.symbolic_pointees = &.{identity};
+                        const loaded = if (try self.symbolicValueAt(state, identity)) |known|
+                            try self.reconstructSymbolicValue(state, identity, known.value)
+                        else blk: {
+                            const observed = try self.readSymbolicValue(state, single, null);
+                            break :blk if (facts.isEmptyValue(observed)) facts.ValueFacts{ .dependencies = single.dependencies, .reference_target_incomplete = true } else observed;
+                        };
+                        combined = if (combined) |prior| try self.joinObservedSymbolicValues(prior, loaded, null, null, &.{}) else loaded;
+                    }
+                    value = if (value.reference_target_incomplete)
+                        try self.joinObservedSymbolicValues(combined.?, .{ .reference_target_incomplete = true }, null, null, &.{})
+                    else
+                        combined.?;
+                    storage = null;
+                    symbolic = null;
+                } else if (value.referenced_place) |place| {
                     storage = place;
                     symbolic = null;
                     value = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
@@ -13980,8 +14023,11 @@ test "allocation slot retains borrowed backing independently of its explicit anc
     const owned = try state.tracker.establish(.fresh);
     const other: facts.Place = .{ .root = @enumFromInt(1) };
     try state.setPlace(other, .initialized, .{ .dependencies = &.{.{ .root = alternative }}, .owned_roots = &.{owned} });
+    const symbolic_backing = try state.tracker.establish(.fresh);
+    const symbolic: facts.SymbolicPointeeId = @enumFromInt(9);
+    try state.setSymbolicValue(.{ .identity = symbolic, .value = .{ .dependencies = &.{.{ .root = symbolic_backing }} } }, true, true);
     const values: [3]facts.ValueFacts = .{
-        .{ .mutation_places = &.{ storage, other } }, .{}, .{ .dependencies = &.{.{ .root = anchor }}, .symbolic_pointees = &.{@enumFromInt(77)} },
+        .{ .mutation_places = &.{ storage, other }, .symbolic_pointees = &.{symbolic} }, .{}, .{ .dependencies = &.{.{ .root = anchor }}, .symbolic_pointees = &.{@enumFromInt(77)} },
     };
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     const direct = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .establish_allocation_slot, &.{}, &values, &state, source);
@@ -13992,6 +14038,7 @@ test "allocation slot retains borrowed backing independently of its explicit anc
     const effect = try inference.primitiveValueEffect(.establish_allocation_slot, 0, null);
     const summarized = try checker.instantiateOutput(effect, &values, &state);
     for ([_]facts.ValueFacts{ direct, summarized }) |value| {
+        try std.testing.expect(valueDependsOnRoot(value, symbolic_backing));
         try std.testing.expect(valueDependsOnRoot(value, alternative));
         try std.testing.expect(valueDependsOnRoot(value, owned));
         try std.testing.expect(valueDependsOnRoot(value, backing));
