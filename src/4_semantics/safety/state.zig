@@ -230,6 +230,19 @@ pub const State = struct {
         try self.executions.appendSlice(right[j..]);
     }
 
+    /// Completed receipts keep their identities but do not constrain loop convergence.
+    pub fn samePendingExecutions(self: *const State, other: *const State) bool {
+        var remaining = other.executions.items;
+        for (self.executions.items) |execution| {
+            if (!execution.pending) continue;
+            while (remaining.len != 0 and !remaining[0].pending) remaining = remaining[1..];
+            if (remaining.len == 0 or execution.id != remaining[0].id) return false;
+            remaining = remaining[1..];
+        }
+        for (remaining) |execution| if (execution.pending) return false;
+        return true;
+    }
+
     pub fn executionState(self: *const State, id: facts.ExecutionId) ?facts.ExecutionState {
         for (self.executions.items) |execution| if (execution.id == id) return execution;
         return null;
@@ -1563,6 +1576,27 @@ test "execution joins preserve interleaved identities and completion in either b
             try std.testing.expectEqual(pending, entry.pending);
         }
     }
+}
+
+test "pending execution equality ignores completed history and compares receipt identities" {
+    var left = State.init(std.testing.allocator);
+    defer left.deinit();
+    var right = State.init(std.testing.allocator);
+    defer right.deinit();
+    for (0..5) |i| {
+        if (i != 3) try left.executions.append(.{ .id = @enumFromInt(i), .loans = &.{}, .pending = i == 1 });
+        if (i != 0) try right.executions.append(.{ .id = @enumFromInt(i), .loans = &.{}, .pending = i == 1 });
+    }
+    try std.testing.expect(left.samePendingExecutions(&right));
+    try std.testing.expect(right.samePendingExecutions(&left));
+    const extra = try right.establishExecution(&.{});
+    try std.testing.expect(!left.samePendingExecutions(&right));
+    try std.testing.expect(!right.samePendingExecutions(&left));
+    right.completeExecution(@enumFromInt(1));
+    try std.testing.expect(!left.samePendingExecutions(&right));
+    left.completeExecution(@enumFromInt(1));
+    right.completeExecution(extra);
+    try std.testing.expect(left.samePendingExecutions(&right));
 }
 
 fn executionReceiptAllocation(allocator: std.mem.Allocator) !void {

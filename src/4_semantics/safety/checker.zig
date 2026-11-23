@@ -10147,8 +10147,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         }
     };
     if (!left_stores.eql(&right_stores, Equal{})) return false;
-    for (left.executions.items) |execution| if (execution.pending and !right.executionPending(execution.id)) return false;
-    for (right.executions.items) |execution| if (execution.pending and !left.executionPending(execution.id)) return false;
+    if (!left.samePendingExecutions(right)) return false;
     if (left.reachable != right.reachable or
         left.tracker.roots.items.len != right.tracker.roots.items.len or
         left.storage_capabilities.items.len != right.storage_capabilities.items.len or
