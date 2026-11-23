@@ -198,7 +198,7 @@ const State = struct {
                 try self.walkNode(virtualize.value);
             },
             .virtual_call => |id| {
-                if (self.isolation_source) |origin| try self.isolationError(origin, "indirect or unresolved calls");
+                if (self.isolation_source != null) try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
