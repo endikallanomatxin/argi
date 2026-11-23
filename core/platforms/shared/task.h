@@ -24,6 +24,14 @@ uintptr_t _argi_task_create_inline_buffers(argi_task_buffer_start start, const v
 /* Certified reclaim performs synchronization itself; a flag supplied by the
    caller cannot stand in for successful joining. Failure retains the loan. */
 int32_t _argi_execution_reclaim(uintptr_t handle);
+/* A typed worker registers cleanup once after initializing its entire output.
+   Only that invocation may register it. Successful join publishes both the
+   bytes and cleanup. The serialized consumer can claim custody once using
+   the matching cleanup operation. On success it must immediately move the
+   owner out of the slot before releasing the task's backing storage. */
+typedef void (*argi_task_result_cleanup)(uintptr_t storage);
+int32_t _argi_task_own_result(uintptr_t identity, argi_task_result_cleanup cleanup);
+uintptr_t _argi_task_take_owned_result(uintptr_t handle, argi_task_result_cleanup cleanup);
 /* Joining publishes the result for repeatable inspection until destruction.
    Invalid sizes fail before join. The typed owner controls delivery. */
 uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size);

@@ -7,6 +7,8 @@
 #define _argi_task_create_inline_buffers probe_task_inline
 #define _argi_task_join_result probe_task_result
 #define _argi_task_result_block probe_task_block
+#define _argi_task_own_result probe_own_result
+#define _argi_task_take_owned_result probe_take_owned_result
 #define _argi_task_destroy probe_task_destroy
 #define _argi_execution_reclaim probe_reclaim
 #include "../../../../core/platforms/shared/task.c"
@@ -39,6 +41,37 @@ static void calculate(struct argi_execution_invocation invocation) {
         invocation.input_alignment != _Alignof(int) || invocation.output_alignment != _Alignof(int)) abort();
     ++calls;
     *(int *)invocation.output = *(int *)invocation.input * 2;
+}
+static unsigned drops;
+static void drop_result(uintptr_t storage) {
+    if (*(int *)storage != 42) abort();
+    ++drops;
+}
+static void other_drop(uintptr_t storage) { (void)storage; abort(); }
+static void make_owned(struct argi_execution_invocation invocation) {
+    calculate(invocation);
+    if (probe_own_result(invocation.identity, drop_result)) abort();
+}
+static void check_owned_result(void) {
+    int input = 21;
+    uintptr_t task = probe_task_create(make_owned, &input, sizeof(input), sizeof(int), _Alignof(int), _Alignof(int));
+    if (!task) abort();
+    join_fails = 1;
+    if (!probe_task_destroy(task) || drops) abort();
+    join_fails = 0;
+    destroy_fails = 1;
+    if (!probe_task_destroy(task) || drops) abort();
+    destroy_fails = 0;
+    if (probe_task_destroy(task) || drops != 1) abort();
+    task = probe_task_inline(make_owned, &input, sizeof(input), sizeof(int), _Alignof(int), _Alignof(int));
+    if (!task || probe_task_result(task, sizeof(int)) || probe_task_block(task, 0).count) abort();
+    if (probe_take_owned_result(task, other_drop)) abort();
+    uintptr_t owned = probe_take_owned_result(task, drop_result);
+    if (!owned || probe_take_owned_result(task, drop_result) || probe_task_block(task, 0).count) abort();
+    int moved = *(int *)owned;
+    if (probe_task_destroy(task) || drops != 1) abort();
+    drop_result((uintptr_t)&moved);
+    if (drops != 2) abort();
 }
 int32_t execution_protocol_probe(void) {
     int input = 21;
@@ -76,5 +109,6 @@ int32_t execution_protocol_probe(void) {
     task = probe_task_create(calculate, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
     if (!task || calls != 3 || !pending_start) abort();
     if (probe_task_destroy(task) || calls != 4 || pending_start || joins != joined + 1) abort();
+    check_owned_result();
     return 0;
 }

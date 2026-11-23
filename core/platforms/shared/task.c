@@ -16,6 +16,8 @@ struct argi_task {
     uintptr_t output_size;
     uintptr_t input_alignment, output_alignment;
     int joined;
+    argi_task_result_cleanup result_cleanup;
+    int owner_claimed;
 };
 
 static void argi_task_entry(void *context) {
@@ -109,11 +111,26 @@ int32_t _argi_execution_reclaim(uintptr_t handle) {
     return argi_task_join((struct argi_task *)handle);
 }
 
+int32_t _argi_task_own_result(uintptr_t identity, argi_task_result_cleanup cleanup) {
+    struct argi_task *task = (struct argi_task *)identity;
+    if (!task || !cleanup || task->result_cleanup) return -1;
+    task->result_cleanup = cleanup;
+    return 0;
+}
+
+uintptr_t _argi_task_take_owned_result(uintptr_t handle, argi_task_result_cleanup cleanup) {
+    struct argi_task *task = (struct argi_task *)handle;
+    if (!task || !cleanup || argi_task_join(task)) return 0;
+    if (task->result_cleanup != cleanup || task->owner_claimed) return 0;
+    task->owner_claimed = 1;
+    return (uintptr_t)task->output;
+}
+
 uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size) {
     if (!handle) return 0;
     struct argi_task *task = (struct argi_task *)handle;
     if (size != task->output_size) return 0;
-    if (argi_task_join(task) || !task->output) return 0;
+    if (argi_task_join(task) || task->result_cleanup || !task->output) return 0;
     return (uintptr_t)task->output;
 }
 
@@ -121,7 +138,7 @@ struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_
     struct argi_task_result_block result = {{0}, 0};
     if (!handle) return result;
     const struct argi_task *task = (const struct argi_task *)handle;
-    if (!task->joined || offset >= task->output_size) return result;
+    if (!task->joined || task->result_cleanup || offset >= task->output_size) return result;
     uintptr_t count = task->output_size - offset;
     if (count > sizeof(result.bytes)) count = sizeof(result.bytes);
     memcpy(result.bytes, (const unsigned char *)task->output + offset, count);
@@ -134,6 +151,8 @@ int32_t _argi_task_destroy(uintptr_t handle) {
     struct argi_task *task = (struct argi_task *)handle;
     if (argi_task_join(task)) return -1;
     if (task->thread && _argi_thread_destroy(task->thread)) return -1;
+    if (task->result_cleanup && !task->owner_claimed)
+        task->result_cleanup((uintptr_t)task->output);
     argi_task_aligned_free(task->output);
     argi_task_aligned_free(task->input);
     free(task);
