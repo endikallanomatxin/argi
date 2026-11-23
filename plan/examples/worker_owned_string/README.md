@@ -34,3 +34,14 @@ copy of the input record. Opening the input type gate alone would give the
 caller and worker cleanup responsibilities for the same bytes. Submission
 needs a single owner on either side of acceptance, including when a provider
 returns an error after starting a worker.
+
+The compile-only negative control in `slot_escape` moves the caller's optional
+String into a local snapshot, writes none to the slot, and returns the snapshot's
+payload. The surrounding factory then returns that String past the lifetime of
+its GeneralPurposeAllocator. At 2330f5597 this compiles. Do not execute it.
+Both returning the String directly and removing just the write of none from
+the generic helper produce the expected local-storage-generation diagnostic.
+With a provider that stays in scope through cleanup, taking and emptying the
+slot succeeds. A handoff using ordinary moves requires the helper's output to
+retain the entry payload's dependencies even as its slot postcondition becomes
+empty. This is a sequential prerequisite independent of the task ABI.
