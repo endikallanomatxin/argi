@@ -16,7 +16,6 @@ struct argi_task {
     uintptr_t output_size;
     uintptr_t input_alignment, output_alignment;
     int joined;
-    int taken;
 };
 
 static void argi_task_entry(void *context) {
@@ -113,9 +112,8 @@ int32_t _argi_execution_reclaim(uintptr_t handle) {
 uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size) {
     if (!handle) return 0;
     struct argi_task *task = (struct argi_task *)handle;
-    if (size != task->output_size || task->taken) return 0;
+    if (size != task->output_size) return 0;
     if (argi_task_join(task) || !task->output) return 0;
-    task->taken = 1;
     return (uintptr_t)task->output;
 }
 
@@ -123,7 +121,7 @@ struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_
     struct argi_task_result_block result = {{0}, 0};
     if (!handle) return result;
     const struct argi_task *task = (const struct argi_task *)handle;
-    if (!task->joined || !task->taken || offset >= task->output_size) return result;
+    if (!task->joined || offset >= task->output_size) return result;
     uintptr_t count = task->output_size - offset;
     if (count > sizeof(result.bytes)) count = sizeof(result.bytes);
     memcpy(result.bytes, (const unsigned char *)task->output + offset, count);

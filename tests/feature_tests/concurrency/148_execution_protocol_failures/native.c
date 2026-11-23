@@ -55,7 +55,11 @@ int32_t execution_protocol_probe(void) {
     int joined = joins;
     if (probe_reclaim(task) || joins != joined || calls != 1) abort();
     uintptr_t output = probe_task_result(task, sizeof(int));
-    if (!output || *(int *)output != 42 || probe_task_result(task, sizeof(int))) abort();
+    if (!output || *(int *)output != 42) abort();
+    /* An unsuccessful read leaves the published result available for retry. */
+    if (probe_task_block(task, sizeof(int)).count ||
+        probe_task_result(task, sizeof(int)) != output ||
+        probe_task_block(task, 0).count != sizeof(int) || joins != joined) abort();
     destroy_fails = 1;
     if (!probe_task_destroy(task) || *(int *)output != 42) abort();
     destroy_fails = 0;

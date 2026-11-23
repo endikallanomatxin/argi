@@ -42,7 +42,7 @@ int32_t argi_task_probe(void) {
     if (_argi_task_join_result(inline_task, sizeof(original) - 1)) abort();
     uintptr_t inline_result = _argi_task_join_result(inline_task, sizeof(original));
     if (!inline_result || *(int *)inline_result != 42) abort();
-    if (_argi_execution_reclaim(inline_task) || _argi_task_join_result(inline_task, sizeof(original))) abort();
+    if (_argi_execution_reclaim(inline_task) || _argi_task_join_result(inline_task, sizeof(original)) != inline_result) abort();
     if (_argi_task_destroy(inline_task)) abort();
     if (_argi_task_create_buffers(NULL, &original, sizeof(original), sizeof(original), 64, 64)) abort();
     if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 3, 64)) abort();
@@ -68,7 +68,7 @@ int32_t argi_task_probe(void) {
     block = _argi_task_result_block(0, 0);
     if (block.count) abort();
 
-    if (_argi_task_join_result(buffer_task, sizeof(original))) abort();
+    if (_argi_task_join_result(buffer_task, sizeof(original)) != result_address) abort();
     if (_argi_task_destroy(buffer_task)) abort();
     original = 21;
     buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 64);
@@ -76,7 +76,7 @@ int32_t argi_task_probe(void) {
     if (_argi_task_join_result(buffer_task, sizeof(original) - 1)) abort();
     result_address = _argi_task_join_result(buffer_task, sizeof(original));
     if (!result_address || result_address % 64 || *(int *)result_address != 42) abort();
-    if (_argi_task_join_result(buffer_task, sizeof(original))) abort();
+    if (_argi_task_join_result(buffer_task, sizeof(original)) != result_address) abort();
     /* Two live tasks have independent storage. Reclaiming the second must
        not revoke the first task's already extracted output. */
     int other_input = 5;
@@ -116,7 +116,7 @@ int32_t argi_task_probe(void) {
     if (_argi_execution_reclaim(moved)) abort();
     result_address = _argi_task_join_result(moved, sizeof(int));
     if (!result_address || *(int *)result_address != 42) abort();
-    if (_argi_task_join_result(moved, sizeof(int))) abort();
+    if (_argi_task_join_result(moved, sizeof(int)) != result_address) abort();
     if (_argi_task_destroy(moved)) abort();
 
     _argi_atomic_u32_store(gate, 0);

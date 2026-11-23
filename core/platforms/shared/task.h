@@ -24,10 +24,10 @@ uintptr_t _argi_task_create_inline_buffers(argi_task_buffer_start start, const v
 /* Certified reclaim performs synchronization itself; a flag supplied by the
    caller cannot stand in for successful joining. Failure retains the loan. */
 int32_t _argi_execution_reclaim(uintptr_t handle);
-/* Result extraction succeeds once. Invalid sizes do not join or consume the
-   result. A successful result address remains valid until task destruction. */
+/* Joining publishes the result for repeatable inspection until destruction.
+   Invalid sizes fail before join. The typed owner controls delivery. */
 uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size);
-/* Copy initialized result bytes by value after successful result extraction.
+/* Copy initialized result bytes by value after successful join.
    No pointer into native storage crosses this boundary. An invalid state/offset
    returns count zero; the unused suffix is always initialized to zero. */
 struct argi_task_result_block { uint8_t bytes[32]; uintptr_t count; };
