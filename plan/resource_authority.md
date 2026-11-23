@@ -752,8 +752,11 @@ starting point: consuming establishment permission need not erase acquisition
 identity. Established Allocation data now retains an acquisition-origin identity separately
 from the consumed establishment permission, with matching direct and summary
 transfer. This is provenance metadata only: it grants no physical range,
-initialization, owner liveness or access authority. `allocation_slot` still
-returns lifetime dependencies without complete physical membership evidence.
+initialization, owner liveness or access authority. The private backing reference
+and bounded slot selection retain possible acquisition origins through direct
+construction and summary substitution. These origins can identify conflicts.
+A retained singleton does not prove that every alternative has that origin,
+and absence does not prove separation.
 Ordinary raw references therefore cannot currently participate in access
 authorization as authenticated acquired storage.
 

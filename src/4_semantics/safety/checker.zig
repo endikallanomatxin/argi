@@ -3208,12 +3208,13 @@ pub const SafetyChecker = struct {
                 state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
                 const shape = primitive_transfer.AllocationTransfer;
                 const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, callee));
+                const origins = if (values.len != 0) try self.acquisitionOrigins(values[0]) else &.{};
                 for (fields, 0..) |*field, index| {
                     const value = try self.allocator.create(facts.ValueFacts);
                     value.* = if (index == shape.backing_reference_field)
-                        .{ .variants = try self.allocator.dupe(facts.VariantFacts, &.{.{ .index = 1, .value = try self.allocationBackingReference(root) }}) }
+                        .{ .variants = try self.allocator.dupe(facts.VariantFacts, &.{.{ .index = 1, .value = try self.allocationBackingReference(root, origins) }}) }
                     else if (index == shape.data_field)
-                        .{ .dependencies = try self.oneDependency(root), .acquisition_origins = if (values.len != 0) try self.acquisitionOrigins(values[0]) else &.{} }
+                        .{ .dependencies = try self.oneDependency(root), .acquisition_origins = origins }
                     else
                         .{};
                     for (shape.borrowed_fields) |borrowed| if (index == borrowed.field) {
@@ -3271,7 +3272,7 @@ pub const SafetyChecker = struct {
                 try self.collectAllocationDependencies(values[0], &.{}, state, &dependencies, true);
                 for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
                 const observation = try self.referenceObservationInput(summary_infer.allocation_slot_relation.source, values, state);
-                break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = observation.lexical_frame };
+                break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = observation.lexical_frame, .acquisition_origins = observation.acquisition_origins };
             },
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
@@ -3295,9 +3296,9 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn allocationBackingReference(self: *SafetyChecker, root: facts.ValidityRootId) !*facts.ValueFacts {
+    fn allocationBackingReference(self: *SafetyChecker, root: facts.ValidityRootId, origins: []const facts.StorageCapabilityId) !*facts.ValueFacts {
         const pointer = try self.allocator.create(facts.ValueFacts);
-        pointer.* = .{ .dependencies = try self.oneDependency(root) };
+        pointer.* = .{ .dependencies = try self.oneDependency(root), .acquisition_origins = origins };
         const payload = try self.allocator.create(facts.ValueFacts);
         payload.* = .{ .dependencies = pointer.dependencies, .fields = try self.allocator.dupe(facts.FieldFacts, &.{.{ .index = 0, .value = pointer }}) };
         return payload;
@@ -5811,6 +5812,11 @@ pub const SafetyChecker = struct {
             // The source observation belongs to the evaluated argument, not
             // a load from its target. Stored references have their own frames.
             const input = try self.referenceObservationInput(path, arguments, state);
+            if (input.acquisition_origins.len != 0) {
+                try origins.appendSlice(result.acquisition_origins);
+                for (input.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
+                result.acquisition_origins = try origins.toOwnedSlice();
+            }
             result.lexical_frame = input.lexical_frame;
         }
         return result;
@@ -13753,6 +13759,18 @@ test "allocation acquisition origin survives consumption without restoring permi
     defer inference.deinit();
     const effect = try inference.primitiveValueEffect(.establish_allocation, 1, @enumFromInt(0));
     const summarized = try checker.instantiateOutput(effect, &arguments, &state);
+    const storage: facts.Place = .{ .root = @enumFromInt(0) };
+    try state.setPlace(storage, .initialized, value);
+    const slot_args = [_]facts.ValueFacts{ .{ .referenced_place = storage }, .{}, .{} };
+    const direct_slot = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .establish_allocation_slot, &.{}, &slot_args, &state, .{ .file_index = 0, .offset = 0 });
+    try state.setPlace(storage, .initialized, summarized);
+    const slot_effect = try inference.primitiveValueEffect(.establish_allocation_slot, 2, null);
+    const summarized_slot = try checker.instantiateOutput(slot_effect, &slot_args, &state);
+    for ([_]facts.ValueFacts{ direct_slot, summarized_slot }) |slot| {
+        try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, slot.acquisition_origins);
+        try std.testing.expectEqual(@as(usize, 0), slot.storage_capabilities.len);
+        try std.testing.expect(!hasReferenceTarget(slot));
+    }
     const summary_data = try checker.projectValueFacts(summarized, &.{.{ .field = primitive_transfer.AllocationTransfer.data_field }});
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, data.acquisition_origins, summary_data.acquisition_origins);
     try std.testing.expectEqual(@as(usize, 0), summary_data.storage_capabilities.len);

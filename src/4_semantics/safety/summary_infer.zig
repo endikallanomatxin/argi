@@ -7936,10 +7936,8 @@ pub const Infer = struct {
         data.* = .{ .fresh_dependencies = try self.oneFresh(source), .input_acquisition_origins = try self.oneInputPath(0, &.{}) };
         fields[shape.data_field].value = data;
         if (fields.len > shape.backing_reference_field) {
-            const pointer = try self.allocator.create(facts.ValueEffect);
-            pointer.* = .{ .fresh_dependencies = try self.oneFresh(source) };
             const payload = try self.allocator.create(facts.ValueEffect);
-            payload.* = .{ .fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = pointer }}) };
+            payload.* = .{ .fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = data }}) };
             const backing = try self.allocator.create(facts.ValueEffect);
             backing.* = .{ .variants = try self.allocator.dupe(facts.OutputVariantEffect, &.{.{ .index = 1, .value = payload }}) };
             fields[shape.backing_reference_field].value = backing;
