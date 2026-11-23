@@ -44,6 +44,11 @@ by themselves grant access authority or transfer an owning resource.
 A receipt identifies each pending execution and its actual storage generations.
 Successful join publishes the worker's writes and completes only that execution's
 loans. Failed submission creates no pending loan, while failed join retains it.
+When two tasks borrow the same storage for reading, joining either task leaves
+the other task's read loan in force. A scope-exit destructor that writes to
+that storage through a virtual provider therefore needs both tasks to have
+completed. The rule follows the destructor's actual access even when the
+owner being dropped occupies a different slot.
 Pending execution receipts cannot be stored in user opaque containers until those
 containers can carry their obligations. This includes receipts nested in records
 or choices and retained through helper calls or fallible collection insertion.
