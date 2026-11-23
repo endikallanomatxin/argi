@@ -37,10 +37,11 @@ async := #(.F: Function) (
             ._output_alignment = alignment_of(.type = result_of#(F)),
             ._access = _execution_lend(.inputs = prepared)
         )
+        output_slot ::= request._output_slot
         task ::= Executor#().submit(.self = $&executor, .request = ~request)!
         -- A provider cannot substitute a task with a different typed worker.
         -- The private entry comes from the authenticated native submission.
-        if task._entry != entry {
+        if task._entry != entry or task._output_slot != output_slot {
             result = ..error(.reason = ..executor_mismatch)
             return
         }

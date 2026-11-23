@@ -9,7 +9,7 @@ TaskRequest := (
     ._entry: _TaskEntry, ._input: &Any,
     ._input_size: UIntNative, ._output_size: UIntNative,
     ._input_alignment: UIntNative, ._output_alignment: UIntNative,
-    ._access: _ExecutionReceipt
+    ._output_slot: UIntNative = 0, ._access: _ExecutionReceipt
 )
 
 -- A request that was never accepted has no native execution to join. On
@@ -35,15 +35,10 @@ Executor#(.Provider: Type): Contract = (
 -- Audited native footprints describe synchronous access to Argi storage. The
 -- initial copy reads the source buffer; join and destroy touch only private
 -- runtime storage. Worker access remains governed by the execution receipt.
-_task_create(
+_task_start(.slot: UIntNative, .inline_run: CInt,
     .entry: _TaskEntry, .input: &Any, .input_size: UIntNative,
     .output_size: UIntNative, .input_alignment: UIntNative, .output_alignment: UIntNative
-) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_create_buffers") where { reads(input) }
-
-_task_create_inline(
-    .entry: _TaskEntry, .input: &Any, .input_size: UIntNative,
-    .output_size: UIntNative, .input_alignment: UIntNative, .output_alignment: UIntNative
-) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_create_inline_buffers") where { reads(input) }
+) -> (.handle: UIntNative): CFunction(.symbol = "_argi_task_start_buffers") where { reads(input) }
 
 _task_join(.handle: UIntNative, .size: UIntNative) -> (.address: UIntNative): CFunction(
     .symbol = "_argi_task_join_result"
@@ -65,7 +60,7 @@ implement Init#(ThreadedExecutor, ThreadedExecutorInitArgs) (
 -- and FFI dependency are established only after the native adapter owns a task.
 TaskReceipt := (
     ._handle: UIntNative, ._ffi: $&ForeignFunctionInterface,
-    ._entry: _TaskEntry, ._access: _ExecutionReceipt = (._marker = 0),
+    ._entry: _TaskEntry, ._output_slot: UIntNative, ._access: _ExecutionReceipt = (._marker = 0),
     ._result_taken: Bool = false
 )
 implement Deinit#(TaskReceipt) (
@@ -82,24 +77,7 @@ implement Executor#(ThreadedExecutor) (
     .submit = (
         .self: $&ThreadedExecutor, .request: TaskRequest
     ) -> (.result: Errable#(TaskReceipt, (..task_start_failed))) {
-        pending ::= ~request
-        assume ffi := self&._ffi
-        handle ::= _task_create(
-            .entry = pending._entry,
-            .input = pending._input,
-            .input_size = pending._input_size, .output_size = pending._output_size,
-            .input_alignment = pending._input_alignment,
-            .output_alignment = pending._output_alignment
-        )
-        if handle == 0 {
-            result = ..error(.reason = ..task_start_failed)
-            return
-        }
-        _execution_accept(.receipt = $&pending._access, .handle = handle)
-        result = ..ok(
-            ._handle = handle, ._ffi = self&._ffi, ._entry = pending._entry,
-            ._access = ~pending._access
-        )
+        result = _start_task(.request = ~request, .ffi = self&._ffi, .inline_run = 0)
     }
 )
 
@@ -119,8 +97,15 @@ implement Init#(InlineExecutor, InlineExecutorInitArgs) (
 execute_inline := (.request: TaskRequest, .ffi: $&ForeignFunctionInterface) -> (
     .result: Errable#(TaskReceipt, (..task_start_failed))
 ) {
+    result = _start_task(.request = ~request, .ffi = ffi, .inline_run = 1)
+}
+
+_start_task := (.request: TaskRequest, .ffi: $&ForeignFunctionInterface, .inline_run: CInt) -> (
+    .result: Errable#(TaskReceipt, (..task_start_failed))
+) {
     pending ::= ~request
-    handle ::= _task_create_inline(
+    handle ::= _task_start(
+        .slot = pending._output_slot, .inline_run = inline_run,
         .ffi = ffi, .entry = pending._entry, .input = pending._input,
         .input_size = pending._input_size, .output_size = pending._output_size,
         .input_alignment = pending._input_alignment,
@@ -132,7 +117,7 @@ execute_inline := (.request: TaskRequest, .ffi: $&ForeignFunctionInterface) -> (
     }
     _execution_accept(.receipt = $&pending._access, .handle = handle)
     result = ..ok(
-        ._handle = handle, ._ffi = ffi, ._entry = pending._entry,
+        ._handle = handle, ._ffi = ffi, ._entry = pending._entry, ._output_slot = pending._output_slot,
         ._access = ~pending._access
     )
 }

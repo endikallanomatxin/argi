@@ -28,7 +28,8 @@ uintptr_t _argi_task_create_inline_buffers(argi_task_buffer_start start, const v
    task handle are serialized by that owner. A failed start leaves it empty.
    A successful release publishes the buffer without running user cleanup. */
 uintptr_t _argi_task_output_create(argi_task_buffer_start entry);
-uintptr_t _argi_task_start_with_output(uintptr_t slot, int32_t inline_run,
+/* A zero slot selects output owned by the task receipt. */
+uintptr_t _argi_task_start_buffers(uintptr_t slot, int32_t inline_run,
     argi_task_buffer_start entry, const void *input, uintptr_t input_size,
     uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment);
 /* A successful take transfers custody of the initialized value. The typed

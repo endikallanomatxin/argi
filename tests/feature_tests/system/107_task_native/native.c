@@ -77,7 +77,7 @@ static void check_threaded_owned_result(void) {
 
     slot = _argi_task_output_create(produce_owned_payload);
     if (!slot) abort();
-    task = _argi_task_start_with_output(slot, 0, produce_owned_payload, &counter,
+    task = _argi_task_start_buffers(slot, 0, produce_owned_payload, &counter,
         sizeof(counter), sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
     if (!task || _argi_task_release_storage(task) || drops != 2) abort();
     uintptr_t published = _argi_task_output_take(slot, produce_owned_payload);

@@ -12,7 +12,7 @@
 #define _argi_task_destroy probe_task_destroy
 #define _argi_execution_reclaim probe_reclaim
 #define _argi_task_output_create probe_output_create
-#define _argi_task_start_with_output probe_start_with_output
+#define _argi_task_start_buffers probe_start_buffers
 #define _argi_task_output_take probe_output_take
 #define _argi_task_output_destroy probe_output_destroy
 #include "../../../../core/platforms/shared/task.c"
@@ -90,10 +90,10 @@ static void check_caller_output(void) {
     uintptr_t slot = probe_output_create(make_owned);
     if (!slot || probe_output_take(slot, make_owned)) abort();
     create_fails = 1;
-    if (probe_start_with_output(slot, 0, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int))) abort();
+    if (probe_start_buffers(slot, 0, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int))) abort();
     create_fails = 0;
     if (probe_output_take(slot, make_owned) || drops != before) abort();
-    uintptr_t task = probe_start_with_output(slot, 1, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
+    uintptr_t task = probe_start_buffers(slot, 1, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
     if (!task || !probe_output_destroy(slot) || probe_output_take(slot, make_owned)) abort();
     if (probe_task_result(task, sizeof(int)) || probe_take_owned_result(task, drop_result)) abort();
     if (probe_task_release_storage(task) || drops != before || !probe_output_destroy(slot)) abort();

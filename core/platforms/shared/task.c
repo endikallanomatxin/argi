@@ -120,16 +120,16 @@ uintptr_t _argi_task_output_create(argi_task_buffer_start entry) {
     return (uintptr_t)slot;
 }
 
-uintptr_t _argi_task_start_with_output(uintptr_t storage, int32_t inline_run,
+uintptr_t _argi_task_start_buffers(uintptr_t storage, int32_t inline_run,
     argi_task_buffer_start entry, const void *input, uintptr_t input_size,
     uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment) {
     struct argi_task_output *slot = (struct argi_task_output *)storage;
-    if (!slot || entry != slot->entry || slot->state != OUTPUT_EMPTY) return 0;
+    if (slot && (entry != slot->entry || slot->state != OUTPUT_EMPTY)) return 0;
     struct argi_task *task = argi_task_prepare(entry, input, input_size, output_size, input_alignment, output_alignment);
     if (!task) return 0;
     task->caller_output = slot;
     uintptr_t handle = argi_task_start(task, inline_run);
-    if (handle) slot->state = OUTPUT_SUBMITTED;
+    if (handle && slot) slot->state = OUTPUT_SUBMITTED;
     return handle;
 }
 
