@@ -1,8 +1,7 @@
 -- The handle owns native stable buffers. Moving this owner moves no task bytes.
 -- Its executor borrow must remain live until join and physical destruction.
 Future := #(.T: Type) (
-    ._task: TaskReceipt,
-    ._taken: Bool = false
+    ._task: TaskReceipt
 )
 
 implement#(.T: Type) Deinit#(Future#(T)) (
@@ -53,7 +52,7 @@ async := #(.F: Function) (
             result = ..error(.reason = ..executor_mismatch)
             return
         }
-        result = ..ok(._task = ~task, ._taken = false)
+        result = ..ok(._task = ~task)
     } #else {
         -- Unsupported payloads never instantiate a worker or enter native code.
         result = ..error(.reason = ..unsupported_task_value)
@@ -63,7 +62,7 @@ async := #(.F: Function) (
 await := #(.T: Type) (.self: $&Future#(T)) -> (
     .result: Errable#(T, (..already_awaited, ..task_join_failed))
 ) {
-    if self&._taken {
+    if self&._task._result_taken {
         result = ..error(.reason = ..already_awaited)
         return
     }
@@ -80,7 +79,7 @@ await := #(.T: Type) (.self: $&Future#(T)) -> (
             .T: T,
             .N = #run () -> (.size: UIntNative) { size = size_of(.type = T) }
         )(.task = &self&._task)!
-        self&._taken = true
+        self&._task._result_taken = true
         result = ..ok ~value
     } #else {
         result = ..error(.reason = ..task_join_failed)

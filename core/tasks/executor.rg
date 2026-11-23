@@ -64,7 +64,8 @@ implement Init#(ThreadedExecutor, ThreadedExecutorInitArgs) (
 -- and FFI dependency are established only after the native adapter owns a task.
 TaskReceipt := (
     ._handle: UIntNative, ._ffi: $&ForeignFunctionInterface,
-    ._entry: _TaskEntry, ._access: _ExecutionReceipt = (._marker = 0)
+    ._entry: _TaskEntry, ._access: _ExecutionReceipt = (._marker = 0),
+    ._result_taken: Bool = false
 )
 implement Deinit#(TaskReceipt) (
     .deinit = (.self: $&TaskReceipt) -> () {
