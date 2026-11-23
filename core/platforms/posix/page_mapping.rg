@@ -5,7 +5,7 @@
     _linux_private_anonymous: Int32 = 34
     _darwin_private_anonymous: Int32 = 4098
 
-    _memory_getpagesize() -> (.size: UIntNative): ExternFunction
+    _memory_getpagesize() -> (.size: UIntNative): ExternFunction where { no_access() }
     _memory_mmap(
         .hint            : UIntNative,
         .length          : UIntNative,

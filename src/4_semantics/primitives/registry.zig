@@ -291,6 +291,9 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .execution_input,
         .trusted_opaque_mark_empty,
         => &.{},
+        // Both native page acquisition adapters select fresh OS storage.
+        // Their scalar inputs cannot designate a range owned by the caller.
+        .native_allocated_storage => &.{},
         // Slot establishment checks the receipt's authenticated bounds and
         // logical index. It does not read or initialize the addressed bytes.
         .establish_allocation_slot => &.{.{ .input = 0 }},
@@ -306,7 +309,6 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .none,
         .prepare_allocation_metadata,
         .trusted_opaque_drop,
-        .native_allocated_storage,
         .raw_allocated_storage,
         .raw_released_storage,
         => null,
@@ -456,4 +458,9 @@ test "reference identity classification excludes offsets and representation chan
     try std.testing.expect(!preservesReferenceStorage(&graph, function));
     function.output.len = 0;
     try std.testing.expect(!forwardsIdenticalReference(&graph, function));
+}
+
+test "fresh native page acquisition has no caller storage footprint" {
+    try std.testing.expectEqual(@as(usize, 0), memoryAccesses(.native_allocated_storage).?.len);
+    try std.testing.expect(memoryAccesses(.raw_released_storage) == null);
 }
