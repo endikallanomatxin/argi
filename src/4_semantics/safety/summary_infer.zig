@@ -12,6 +12,11 @@ const contracts = @import("contracts.zig");
 const cleanup_activation = @import("cleanup_activation.zig");
 const primitive_transfer = @import("../primitives/registry.zig");
 
+pub const allocation_slot_relation: facts.ReferenceRelation = .{
+    .source = .{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } },
+    .grade = .backing,
+};
+
 /// Symbolic SafetySummary inference over the compact GlobalSG.
 ///
 /// This is the indexed counterpart of the old checker's `inferBlock` /
@@ -7892,10 +7897,7 @@ pub const Infer = struct {
                     try self.validityOnlyEffect(try self.inputValueEffect(0, &.{.dereference})),
                 );
                 result.input_owned_roots = try self.oneInputPath(0, &.{});
-                result.reference_relation = .{
-                    .source = .{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } },
-                    .grade = .backing,
-                };
+                result.reference_relation = allocation_slot_relation;
                 break :blk result;
             },
             .restrict_reference, .depend_on => |transfer| blk: {

@@ -3270,7 +3270,7 @@ pub const SafetyChecker = struct {
                 // when the caller supplies a longer-lived anchor.
                 try self.collectAllocationDependencies(values[0], &.{}, state, &dependencies, true);
                 for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
-                const observation = try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } }, values, state);
+                const observation = try self.referenceObservationInput(summary_infer.allocation_slot_relation.source, values, state);
                 break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = observation.lexical_frame };
             },
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
@@ -5828,11 +5828,12 @@ pub const SafetyChecker = struct {
             }
             if (value.reference_target_incomplete) return .{};
             if (value.referenced_place != null) {
+                if (exactObservedPlace(value) == null) return .{};
                 value = try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{.dereference} }, &.{value}, state);
             } else {
                 // A frame for an address does not also describe the reference
                 // stored at that address. An unresolved load proves no frame.
-                if (value.symbolic_pointees.len != 1) return .{};
+                if (value.symbolic_pointees.len != 1 or value.mutation_places.len != 0) return .{};
                 value = try self.readSymbolicValue(state, value, null);
             }
         }
@@ -14417,6 +14418,10 @@ test "whole-reference forwarding observes the argument rather than its stored co
     try std.testing.expectEqual(@as(?u32, null), unknown.lexical_frame);
 
     const from_slot: facts.InputPath = .{ .input_index = 0, .projections = &.{.dereference} };
+    const missing = facts.Place{ .root = @enumFromInt(1) };
+    const ambiguous: facts.ValueFacts = .{ .referenced_place = slot, .mutation_places = &.{ slot, missing } };
+    const mixed = try checker.referenceObservationInput(from_slot, &.{ambiguous}, &state);
+    try std.testing.expectEqual(@as(?u32, null), mixed.lexical_frame);
     for ([_][]const facts.SymbolicPointeeId{ &.{}, &.{@enumFromInt(0)}, &.{ @enumFromInt(0), @enumFromInt(1) } }) |candidates| {
         const loaded = try checker.referenceObservationInput(from_slot, &.{.{
             .lexical_frame = 9,
