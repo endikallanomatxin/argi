@@ -38,4 +38,6 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         abandoned ::= unwrap_or_abort(async#(make_text)(.args = (.allocator = allocator)))
     }
     if has_live_allocations(&storage) { abort }
+    check_rejected_text(.storage = $&storage, .ffi = system.ffi, .start = false)
+    check_rejected_text(.storage = $&storage, .ffi = system.ffi, .start = true)
 }
