@@ -5832,7 +5832,7 @@ pub const SafetyChecker = struct {
         var value = arguments[path.input_index];
         for (path.projections) |projection| {
             if (projection != .dereference) {
-                value = try self.projectValueFacts(value, &.{projection});
+                value = representedSnapshotProjection(value, projection) orelse return .{};
                 continue;
             }
             if (value.reference_target_incomplete) return .{};
@@ -5847,6 +5847,19 @@ pub const SafetyChecker = struct {
             }
         }
         return value;
+    }
+
+    fn representedSnapshotProjection(value: facts.ValueFacts, projection: facts.Projection) ?facts.ValueFacts {
+        switch (projection) {
+            .field, .static_index => |index| {
+                for (value.fields) |field| if (field.index == index) return field.value.*;
+            },
+            .variant => |index| {
+                for (value.variants) |variant| if (variant.index == index) return variant.value.*;
+            },
+            .dereference, .dynamic_index => {},
+        }
+        return null;
     }
 
     fn instantiateRegionEffect(self: *SafetyChecker, domain_index: u32, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState, observe_handles: bool) !facts.DomainFacts {
@@ -14412,6 +14425,29 @@ test "verified forwarding preserves observations without manufacturing authority
     try std.testing.expectEqual(@as(?u32, null), (try checker.instantiateOutput(.{
         .reference_relation = .{ .source = .{ .input_index = 1 } },
     }, &.{ input, .{} }, &state)).lexical_frame);
+}
+
+test "an absent backing projection cannot reuse a sibling observation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const origin = try state.establishCapability();
+    const observed: facts.ValueFacts = .{ .acquisition_origins = &.{origin}, .lexical_frame = 1 };
+    const aggregate: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &observed }} };
+    for ([_]facts.Projection{ .{ .field = 1 }, .{ .static_index = 1 }, .{ .variant = 1 } }) |missing| {
+        const path: facts.InputPath = .{ .input_index = 0, .projections = &.{ missing, .{ .field = 0 } } };
+        const result = try checker.referenceObservationInput(path, &.{aggregate}, &state);
+        try std.testing.expectEqual(@as(usize, 0), result.acquisition_origins.len);
+        try std.testing.expectEqual(@as(?u32, null), result.lexical_frame);
+    }
+    const present = try checker.referenceObservationInput(.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }, &.{aggregate}, &state);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, present.acquisition_origins);
 }
 
 test "whole-reference forwarding observes the argument rather than its stored contents" {
