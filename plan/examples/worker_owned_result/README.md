@@ -1,10 +1,12 @@
 # Result ownership across a join
 
-Build the directory and run its output. Exit 0 requires all three destruction
-observations. The direct call drops one ticket. Awaiting the first task moves
+Build the directory and run its output. Exit 0 requires all destruction observations. The direct call drops one ticket. Awaiting the first task moves
 its ticket into the caller, whose scope exit drops it. A second await must
 report already_awaited. Dropping a moved future must join the second task and
-drop its unclaimed ticket. The expected final count is three. Counter checks
+drop its unclaimed ticket. The expected count at that point is three. Two further submissions return
+the same start error. The first drops the request before invocation and adds
+zero destructions. The second executes inline and drops the accepted receipt
+before returning the error, adding exactly one. Counter checks
 follow synchronous return, successful await or completed scope cleanup.
 
 The worker takes no inputs. Its returned ticket contains a scalar and carries a
