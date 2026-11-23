@@ -71,16 +71,18 @@ implement Allocator#(TrackingAllocator) (
         .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) {
 
-        allocated ::= allocate_bytes(
-            .self = self&.backing, .size = size, .alignment = alignment
+        allocated ::= acquire_page_storage(
+            .memory = self&.backing&.memory, .size = size, .alignment = alignment
         )
         match allocated {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~payload {
-                original ::= ~payload
+                storage ::= ~payload
+                release ::= Virtual#(Deallocator)(self)
+                original ::= establish_allocation(
+                    .storage = ~storage, .size = size, .alignment = alignment, .deallocator = release
+                )
                 self&.allocations = self&.allocations + 1
-                -- Tracking delegates release to the same backing allocator.
-                original.deallocator = Virtual#(.contract: Deallocator)(.value = self)
                 result = ..ok ~original
             }
         }

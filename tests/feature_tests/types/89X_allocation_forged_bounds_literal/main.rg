@@ -12,7 +12,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         .anchor    = erase_reference#(.t: UInt8)(
             .base = &allocation_static_anchor
         ).reference
-        .deallocator        = deallocator
+        ._deallocator       = deallocator
         ._storage_address   = 1
         ._storage_size      = 8
         ._storage_alignment = 1

@@ -80,7 +80,7 @@ Allocation : Type = (
     .size: UIntNative
     .alignment: UIntNative
     .anchor: &Any
-    .deallocator: Virtual#(Deallocator)
+    ._deallocator: Virtual#(Deallocator)
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative
@@ -124,7 +124,11 @@ no readable bytes, even when acquisition reserves heap or page padding.
 `establish_allocation(storage: AcquiredStorage, size, alignment, deallocator,
 anchor)` checks that the requested prefix fits the acquired extent and that
 its address satisfies the requested alignment. It consumes the acquisition's
-storage authorization and creates the temporal allocation root.
+storage authorization and creates the temporal allocation root. The provider
+selects a release operation compatible with the acquisition at establishment.
+The returned owner keeps that binding private through moves and scope cleanup.
+For example, a page-tracking provider can acquire pages, establish the owner
+with its own deallocator, and delegate release to the underlying memory provider.
 `establish_inherited_storage(storage: AcquiredStorage, root)` consumes the same
 authorization when attaching acquired bytes to an existing temporal domain.
 The receipt is move-only. Establishment consumes it with `~storage`; forwarding

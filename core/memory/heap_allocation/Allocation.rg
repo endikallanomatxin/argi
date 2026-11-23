@@ -27,7 +27,8 @@ Allocation := (
     .alignment : UIntNative
     -- The heap uses a static marker; arena children point at ArenaDomain.
     .anchor      : &Any
-    .deallocator : Virtual#(Deallocator)
+    -- Moving the owner preserves its selected release operation.
+    ._deallocator : Virtual#(Deallocator)
     -- Allocator-authenticated bounds. Public receipt fields can restrict a
     -- request, but cannot enlarge this region or change the address, size,
     -- or alignment passed to physical cleanup.
@@ -67,7 +68,7 @@ trusted_establish_allocation := (
         .size               = size
         .alignment          = alignment
         .anchor             = anchor
-        .deallocator        = deallocator
+        ._deallocator       = deallocator
         ._storage_address   = storage
         ._storage_size      = size
         ._storage_alignment = alignment
@@ -112,7 +113,7 @@ implement Deinit#(Allocation) (
         data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
         Deallocator#(
         ).deallocate(
-            $&self&.deallocator
+            $&self&._deallocator
             .data      = data
             .size      = self&._release_size
             .alignment = self&._storage_alignment

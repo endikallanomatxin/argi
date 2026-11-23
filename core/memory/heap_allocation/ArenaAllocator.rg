@@ -181,7 +181,7 @@ implement Allocator#(ArenaAllocator) (
             .anchor    = erase_mutable_reference#(.t: ArenaDomain)(
                 .base = $&self&.domain
             ).reference
-            .deallocator        = deallocator
+            ._deallocator       = deallocator
             ._storage_address   = address
             ._storage_size      = size
             ._storage_alignment = alignment
