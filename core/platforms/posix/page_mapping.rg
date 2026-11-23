@@ -41,26 +41,33 @@
         }
     }
 
-    -- POSIX may release alignment padding independently from the returned range.
-    _memory_acquire_storage := (
+    -- This operation receives sizes only. Every unmap trims the fresh mapping
+    -- made by this invocation. A result of one denotes failure and cannot be
+    -- the base of a page-aligned mapping.
+    _memory_acquire_aligned := (
         .length: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
-    ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
+    ) -> (.address: UIntNative) {
         assume ffi
         page_size ::= _memory_getpagesize().size
+        _require_allocation_alignment(.alignment = alignment)
+        if page_size == 0 or length == 0 or length % page_size != 0 {
+            address = 1
+            return
+        }
         extra :: UIntNative = 0
         if alignment > page_size { extra = alignment - page_size }
         request_size ::= length + extra
         if request_size < length {
-            result = ..error(.reason = ..out_of_memory)
+            address = 1
             return
         }
         mapped_address ::= _memory_map_anonymous(.length = request_size).address
         if mapped_address + 1 == 0 {
-            result = ..error(.reason = ..out_of_memory)
+            address = 1
             return
         }
         if mapped_address + request_size < mapped_address { abort }
-        address ::= mapped_address
+        address = mapped_address
         if alignment > page_size {
             remainder ::= mapped_address % alignment
             if remainder != 0 {
@@ -82,10 +89,17 @@
                 }
             }
         }
-        selected ::= _trusted_acquisition_subaddress(
-            .base = mapped_address, .address = address
-        ).result
-        result = ..ok(._address = selected, ._size = length, ._alignment = alignment)
+    }
+
+    _memory_acquire_storage := (
+        .length: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
+    ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
+        address ::= _memory_acquire_aligned(.length = length, .alignment = alignment, .ffi = ffi).address
+        if address == 1 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        result = ..ok(._address = address, ._size = length, ._alignment = alignment)
     }
 
     _memory_release_aligned := (
