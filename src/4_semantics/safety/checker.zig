@@ -4022,7 +4022,7 @@ pub const SafetyChecker = struct {
         // Returned owners keep these obligations; no caller place is restored.
         const effects = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         for (summary.outputs, effects) |output, *effect| effect.* = try self.opaqueOutputDependencies(output);
-        const hidden = try self.instantiateSummaryOutputs(effects, arguments, state);
+        const hidden = try self.instantiateSummaryOutputs(effects, arguments, state, &.{});
         const result = try self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
         var combined = try self.mergeValueFacts(result, hidden);
         // This adds provenance to the same result, rather than joining two
@@ -4144,7 +4144,33 @@ pub const SafetyChecker = struct {
         return result;
     }
 
+    const EntryPlaceValue = struct {
+        path: facts.InputPath,
+        value: facts.ValueFacts,
+    };
+
+    fn collectOutputEntryValues(self: *SafetyChecker, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState, entries: *std.ArrayList(EntryPlaceValue)) anyerror!void {
+        for (effect.input_place_values) |path| {
+            for (entries.items) |entry| {
+                if (sameInputPath(path, entry.path)) break;
+            } else {
+                const value = try self.loadSummaryInputPlaceContents(path, arguments, state);
+                try entries.append(self.state_allocator, .{ .path = path, .value = value });
+            }
+        }
+        for (effect.fields) |field| try self.collectOutputEntryValues(field.value.*, arguments, state, entries);
+        for (effect.variants) |variant| try self.collectOutputEntryValues(variant.value.*, arguments, state, entries);
+        for (effect.fresh_executions) |execution| try self.collectOutputEntryValues(execution.inputs.*, arguments, state, entries);
+    }
+
     fn applyOutcomeSummaryEffects(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        // A result copied out of caller storage refers to its entry contents.
+        // Postconditions may replace that storage before the result is materialized.
+        var entries: std.ArrayList(EntryPlaceValue) = .empty;
+        defer entries.deinit(self.state_allocator);
+        if (summary.input_post_states.len != 0 or summary.outcome_post_states.len != 0) {
+            for (summary.outputs) |output| try self.collectOutputEntryValues(output, arguments, state, &entries);
+        }
         var selector: ?u32 = null;
         for (summary.outcome_post_states) |outcome| {
             var preserves = false;
@@ -4170,13 +4196,13 @@ pub const SafetyChecker = struct {
             if (!preserves) continue;
             if (selector != null and selector.? != outcome.output_index) {
                 try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
-                return self.instantiateSummaryOutputs(summary.outputs, arguments, state);
+                return self.instantiateSummaryOutputs(summary.outputs, arguments, state, entries.items);
             }
             selector = outcome.output_index;
         }
         const output_index = selector orelse {
             try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
-            return self.instantiateSummaryOutputs(summary.outputs, arguments, state);
+            return self.instantiateSummaryOutputs(summary.outputs, arguments, state, entries.items);
         };
         var deferred = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         defer deferred.deinit();
@@ -4254,7 +4280,7 @@ pub const SafetyChecker = struct {
         common_summary.input_post_states = common.items;
         common_summary.invalidated_domains = common_domains.items;
         try self.applySummaryEffects(source, common_summary, argument_ids, arguments, state);
-        var result = try self.instantiateSummaryOutputs(summary.outputs, arguments, state);
+        var result = try self.instantiateSummaryOutputs(summary.outputs, arguments, state, entries.items);
         if (deferred.items.len == 0 and deferred_domains.items.len == 0 and resources.items.len == 0 and relocations.items.len == 0) return result;
         var choice: *facts.ValueFacts = &result;
         if (summary.outputs.len != 1) {
@@ -4846,6 +4872,7 @@ pub const SafetyChecker = struct {
                 state,
                 &fresh_roots,
                 self.active_fresh_capabilities orelse &fresh_capabilities,
+                &.{},
             );
         }
         self.active_post_captures = previous_captures;
@@ -5421,18 +5448,19 @@ pub const SafetyChecker = struct {
         outputs: []const facts.ValueEffect,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
+        entries: []const EntryPlaceValue,
     ) !facts.ValueFacts {
         if (outputs.len == 0) return .{};
-        if (outputs.len == 1) return self.instantiateOutput(outputs[0], arguments, state);
         var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer fresh_capabilities.deinit();
+        if (outputs.len == 1) return self.instantiateOutputWithFresh(outputs[0], arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, entries);
         const fields = try self.allocator.alloc(facts.FieldFacts, outputs.len);
         var aggregate: facts.ValueFacts = .{};
         for (outputs, 0..) |effect, index| {
             const value = try self.allocator.create(facts.ValueFacts);
-            value.* = try self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities);
+            value.* = try self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, entries);
             fields[index] = .{ .index = @intCast(index), .value = value };
             aggregate = try self.mergeValueFacts(aggregate, value.*);
         }
@@ -5450,7 +5478,7 @@ pub const SafetyChecker = struct {
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer fresh_capabilities.deinit();
-        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities);
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, &.{});
     }
 
     fn instantiateOutputWithFresh(
@@ -5460,6 +5488,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
         fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
+        entries: []const EntryPlaceValue,
     ) !facts.ValueFacts {
         const capture_source: primitives.SourceRef = if (self.call_stack.items.len != 0) self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source else .{ .file_index = 0, .offset = 0 };
         var result: facts.ValueFacts = .{ .explicit_dependency = effect.explicit_dependency, .storage_capability_incomplete = effect.storage_capability_incomplete };
@@ -5478,7 +5507,7 @@ pub const SafetyChecker = struct {
             if (!self.inputTypeHasReferences(@enumFromInt(fresh.input_type), 0)) continue;
             const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
             const maybe_id: ?facts.ExecutionId = existing orelse blk: {
-                const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities);
+                const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries);
                 const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
@@ -5715,7 +5744,9 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            const input = try self.loadSummaryInputPlaceContents(path, arguments, state);
+            const input = for (entries) |entry| {
+                if (sameInputPath(entry.path, path)) break entry.value;
+            } else try self.loadSummaryInputPlaceContents(path, arguments, state);
             unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
             includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             result = try self.mergeValueFacts(result, input);
@@ -5744,7 +5775,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities);
+                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities, entries);
                 fields[index] = .{ .index = field.index, .value = value };
                 result = try self.mergeValueFacts(result, value.*);
             }
@@ -5772,7 +5803,7 @@ pub const SafetyChecker = struct {
                 const first_root = state.tracker.roots.items.len;
                 const first_capability = state.storage_capabilities.items.len;
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities);
+                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities, entries);
                 for (state.tracker.roots.items[first_root..]) |*root| {
                     // Input storage generations can be materialized lazily
                     // while instantiating a choice payload. Their lifetime
