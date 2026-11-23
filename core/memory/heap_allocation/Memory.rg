@@ -79,6 +79,8 @@ map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
                 .size        = physical_size
                 .alignment   = alignment
                 .deallocator = deallocator
+                -- Page cleanup already borrows this Memory to round the release size.
+                .anchor = erase_reference#(UIntNative)(.base = &self&._page_size).reference
             )
             result = ..ok ~allocation
         }
