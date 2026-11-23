@@ -21,3 +21,16 @@ awaiting it must also satisfy the destructor's external requirements. Failure
 before worker entry cannot imply that an output was initialized. The provider
 dependency must follow the result beyond await if the result outlives its
 future. These obligations also apply to owners other than String.
+
+The `input` control exercises the opposite transfer. The caller constructs the
+String, moves it into the submission arguments and keeps its allocator alive
+until after await. The worker consumes the String and returns a plain byte.
+Exit 2 therefore isolates the owning-input admission check from the result
+restriction. Exit 0 would exercise the worker's use and scope cleanup. The
+returned byte alone cannot certify exactly-once release.
+
+The existing request borrows the prepared arguments and its worker loads a
+copy of the input record. Opening the input type gate alone would give the
+caller and worker cleanup responsibilities for the same bytes. Submission
+needs a single owner on either side of acceptance, including when a provider
+returns an error after starting a worker.
