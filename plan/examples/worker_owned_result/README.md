@@ -40,3 +40,18 @@ at publication. Scope cleanup must also handle an executor that ran the worker
 but returned an error. A local slot suffices for this scoped experiment.
 Returning a movable Future would require stable backing and ownership of the
 slot before the fallible submission, with a handoff to the Future on success.
+
+## Stable backing for a movable result slot
+
+The `heap_slot` probe reduces the destination to one initialized Int32 in a
+DynamicArray. Its owner stays in the caller until after join. Building it
+currently reports “borrowed execution requires an authenticated reference
+target” at submission. Replacing submission and await with a direct worker
+call compiles, including when the array owner is moved after the call.
+
+This isolates a prerequisite of the typed heap slot approach. Even a scalar
+loan needs evidence that every possible referent is covered by the loan and
+that other accesses to its backing will see the conflict. A dependency on the
+array lifetime alone establishes neither property. A future implementation
+should accept this probe and still reject reading the element through a fresh
+lookup before join.
