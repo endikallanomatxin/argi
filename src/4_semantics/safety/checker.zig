@@ -2894,9 +2894,12 @@ pub const SafetyChecker = struct {
     /// these identities; only certified completion discharges them.
     fn lendExecution(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, inputs: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef) !facts.ValueFacts {
         var loans = std.array_list.Managed(facts.ExecutionLoan).init(self.allocator);
+        defer loans.deinit();
+        const diagnostics_before = self.diagnostics.list.items.len;
         try self.collectExecutionLoans(ty, inputs, state, &loans, source);
-        if (loans.items.len == 0) return .{};
+        if (loans.items.len == 0 or self.diagnostics.list.items.len != diagnostics_before) return .{};
         for (loans.items) |loan| try self.requireExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, state);
+        if (self.diagnostics.list.items.len != diagnostics_before) return .{};
         const id = try state.establishExecutionAt(try loans.toOwnedSlice(), source);
         // A pending execution retains its backing generations through the
         // obligation itself. Do not turn these temporary loans into ordinary
@@ -15029,12 +15032,27 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     try std.testing.expectEqual(facts.AccessMode.write, loans.items[3].mode);
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(loans.items[4].symbolic.?));
     try std.testing.expectEqual(facts.AccessMode.read, loans.items[4].mode);
+    const provider: facts.ValueFacts = .{ .domains = &.{
+        .{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{first} },
+        .{ .domain_index = 0, .storages = &.{second} },
+    } };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const receipt = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
+    try std.testing.expectEqual(@as(usize, 1), receipt.execution_receipts.len);
+    const conflicting = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
+    try std.testing.expectEqual(@as(usize, 0), conflicting.execution_receipts.len);
+    try std.testing.expectEqual(@as(usize, 1), state.executions.items.len);
+    checker.completeExecutionReceipts(receipt, &state);
+    const next = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
+    try std.testing.expectEqual(@as(usize, 1), next.execution_receipts.len);
+    try std.testing.expect(next.execution_receipts[0] != receipt.execution_receipts[0]);
+    const prior_errors = diags.list.items.len;
     loans.clearRetainingCapacity();
     try checker.collectExecutionLoans(@enumFromInt(1), .{
         .domains = &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{first} }},
     }, &state, &loans, .{ .file_index = 0, .offset = 0 });
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
-    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqual(prior_errors + 1, diags.list.items.len);
 }
 
 test "an uncovered target cannot establish an execution loan" {
