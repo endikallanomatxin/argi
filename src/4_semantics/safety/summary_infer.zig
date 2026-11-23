@@ -1251,9 +1251,10 @@ pub const Infer = struct {
 
         // Publish identity only after proving the complete forwarding body.
         // May-dependencies cannot establish this universal return guarantee.
-        const forwarded_calls = try self.forwardedReferenceCalls(function, .identity);
-        const contained_calls = try self.forwardedReferenceCalls(function, .contained);
-        const backing_calls = try self.forwardedReferenceCalls(function, .backing);
+        const forwarding = @import("lexical_forwarding.zig");
+        // Try strongest to weakest. Compute links only for grades a pointer output needs.
+        const grades = std.enums.values(facts.ReferenceRelation.Grade);
+        var call_sets = [_]?[]const forwarding.ForwardedCall{null} ** grades.len;
         for (outputs, 0..) |*output, output_index| {
             const embedded_relation = output.reference_relation;
             output.reference_relation = null;
@@ -1268,20 +1269,15 @@ pub const Infer = struct {
                     .input_index = @intCast(input_index),
                     .output_index = @intCast(output_index),
                 };
-                if (types.equal(self.graph, self.graph.binding(binding).ty, output_fields[output_index].ty) and
-                    try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, relation, false, forwarded_calls))
-                {
-                    output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) } };
-                    break;
-                }
-                if (try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, relation, false, contained_calls)) {
-                    output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) }, .grade = .contained };
-                    break;
-                }
-                if (try @import("lexical_forwarding.zig").provesWithCalls(self.allocator, self.graph, function, relation, false, backing_calls)) {
-                    output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) }, .grade = .backing };
-                    break;
-                }
+                for (grades, &call_sets) |grade, *calls| {
+                    if (grade == .identity and !types.equal(self.graph, self.graph.binding(binding).ty, output_fields[output_index].ty)) continue;
+                    if (calls.* == null) calls.* = try self.forwardedReferenceCalls(function, grade);
+                    if (try forwarding.provesWithCalls(self.allocator, self.graph, function, relation, false, calls.*.?)) {
+                        output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) }, .grade = grade };
+                        break;
+                    }
+                } else continue;
+                break;
             }
         }
         profile.accumulate(self.profile_io, start, &self.capability_ns);
@@ -8467,6 +8463,27 @@ test "output summaries reach a fixed point through reverse call dependencies" {
         try std.testing.expect(repeated.outputs.ptr == wrapper.outputs.ptr);
     }
     try std.testing.expectEqual(retained_capacity, arena.queryCapacity());
+
+    // The same forwarding body must publish exactly the guarantee supplied
+    // by its callee, including a checked range outside the source view.
+    {
+        var graded = summaries.Engine.init(summary_allocator);
+        defer graded.deinit();
+        _ = try graded.updateSummary(@enumFromInt(0), .{ .outputs = &.{.{}} });
+        var forwarding = Infer.init(summary_allocator, &graph, &graded);
+        defer forwarding.deinit();
+        try graph.fields.append(allocator, .{ .name = empty_name, .source = source, .ty = pointer_ty });
+        graph.functions.items[0].output.len = 1;
+        defer graph.functions.items[0].output.len = 0;
+        graph.bindings.items[0].mutability = .constant;
+        defer graph.bindings.items[0].mutability = .variable;
+        for (std.enums.values(facts.ReferenceRelation.Grade)) |grade| {
+            const published: facts.ReferenceRelation = .{ .source = .{ .input_index = 0 }, .grade = grade };
+            _ = try graded.updateSummary(@enumFromInt(1), .{ .outputs = &.{.{ .reference_relation = published }} });
+            const result = try forwarding.inferFunction(@enumFromInt(0));
+            try std.testing.expectEqual(grade, result.outputs[0].reference_relation.?.grade);
+        }
+    }
 
     // Add a back edge while preserving identity's local source of effects.
     // Reversing the function IDs then exercises both initial scheduling orders.
