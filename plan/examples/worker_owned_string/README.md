@@ -61,3 +61,21 @@ reference already obtained, and a later query through the provider. An
 implementation may forget the provider's earlier route after observing its
 target if it preserves the obligations of the observed value. A new call
 must account for changes that could affect its own observation.
+
+## Evidence available at the worker boundary
+
+A temporary inspection of the converged summary for the direct make_text
+control at 2ed86c48c found one output with a fresh owned root, a cleanup
+obligation and an input_receiver_values recipe for input zero with an empty
+projection path. Its ordinary input_dependencies list was empty. The worker
+result therefore already carries a recipe for the erased allocator receiver.
+Retaining only ordinary input dependencies when transferring a worker result
+would omit the provider. Instantiation needs the submitted argument value
+while its receiver and captured dependencies are still available.
+
+The same summary had unknown_access set and no enumerated input or global
+accesses. Receiver validity alone cannot authorize running this worker. Any
+admission proof also needs an access bound that covers the selected allocator,
+including backing providers its operations can reach. Ordinary direct-call
+summary instantiation is a reference for preserving the result dependencies;
+it does not discharge that separate execution obligation.
