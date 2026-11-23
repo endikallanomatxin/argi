@@ -5566,7 +5566,7 @@ pub const SafetyChecker = struct {
             for (value.execution_receipts) |id| if (std.mem.indexOfScalar(facts.ExecutionId, execution_ids.items, id) == null) try execution_ids.append(id);
         }
         for (effect.fresh_executions) |fresh| {
-            if (!self.inputTypeHasReferences(@enumFromInt(fresh.input_type), 0)) continue;
+            if (!self.inputTypeNeedsLoan(@enumFromInt(fresh.input_type), 0, true)) continue;
             const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
             const maybe_id: ?facts.ExecutionId = existing orelse blk: {
                 const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries);
@@ -15043,9 +15043,18 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     try std.testing.expectEqual(@as(usize, 0), conflicting.execution_receipts.len);
     try std.testing.expectEqual(@as(usize, 1), state.executions.items.len);
     checker.completeExecutionReceipts(receipt, &state);
-    const next = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = .{ .start = 0, .len = 0 }, .source = source });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    const copied_provider: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const next = try checker.instantiateOutput(.{
+        .fresh_executions = &.{.{ .source = 0, .inputs = &copied_provider, .input_type = 1 }},
+    }, &.{provider}, &state);
     try std.testing.expectEqual(@as(usize, 1), next.execution_receipts.len);
     try std.testing.expect(next.execution_receipts[0] != receipt.execution_receipts[0]);
+    const summarized_loans = state.executions.getLast().loans;
+    try std.testing.expectEqual(@as(usize, 2), summarized_loans.len);
+    try std.testing.expect(summarized_loans[0].storage.?.eql(first));
+    try std.testing.expect(summarized_loans[1].storage.?.eql(second));
     const prior_errors = diags.list.items.len;
     loans.clearRetainingCapacity();
     try checker.collectExecutionLoans(@enumFromInt(1), .{
