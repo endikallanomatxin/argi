@@ -9126,16 +9126,7 @@ pub const SafetyChecker = struct {
         for (left.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
         for (right.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
 
-        try joined.executions.appendSlice(left.executions.items);
-        for (right.executions.items) |execution| {
-            var found = false;
-            for (joined.executions.items) |*existing| if (existing.id == execution.id) {
-                existing.pending = existing.pending or execution.pending;
-                found = true;
-                break;
-            };
-            if (!found) try joined.executions.append(execution);
-        }
+        try joined.joinExecutions(left.executions.items, right.executions.items);
 
         for (left.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);

@@ -200,6 +200,36 @@ pub const State = struct {
         return id;
     }
 
+    /// Establishment appends increasing IDs. Preserve that order across joins
+    /// so each incoming execution is visited once. An ID shared by both
+    /// branches denotes the same loan, still pending if either branch retains it.
+    pub fn joinExecutions(self: *State, left: []const facts.ExecutionState, right: []const facts.ExecutionState) !void {
+        std.debug.assert(self.executions.items.len == 0);
+        var i: usize = 0;
+        var j: usize = 0;
+        while (i < left.len and j < right.len) {
+            switch (std.math.order(@intFromEnum(left[i].id), @intFromEnum(right[j].id))) {
+                .lt => {
+                    try self.executions.append(left[i]);
+                    i += 1;
+                },
+                .gt => {
+                    try self.executions.append(right[j]);
+                    j += 1;
+                },
+                .eq => {
+                    var shared = left[i];
+                    shared.pending = shared.pending or right[j].pending;
+                    try self.executions.append(shared);
+                    i += 1;
+                    j += 1;
+                },
+            }
+        }
+        try self.executions.appendSlice(left[i..]);
+        try self.executions.appendSlice(right[j..]);
+    }
+
     pub fn executionState(self: *const State, id: facts.ExecutionId) ?facts.ExecutionState {
         for (self.executions.items) |execution| if (execution.id == id) return execution;
         return null;
@@ -1508,6 +1538,31 @@ test "execution receipts keep distinct identities across branches and completion
     try std.testing.expect(state.executionPending(third));
     const later = try state.establishExecution(&.{});
     try std.testing.expect(later != first);
+}
+
+test "execution joins preserve interleaved identities and completion in either branch order" {
+    const left = [_]facts.ExecutionState{
+        .{ .id = @enumFromInt(0), .loans = &.{}, .pending = false },
+        .{ .id = @enumFromInt(2), .loans = &.{}, .pending = false },
+        .{ .id = @enumFromInt(3), .loans = &.{} },
+    };
+    const right = [_]facts.ExecutionState{
+        .{ .id = @enumFromInt(0), .loans = &.{}, .pending = false },
+        .{ .id = @enumFromInt(1), .loans = &.{} },
+        .{ .id = @enumFromInt(2), .loans = &.{} },
+        .{ .id = @enumFromInt(4), .loans = &.{}, .pending = false },
+    };
+    for ([_]bool{ false, true }) |reverse| {
+        var joined = State.init(std.testing.allocator);
+        defer joined.deinit();
+        try joined.joinExecutions(if (reverse) &right else &left, if (reverse) &left else &right);
+        const expected = [_]bool{ false, true, true, true, false };
+        try std.testing.expectEqual(expected.len, joined.executions.items.len);
+        for (joined.executions.items, expected, 0..) |entry, pending, index| {
+            try std.testing.expectEqual(index, @intFromEnum(entry.id));
+            try std.testing.expectEqual(pending, entry.pending);
+        }
+    }
 }
 
 fn executionReceiptAllocation(allocator: std.mem.Allocator) !void {
