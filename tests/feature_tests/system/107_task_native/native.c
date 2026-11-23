@@ -33,7 +33,48 @@ static void destroy_task(void *context) {
     job->result = _argi_task_destroy(job->task);
 }
 
+struct owned_payload {
+    int *value;
+    unsigned *drops;
+};
+
+static void drop_owned_payload(uintptr_t storage) {
+    struct owned_payload *owner = (struct owned_payload *)storage;
+    if (!owner->value || *owner->value != 42) abort();
+    free(owner->value);
+    owner->value = NULL;
+    ++*owner->drops;
+}
+
+static void produce_owned_payload(struct argi_execution_invocation invocation) {
+    struct owned_payload *owner = (struct owned_payload *)invocation.output;
+    owner->drops = *(unsigned *const *)invocation.input;
+    owner->value = malloc(sizeof(*owner->value));
+    if (!owner->value) abort();
+    *owner->value = 42;
+    if (_argi_task_own_result(invocation.identity, drop_owned_payload)) abort();
+}
+
+static void check_threaded_owned_result(void) {
+    unsigned drops = 0;
+    unsigned *counter = &drops;
+    uintptr_t task = _argi_task_create_buffers(produce_owned_payload, &counter, sizeof(counter),
+        sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
+    if (!task || _argi_task_destroy(task) || drops != 1) abort();
+
+    task = _argi_task_create_buffers(produce_owned_payload, &counter, sizeof(counter),
+        sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
+    if (!task) abort();
+    uintptr_t slot = _argi_task_take_owned_result(task, drop_owned_payload);
+    if (!slot) abort();
+    struct owned_payload moved = *(struct owned_payload *)slot;
+    if (_argi_task_release_storage(task) || drops != 1) abort();
+    drop_owned_payload((uintptr_t)&moved);
+    if (drops != 2) abort();
+}
+
 int32_t argi_task_probe(void) {
+    check_threaded_owned_result();
     int original = 21;
     if (!_argi_execution_reclaim(0)) abort();
     if (_argi_task_create_inline_buffers(NULL, &original, sizeof(original), sizeof(original), 64, 64)) abort();
