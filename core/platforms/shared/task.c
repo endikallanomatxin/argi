@@ -146,10 +146,11 @@ struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_
     return result;
 }
 
-int32_t _argi_task_destroy(uintptr_t handle) {
+static int32_t argi_task_destroy(uintptr_t handle, int allow_cleanup) {
     if (!handle) return -1;
     struct argi_task *task = (struct argi_task *)handle;
     if (argi_task_join(task)) return -1;
+    if (!allow_cleanup && task->result_cleanup && !task->owner_claimed) return -1;
     if (task->thread && _argi_thread_destroy(task->thread)) return -1;
     if (task->result_cleanup && !task->owner_claimed)
         task->result_cleanup((uintptr_t)task->output);
@@ -157,4 +158,12 @@ int32_t _argi_task_destroy(uintptr_t handle) {
     argi_task_aligned_free(task->input);
     free(task);
     return 0;
+}
+
+int32_t _argi_task_release_storage(uintptr_t handle) {
+    return argi_task_destroy(handle, 0);
+}
+
+int32_t _argi_task_destroy(uintptr_t handle) {
+    return argi_task_destroy(handle, 1);
 }

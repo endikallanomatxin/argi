@@ -40,6 +40,9 @@ uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size);
    returns count zero; the unused suffix is always initialized to zero. */
 struct argi_task_result_block { uint8_t bytes[32]; uintptr_t count; };
 struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_t offset);
+/* Release can free plain or already claimed storage. A pending owner leaves
+   the handle intact. This entry never invokes a result destructor. */
+int32_t _argi_task_release_storage(uintptr_t handle);
 /* Destroy joins if necessary; a join failure retains the handle and payload. */
 int32_t _argi_task_destroy(uintptr_t handle);
 #endif

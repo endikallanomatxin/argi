@@ -47,8 +47,8 @@ _task_create_inline(
 _task_join(.handle: UIntNative, .size: UIntNative) -> (.address: UIntNative): CFunction(
     .symbol = "_argi_task_join_result"
 ) where { no_access() }
-_task_destroy(.handle: UIntNative) -> (.status: CInt): CFunction(
-    .symbol = "_argi_task_destroy"
+_task_release_storage(.handle: UIntNative) -> (.status: CInt): CFunction(
+    .symbol = "_argi_task_release_storage"
 ) where { no_access() }
 
 ThreadedExecutor := (._ffi: $&ForeignFunctionInterface)
@@ -72,7 +72,7 @@ implement Deinit#(TaskReceipt) (
         assume ffi := self&._ffi
         _execution_complete(.receipt = $&self&._access,
             .join = ..some(.value = (._handle = self&._handle, ._ffi = self&._ffi)))
-        if _task_destroy(.handle = self&._handle) != 0 { abort }
+        if _task_release_storage(.handle = self&._handle) != 0 { abort }
     }
 )
 

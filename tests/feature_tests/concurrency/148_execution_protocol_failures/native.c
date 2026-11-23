@@ -9,6 +9,7 @@
 #define _argi_task_result_block probe_task_block
 #define _argi_task_own_result probe_own_result
 #define _argi_task_take_owned_result probe_take_owned_result
+#define _argi_task_release_storage probe_task_release_storage
 #define _argi_task_destroy probe_task_destroy
 #define _argi_execution_reclaim probe_reclaim
 #include "../../../../core/platforms/shared/task.c"
@@ -65,11 +66,12 @@ static void check_owned_result(void) {
     if (probe_task_destroy(task) || drops != 1) abort();
     task = probe_task_inline(make_owned, &input, sizeof(input), sizeof(int), _Alignof(int), _Alignof(int));
     if (!task || probe_task_result(task, sizeof(int)) || probe_task_block(task, 0).count) abort();
+    if (!probe_task_release_storage(task) || drops != 1) abort();
     if (probe_take_owned_result(task, other_drop)) abort();
     uintptr_t owned = probe_take_owned_result(task, drop_result);
     if (!owned || probe_take_owned_result(task, drop_result) || probe_task_block(task, 0).count) abort();
     int moved = *(int *)owned;
-    if (probe_task_destroy(task) || drops != 1) abort();
+    if (probe_task_release_storage(task) || drops != 1) abort();
     drop_result((uintptr_t)&moved);
     if (drops != 2) abort();
 }
