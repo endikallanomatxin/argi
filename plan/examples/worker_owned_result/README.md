@@ -165,3 +165,30 @@ The assertion concerns the backing bytes. Entry authority, initialization,
 provider lifetime and release compatibility are separate checks. In particular,
 the caller selecting a deallocator at establishment still has to choose one
 that can release the storage returned by the producer.
+
+## Where the typed destructor must be authorized
+
+An isolated compiler experiment based on 1cfa69f15 specialized the result
+destructor for Ticket and moved the claimed slot out in await. Forming the
+destructor address inside the isolated worker failed isolated-callback
+verification. Selecting it at submission instead, and passing it to the worker
+in the private invocation, got past that check. This kept the callback body
+outside worker execution and kept the existing isolation rule.
+
+The remaining diagnostic was at construction of the virtual ProbeExecutor.
+Its submit method can accept the request, drop its receipt and return an
+error. In this experiment receipt cleanup called the native destroy operation
+with unknown effects, since it could run the result destructor. That exceeded
+the executor's published access bound. The program was rejected before it
+could provide any evidence about successful extraction.
+
+This distinguishes publication from authorization. The native cleanup token
+selects a function but carries no static bound for its accesses. Declaring
+native destruction to have no accesses would hide Ticket's write to the drop
+counter. String adds the lifetime and access requirements of its deallocator.
+One design to test is keeping typed output custody at the submitting caller
+across the call to submit. Then a failing executor can finish the worker and
+release its execution resources while the caller still owns the published
+output and can perform checked cleanup after submit returns. On success the
+same custody would move into the future. Either design must keep the slot
+alive even when an executor finishes or drops a receipt inside submit.
