@@ -20,3 +20,23 @@ before worker entry. Its zero-filled bytes cannot supply a previously
 initialized owner for replacement cleanup. The worker must initialize empty
 storage; after verified publication the consumer can move the result out or
 run its cleanup in place. A failed join provides evidence for neither action.
+
+## Alternative with a typed caller slot
+
+The `caller_slot` probe passes a mutable reference to an initially empty
+optional Ticket. The worker returns unit. The direct control moves the
+payload out and verifies one destruction. The threaded path leaves the
+payload in its typed slot for ordinary scope cleanup after await. It currently
+returns 2 at submission. Replacing Ticket with Int32 in the experiment let
+the worker populate the choice and the caller read 42 after join. Assigning
+to the slot in the caller before await produced a pending-execution conflict.
+
+This separates the remaining type admission problem from native result
+extraction. Extending the loan to arbitrary owner-bearing destinations would
+be unsound: assigning through the pointer can destroy its old payload on the
+worker. A protocol can instead transfer a verified empty destination, constrain
+the worker to initialization, and return occupancy and payload dependencies
+at publication. Scope cleanup must also handle an executor that ran the worker
+but returned an error. A local slot suffices for this scoped experiment.
+Returning a movable Future would require stable backing and ownership of the
+slot before the fallible submission, with a handoff to the Future on success.
