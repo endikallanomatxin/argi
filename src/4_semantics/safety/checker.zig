@@ -2908,11 +2908,19 @@ pub const SafetyChecker = struct {
             for (value.dependencies) |dependency| try appendRootFact(&generations, dependency.root);
             const roots = try generations.toOwnedSlice();
             const mode: facts.AccessMode = if (semantic.pointer.mutability == .read_write) .write else .read;
-            if (value.referenced_place) |storage| {
+            if (value.referenced_place == null and value.symbolic_pointees.len == 0) {
+                try self.report(source, "borrowed execution requires an authenticated reference target", .{});
+                return;
+            }
+            if (value.referenced_place) |storage|
                 try loans.append(.{ .storage = storage, .generations = roots, .mode = mode });
-            } else if (value.symbolic_pointees.len != 0) {
-                for (value.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = roots, .mode = mode });
-            } else try self.report(source, "borrowed execution requires an authenticated reference target", .{});
+            // Retained alternatives enlarge the conflict footprint of an admitted loan.
+            for (value.mutation_places) |storage| {
+                if (value.referenced_place) |exact| if (exact.eql(storage)) continue;
+                try loans.append(.{ .storage = storage, .generations = roots, .mode = mode });
+            }
+            for (value.symbolic_pointees) |identity|
+                try loans.append(.{ .symbolic = identity, .generations = roots, .mode = mode });
             return;
         }
         if (types.arrayElement(self.graph, ty)) |element| {
@@ -14729,6 +14737,33 @@ test "incomplete targets preserve the read read authority contrast" {
         try checker.requireExecutionPointerAccess(.{ .file_index = 0, .offset = 0 }, pointer, access_mode, &state);
         try std.testing.expectEqual(before + @intFromBool(loan_mode != .read or access_mode != .read), diags.list.items.len);
     };
+}
+
+test "execution lending retains every concrete and symbolic target alternative" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } } });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    try checker.call_stack.append(@enumFromInt(0));
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    const symbolic: facts.SymbolicPointeeId = @enumFromInt(0);
+    var loans = std.array_list.Managed(facts.ExecutionLoan).init(allocator);
+    try checker.collectExecutionLoans(@enumFromInt(1), .{
+        .referenced_place = first,
+        .mutation_places = &.{ first, second },
+        .symbolic_pointees = &.{symbolic},
+    }, &state, &loans, .{ .file_index = 0, .offset = 0 });
+    try std.testing.expectEqual(@as(usize, 3), loans.items.len);
+    try std.testing.expect(loans.items[0].storage.?.eql(first));
+    try std.testing.expect(loans.items[1].storage.?.eql(second));
+    try std.testing.expectEqual(symbolic, loans.items[2].symbolic.?);
 }
 
 test "an uncovered target cannot establish an execution loan" {
