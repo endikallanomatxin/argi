@@ -176,6 +176,7 @@ pub const SafetyChecker = struct {
     // Nested calls install their own map so repeated acquisitions stay distinct.
     next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
+    active_summary_call_source: ?primitives.SourceRef = null,
     active_fresh_executions: ?*std.AutoHashMap(facts.FreshEffectSource, facts.ExecutionId) = null,
     active_post_captures: ?*std.array_list.Managed(PostCapture) = null,
     active_entry_generations: []const state_mod.StorageGeneration = &.{},
@@ -1974,6 +1975,9 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         outcome: ?u32,
     ) !?facts.ValueFacts {
+        const previous_source = self.active_summary_call_source;
+        self.active_summary_call_source = source;
+        defer self.active_summary_call_source = previous_source;
         const engine = self.active_summaries orelse return null;
         const complete_summary = engine.summaryFor(callee) orelse return null;
         const summary = try self.selectEntryGuardedSummary(complete_summary, values, state);
@@ -2890,6 +2894,7 @@ pub const SafetyChecker = struct {
         if (loans.items.len == 0) return .{};
         for (loans.items) |loan| try self.requireExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, state);
         const id = try state.establishExecution(try loans.toOwnedSlice());
+        state.executions.items[state.executions.items.len - 1].origin = source;
         // A pending execution retains its backing generations through the
         // obligation itself. Do not turn these temporary loans into ordinary
         // lifetime dependencies that would survive certified completion.
@@ -3090,6 +3095,12 @@ pub const SafetyChecker = struct {
                     };
                     continue;
                 }
+                if (execution.origin) |origin| if (self.location(origin)) |location_at_lend| {
+                    const position = self.diagnostics.lineColumn(location_at_lend);
+                    return self.report(source, "concurrent access conflicts with a pending execution ({s} access overlaps an active {s} loan established at {s}:{d}:{d})", .{
+                        @tagName(mode), @tagName(loan.mode), self.diagnostics.path(location_at_lend), position.line, position.column,
+                    });
+                };
                 try self.report(source, "concurrent access conflicts with a pending execution ({s} access overlaps an active {s} loan)", .{
                     @tagName(mode), @tagName(loan.mode),
                 });
@@ -5510,7 +5521,7 @@ pub const SafetyChecker = struct {
             const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
             const maybe_id: ?facts.ExecutionId = existing orelse blk: {
                 const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries);
-                const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source);
+                const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
                 if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);

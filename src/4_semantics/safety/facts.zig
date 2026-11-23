@@ -33,6 +33,7 @@ pub const ExecutionLoan = struct {
 pub const ExecutionState = struct {
     id: ExecutionId,
     loans: []const ExecutionLoan,
+    origin: ?primitives.SourceRef = null,
     pending: bool = true,
 };
 pub const InputAccess = base.InputAccess;
