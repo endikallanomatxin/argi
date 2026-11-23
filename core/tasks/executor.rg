@@ -65,12 +65,18 @@ TaskReceipt := (
 )
 implement Deinit#(TaskReceipt) (
     .deinit = (.self: $&TaskReceipt) -> () {
-        assume ffi := self&._ffi
-        _execution_complete(.receipt = $&self&._access,
-            .join = ..some(.value = (._handle = self&._handle, ._ffi = self&._ffi)))
-        if _task_release_storage(.handle = self&._handle) != 0 { abort }
+        _close_task(self)
     }
 )
+
+_close_task := (.self: $&TaskReceipt) -> () {
+    assume ffi := self&._ffi
+    _execution_complete(.receipt = $&self&._access,
+        .join = ..some(.value = (._handle = self&._handle, ._ffi = self&._ffi)))
+    if self&._handle == 0 { return }
+    if _task_release_storage(.handle = self&._handle) != 0 { abort }
+    self&._handle = 0
+}
 
 implement Executor#(ThreadedExecutor) (
     .state = region(self),

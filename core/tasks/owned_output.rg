@@ -20,6 +20,7 @@ _prepare_task_output := #(.T: Type) (.entry: _TaskEntry, .ffi: $&ForeignFunction
 
 implement#(.T: Type) Deinit#(_OwnedTaskOutput#(T)) (
     .deinit = (.self: $&_OwnedTaskOutput#(T)) -> () {
+        if self&._slot == 0 { return }
         assume ffi := self&._ffi
         address ::= _claim_task_output(.slot = self&._slot, .entry = self&._entry)
         if address != 0 {

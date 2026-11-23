@@ -6,7 +6,12 @@ Future := #(.T: Type) (
 
 implement#(.T: Type) Deinit#(Future#(T)) (
     .deinit = (.self: $&Future#(T)) -> () {
-        deinit(.self = $&self&._task)
+        #if is_plain_data(.type = T) {
+            deinit(.self = $&self&._task)
+        } #else {
+            _close_task(.self = $&self&._task)
+            output: _OwnedTaskOutput#(T) = (._slot = self&._task._output_slot, ._entry = self&._task._entry, ._ffi = self&._task._ffi)
+        }
     }
 )
 
@@ -75,7 +80,16 @@ await := #(.T: Type) (.self: $&Future#(T)) -> (
         self&._task._result_taken = true
         result = ..ok ~value
     } #else {
-        result = ..error(.reason = ..task_join_failed)
+        if _execution_reclaim_native(.handle = self&._task._handle, .ffi = self&._task._ffi) != 0 {
+            result = ..error(.reason = ..task_join_failed)
+            return
+        }
+        _close_task(.self = $&self&._task)
+        self&._task._result_taken = true
+        output: _OwnedTaskOutput#(T) = (._slot = self&._task._output_slot, ._entry = self&._task._entry, ._ffi = self&._task._ffi)
+        self&._task._output_slot = 0
+        value ::= _take_task_output#(T)(.self = $&output)
+        result = ..ok ~value
     }
 }
 
