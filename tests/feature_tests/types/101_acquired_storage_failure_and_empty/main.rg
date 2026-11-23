@@ -8,7 +8,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     match failed {
         ..error _ {}
         ..ok ~storage {
-            free(
+            aligned_free(
                 .address = acquired_storage_address(.storage = &storage).address
                 .ffi     = system.ffi
             )
@@ -40,5 +40,5 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     raw ::= establish_inherited_storage(
         .storage = ~inherited, .root = erase_reference#(.t: UInt8)(.base = &marker).reference
     ).raw
-    free(.address = raw.address, .ffi = system.ffi)
+    aligned_free(.address = raw.address, .ffi = system.ffi)
 }

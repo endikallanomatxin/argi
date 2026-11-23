@@ -36,6 +36,6 @@ implement Deallocator#(TrackingDeallocator) (
     ) -> () {
         self&.released_size = size
         self&.released_alignment = alignment
-        free(.address = data.address, .ffi = self&.ffi)
+        aligned_free(.address = data.address, .ffi = self&.ffi)
     }
 )
