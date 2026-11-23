@@ -49,6 +49,10 @@ the other task's read loan in force. A scope-exit destructor that writes to
 that storage through a virtual provider therefore needs both tasks to have
 completed. The rule follows the destructor's actual access even when the
 owner being dropped occupies a different slot.
+After conditional control flow, each execution whose loan could still be
+pending constrains the next access. Branches may await both readers in
+different orders. Awaiting one reader in each branch leaves a possible
+conflict at the point where the branches meet.
 Pending execution receipts cannot be stored in user opaque containers until those
 containers can carry their obligations. This includes receipts nested in records
 or choices and retained through helper calls or fallible collection insertion.
