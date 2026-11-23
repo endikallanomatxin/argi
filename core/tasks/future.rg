@@ -34,14 +34,8 @@ async := #(.F: Function) (
     prepared ::= ~args
     #if is_borrowable_data(.type = inputs_of#(F)) and is_plain_data(.type = result_of#(F)) {
         entry ::= _TaskEntry(.function = _task_worker#(F))
-        request: TaskRequest = (
-            ._entry = entry, ._input = erase_reference#(inputs_of#(F))(.base = &prepared),
-            ._input_size = size_of(.type = inputs_of#(F)),
-            ._output_size = size_of(.type = result_of#(F)),
-            ._input_alignment = alignment_of(.type = inputs_of#(F)),
-            ._output_alignment = alignment_of(.type = result_of#(F)),
-            ._access = _execution_lend(.inputs = prepared)
-        )
+        request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = 0,
+            .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_lend(.inputs = prepared))
         output_slot ::= request._output_slot
         task ::= Executor#().submit(.self = $&executor, .request = ~request)!
         -- A provider cannot substitute a task with a different typed worker.
@@ -55,6 +49,38 @@ async := #(.F: Function) (
         -- Unsupported payloads never instantiate a worker or enter native code.
         result = ..error(.reason = ..unsupported_task_value)
     }
+}
+
+_prepare_task_request := #(.F: Function) (
+    .entry: _TaskEntry, .output_slot: UIntNative, .input: &Any, .access: _ExecutionReceipt
+) -> (.result: TaskRequest) {
+    result = (
+        ._output_slot = output_slot, ._entry = entry, ._input = input,
+        ._input_size = size_of(.type = inputs_of#(F)),
+        ._output_size = size_of(.type = result_of#(F)),
+        ._input_alignment = alignment_of(.type = inputs_of#(F)),
+        ._output_alignment = alignment_of(.type = result_of#(F)),
+        ._access = ~access
+    )
+}
+
+-- A checked caller must establish transfer authority for the worker inputs
+-- and result before selecting this private submission path.
+_submit_owned_task := #(.F: Function) (
+    .args: inputs_of#(F), .executor: Virtual#(Executor), .ffi: $&ForeignFunctionInterface
+) -> (.result: Errable#(Future#(result_of#(F)), (..task_start_failed, ..executor_mismatch))) {
+    prepared ::= ~args
+    entry ::= _TaskEntry(.function = _task_worker#(F))
+    output ::= _prepare_task_output#(result_of#(F))(.entry = entry, .ffi = ffi)!
+    request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = output._slot,
+        .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_lend(.inputs = prepared))
+    task ::= Executor#().submit(.self = $&executor, .request = ~request)!
+    if task._entry != entry or task._output_slot != output._slot {
+        result = ..error(.reason = ..executor_mismatch)
+        return
+    }
+    output._slot = 0
+    result = ..ok(._task = ~task)
 }
 
 await := #(.T: Type) (.self: $&Future#(T)) -> (
