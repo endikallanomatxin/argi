@@ -192,3 +192,20 @@ release its execution resources while the caller still owns the published
 output and can perform checked cleanup after submit returns. On success the
 same custody would move into the future. Either design must keep the slot
 alive even when an executor finishes or drops a receipt inside submit.
+
+## Caller custody with a typed result
+
+A prototype based on d9db3417c ran this entire Ticket example successfully
+with an explicit FFI input for slot creation. A lexical output owner was
+established before submission, moved into the future on success, and cleaned
+up in the submitting caller on error. Await completed the execution and
+released the native receipt before taking the published value. Future
+cleanup released the receipt before dropping the output owner. The counter
+checks covered delivery, repeat await, abandonment, and both error paths.
+
+The private output owner in core/tasks/owned_output.rg implements the typed
+half of that experiment. Its take operation requires a published value.
+A caller must carry the worker result's actual dependencies into the owning
+domain before exposing it through a safe task API. The Ticket experiment
+did not establish this property for borrowed or provider-dependent results.
+Its relaxed result admission and extra mandatory FFI input are experimental.
