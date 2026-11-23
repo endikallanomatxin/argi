@@ -15020,12 +15020,23 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     state.tracker.namespace = &namespace;
     var ingress_backing: ?facts.ValidityRootId = null;
     var ingress_generation: ?facts.ValidityRootId = null;
-    const ingress = try checker.seedExecutionValue(@enumFromInt(1), &state, &ingress_backing, &ingress_generation);
-    const worker_receiver = try checker.domainFacts(ingress, @import("access_bounds.zig").receiver_domain, &state);
-    const worker_backing = try checker.domainFacts(ingress, 0, &state);
-    try std.testing.expectEqual(@as(usize, 1), worker_receiver.symbolic_pointees.len);
-    try std.testing.expectEqual(@as(usize, 1), worker_backing.symbolic_pointees.len);
-    try std.testing.expect(worker_receiver.symbolic_pointees[0] != worker_backing.symbolic_pointees[0]);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    for (0..2) |_| try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } });
+    const ingress = try checker.seedExecutionValue(@enumFromInt(2), &state, &ingress_backing, &ingress_generation);
+    try std.testing.expectEqual(@as(usize, 0), ingress.domains.len);
+    const left = try checker.projectValueFacts(ingress, &.{.{ .field = 0 }});
+    const right = try checker.projectValueFacts(ingress, &.{.{ .field = 1 }});
+    const receiver = @import("access_bounds.zig").receiver_domain;
+    const left_receiver = try checker.domainFacts(left, receiver, &state);
+    const left_backing = try checker.domainFacts(left, 0, &state);
+    const right_receiver = try checker.domainFacts(right, receiver, &state);
+    const right_backing = try checker.domainFacts(right, 0, &state);
+    for ([_]facts.DomainFacts{ left_receiver, left_backing, right_receiver, right_backing }) |domain|
+        try std.testing.expectEqual(@as(usize, 1), domain.symbolic_pointees.len);
+    try std.testing.expect(left_receiver.symbolic_pointees[0] != right_receiver.symbolic_pointees[0]);
+    try std.testing.expect(left_backing.symbolic_pointees[0] != right_backing.symbolic_pointees[0]);
+    try std.testing.expect(left_receiver.symbolic_pointees[0] != left_backing.symbolic_pointees[0]);
     const first: facts.Place = .{ .root = @enumFromInt(0) };
     const second: facts.Place = .{ .root = @enumFromInt(1) };
     const symbolic: facts.SymbolicPointeeId = @enumFromInt(0);
@@ -15048,7 +15059,6 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
         .{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{first} },
         .{ .domain_index = 0, .storages = &.{second} },
     } };
-    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     const receipt = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
     try std.testing.expectEqual(@as(usize, 1), receipt.execution_receipts.len);
     const conflicting = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
