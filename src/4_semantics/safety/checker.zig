@@ -3020,9 +3020,9 @@ pub const SafetyChecker = struct {
     }
 
     fn seedExecutionValue(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, state: *FunctionState, backing: *?facts.ValidityRootId, generation: *?facts.ValidityRootId) anyerror!facts.ValueFacts {
-        if (isPointer(self.graph, ty)) return self.seedInputValue(ty, state, backing, generation, null, .{ .input_index = 0 });
+        if (isPointer(self.graph, ty) or self.graph.semanticType(ty) == .virtual) return self.seedInputValue(ty, state, backing, generation, null, .{ .input_index = 0 });
         var result: facts.ValueFacts = .{};
-        if (!self.inputTypeHasReferences(ty, 0)) return result;
+        if (!self.inputTypeNeedsLoan(ty, 0, true)) return result;
         if (types.arrayElement(self.graph, ty)) |element| {
             const length = types.arrayLength(self.graph, ty).?;
             const fields = try self.allocator.alloc(facts.FieldFacts, length);
@@ -3044,6 +3044,7 @@ pub const SafetyChecker = struct {
             result.fields = fields;
         }
         result.symbolic_pointees = &.{};
+        result.domains = &.{};
         return result;
     }
 
@@ -15014,6 +15015,17 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     try checker.call_stack.append(@enumFromInt(0));
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    state.tracker.namespace = &namespace;
+    var ingress_backing: ?facts.ValidityRootId = null;
+    var ingress_generation: ?facts.ValidityRootId = null;
+    const ingress = try checker.seedExecutionValue(@enumFromInt(1), &state, &ingress_backing, &ingress_generation);
+    const worker_receiver = try checker.domainFacts(ingress, @import("access_bounds.zig").receiver_domain, &state);
+    const worker_backing = try checker.domainFacts(ingress, 0, &state);
+    try std.testing.expectEqual(@as(usize, 1), worker_receiver.symbolic_pointees.len);
+    try std.testing.expectEqual(@as(usize, 1), worker_backing.symbolic_pointees.len);
+    try std.testing.expect(worker_receiver.symbolic_pointees[0] != worker_backing.symbolic_pointees[0]);
     const first: facts.Place = .{ .root = @enumFromInt(0) };
     const second: facts.Place = .{ .root = @enumFromInt(1) };
     const symbolic: facts.SymbolicPointeeId = @enumFromInt(0);
