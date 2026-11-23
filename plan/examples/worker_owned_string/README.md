@@ -45,3 +45,19 @@ With a provider that stays in scope through cleanup, taking and emptying the
 slot succeeds. A handoff using ordinary moves requires the helper's output to
 retain the entry payload's dependencies even as its slot postcondition becomes
 empty. This is a sequential prerequisite independent of the task ABI.
+
+## Acceptance cases for an entry observation
+
+| Observation | Subsequent change | Required outcome |
+| --- | --- | --- |
+| Move a String from an optional slot | Empty the slot, then return the String beyond its provider's scope | Reject the escape at compile time (ownership fixture 321X). |
+| Move the same String from the same slot | Empty the slot while its provider remains live through cleanup | Accept the move and cleanup (ownership fixture 322). |
+| Obtain a reference to slot A through a virtual getter | Redirect the provider to B, then write through the obtained reference | Update A and preserve B (concurrency fixture 321_exported_reference_survives_retarget). |
+| Redirect the provider to B before calling the getter | Write a local reference through the returned reference to global slot B | Reject the store (concurrency fixture 317X). |
+| Obtain a reference to a local target | Return the reference beyond the target's scope | Reject the escape (concurrency fixture 322X_exported_reference_outlives_target). |
+
+These cases distinguish the contents taken from a slot, the identity of a
+reference already obtained, and a later query through the provider. An
+implementation may forget the provider's earlier route after observing its
+target if it preserves the obligations of the observed value. A new call
+must account for changes that could affect its own observation.
