@@ -1111,11 +1111,15 @@ pub const SafetyChecker = struct {
     }
 
     fn inputTypeHasReferences(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize) bool {
+        return self.inputTypeNeedsLoan(ty, depth, false);
+    }
+
+    fn inputTypeNeedsLoan(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize, include_virtual: bool) bool {
         if (depth > 64) return true;
-        if (isPointer(self.graph, ty)) return true;
-        if (types.arrayElement(self.graph, ty)) |element| return self.inputTypeHasReferences(element, depth + 1);
+        if (isPointer(self.graph, ty) or (include_virtual and self.graph.semanticType(ty) == .virtual)) return true;
+        if (types.arrayElement(self.graph, ty)) |element| return self.inputTypeNeedsLoan(element, depth + 1, include_virtual);
         const fields = types.fields(self.graph, ty) orelse return false;
-        for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (self.inputTypeHasReferences(field.ty, depth + 1)) return true;
+        for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (self.inputTypeNeedsLoan(field.ty, depth + 1, include_virtual)) return true;
         return false;
     }
 
@@ -2931,6 +2935,28 @@ pub const SafetyChecker = struct {
 
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
+        if (semantic == .virtual) {
+            // The handle is copied. Its receiver remains in the submitting
+            // execution and needs independent authority until completion.
+            const domain = self.domainFacts(value, @import("access_bounds.zig").receiver_domain, state) catch |err| switch (err) {
+                error.MissingVirtualStorageDomain => {
+                    try self.report(source, "borrowed execution requires an authenticated virtual receiver", .{});
+                    return;
+                },
+                else => return err,
+            };
+            if (domain.storages.len == 0 and domain.symbolic_pointees.len == 0) {
+                try self.report(source, "borrowed execution requires an authenticated virtual receiver", .{});
+                return;
+            }
+            try self.requireLive(self.call_stack.getLast(), source, value, state);
+            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            try collectDependencyRoots(value, &roots);
+            const generations = try roots.toOwnedSlice();
+            for (domain.storages) |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .write });
+            for (domain.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = generations, .mode = .write });
+            return;
+        }
         if (semantic == .pointer) {
             if (value.reference_target_incomplete) {
                 try self.report(source, "borrowed execution requires an authenticated reference target for every alternative", .{});
@@ -2957,14 +2983,14 @@ pub const SafetyChecker = struct {
             return;
         }
         if (types.arrayElement(self.graph, ty)) |element| {
-            if (!self.inputTypeHasReferences(element, 0)) return;
+            if (!self.inputTypeNeedsLoan(element, 0, true)) return;
             const length = types.arrayLength(self.graph, ty).?;
             for (0..length) |index|
                 try self.collectExecutionLoans(element, try self.projectValueFacts(value, &.{.{ .static_index = index }}), state, loans, source);
             return;
         }
         if (types.fields(self.graph, ty)) |fields| for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            if (self.inputTypeHasReferences(field.ty, 0))
+            if (self.inputTypeNeedsLoan(field.ty, 0, true))
                 try self.collectExecutionLoans(field.ty, try self.projectValueFacts(value, &.{.{ .field = @intCast(index) }}), state, loans, source);
         };
     }
@@ -14942,6 +14968,31 @@ test "execution lending retains every concrete and symbolic target alternative" 
         .referenced_place = first,
         .mutation_places = &.{ first, second },
         .symbolic_pointees = &.{symbolic},
+    }, &state, &loans, .{ .file_index = 0, .offset = 0 });
+    try std.testing.expectEqual(@as(usize, 3), loans.items.len);
+    try std.testing.expect(loans.items[0].storage.?.eql(first));
+    try std.testing.expect(loans.items[1].storage.?.eql(second));
+    try std.testing.expectEqual(symbolic, loans.items[2].symbolic.?);
+}
+
+test "execution lending retains concrete and symbolic erased receiver targets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .virtual = @enumFromInt(0) } });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    try checker.call_stack.append(@enumFromInt(0));
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    const symbolic: facts.SymbolicPointeeId = @enumFromInt(0);
+    var loans = std.array_list.Managed(facts.ExecutionLoan).init(allocator);
+    try checker.collectExecutionLoans(@enumFromInt(1), .{
+        .domains = &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{ first, second }, .symbolic_pointees = &.{symbolic} }},
     }, &state, &loans, .{ .file_index = 0, .offset = 0 });
     try std.testing.expectEqual(@as(usize, 3), loans.items.len);
     try std.testing.expect(loans.items[0].storage.?.eql(first));
