@@ -243,9 +243,17 @@ pub const State = struct {
         return true;
     }
 
+    fn compareExecutionId(id: facts.ExecutionId, entry: facts.ExecutionState) std.math.Order {
+        return std.math.order(@intFromEnum(id), @intFromEnum(entry.id));
+    }
+
+    fn executionIndex(self: *const State, id: facts.ExecutionId) ?usize {
+        return std.sort.binarySearch(facts.ExecutionState, self.executions.items, id, compareExecutionId);
+    }
+
     pub fn executionState(self: *const State, id: facts.ExecutionId) ?facts.ExecutionState {
-        for (self.executions.items) |execution| if (execution.id == id) return execution;
-        return null;
+        const index = self.executionIndex(id) orelse return null;
+        return self.executions.items[index];
     }
 
     pub fn executionPending(self: *const State, id: facts.ExecutionId) bool {
@@ -253,10 +261,8 @@ pub const State = struct {
     }
 
     pub fn completeExecution(self: *State, id: facts.ExecutionId) void {
-        for (self.executions.items) |*execution| if (execution.id == id) {
-            execution.pending = false;
-            return;
-        };
+        const index = self.executionIndex(id) orelse return;
+        self.executions.items[index].pending = false;
     }
 
     /// Reserve an acquisition origin without creating establishment permission.
@@ -1597,6 +1603,27 @@ test "pending execution equality ignores completed history and compares receipt 
     left.completeExecution(@enumFromInt(1));
     right.completeExecution(extra);
     try std.testing.expect(left.samePendingExecutions(&right));
+}
+
+test "completing a receipt absent from this branch preserves nearby loans" {
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(std.testing.allocator);
+    var state = State.init(std.testing.allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const first = try state.establishExecution(&.{});
+    var branch = try state.clone(std.testing.allocator);
+    defer branch.deinit();
+    const absent = try branch.establishExecution(&.{});
+    const last = try state.establishExecution(&.{});
+    state.completeExecution(absent);
+    try std.testing.expect(state.executionState(absent) == null);
+    try std.testing.expect(state.executionPending(first));
+    try std.testing.expect(state.executionPending(last));
+    state.completeExecution(last);
+    try std.testing.expect(state.executionPending(first));
+    try std.testing.expect(!state.executionPending(last));
+    try std.testing.expect(branch.executionPending(absent));
 }
 
 fn executionReceiptAllocation(allocator: std.mem.Allocator) !void {
