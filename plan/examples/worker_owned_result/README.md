@@ -133,3 +133,35 @@ at the physical boundary and preserved through checked subranges. The first
 implementation can conservatively overlap all such external loans. Proving
 that two distinct acquisitions are independent is optional for this control.
 A projected path through a stored reference still needs its own access check.
+
+### Where a checked range can originate
+
+The successful heap acquisition checks the native failure sentinel and address
+overflow before packaging its requested extent. The POSIX page producer can
+unmap padding on both sides of a mapping before packaging its surviving range.
+For both producers the useful assertion is about the bytes in the successful
+receipt. In particular, a surviving mapping identity alone says nothing about
+whether an address points into the prefix that was just unmapped.
+
+At ordinary establishment the requested prefix is bounded by the receipt's
+private size. This is the point at which the allocation can retain coverage
+of that prefix. The integer-address establishment path also serves
+suballocators. It accepts a size supplied independently of the address.
+Sharing the implementation of the two paths must not give the latter the
+former's guarantee. The address capability check establishes availability;
+its input carries no length against which to validate a supplied extent.
+
+A coverage implementation should distinguish the following cases even if the
+same address flows through every call:
+
+| Operation | Guarantee usable for a loan |
+| --- | --- |
+| Establish a checked prefix of a successful receipt and select an in-bounds slot | The slot lies in the acquired range |
+| Establish from the address alone with an independently supplied length | Requires additional evidence of containment |
+| Join alternatives from these two paths | Only guarantees common to both paths |
+| Establish an empty prefix | No nonempty slot lies in the prefix |
+
+The assertion concerns the backing bytes. Entry authority, initialization,
+provider lifetime and release compatibility are separate checks. In particular,
+the caller selecting a deallocator at establishment still has to choose one
+that can release the storage returned by the producer.

@@ -105,11 +105,8 @@ by the allocator at establishment. Public receipt fields describe a requested
 range; changing them cannot enlarge the certified region. Slot establishment
 checks containment in both ranges and the target type's alignment. Cleanup
 uses the original storage fields, so editing public data, size, or alignment
-cannot change the storage arguments passed to release. The public deallocator
-can still be replaced by an allocator adapter; that adapter remains responsible
-for honoring the acquisition's release contract. These fields are private to
-bundled core, rather than a general proof that an arbitrary address
-was acquired. A granted prefix can be smaller than its acquisition; cleanup
+cannot change the storage arguments passed to release. The private deallocator retains the provider selected at
+establishment. Bundled core is responsible for preserving these fields. A granted prefix can be smaller than its acquisition; cleanup
 retains the acquisition's original extent and alignment.
 
 ### Acquisition receipts
