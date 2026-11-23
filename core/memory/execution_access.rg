@@ -58,3 +58,19 @@ _execution_input := #(.t: Type) (.invocation: _ExecutionInvocation, .anchor: &An
         .raw = raw_pointer#(t)(.address = invocation._input), .root = anchor
     )
 }
+
+-- Consumes the worker result into the empty output of this invocation. The
+-- temporary reference stays inside this operation. Publication occurs when
+-- the worker returns and the consumer successfully joins.
+_initialize_task_output := #(.t: Type) (.invocation: _ExecutionInvocation, .value: t) -> () {
+    if invocation._identity == 0 or invocation._output == 0 or
+        invocation._output_size != size_of(.type = t) or
+        invocation._output_alignment != alignment_of(.type = t) or
+        invocation._output % alignment_of(.type = t) != 0 { abort }
+    anchor: UInt8 = 0
+    root ::= erase_reference#(UInt8)(.base = &anchor)
+    destination ::= trusted_establish_inherited_reference#(t)(
+        .raw = raw_pointer#(t)(.address = invocation._output), .root = root
+    )
+    trusted_opaque_move#(.t: t)(.destination = destination, .source = ~value)
+}
