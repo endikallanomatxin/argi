@@ -7,24 +7,27 @@
 #include <string.h>
 
 struct input { uintptr_t gate; uintptr_t entered; int value; };
-static void calculate(struct argi_execution_invocation invocation) {
+static argi_task_result_cleanup calculate(struct argi_execution_invocation invocation) {
     uintptr_t input_address = invocation.input, output_address = invocation.output;
     if (!invocation.identity || invocation.input_size != sizeof(struct input) || invocation.output_size != sizeof(int)) abort();
     const struct input *input = (const struct input *)input_address;
     _argi_atomic_u32_store(input->entered, 1);
     while (!_argi_atomic_u32_load(input->gate)) {}
     *(int *)output_address = input->value * 2;
+    return NULL;
 }
-static void buffers(struct argi_execution_invocation invocation) {
+static argi_task_result_cleanup buffers(struct argi_execution_invocation invocation) {
     uintptr_t input = invocation.input, output = invocation.output;
     if (!invocation.identity || invocation.input_size != sizeof(int)) abort();
     if (!input || !output || input % 64 || output % 64) abort();
     *(int *)output = *(const int *)input * 2;
+    return NULL;
 }
-static void empty_buffers(struct argi_execution_invocation invocation) {
+static argi_task_result_cleanup empty_buffers(struct argi_execution_invocation invocation) {
     uintptr_t input = invocation.input, output = invocation.output;
     if (!invocation.identity || invocation.input_size || invocation.output_size) abort();
     if (!input || !output || input % 64 || output % 64) abort();
+    return NULL;
 }
 struct destroy_job { uintptr_t task; uintptr_t entered; int result; };
 static void destroy_task(void *context) {
@@ -46,13 +49,13 @@ static void drop_owned_payload(uintptr_t storage) {
     ++*owner->drops;
 }
 
-static void produce_owned_payload(struct argi_execution_invocation invocation) {
+static argi_task_result_cleanup produce_owned_payload(struct argi_execution_invocation invocation) {
     struct owned_payload *owner = (struct owned_payload *)invocation.output;
     owner->drops = *(unsigned *const *)invocation.input;
     owner->value = malloc(sizeof(*owner->value));
     if (!owner->value) abort();
     *owner->value = 42;
-    if (_argi_task_own_result(invocation.identity, drop_owned_payload)) abort();
+    return drop_owned_payload;
 }
 
 static void check_threaded_owned_result(void) {

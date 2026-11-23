@@ -10,7 +10,9 @@ struct argi_execution_invocation {
     uintptr_t input_size, output_size;
     uintptr_t input_alignment, output_alignment;
 };
-typedef void (*argi_task_buffer_start)(struct argi_execution_invocation invocation);
+typedef void (*argi_task_result_cleanup)(uintptr_t storage);
+/* Return NULL for plain output or its typed destructor for owned output. */
+typedef argi_task_result_cleanup (*argi_task_buffer_start)(struct argi_execution_invocation invocation);
 /* Byte copies transport representations; they establish neither Argi reference
    validity nor ownership transfer.
    The worker owns input reads and output publication until join. The handle
@@ -24,13 +26,9 @@ uintptr_t _argi_task_create_inline_buffers(argi_task_buffer_start start, const v
 /* Certified reclaim performs synchronization itself; a flag supplied by the
    caller cannot stand in for successful joining. Failure retains the loan. */
 int32_t _argi_execution_reclaim(uintptr_t handle);
-/* A typed worker registers cleanup once after initializing its entire output.
-   Only that invocation may register it. Successful join publishes both the
-   bytes and cleanup. The serialized consumer can claim custody once using
-   the matching cleanup operation. On success it must immediately move the
-   owner out of the slot before releasing the task's backing storage. */
-typedef void (*argi_task_result_cleanup)(uintptr_t storage);
-int32_t _argi_task_own_result(uintptr_t identity, argi_task_result_cleanup cleanup);
+/* Successful join publishes the initialized output and its worker-returned
+   destructor. A matching consumer can claim the owner once, then must move
+   it out before releasing the backing storage. */
 uintptr_t _argi_task_take_owned_result(uintptr_t handle, argi_task_result_cleanup cleanup);
 /* Joining publishes the result for repeatable inspection until destruction.
    Invalid sizes fail before join. The typed owner controls delivery. */

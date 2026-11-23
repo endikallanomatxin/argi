@@ -7,7 +7,6 @@
 #define _argi_task_create_inline_buffers probe_task_inline
 #define _argi_task_join_result probe_task_result
 #define _argi_task_result_block probe_task_block
-#define _argi_task_own_result probe_own_result
 #define _argi_task_take_owned_result probe_take_owned_result
 #define _argi_task_release_storage probe_task_release_storage
 #define _argi_task_destroy probe_task_destroy
@@ -36,12 +35,13 @@ int32_t probe_thread_destroy(uintptr_t handle) {
     if (handle != 1 || pending_start) abort();
     return destroy_fails ? -1 : 0;
 }
-static void calculate(struct argi_execution_invocation invocation) {
+static argi_task_result_cleanup calculate(struct argi_execution_invocation invocation) {
     if (!invocation.identity || !invocation.input || !invocation.output ||
         invocation.input_size != sizeof(int) || invocation.output_size != sizeof(int) ||
         invocation.input_alignment != _Alignof(int) || invocation.output_alignment != _Alignof(int)) abort();
     ++calls;
     *(int *)invocation.output = *(int *)invocation.input * 2;
+    return NULL;
 }
 static unsigned drops;
 static void drop_result(uintptr_t storage) {
@@ -49,12 +49,17 @@ static void drop_result(uintptr_t storage) {
     ++drops;
 }
 static void other_drop(uintptr_t storage) { (void)storage; abort(); }
-static void make_owned(struct argi_execution_invocation invocation) {
+static argi_task_result_cleanup make_owned(struct argi_execution_invocation invocation) {
     calculate(invocation);
-    if (probe_own_result(invocation.identity, drop_result)) abort();
+    return drop_result;
 }
 static void check_owned_result(void) {
     int input = 21;
+    create_fails = 1;
+    int before = calls;
+    if (probe_task_create(make_owned, &input, sizeof(input), sizeof(int), _Alignof(int), _Alignof(int))) abort();
+    if (calls != before || drops) abort();
+    create_fails = 0;
     uintptr_t task = probe_task_create(make_owned, &input, sizeof(input), sizeof(int), _Alignof(int), _Alignof(int));
     if (!task) abort();
     join_fails = 1;

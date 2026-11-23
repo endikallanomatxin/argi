@@ -27,7 +27,7 @@ static void argi_task_entry(void *context) {
         task->input_size, task->output_size,
         task->input_alignment, task->output_alignment
     };
-    task->buffer_start(invocation);
+    task->result_cleanup = task->buffer_start(invocation);
 }
 
 /* Allocate at least one byte even for an empty value, so the callback receives
@@ -109,13 +109,6 @@ static int argi_task_join(struct argi_task *task) {
 int32_t _argi_execution_reclaim(uintptr_t handle) {
     if (!handle) return -1;
     return argi_task_join((struct argi_task *)handle);
-}
-
-int32_t _argi_task_own_result(uintptr_t identity, argi_task_result_cleanup cleanup) {
-    struct argi_task *task = (struct argi_task *)identity;
-    if (!task || !cleanup || task->result_cleanup) return -1;
-    task->result_cleanup = cleanup;
-    return 0;
 }
 
 uintptr_t _argi_task_take_owned_result(uintptr_t handle, argi_task_result_cleanup cleanup) {
