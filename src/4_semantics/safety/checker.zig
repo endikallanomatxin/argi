@@ -3090,7 +3090,9 @@ pub const SafetyChecker = struct {
                     };
                     continue;
                 }
-                try self.report(source, "concurrent access conflicts with a pending execution", .{});
+                try self.report(source, "concurrent access conflicts with a pending execution ({s} access overlaps an active {s} loan)", .{
+                    @tagName(mode), @tagName(loan.mode),
+                });
                 return;
             }
         }
