@@ -45,6 +45,7 @@ pub const Infer = struct {
     // cleanup and completed-call traversal. Authority is not a liveness fact.
     access_sink: ?*AccessEffects = null,
     reading_access_targets: bool = false,
+    post_state_function: ?graph_mod.GlobalFunctionId = null,
     post_state_ns: u64 = 0,
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
@@ -927,6 +928,9 @@ pub const Infer = struct {
     }
 
     fn inferFunction(self: *Infer, function_id: graph_mod.GlobalFunctionId) !facts.SafetySummary {
+        const previous_function = self.post_state_function;
+        self.post_state_function = function_id;
+        defer self.post_state_function = previous_function;
         const function = self.graph.function(function_id);
         const stored = self.engine.summaries.get(function_id) orelse return error.MissingSafetySummary;
         // Only output approximation reuse creates a dependency on ourselves.
@@ -3754,6 +3758,14 @@ pub const Infer = struct {
         return try self.union_input_paths(references, entry);
     }
 
+    fn postStateValueType(self: *Infer, target: facts.InputPath) ?graph_mod.GlobalTypeId {
+        if (target.storage_domain != null) return null;
+        const ty = self.inputPathType(self.post_state_function orelse return null, target) orelse return null;
+        // Aggregate summaries can describe only selected subobjects; their
+        // projected content recipes need a separately proven layout.
+        return if (self.graph.semanticType(ty) == .builtin) ty else null;
+    }
+
     fn joinInputPostStates(
         self: *Infer,
         destination: *std.array_list.Managed(facts.PlacePostState),
@@ -3768,7 +3780,7 @@ pub const Infer = struct {
             if (self.findInputPostState(right.items, left_state.target)) |right_state| {
                 merged.initialization = if (left_state.initialization == right_state.initialization) left_state.initialization else .possible;
                 merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
-                merged.value = try self.joinStorageAlternatives(null, left_state.value, right_state.value);
+                merged.value = try self.joinStorageAlternatives(self.postStateValueType(left_state.target), left_state.value, right_state.value);
                 merged.reference_refresh = left_state.reference_refresh and right_state.reference_refresh;
                 merged.reference_targets = if (left_state.reference_targets != null and right_state.reference_targets != null)
                     try self.union_input_paths(left_state.reference_targets.?, right_state.reference_targets.?)
@@ -3792,7 +3804,7 @@ pub const Infer = struct {
                     merged.initializedness = .maybe_initialized;
                 } else {
                     merged.value = try self.joinStorageAlternatives(
-                        null,
+                        self.postStateValueType(left_state.target),
                         left_state.value,
                         try self.inputPlaceValueEffect(left_state.target),
                     );
@@ -3816,7 +3828,7 @@ pub const Infer = struct {
                 merged.initializedness = .maybe_initialized;
             } else {
                 merged.value = try self.joinStorageAlternatives(
-                    null,
+                    self.postStateValueType(right_state.target),
                     right_state.value,
                     try self.inputPlaceValueEffect(right_state.target),
                 );
@@ -7555,9 +7567,18 @@ pub const Infer = struct {
         return represented;
     }
 
-    fn mayCarryStoragePermission(effect: facts.ValueEffect) bool {
+    fn mayCarryStoragePermission(self: *Infer, ty: ?graph_mod.GlobalTypeId, effect: facts.ValueEffect) bool {
+        // A place-value recipe can forward an acquisition through a native
+        // address. A copied Bool or Int32 is only a value at that place.
+        const place_can_carry = if (ty) |id| switch (self.graph.semanticType(id)) {
+            .builtin => |builtin| switch (builtin) {
+                .Bool, .Int8, .UInt8, .Int16, .UInt16, .Int32, .UInt32, .Int64, .UInt64, .Float16, .Float32, .Float64 => false,
+                else => true,
+            },
+            else => true,
+        } else true;
         if (effect.input_storage_capabilities.len != 0 or effect.fresh_storage_capabilities.len != 0 or
-            effect.input_place_values.len != 0) return true;
+            (place_can_carry and effect.input_place_values.len != 0)) return true;
         for (effect.input_dependencies) |dependency| if (!dependency.validity_only) return true;
         return false;
     }
@@ -7581,7 +7602,7 @@ pub const Infer = struct {
         // an empty alternative or a proof of separation.
         result.reference_relation = facts.ReferenceRelation.common(left.reference_relation, right.reference_relation);
         if (result.fields.len == 0 and result.variants.len == 0 and
-            mayCarryStoragePermission(left) != mayCarryStoragePermission(right))
+            self.mayCarryStoragePermission(value_type, left) != self.mayCarryStoragePermission(value_type, right))
             result.storage_capability_incomplete = true;
         if (result.fields.len == 0 and result.variants.len == 0) {
             _ = try self.retainStorageAuthorization(&result, left);
@@ -9521,6 +9542,29 @@ test "unknown choice alternatives cannot preserve another branch's reference pro
     const other_case = facts.ValueEffect{ .known_choice_variant = 1 };
     const joined = try infer.joinStorageAlternatives(null, known, other_case);
     try std.testing.expect(joined.variants[0].value.reference_relation != null);
+}
+
+test "typed alternative joins distinguish a scalar value origin from native address evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .UIntNative } });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const origin: facts.ValueEffect = .{ .input_place_values = &.{.{ .input_index = 0 }} };
+    const scalar = try infer.joinStorageAlternatives(@enumFromInt(0), origin, .{});
+    try std.testing.expect(!scalar.storage_capability_incomplete);
+    try std.testing.expect(!scalar.reference_target_incomplete);
+    try std.testing.expectEqual(@as(usize, 1), scalar.input_place_values.len);
+    const address = try infer.joinStorageAlternatives(@enumFromInt(1), origin, .{});
+    try std.testing.expect(address.storage_capability_incomplete);
+    const erased = try infer.joinStorageAlternatives(null, origin, .{});
+    try std.testing.expect(erased.storage_capability_incomplete);
+    try std.testing.expect(erased.reference_target_incomplete);
 }
 
 test "unknown choice alternatives cannot grant storage authorization" {
