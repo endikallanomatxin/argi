@@ -2938,23 +2938,44 @@ pub const SafetyChecker = struct {
         if (semantic == .virtual) {
             // The handle is copied. Its receiver remains in the submitting
             // execution and needs independent authority until completion.
-            const domain = self.domainFacts(value, @import("access_bounds.zig").receiver_domain, state) catch |err| switch (err) {
-                error.MissingVirtualStorageDomain => {
-                    try self.report(source, "borrowed execution requires an authenticated virtual receiver", .{});
-                    return;
-                },
-                else => return err,
-            };
-            if (domain.storages.len == 0 and domain.symbolic_pointees.len == 0) {
-                try self.report(source, "borrowed execution requires an authenticated virtual receiver", .{});
-                return;
-            }
+            const contract = @import("../global/contract_evidence.zig").contractDefinition(self.graph, semantic.virtual) orelse return error.InvalidVirtualContractType;
+            const domain_count = self.graph.familyDefinition(contract).domain_count;
             try self.requireLive(self.call_stack.getLast(), source, value, state);
             var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             try collectDependencyRoots(value, &roots);
             const generations = try roots.toOwnedSlice();
-            for (domain.storages) |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .write });
-            for (domain.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = generations, .mode = .write });
+            const initial_len = loans.items.len;
+            for (0..@as(usize, domain_count) + 1) |index| {
+                const domain_index: u32 = if (index == 0) @import("access_bounds.zig").receiver_domain else @intCast(index - 1);
+                const domain = self.domainFacts(value, domain_index, state) catch |err| switch (err) {
+                    error.MissingVirtualStorageDomain => {
+                        loans.shrinkRetainingCapacity(initial_len);
+                        try self.report(source, "borrowed execution requires an authenticated target for every virtual region", .{});
+                        return;
+                    },
+                    else => return err,
+                };
+                const targets = self.checkedDomainStorage(domain, state) catch |err| switch (@as(anyerror, err)) {
+                    error.MissingVirtualStorageDomain => {
+                        loans.shrinkRetainingCapacity(initial_len);
+                        try self.report(source, "borrowed execution cannot use a retargeted virtual region", .{});
+                        return;
+                    },
+                    else => return err,
+                };
+                if (targets.len == 0 and domain.symbolic_pointees.len == 0) {
+                    loans.shrinkRetainingCapacity(initial_len);
+                    try self.report(source, "borrowed execution requires an authenticated target for every virtual region", .{});
+                    return;
+                }
+                for (targets) |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .write });
+                for (domain.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = generations, .mode = .write });
+                for (domain.traversals) |step| try loans.append(.{ .storage = step.slot, .generations = generations, .mode = .read });
+                for (domain.required_reads) |required| switch (required) {
+                    .place => |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .read }),
+                    .symbolic => |identity| try loans.append(.{ .symbolic = identity, .generations = generations, .mode = .read }),
+                };
+            }
             return;
         }
         if (semantic == .pointer) {
@@ -14981,8 +15002,11 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     const allocator = arena.allocator();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .virtual = @enumFromInt(0) } });
-    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    try graph.family_definitions.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .kind = .contract, .parameter_count = 1, .domain_count = 1 });
+    try graph.types.appendSlice(allocator, &.{ .{ .definition = @enumFromInt(0) }, .{ .virtual = @enumFromInt(0) } });
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
     defer checker.deinit();
     try checker.call_stack.append(@enumFromInt(0));
     var state = SafetyChecker.FunctionState.init(allocator);
@@ -14992,12 +15016,25 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     const symbolic: facts.SymbolicPointeeId = @enumFromInt(0);
     var loans = std.array_list.Managed(facts.ExecutionLoan).init(allocator);
     try checker.collectExecutionLoans(@enumFromInt(1), .{
-        .domains = &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{ first, second }, .symbolic_pointees = &.{symbolic} }},
+        .domains = &.{
+            .{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{ first, second }, .symbolic_pointees = &.{symbolic} },
+            .{ .domain_index = 0, .storages = &.{.{ .root = @enumFromInt(2) }}, .required_reads = &.{.{ .symbolic = @enumFromInt(3) }} },
+        },
     }, &state, &loans, .{ .file_index = 0, .offset = 0 });
-    try std.testing.expectEqual(@as(usize, 3), loans.items.len);
+    try std.testing.expectEqual(@as(usize, 5), loans.items.len);
     try std.testing.expect(loans.items[0].storage.?.eql(first));
     try std.testing.expect(loans.items[1].storage.?.eql(second));
     try std.testing.expectEqual(symbolic, loans.items[2].symbolic.?);
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(loans.items[3].storage.?.root));
+    try std.testing.expectEqual(facts.AccessMode.write, loans.items[3].mode);
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(loans.items[4].symbolic.?));
+    try std.testing.expectEqual(facts.AccessMode.read, loans.items[4].mode);
+    loans.clearRetainingCapacity();
+    try checker.collectExecutionLoans(@enumFromInt(1), .{
+        .domains = &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = &.{first} }},
+    }, &state, &loans, .{ .file_index = 0, .offset = 0 });
+    try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
 test "an uncovered target cannot establish an execution loan" {
