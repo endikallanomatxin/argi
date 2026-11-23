@@ -23,6 +23,18 @@ uintptr_t _argi_task_create_buffers(argi_task_buffer_start start, const void *in
 /* Failure is possible only before invocation. Success has already executed
    the callback exactly once, with no worker or outstanding asynchronous use. */
 uintptr_t _argi_task_create_inline_buffers(argi_task_buffer_start start, const void *input, uintptr_t input_size, uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment);
+/* Caller custody may outlive a submitted receipt. The typed caller keeps the
+   slot alive through submission and task release. Operations on the slot and
+   task handle are serialized by that owner. A failed start leaves it empty.
+   A successful release publishes the buffer without running user cleanup. */
+uintptr_t _argi_task_output_create(argi_task_buffer_start entry);
+uintptr_t _argi_task_start_with_output(uintptr_t slot, int32_t inline_run,
+    argi_task_buffer_start entry, const void *input, uintptr_t input_size,
+    uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment);
+/* A successful take transfers custody of the initialized value. The typed
+   consumer must move or drop it before destroying the slot and its buffer. */
+uintptr_t _argi_task_output_take(uintptr_t slot, argi_task_buffer_start entry);
+int32_t _argi_task_output_destroy(uintptr_t slot);
 /* Certified reclaim performs synchronization itself; a flag supplied by the
    caller cannot stand in for successful joining. Failure retains the loan. */
 int32_t _argi_execution_reclaim(uintptr_t handle);

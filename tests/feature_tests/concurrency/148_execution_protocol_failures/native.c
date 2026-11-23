@@ -11,6 +11,10 @@
 #define _argi_task_release_storage probe_task_release_storage
 #define _argi_task_destroy probe_task_destroy
 #define _argi_execution_reclaim probe_reclaim
+#define _argi_task_output_create probe_output_create
+#define _argi_task_start_with_output probe_start_with_output
+#define _argi_task_output_take probe_output_take
+#define _argi_task_output_destroy probe_output_destroy
 #include "../../../../core/platforms/shared/task.c"
 
 static argi_thread_start pending_start;
@@ -80,6 +84,27 @@ static void check_owned_result(void) {
     drop_result((uintptr_t)&moved);
     if (drops != 2) abort();
 }
+static void check_caller_output(void) {
+    int input = 21;
+    unsigned before = drops;
+    uintptr_t slot = probe_output_create(make_owned);
+    if (!slot || probe_output_take(slot, make_owned)) abort();
+    create_fails = 1;
+    if (probe_start_with_output(slot, 0, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int))) abort();
+    create_fails = 0;
+    if (probe_output_take(slot, make_owned) || drops != before) abort();
+    uintptr_t task = probe_start_with_output(slot, 1, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
+    if (!task || !probe_output_destroy(slot) || probe_output_take(slot, make_owned)) abort();
+    if (probe_task_result(task, sizeof(int)) || probe_take_owned_result(task, drop_result)) abort();
+    if (probe_task_release_storage(task) || drops != before || !probe_output_destroy(slot)) abort();
+    if (probe_output_take(slot, calculate)) abort();
+    uintptr_t value = probe_output_take(slot, make_owned);
+    if (!value || probe_output_take(slot, make_owned)) abort();
+    drop_result(value);
+    if (probe_output_destroy(slot)) abort();
+    if (drops != before + 1) abort();
+}
+
 int32_t execution_protocol_probe(void) {
     int input = 21;
     create_fails = 1;
@@ -117,5 +142,6 @@ int32_t execution_protocol_probe(void) {
     if (!task || calls != 3 || !pending_start) abort();
     if (probe_task_destroy(task) || calls != 4 || pending_start || joins != joined + 1) abort();
     check_owned_result();
+    check_caller_output();
     return 0;
 }

@@ -74,6 +74,18 @@ static void check_threaded_owned_result(void) {
     if (_argi_task_release_storage(task) || drops != 1) abort();
     drop_owned_payload((uintptr_t)&moved);
     if (drops != 2) abort();
+
+    slot = _argi_task_output_create(produce_owned_payload);
+    if (!slot) abort();
+    task = _argi_task_start_with_output(slot, 0, produce_owned_payload, &counter,
+        sizeof(counter), sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
+    if (!task || _argi_task_release_storage(task) || drops != 2) abort();
+    uintptr_t published = _argi_task_output_take(slot, produce_owned_payload);
+    if (!published) abort();
+    moved = *(struct owned_payload *)published;
+    if (_argi_task_output_destroy(slot)) abort();
+    drop_owned_payload((uintptr_t)&moved);
+    if (drops != 3) abort();
 }
 
 int32_t argi_task_probe(void) {
