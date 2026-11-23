@@ -102,3 +102,34 @@ loan. It must cover every possible backing, and the checker needs a verified
 separation between that backing and the caller's lexical task-handle slot.
 Neither accepting any nonempty origin list nor treating all memory as the
 loaned backing meets both conditions.
+
+### Separation from the caller's local storage
+
+The `concrete_heap_loan` control creates two references to the same bytes
+before submission. The worker writes through one and the caller reads through
+the other after join. This isolates the authority question from erased allocator
+dispatch. The following modifications change only the operation before await.
+
+| Before await | Required outcome |
+| --- | --- |
+| No additional operation | Accept the join and subsequent read |
+| Read `alias&` | Reject the overlapping read |
+| Submit another writer with `.slot = alias` | Reject overlapping submissions |
+| Call `deinit($&memory)` | Reject early release |
+
+A compile-only experiment on the concrete control tested two separation rules.
+Recording the lexical frame at lend still rejected await: the local receiving
+the task had already been registered when the loan was established. A frame
+excluding *later* storage therefore could not exclude the task's own slot.
+Assuming the loan covered external backing and exempting direct accesses to
+lexical slots accepted the control and rejected the three variants. The
+early-release variant failed at the destructor's unknown effects, so that run
+does not establish that generation invalidation would independently reject it.
+
+The second experiment assumed the very property the implementation needs to
+prove. Its admission rule was discarded. The design target is an all-path
+guarantee that the observed range lies in live acquired storage, established
+at the physical boundary and preserved through checked subranges. The first
+implementation can conservatively overlap all such external loans. Proving
+that two distinct acquisitions are independent is optional for this control.
+A projected path through a stored reference still needs its own access check.
