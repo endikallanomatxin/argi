@@ -55,3 +55,33 @@ that other accesses to its backing will see the conflict. A dependency on the
 array lifetime alone establishes neither property. A future implementation
 should accept this probe and still reject reading the element through a fresh
 lookup before join.
+
+### Locating the loss at allocator dispatch
+
+A compile-only comparison at `3755be8d3` kept the executor, provider, slot
+construction and worker identical. Each variant initialized the first
+UIntNative of an eight-byte allocation, submitted its reference to the writer,
+then awaited completion before reading it. Temporary instrumentation counted
+possible acquisition origins on the bounded slot in each variant.
+
+| Allocation source in the caller | Origins on the bounded slot | Loan admitted |
+| --- | --- | --- |
+| `acquire_heap_storage` followed by `establish_allocation` | 1 | No |
+| `allocate_bytes(.self = $&allocator, ...)` with a concrete CAllocator | 1 | No |
+| The same call with `erased ::= Virtual#(Allocator)($&allocator)` and `.self = $&erased` | 0 | No |
+
+All three use the same final construction:
+`trusted_establish_allocation_slot#(.t: UIntNative)(.allocation = &memory,
+.slot = raw, .anchor = memory.anchor)`, with the raw address taken from
+`memory.data.address`. The dispatch comparison isolates a loss before any
+DynamicArray lookup. The concrete control exposes a separate issue: observing
+one possible origin still leaves the checker without a loan footprint that
+covers every alternative.
+
+For an abstract allocator, acquisition freshness would be an excessive public
+requirement: an arena can return a checked subrange of an existing block.
+A sufficient storage guarantee would bind the returned view to a live backing
+and bound its extent. Two existentially hidden backings must still be treated
+as potentially overlapping. Distinct calls, owner roots and executor receipts
+supply no proof of separation. This leaves room to lend an entire backing
+before supporting parallel writes to disjoint indices.
