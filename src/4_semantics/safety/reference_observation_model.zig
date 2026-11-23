@@ -8,7 +8,8 @@ const Relation = facts.ReferenceRelation;
 const Grade = @FieldType(Relation, "grade");
 
 // A snapshot identifies the certified extent, not an allocator's lifetime.
-// There are two independent backings, two generations and two bytes each.
+// Each backing has two reserved bytes. Candidate views may extend past
+// that boundary while retaining the same origin and generation.
 const Observation = struct {
     backing: u1,
     generation: facts.ValidityRootId,
@@ -21,6 +22,7 @@ fn holds(grade: Grade, source: Observation, output: Observation) bool {
     return switch (grade) {
         .identity => source.start == output.start and source.end == output.end,
         .contained => source.start <= output.start and output.end <= source.end,
+        .checked_backing => source.end > 2 or output.end <= 2,
         .backing => true,
     };
 }
@@ -39,11 +41,11 @@ fn loadReference(slot: ?Relation, stored_reference: ?Relation) ?Relation {
     return stored_reference;
 }
 
-fn observations() [12]Observation {
-    var all: [12]Observation = undefined;
+fn observations() [20]Observation {
+    var all: [20]Observation = undefined;
     var index: usize = 0;
     for (0..2) |backing| for (0..2) |generation| {
-        for ([_][2]u8{ .{ 0, 1 }, .{ 1, 2 }, .{ 0, 2 } }) |range| {
+        for ([_][2]u8{ .{ 0, 1 }, .{ 1, 2 }, .{ 0, 2 }, .{ 1, 3 }, .{ 2, 3 } }) |range| {
             all[index] = .{
                 .backing = @intCast(backing),
                 .generation = @enumFromInt(generation),
@@ -128,6 +130,20 @@ test "backing relation cannot establish containment in the source view" {
     var external = second;
     external.backing = 1;
     try std.testing.expect(!holds(.backing, first, external));
+}
+
+test "checked backing can widen a view only within the certified reservation" {
+    const first = Observation{ .backing = 0, .generation = @enumFromInt(0), .start = 0, .end = 1 };
+    var widened = first;
+    widened.end = 2;
+    try std.testing.expect(holds(.checked_backing, first, widened));
+    try std.testing.expect(!holds(.contained, first, widened));
+    widened.end = 3;
+    try std.testing.expect(!holds(.checked_backing, first, widened));
+    try std.testing.expect(holds(.backing, first, widened));
+    const slot = @import("summary_infer.zig").allocation_slot_relation;
+    try std.testing.expectEqual(Grade.checked_backing, slot.grade);
+    try std.testing.expectEqual(Grade.backing, slot.then(.backing).grade);
 }
 
 test "equal addresses of empty observations do not establish shared backing" {

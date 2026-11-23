@@ -169,11 +169,15 @@ pub const ReferenceRelation = struct {
     source: InputPath,
     grade: Grade = .identity,
 
-    pub const Grade = enum { identity, contained, backing };
+    /// checked_backing preserves membership of the complete output extent
+    /// in the backing reservation, conditional on a bounded source. The
+    /// output may extend beyond the source view. backing preserves origin only.
+    pub const Grade = enum { identity, contained, checked_backing, backing };
 
     /// Common strength for alternatives and transitive reference derivations.
     pub fn weaker(a: Grade, b: Grade) Grade {
         if (a == .backing or b == .backing) return .backing;
+        if (a == .checked_backing or b == .checked_backing) return .checked_backing;
         if (a == .contained or b == .contained) return .contained;
         return .identity;
     }

@@ -14,7 +14,7 @@ const primitive_transfer = @import("../primitives/registry.zig");
 
 pub const allocation_slot_relation: facts.ReferenceRelation = .{
     .source = .{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } },
-    .grade = .backing,
+    .grade = .checked_backing,
 };
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
@@ -5203,7 +5203,7 @@ pub const Infer = struct {
         for (targets) |target| try self.recordAddressedAccess(function, target, projections, mode);
         if (paths.len == 0 and targets.len == 0) {
             const effect = try self.inferExpression(function, pointer);
-            if (effect.reference_relation) |relation| if (relation.grade == .backing and self.embeddedInputReference(function, relation.source)) {
+            if (effect.reference_relation) |relation| if (!facts.ReferenceRelation.implies(relation.grade, .contained) and self.embeddedInputReference(function, relation.source)) {
                 try self.access_sink.?.addBackingInput(relation.source, mode, true);
                 return;
             };
