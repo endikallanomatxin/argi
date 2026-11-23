@@ -2896,6 +2896,26 @@ pub const SafetyChecker = struct {
         return .{ .execution_receipts = try self.allocator.dupe(facts.ExecutionId, &.{id}) };
     }
 
+    fn collectAllocationDependencies(self: *SafetyChecker, pointer: facts.ValueFacts, projections: []const facts.Projection, state: *FunctionState, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
+        var targets = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer targets.deinit();
+        if (pointer.referenced_place) |place| try targets.append(place);
+        for (pointer.mutation_places) |place| try appendPlaceFact(&targets, place);
+        for (targets.items) |base| {
+            var place = base;
+            for (projections) |projection| place = try self.project(place, projection);
+            const stored = self.valueAtPlace(state, place) orelse continue;
+            const value = try self.reconstructPlaceValue(state, place, stored);
+            for (value.owned_roots) |root| try appendDependencyFact(dependencies, .{ .root = root });
+            if (include_borrowed) {
+                var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer backing.deinit();
+                try collectDependencyRoots(value, &backing);
+                for (backing.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
+            }
+        }
+    }
+
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
         if (semantic == .pointer) {
@@ -3237,19 +3257,9 @@ pub const SafetyChecker = struct {
             .allocation_slot => blk: {
                 if (values.len < 3) break :blk .{};
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
-                if (values[0].referenced_place) |place| {
-                    if (self.valueAtPlace(state, place)) |allocation_value| {
-                        for (allocation_value.owned_roots) |root| try appendDependencyFact(&dependencies, .{ .root = root });
-                        // A region-backed allocation may borrow its backing
-                        // without owning a fresh root. A caller-supplied anchor
-                        // can restrict the slot lifetime, never replace those
-                        // existing backing dependencies.
-                        var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                        defer backing.deinit();
-                        try collectDependencyRoots(allocation_value, &backing);
-                        for (backing.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
-                    }
-                }
+                // Every possible allocation contributes its backing lifetime, even
+                // when the caller supplies a longer-lived anchor.
+                try self.collectAllocationDependencies(values[0], &.{}, state, &dependencies, true);
                 for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
                 const observation = try self.load_summary_input_value(.{ .input_index = 0, .projections = &.{ .dereference, .{ .field = primitive_transfer.AllocationTransfer.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 } } }, values, state);
                 break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = observation.lexical_frame };
@@ -5597,11 +5607,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_owned_roots) |path| {
             if (path.input_index >= arguments.len) continue;
-            var place = arguments[path.input_index].referenced_place orelse continue;
-            for (path.projections) |projection| place = try self.project(place, projection);
-            if (self.valueAtPlace(state, place)) |value| {
-                for (value.owned_roots) |root| try appendDependencyFact(&dependencies, .{ .root = root });
-            }
+            try self.collectAllocationDependencies(arguments[path.input_index], path.projections, state, &dependencies, false);
         }
         if (effect.domain_values.len != 0) {
             // Region identity does not pin call-entry generations. Ordered
@@ -13970,8 +13976,12 @@ test "allocation slot retains borrowed backing independently of its explicit anc
     const anchor = try state.tracker.establish(.fresh);
     const storage: facts.Place = .{ .root = @enumFromInt(0) };
     try state.setPlace(storage, .initialized, .{ .dependencies = &.{.{ .root = backing }} });
+    const alternative = try state.tracker.establish(.fresh);
+    const owned = try state.tracker.establish(.fresh);
+    const other: facts.Place = .{ .root = @enumFromInt(1) };
+    try state.setPlace(other, .initialized, .{ .dependencies = &.{.{ .root = alternative }}, .owned_roots = &.{owned} });
     const values: [3]facts.ValueFacts = .{
-        .{ .referenced_place = storage }, .{}, .{ .dependencies = &.{.{ .root = anchor }}, .symbolic_pointees = &.{@enumFromInt(77)} },
+        .{ .mutation_places = &.{ storage, other } }, .{}, .{ .dependencies = &.{.{ .root = anchor }}, .symbolic_pointees = &.{@enumFromInt(77)} },
     };
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
     const direct = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .establish_allocation_slot, &.{}, &values, &state, source);
@@ -13982,6 +13992,8 @@ test "allocation slot retains borrowed backing independently of its explicit anc
     const effect = try inference.primitiveValueEffect(.establish_allocation_slot, 0, null);
     const summarized = try checker.instantiateOutput(effect, &values, &state);
     for ([_]facts.ValueFacts{ direct, summarized }) |value| {
+        try std.testing.expect(valueDependsOnRoot(value, alternative));
+        try std.testing.expect(valueDependsOnRoot(value, owned));
         try std.testing.expect(valueDependsOnRoot(value, backing));
         try std.testing.expect(valueDependsOnRoot(value, anchor));
         try std.testing.expectEqual(@as(usize, 0), value.owned_roots.len);
