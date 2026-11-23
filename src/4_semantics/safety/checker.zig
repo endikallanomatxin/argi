@@ -2893,8 +2893,7 @@ pub const SafetyChecker = struct {
         try self.collectExecutionLoans(ty, inputs, state, &loans, source);
         if (loans.items.len == 0) return .{};
         for (loans.items) |loan| try self.requireExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, state);
-        const id = try state.establishExecution(try loans.toOwnedSlice());
-        state.executions.items[state.executions.items.len - 1].origin = source;
+        const id = try state.establishExecutionAt(try loans.toOwnedSlice(), source);
         // A pending execution retains its backing generations through the
         // obligation itself. Do not turn these temporary loans into ordinary
         // lifetime dependencies that would survive certified completion.

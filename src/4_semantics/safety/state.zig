@@ -183,19 +183,19 @@ pub const State = struct {
 
     /// Completed entries remain present so an execution identity is never reused.
     pub fn establishExecution(self: *State, loans: []const facts.ExecutionLoan) !facts.ExecutionId {
-        var next: u32 = 0;
-        if (self.tracker.namespace) |namespace| {
-            next = namespace.next_execution_id;
-        } else {
-            for (self.executions.items) |execution| {
-                const id = @intFromEnum(execution.id);
-                if (id == std.math.maxInt(u32)) return error.SafetyExecutionIdentityLimit;
-                next = @max(next, id + 1);
-            }
-        }
+        return self.establishExecutionAt(loans, null);
+    }
+
+    pub fn establishExecutionAt(self: *State, loans: []const facts.ExecutionLoan, origin: ?primitives.SourceRef) !facts.ExecutionId {
+        const next = if (self.tracker.namespace) |namespace|
+            namespace.next_execution_id
+        else if (self.executions.getLastOrNull()) |last|
+            std.math.add(u32, @intFromEnum(last.id), 1) catch return error.SafetyExecutionIdentityLimit
+        else
+            0;
         if (next == std.math.maxInt(u32)) return error.SafetyExecutionIdentityLimit;
         const id: facts.ExecutionId = @enumFromInt(next);
-        try self.executions.append(.{ .id = id, .loans = loans });
+        try self.executions.append(.{ .id = id, .loans = loans, .origin = origin });
         if (self.tracker.namespace) |namespace| namespace.next_execution_id = next + 1;
         return id;
     }
@@ -1632,10 +1632,13 @@ fn executionReceiptAllocation(allocator: std.mem.Allocator) !void {
     var state = State.init(allocator);
     defer state.deinit();
     state.tracker.namespace = &namespace;
-    const first = state.establishExecution(&.{}) catch |err| {
+    const source: primitives.SourceRef = .{ .file_index = 2, .offset = 17 };
+    const first = state.establishExecutionAt(&.{}, source) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), state.executions.items.len);
         try std.testing.expectEqual(@as(u32, 0), namespace.next_execution_id);
         return err;
     };
+    try std.testing.expectEqual(source, state.executionState(first).?.origin.?);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(first));
     try std.testing.expectEqual(@as(u32, 1), namespace.next_execution_id);
 }
