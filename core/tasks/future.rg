@@ -27,7 +27,9 @@ _task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (): CFunc
     output_ref ::= trusted_establish_inherited_reference#(result_of#(F))(
         .raw = raw_pointer#(result_of#(F))(.address = invocation._output), .root = root
     )
-    output_ref&= ~value
+    -- The invocation owns an empty output slot until this callback returns.
+    -- Its backing bytes have no previous Argi value to clean up.
+    trusted_opaque_move#(.t: result_of#(F))(.destination = output_ref, .source = ~value)
 }
 
 async := #(.F: Function) (
