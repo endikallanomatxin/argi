@@ -10,7 +10,5 @@ main := () -> (.status_code: Int32) {
 
     box :: Box = (.value = 1)
     virtual ::= Virtual#(.contract: A)(.value = $&box)
-    if virtual.data | convert#(.to: UIntNative)(_) == $&box | convert#(.to: UIntNative)(_) {
-        status_code = 0
-    }
+    if virtual.read().value != 1 { status_code = 1 }
 }

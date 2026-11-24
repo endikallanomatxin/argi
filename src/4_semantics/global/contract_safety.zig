@@ -405,9 +405,17 @@ fn containsErasedParticipantVisited(self: *Resolver, ty: global_sg.GlobalTypeId,
                 if (argument.value == .type and try containsErasedParticipantVisited(self, argument.value.type, erased, visited)) return true;
             }
         },
-        // An explicit virtual handle has a fixed representation regardless
-        // of the concrete implementation behind its own table.
-        .virtual => return false,
+        .virtual => |contract| {
+            // The descriptor layout is fixed, but bound contract arguments
+            // still determine its public member signatures and type identity.
+            const signature = self.graph.semanticType(contract);
+            if (signature != .generic) return false;
+            const arguments = signature.generic.arguments;
+            for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+                if (argument.value == .type and try containsErasedParticipantVisited(self, argument.value.type, erased, visited)) return true;
+            }
+            return false;
+        },
         else => {},
     }
     if (global_types.fields(self.graph, ty)) |fields| {
