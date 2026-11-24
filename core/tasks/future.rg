@@ -92,25 +92,32 @@ async_owned := #(.F: Function) (
     prepared: inputs_of#(F) = ~args
     _require_task_input_transfer#(inputs_of#(F))(.value = &prepared)
     entry ::= _TaskEntry(.function = _owned_task_worker#(F))
-    output ::= _prepare_task_output#(result_of#(F))(.entry = entry, .ffi = ffi)!
-    request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = output._slot,
+    reservation ::= _reserve_task_output(.entry = entry, .ffi = ffi)!
+    request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = reservation._slot,
         .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_transfer(.inputs = prepared))
     submitted ::= Executor#().submit(.self = $&executor, .request = ~request)
-    accepted ::= _task_output_accepted(.slot = output._slot, .entry = entry, .ffi = ffi).accepted != 0
+    accepted ::= _task_output_accepted(.slot = reservation._slot, .entry = entry, .ffi = ffi) != 0
     if accepted { _retire_task_input#(inputs_of#(F))(.value = ~prepared) }
     match submitted {
-        ..error _ { result = ..error(.reason = ..task_start_failed) }
+        ..error _ {
+            if accepted {
+                output ::= _adopt_task_output#(result_of#(F))(.reservation = $&reservation, .entry = entry)
+            }
+            result = ..error(.reason = ..task_start_failed)
+        }
         ..ok ~task {
             if accepted == false { abort }
-            if task._entry != entry or task._output_slot != output._slot {
+            if task._entry != entry or task._output_slot != reservation._slot {
+                deinit(.self = $&task)
+                output ::= _adopt_task_output#(result_of#(F))(.reservation = $&reservation, .entry = entry)
                 result = ..error(.reason = ..executor_mismatch)
                 return
             }
             #if is_plain_data(.type = result_of#(F)) {
-                if _detach_task_output(.slot = output._slot, .task = task._handle, .entry = entry, .ffi = ffi) != 0 { abort }
+                if _detach_task_output(.slot = reservation._slot, .task = task._handle, .entry = entry, .ffi = ffi) != 0 { abort }
                 task._output_slot = 0
             } #else {
-                output._slot = 0
+                reservation._slot = 0
             }
             result = ..ok(._task = ~task)
         }

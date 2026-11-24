@@ -1,6 +1,9 @@
--- This owner is constructed before submit. After request completion and native
--- receipt release, an occupied slot can be claimed exactly once. The typed
--- caller performs cleanup; releasing the native slot only frees its buffer.
+-- The reservation protects raw storage before submission. Once a worker
+-- accepts it, custody must go to either the receipt or a typed output owner.
+_TaskOutputReservation := (._slot: UIntNative, ._ffi: $&ForeignFunctionInterface)
+
+-- After request completion and native release, the typed owner can claim
+-- an occupied slot exactly once.
 _OwnedTaskOutput := #(.T: Type) (._slot: UIntNative, ._entry: _TaskEntry, ._ffi: $&ForeignFunctionInterface)
 
 _new_task_output(.entry: _TaskEntry) -> (.slot: UIntNative): CFunction(.symbol = "_argi_task_output_create") where { no_access() }
@@ -9,15 +12,29 @@ _detach_task_output(.slot: UIntNative, .task: UIntNative, .entry: _TaskEntry) ->
 _claim_task_output(.slot: UIntNative, .entry: _TaskEntry) -> (.address: UIntNative): CFunction(.symbol = "_argi_task_output_take") where { no_access() }
 _destroy_task_output(.slot: UIntNative) -> (.status: CInt): CFunction(.symbol = "_argi_task_output_destroy") where { no_access() }
 
-_prepare_task_output := #(.T: Type) (.entry: _TaskEntry, .ffi: $&ForeignFunctionInterface) -> (
-    .result: Errable#(_OwnedTaskOutput#(T), (..task_start_failed))
+_reserve_task_output := (.entry: _TaskEntry, .ffi: $&ForeignFunctionInterface) -> (
+    .result: Errable#(_TaskOutputReservation, (..task_start_failed))
 ) {
     slot ::= _new_task_output(.entry = entry, .ffi = ffi)
     if slot == 0 {
         result = ..error(.reason = ..task_start_failed)
         return
     }
-    result = ..ok(._slot = slot, ._entry = entry, ._ffi = ffi)
+    result = ..ok(._slot = slot, ._ffi = ffi)
+}
+
+implement Deinit#(_TaskOutputReservation) (
+    .deinit = (.self: $&_TaskOutputReservation) -> () {
+        if self&._slot == 0 { return }
+        if _destroy_task_output(.slot = self&._slot, .ffi = self&._ffi) != 0 { abort }
+    }
+)
+
+_adopt_task_output := #(.T: Type) (.reservation: $&_TaskOutputReservation, .entry: _TaskEntry) -> (
+    .output: _OwnedTaskOutput#(T)
+) {
+    output = (._slot = reservation&._slot, ._entry = entry, ._ffi = reservation&._ffi)
+    reservation&._slot = 0
 }
 
 implement#(.T: Type) Deinit#(_OwnedTaskOutput#(T)) (
