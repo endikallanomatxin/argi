@@ -273,3 +273,11 @@ retains its backing lifetime, but its forwarding recipe is validity-only.
 That recipe may also describe scalar results derived from an address, so it
 cannot restore an authenticated observation. Scalar address forwarding
 needs evidence of the value relation independently of its lifetime.
+
+With structural Allocation evidence and the temporary bounded release
+interface, the allocation submission probe can also retain an external
+slot alias at the sender. The worker consumes the allocation and returns
+its size. After await and recovery of ordinary allocator authority, writing
+through the old slot alias fails because the allocation root has ended.
+Recovery is important in this probe: before it, the ordinary access check
+can reject the write earlier because the allocator is still shared.
