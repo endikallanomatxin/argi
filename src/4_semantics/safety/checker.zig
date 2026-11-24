@@ -4319,7 +4319,7 @@ pub const SafetyChecker = struct {
         // Returned owners keep these obligations; no caller place is restored.
         const effects = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         for (summary.outputs, effects) |output, *effect| effect.* = try self.opaqueOutputDependencies(output);
-        const hidden = try self.instantiateSummaryOutputs(effects, arguments, state, &.{});
+        const hidden = try self.instantiateSummaryOutputs(effects, null, arguments, state, &.{});
         const result = try self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
         var combined = try self.mergeValueFacts(result, hidden);
         // This adds provenance to the same result, rather than joining two
@@ -4484,13 +4484,13 @@ pub const SafetyChecker = struct {
             if (!preserves) continue;
             if (selector != null and selector.? != outcome.output_index) {
                 try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
-                return self.instantiateSummaryOutputs(summary.outputs, arguments, state, entries.items);
+                return self.instantiateSummaryOutputs(summary.outputs, summary.exact_moved_input, arguments, state, entries.items);
             }
             selector = outcome.output_index;
         }
         const output_index = selector orelse {
             try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
-            return self.instantiateSummaryOutputs(summary.outputs, arguments, state, entries.items);
+            return self.instantiateSummaryOutputs(summary.outputs, summary.exact_moved_input, arguments, state, entries.items);
         };
         var deferred = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         defer deferred.deinit();
@@ -4568,7 +4568,7 @@ pub const SafetyChecker = struct {
         common_summary.input_post_states = common.items;
         common_summary.invalidated_domains = common_domains.items;
         try self.applySummaryEffects(source, common_summary, argument_ids, arguments, state);
-        var result = try self.instantiateSummaryOutputs(summary.outputs, arguments, state, entries.items);
+        var result = try self.instantiateSummaryOutputs(summary.outputs, summary.exact_moved_input, arguments, state, entries.items);
         if (deferred.items.len == 0 and deferred_domains.items.len == 0 and resources.items.len == 0 and relocations.items.len == 0) return result;
         var choice: *facts.ValueFacts = &result;
         if (summary.outputs.len != 1) {
@@ -5795,10 +5795,15 @@ pub const SafetyChecker = struct {
     fn instantiateSummaryOutputs(
         self: *SafetyChecker,
         outputs: []const facts.ValueEffect,
+        exact_moved_input: ?u32,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
         entries: []const EntryPlaceValue,
     ) !facts.ValueFacts {
+        if (exact_moved_input) |index| {
+            if (outputs.len != 1 or index >= arguments.len) return error.InvalidSafetySummary;
+            return arguments[index];
+        }
         if (outputs.len == 0) return .{};
         var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
         defer fresh_roots.deinit();
@@ -12280,6 +12285,26 @@ test "copying input dependencies does not copy nested ownership" {
         .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
     }, &.{wrapped}, &state);
     try std.testing.expect(valueContainsOwnedRoot(moved, root));
+}
+
+test "an exact owned output preserves the full input snapshot" {
+    const allocator = std.testing.allocator;
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const address: facts.ValueFacts = .{
+        .owned_backing = backing,
+        .dependencies = &.{.{ .root = backing }},
+    };
+    const input: facts.ValueFacts = .{
+        .owned_roots = &.{backing},
+        .intrinsic_backing_owner = backing,
+        .fields = &.{.{ .index = 0, .value = &address }},
+    };
+    const output = try checker.instantiateSummaryOutputs(&.{.{}}, 0, &.{input}, &state, &.{});
+    try std.testing.expect(valueFactsEqual(input, output));
 }
 
 test "field materialization preserves intrinsic ownership moved from an input" {

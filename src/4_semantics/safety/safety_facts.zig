@@ -399,6 +399,9 @@ pub const SafetySummary = struct {
     /// Inferred regions cover every returning path. Declaration guards alone
     /// are conditional promises and cannot establish exhaustive coverage.
     guarded_returns_complete: bool = false,
+    /// A body-certified move of the entire evaluated input value.
+    /// May-dependencies and partial ownership transfers cannot establish this.
+    exact_moved_input: ?u32 = null,
     outputs: []const ValueEffect = &.{},
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},

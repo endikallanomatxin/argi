@@ -157,6 +157,7 @@ pub const Engine = struct {
 };
 
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
+    if (a.exact_moved_input != b.exact_moved_input) return false;
     if (a.unknown_access != b.unknown_access or a.input_accesses.len != b.input_accesses.len or a.global_accesses.len != b.global_accesses.len) return false;
     for (a.input_accesses, b.input_accesses) |left, right|
         if (left.mode != right.mode or left.backing != right.backing or left.virtual_method != right.virtual_method or !inputPathEql(left.target, right.target)) return false;

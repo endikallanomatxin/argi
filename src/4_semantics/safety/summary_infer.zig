@@ -1295,7 +1295,23 @@ pub const Infer = struct {
         // Try strongest to weakest. Compute links only for grades a pointer output needs.
         const grades = std.enums.values(facts.ReferenceRelation.Grade);
         var call_sets = [_]?[]const forwarding.ForwardedCall{null} ** grades.len;
+        var exact_moved_input: ?u32 = null;
         for (outputs, 0..) |*output, output_index| {
+            if (outputs.len == 1 and !accesses.unknown and accesses.inputs.items.len == 0 and accesses.globals.items.len == 0 and
+                accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency| {
+                const path = dependency.path;
+                if (!dependency.transfers_ownership or dependency.validity_only or path.projections.len != 0 or
+                    path.storage_domain != null or path.input_index >= function.input.len or output_index >= output_fields.len) continue;
+                const input_type = self.graph.fields.items[function.input.start + path.input_index].ty;
+                if (!types.equal(self.graph, input_type, output_fields[output_index].ty)) continue;
+                if (try forwarding.proves(self.allocator, self.graph, function, .{
+                    .input_index = path.input_index,
+                    .output_index = @intCast(output_index),
+                }, true)) {
+                    exact_moved_input = path.input_index;
+                    break;
+                }
+            };
             const embedded_relation = output.reference_relation;
             output.reference_relation = null;
             if (stable_reference_sources) if (embedded_relation) |relation| {
@@ -1331,6 +1347,7 @@ pub const Infer = struct {
             .input_accesses = try accesses.inputs.toOwnedSlice(),
             .global_accesses = try accesses.globals.toOwnedSlice(),
             .unknown_access = accesses.unknown or (accesses.has_loops and accesses.unstable_targets),
+            .exact_moved_input = exact_moved_input,
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
