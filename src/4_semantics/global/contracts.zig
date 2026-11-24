@@ -379,7 +379,7 @@ pub const Resolver = struct {
             try self.graph.virtual_registry_refs.append(self.allocator, registry);
         }
         const virtual_ty = try self.generics.internType(.{ .virtual = contract_ty });
-        const domains = (try self.resolveStorageDomains(contract_use, participant, concrete, located, source)) orelse return null;
+        const domains = (try self.resolveStorageDomains(evidence, concrete, located, source)) orelse return null;
         const virtualize: global_sg.GlobalVirtualizeId = @enumFromInt(@as(u32, @intCast(self.graph.virtualizes.items.len)));
         try self.graph.virtualizes.append(self.allocator, .{
             .value = handle,
@@ -492,20 +492,14 @@ pub const Resolver = struct {
         function: global_sg.GlobalFunctionId,
     };
 
-    fn resolveStorageDomains(self: *Resolver, use: ContractUse, participant: global_sg.GlobalTypeId, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
-        defer bindings.deinit(self.allocator);
-        if (try self.selectConformance(use.declaration, &.{participant}, &bindings, 0, null)) |selection| {
-            if (try self.associatedArgumentsMatch(located, &bindings, use.arguments)) {
-                const evidence = self.graph.contract_conformances.items[selection.tuple];
-                const owner: usize = @intFromEnum(evidence.context);
-                for (self.modules[owner].semantic.parameterized_storage.contract_conformances.items) |template| {
-                    if (std.meta.eql(self.sourceFor(owner, template.source), evidence.source))
-                        return self.resolveDomainPaths(owner, template.domains, concrete, located, source);
-                }
-            }
-        }
+    fn resolveStorageDomains(self: *Resolver, selection: ConformanceSelection, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
         if (located.definition.domains.len == 0) return &.{};
+        const evidence = self.graph.contract_conformances.items[selection.tuple];
+        const owner: usize = @intFromEnum(evidence.context);
+        for (self.modules[owner].semantic.parameterized_storage.contract_conformances.items) |template| {
+            if (std.meta.eql(self.sourceFor(owner, template.source), evidence.source))
+                return self.resolveDomainPaths(owner, template.domains, concrete, located, source);
+        }
         return self.domainFailure(source, "storage domains require an explicit implementation mapping for this contract");
     }
 
@@ -2021,7 +2015,7 @@ pub const Resolver = struct {
                 self.participant_conformance_failure = failure;
                 return null;
             }
-            try self.recordStaticSafetyContract(located, requirement, &bindings, participants[0], method, required_output, source, .{ .conformance = @intCast(selected.tuple), .index = @intCast(method_index) });
+            try self.recordStaticSafetyContract(located, requirement, participants[0], method, required_output, source, .{ .conformance = @intCast(selected.tuple), .index = @intCast(method_index) });
             break :generic method;
         };
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidContractRequirementInput;
@@ -2666,7 +2660,7 @@ pub const Resolver = struct {
                     return;
                 }
 
-                try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });
+                try self.recordStaticSafetyContract(located, requirement, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });
                 try operations.append(self.allocator, .{ .index = @intCast(operation_index), .function = selected.function });
             }
             for (operations.items) |operation|
@@ -3235,7 +3229,7 @@ pub const Resolver = struct {
         return parameter - participants.start;
     }
 
-    fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef, selection: primitives.ContractOperationIdentity) !void {
+    fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef, selection: primitives.ContractOperationIdentity) !void {
         const declared = requirement.safety_contract orelse return;
         const function = self.graph.function(method);
         const participant_type = self.graph.semanticType(concrete);
@@ -3268,24 +3262,7 @@ pub const Resolver = struct {
             },
             else => return err,
         };
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
-        for (0..located.definition.parameters.len) |offset| {
-            const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
-            const parameter = storage.comptime_parameters.items[raw];
-            const name = try self.graph.addString(self.allocator, self.modules[located.module_index].text(parameter.name));
-            try self.graph.generic_arguments.append(self.allocator, .{
-                .name = name,
-                .value = switch (parameter.kind) {
-                    .definition => .{ .definition = bindings.definitions[raw] orelse return error.UnboundDefinitionParameter },
-                    .type => .{ .type = bindings.types[raw] orelse return error.UnboundGenericTypeParameter },
-                    .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.UnboundComptimeParameter },
-                },
-            });
-        }
-        const contract_decl = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?;
-        const use = ContractUse{ .declaration = contract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
-        const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, referent, located, source)) orelse return;
+        const domains = (try self.resolveStorageDomains(.{ .tuple = selection.conformance }, referent, located, source)) orelse return;
         const receiver = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located));
         try self.graph.contract_safety_conformances.append(self.allocator, .{ .selection = selection, .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
     }
