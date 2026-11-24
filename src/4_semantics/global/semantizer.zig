@@ -2580,7 +2580,6 @@ fn diagnosePrivateFields(
                 else => continue,
             };
             const name = module.text(access.field_name);
-            if (!std.mem.startsWith(u8, name, "_")) continue;
             if (reachable) |set| {
                 if (operation_index < module.semantic.pending_owner_functions.items.len) {
                     if (module.semantic.pending_owner_functions.items[operation_index]) |owner| {
@@ -2589,6 +2588,23 @@ fn diagnosePrivateFields(
                 }
             }
             const target = globalizer.globalNode(offsets[module_index], access.node);
+            const receiver = graph.node(globalizer.globalNode(offsets[module_index], access.value));
+            if (graph.node(target).ty == null) if (receiver.ty) |ty| {
+                if (graph.resolvedSemanticType(ty)) |semantic| {
+                    if (semantic == .virtual and (std.mem.eql(u8, name, "data") or
+                        std.mem.eql(u8, name, "data_ptr") or std.mem.eql(u8, name, "vtable")))
+                    {
+                        try diagnostics.add(
+                            diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], access.source)),
+                            .semantic,
+                            "Virtual descriptor storage is private",
+                            .{},
+                        );
+                        return true;
+                    }
+                }
+            };
+            if (!std.mem.startsWith(u8, name, "_")) continue;
             const node = graph.node(target);
             if (node.content != .struct_field_access) continue;
             const value = node.content.struct_field_access.value;
