@@ -322,3 +322,15 @@ its root ID matches across arms. A union of roots would lose the pairing
 between an observation and its enclosing owner. A collective proof needs
 to establish that pairing on every incoming value and survive only
 mutations that preserve it.
+
+A second round-trip probe used the bounded release interface and temporarily
+removed the latent typed drop from the native result owner in a disposable
+sysroot. That removes both unknown-effect diagnostics and exposes an earlier
+proof obligation than result-slot metadata transport: a worker forwarding
+its owned String input cannot prove that the result is transferable. Worker
+ingress seeds facts from the parameter type, so the worker has no summary
+relationship connecting the returned String to the submitted value evidence.
+The output proof needs that relationship even if execution storage gains a
+way to preserve metadata. Suppressing the typed drop leaks the occupied
+result and serves only to isolate the diagnostic; the production path
+must retain cleanup on both successful and failed submission.
