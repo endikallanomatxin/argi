@@ -11798,19 +11798,26 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     const direct = try checker.evaluatePrimitive(@enumFromInt(1), @enumFromInt(0), .establish_allocation, &.{}, &arguments, &direct_state, .{ .file_index = 0, .offset = 0 });
     try std.testing.expect(valueFactsEqual(direct, symbolic));
     try std.testing.expectEqual(@as(usize, 12), direct.fields.len);
-    for (direct.fields[5..]) |field| {
+    const shape = primitive_transfer.AllocationTransfer;
+    for (direct.fields[shape.storage_address_field + 1 .. shape.backing_reference_field]) |field| {
         try std.testing.expectEqual(@as(usize, 0), field.value.dependencies.len);
         try std.testing.expectEqual(@as(usize, 0), field.value.owned_roots.len);
     }
     try std.testing.expectEqual(@as(usize, 1), direct.owned_roots.len);
+    const backing_root = direct.owned_roots[0];
+    const address = try checker.projectValueFacts(direct, &.{.{ .field = shape.storage_address_field }});
+    try std.testing.expect(valueDependsOnRoot(address, backing_root));
     try std.testing.expect(valueDependsOnRoot(direct, deallocator_root));
     try std.testing.expect(valueDependsOnRoot(direct, anchor_root));
     const deallocator = try checker.projectValueFacts(direct, &.{.{ .field = 4 }});
     try std.testing.expect(valueDependsOnRoot(deallocator, deallocator_root));
-    const metadata = try checker.projectValueFacts(direct, &.{.{ .field = 11 }});
-    try std.testing.expectEqual(@as(usize, 0), metadata.owned_roots.len);
-    try std.testing.expect(!valueDependsOnRoot(metadata, anchor_root));
-    try std.testing.expect(!valueDependsOnRoot(metadata, deallocator_root));
+    const backing = try checker.projectValueFacts(direct, &.{
+        .{ .field = shape.backing_reference_field }, .{ .variant = 1 }, .{ .field = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 0), backing.owned_roots.len);
+    try std.testing.expect(valueDependsOnRoot(backing, backing_root));
+    try std.testing.expect(!valueDependsOnRoot(backing, anchor_root));
+    try std.testing.expect(!valueDependsOnRoot(backing, deallocator_root));
 }
 
 test "new borrows after joined reinitialization do not revive old generations" {
