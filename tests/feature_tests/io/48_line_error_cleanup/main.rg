@@ -79,7 +79,7 @@ implement Allocator#(RecordingAllocator) (
 )
 
 implement Deallocator#($&RecordingAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&RecordingAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

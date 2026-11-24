@@ -111,7 +111,7 @@ implement Deinit#(Allocation) (
         -- Cleanup may touch backing metadata; an ended region cannot be released.
         live ::= self&.anchor&
         data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
-        self&._deallocator.deallocate(
+        self&._deallocator._deallocate(
             .data      = data
             .size      = self&._release_size
             .alignment = self&._storage_alignment

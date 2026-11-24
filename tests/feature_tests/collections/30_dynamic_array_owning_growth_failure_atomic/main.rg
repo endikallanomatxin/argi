@@ -141,7 +141,7 @@ implement Allocator#(FailSecondAllocator) (
 )
 
 implement Deallocator#($&FailSecondAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&FailSecondAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

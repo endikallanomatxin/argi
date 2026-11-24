@@ -13,9 +13,7 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..ok ~second_payload {
                     second_allocation ::= ~second_payload
                     deinit(.self = $&first_allocation)
-                    Deallocator#(
-                    ).deallocate(
-                        .self = $&allocator, .data = first_data, .size = 8, .alignment = 8
+                    trusted_deallocate_raw(.ffi = system.ffi, .provider = Virtual#(Deallocator)($&allocator), .data = first_data, .size = 8, .alignment = 8
                     )
                     status_code = 0
                 }

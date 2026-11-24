@@ -54,7 +54,7 @@ implement Allocator#(FailFirstAllocator) (
 )
 
 implement Deallocator#($&FailFirstAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&FailFirstAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

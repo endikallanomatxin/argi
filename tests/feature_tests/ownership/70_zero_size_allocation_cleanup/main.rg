@@ -38,7 +38,7 @@ implement Allocator#(CountingAllocator) (
 )
 
 implement Deallocator#($&CountingAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&CountingAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

@@ -24,7 +24,7 @@ implement Allocator#(CAllocator) (
 )
 
 implement Deallocator#($&CAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&CAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,
@@ -39,7 +39,7 @@ implement Deallocator#($&CAllocator) (
 implement ConcurrentAlias#(CAllocator) ()
 
 implement Deallocator#($$&CAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self: $$&CAllocator, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative
     ) -> () {
         view ::= trusted_concurrent_view(.shared = self)

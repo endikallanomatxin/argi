@@ -10,12 +10,14 @@ implement Init#(NoopDeallocator, NoopDeallocatorInitArgs) (
     }
 )
 
-main := () -> (.status_code: Int32) {
+main := (.system: System) -> (.status_code: Int32) {
 
     noop :: NoopDeallocator = NoopDeallocator()
     deallocator :: Virtual#(Deallocator) = Virtual#(.contract: Deallocator)(.value = $&noop)
     byte :: UInt8 = 7
-    deallocator.deallocate(
+    trusted_deallocate_raw(
+        .ffi = system.ffi
+        .provider = deallocator
         .data = raw_pointer#(.t: UInt8)(
             .address = [$&byte | convert#(.to: UIntNative)(_)]
         ).raw
@@ -26,7 +28,7 @@ main := () -> (.status_code: Int32) {
 }
 
 implement Deallocator#($&NoopDeallocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&NoopDeallocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

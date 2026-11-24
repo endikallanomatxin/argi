@@ -28,7 +28,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 }
 
 implement Deallocator#($&TrackingDeallocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&TrackingDeallocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

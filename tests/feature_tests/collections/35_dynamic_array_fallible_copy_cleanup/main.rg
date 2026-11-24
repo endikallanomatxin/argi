@@ -104,7 +104,7 @@ implement Allocator#(FailFourthAllocator) (
 )
 
 implement Deallocator#($&FailFourthAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&FailFourthAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

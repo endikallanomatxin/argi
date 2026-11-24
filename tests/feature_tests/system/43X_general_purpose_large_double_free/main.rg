@@ -8,8 +8,7 @@ main := (.system: System) -> (.status_code: Int32) {
             allocation ::= ~payload
             data ::= allocation.data
             deinit(.self = $&allocation)
-            Deallocator#(
-            ).deallocate(.self = $&allocator, .data = data, .size = 5000, .alignment = 4096)
+            trusted_deallocate_raw(.ffi = system.ffi, .provider = Virtual#(Deallocator)($&allocator), .data = data, .size = 5000, .alignment = 4096)
             status_code = 0
         }
     }

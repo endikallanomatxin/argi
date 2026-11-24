@@ -1,10 +1,10 @@
-ReleaseCounter := (.memory: $&Memory, .releases: UIntNative = 0)
+ReleaseCounter := (.ffi: $&ForeignFunctionInterface, .memory: $&Memory, .releases: UIntNative = 0)
 FailSecond := (.release: $&ReleaseCounter, .requests: UIntNative = 0)
 
 implement Deallocator#($&ReleaseCounter) (
-    .deallocate = (.self: $&ReleaseCounter, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative) -> () {
+    ._deallocate = (.self: $&ReleaseCounter, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative) -> () {
         self&.releases = self&.releases + 1
-        Deallocator#().deallocate(.self = self&.memory, .data = data, .size = size, .alignment = alignment)
+        trusted_deallocate_raw(.ffi = self&.ffi, .provider = Virtual#(Deallocator)(self&.memory), .data = data, .size = size, .alignment = alignment)
     }
 )
 
@@ -25,7 +25,7 @@ implement Allocator#(FailSecond) (
 )
 
 main := (.system: System) -> () {
-    release: ReleaseCounter = (.memory = system.memory)
+    release: ReleaseCounter = (.ffi = system.ffi, .memory = system.memory)
     backing: FailSecond = (.release = $&release)
     heap ::= GeneralPurposeAllocator(.allocator = Virtual#(Allocator)($&backing))
     match String(.allocator = Virtual#(Allocator)($&heap), .length = 8192) {

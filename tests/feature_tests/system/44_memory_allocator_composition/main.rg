@@ -1,4 +1,5 @@
 TrackingAllocator := (
+    .ffi           : $&ForeignFunctionInterface
     .backing       : $&PageAllocator
     .allocations   : UIntNative
     .deallocations : UIntNative
@@ -8,6 +9,7 @@ main := (.system: System) -> (.status_code: Int32) {
 
     page :: PageAllocator = PageAllocator(.memory = system.memory)
     tracker :: TrackingAllocator = (
+        .ffi           = system.ffi
         .backing       = $&page
         .allocations   = 0
         .deallocations = 0
@@ -90,16 +92,15 @@ implement Allocator#(TrackingAllocator) (
 )
 
 implement Deallocator#($&TrackingAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&TrackingAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {
         self&.deallocations = self&.deallocations + 1
-        Deallocator#(
-        ).deallocate(
-            .self = self&.backing&.memory, .data = data, .size = size, .alignment = alignment
+        trusted_deallocate_raw(
+            .ffi = self&.ffi, .provider = Virtual#(Deallocator)(self&.backing&.memory), .data = data, .size = size, .alignment = alignment
         )
     }
 )

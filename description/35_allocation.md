@@ -12,8 +12,13 @@ Allocator#(.Provider: Type): Contract = (
 
 Calls use `Allocator#(Provider).allocate(...)`, or `Allocator#().allocate(...)`
 to infer the provider from its input. `implement` supplies the operation;
-virtual handles retain selected evidence. `Deallocator#(Provider)` similarly
-provides scoped physical cleanup.
+virtual handles retain selected evidence. `Deallocator#(Receiver)` provides
+physical cleanup through its private `_deallocate` operation. Allocation
+selects the retained provider and supplies the original acquisition bounds.
+External providers can implement the operation. An adapter that forwards raw
+bounds uses `trusted_deallocate_raw` with an explicit FFI capability. The
+adapter must establish that the bounds name a live block in its custody
+and match the provider.
 
 The ordinary `allocate_bytes` helper accepts size and optional alignment.
 The unique typed `allocate#(T)` helper accepts an optional count, defaulting

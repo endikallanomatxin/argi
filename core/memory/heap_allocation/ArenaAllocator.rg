@@ -196,7 +196,7 @@ implement Allocator#(ArenaAllocator) (
 )
 
 implement Deallocator#($&ArenaAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&ArenaAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

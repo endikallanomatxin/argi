@@ -292,7 +292,7 @@ implement Allocator#(GeneralPurposeAllocator) (
 )
 
 implement Deallocator#($&GeneralPurposeAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&GeneralPurposeAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,

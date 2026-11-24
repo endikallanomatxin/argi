@@ -1,7 +1,7 @@
 Numbers: CStruct = (.address: UIntNative, .size: UIntNative, .alignment: UIntNative)
 NoFree: Type = ()
 implement Deallocator#($&NoFree) (
-    .deallocate = (.self: $&NoFree, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative) -> () {}
+    ._deallocate = (.self: $&NoFree, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative) -> () {}
 )
 Boundary(.bytes: Numbers) -> (): CFunctionPointer
 establish(.bytes: Numbers) -> (): CFunction := {

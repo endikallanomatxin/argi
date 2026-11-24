@@ -38,7 +38,7 @@ implement Allocator#(LocalAllocator) (
 )
 
 implement Deallocator#($&LocalAllocator) (
-    .deallocate = (
+    ._deallocate = (
         .self      : $&LocalAllocator,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,
