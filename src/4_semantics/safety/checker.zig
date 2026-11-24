@@ -3498,7 +3498,7 @@ pub const SafetyChecker = struct {
 
     fn allocationBackingReference(self: *SafetyChecker, root: facts.ValidityRootId, origins: []const facts.StorageCapabilityId) !*facts.ValueFacts {
         const pointer = try self.allocator.create(facts.ValueFacts);
-        pointer.* = .{ .dependencies = try self.oneDependency(root), .acquisition_origins = origins };
+        pointer.* = .{ .owned_backing = root, .dependencies = try self.oneDependency(root), .acquisition_origins = origins };
         const payload = try self.allocator.create(facts.ValueFacts);
         payload.* = .{ .dependencies = pointer.dependencies, .fields = try self.allocator.dupe(facts.FieldFacts, &.{.{ .index = 0, .value = pointer }}) };
         return payload;
@@ -5832,6 +5832,8 @@ pub const SafetyChecker = struct {
         result.execution_receipts = try execution_ids.toOwnedSlice();
         for (effect.fresh_dependencies) |fresh| {
             const root = try self.instantiateFreshRoot(fresh, state, fresh_roots);
+            if (effect.observes_fresh_backing and effect.fresh_dependencies.len == 1)
+                result.owned_backing = root;
             try appendDependencyFact(&dependencies, .{ .root = root });
         }
         for (effect.opaque_generation_dependencies) |input_path| {
@@ -10756,6 +10758,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
     for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
@@ -11938,6 +11941,7 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     });
     try std.testing.expectEqual(@as(usize, 0), backing.owned_roots.len);
     try std.testing.expect(valueDependsOnRoot(backing, backing_root));
+    try std.testing.expectEqual(backing_root, backing.owned_backing.?);
     try std.testing.expect(!valueDependsOnRoot(backing, anchor_root));
     try std.testing.expect(!valueDependsOnRoot(backing, deallocator_root));
 }

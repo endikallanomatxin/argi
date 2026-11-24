@@ -199,7 +199,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
-    if (a.static_reference != b.static_reference) return false;
+    if (a.static_reference != b.static_reference or a.observes_fresh_backing != b.observes_fresh_backing) return false;
     if (a.reference_relation) |path| {
         if (b.reference_relation == null or !path.eql(b.reference_relation.?)) return false;
     } else if (b.reference_relation != null) return false;

@@ -155,6 +155,8 @@ pub const GuardedValueFacts = struct {
 };
 
 pub const ValueFacts = struct {
+    /// The observed address is within this owned resource backing.
+    owned_backing: ?ValidityRootId = null,
     /// A user-declared dependency must be checked on ordinary value reads,
     /// including scalars. Other dependencies retain their operation-specific
     /// checks, such as pointer dereference and opaque storage release.
@@ -587,6 +589,12 @@ fn replaceValueRootsIfChanged(
 ) !?ValueFacts {
     var result = value;
     var changed = false;
+    if (value.owned_backing) |root| {
+        if (root != replacement and std.mem.indexOfScalar(ValidityRootId, sources, root) != null) {
+            result.owned_backing = replacement;
+            changed = true;
+        }
+    }
     for (value.dependencies) |dependency| {
         if (dependency.root == replacement or std.mem.indexOfScalar(ValidityRootId, sources, dependency.root) == null) continue;
         var dependencies: std.ArrayList(ValidityDependency) = .empty;

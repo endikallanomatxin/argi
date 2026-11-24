@@ -7405,6 +7405,7 @@ pub const Infer = struct {
         if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
             .static_reference = effect.static_reference,
+            .observes_fresh_backing = effect.observes_fresh_backing,
             .concurrent_receiver = effect.concurrent_receiver,
             .explicit_dependency = effect.explicit_dependency,
             .fresh_dependencies = effect.fresh_dependencies,
@@ -7812,6 +7813,7 @@ pub const Infer = struct {
         }
         var result = effect;
         result.static_reference = null;
+        result.observes_fresh_backing = false;
         result.concurrent_receiver = false;
         result.virtual_methods = &.{};
         if (result.virtual_receiver_input) |*path| {
@@ -8295,8 +8297,11 @@ pub const Infer = struct {
         // provenance grants neither another receipt nor release authority.
         if (fields.len > shape.storage_address_field) fields[shape.storage_address_field].value = data;
         if (fields.len > shape.backing_reference_field) {
+            const observation = try self.allocator.create(facts.ValueEffect);
+            observation.* = data.*;
+            observation.observes_fresh_backing = true;
             const payload = try self.allocator.create(facts.ValueEffect);
-            payload.* = .{ .fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = data }}) };
+            payload.* = .{ .fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = observation }}) };
             const backing = try self.allocator.create(facts.ValueEffect);
             backing.* = .{ .variants = try self.allocator.dupe(facts.OutputVariantEffect, &.{.{ .index = 1, .value = payload }}) };
             fields[shape.backing_reference_field].value = backing;
