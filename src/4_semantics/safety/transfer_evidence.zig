@@ -134,7 +134,7 @@ pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.Val
         reference.symbolic_pointees.len != 0 or reference.opaque_provenance.len != 0 or
         reference.domains.len != 0 or reference.execution_receipts.len != 0 or
         reference.fields.len != 0 or reference.variants.len != 0 or
-        reference.guarded_values.len != 0 or reference.generation_outcomes.len != 0)
+        reference.guarded_values.len != 0 or reference.generation_outcomes.len != 0 or reference.completed_executions.len != 0)
         return false;
     if (reference.dependencies.len == 0) return false;
     for (reference.dependencies) |dependency| if (dependency.root != root) return false;
@@ -148,7 +148,7 @@ pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
         value.foreign_storage or value.storage_capabilities.len != 0 or value.storage_capability_incomplete or value.acquisition_origins.len != 0 or
         value.referenced_place != null or value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len != 0 or
         value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0 or
-        value.generation_outcomes.len != 0 or value.concurrent_receiver) return true;
+        value.generation_outcomes.len != 0 or value.completed_executions.len != 0 or value.concurrent_receiver) return true;
     var children = value.structuralChildren();
     while (children.next()) |child| if (requiresResultMetadata(child.*, depth + 1)) return true;
     for (value.guarded_values) |guard| if (requiresResultMetadata(guard.value.*, depth + 1)) return true;
@@ -224,10 +224,8 @@ test "native task result transport rejects execution and storage evidence in a p
     child = .{ .concurrent_receiver = true };
     try std.testing.expect(requiresResultMetadata(result, 0));
 
-    // Concrete dispatch identity can be discarded. It cannot establish
-    // concurrent receiver authority or authenticate its backing.
-    child = .{ .virtual_methods = &.{@enumFromInt(0)} };
-    try std.testing.expect(!requiresResultMetadata(result, 0));
+    child = .{ .completed_executions = &.{@enumFromInt(0)} };
+    try std.testing.expect(requiresResultMetadata(result, 0));
 }
 
 test "owned backing transport requires matching custody and no external loan" {

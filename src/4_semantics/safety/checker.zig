@@ -2120,7 +2120,7 @@ pub const SafetyChecker = struct {
     }
 
     fn activateExecutionEvidence(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) void {
-        for (value.generation_outcomes) |proof| for (proof.completed_executions) |id| state.completeExecution(id);
+        for (value.completed_executions) |id| state.completeExecution(id);
         for (value.fields) |field| self.activateExecutionEvidence(field.value.*, state);
         if (value.known_choice_variant) |active| for (value.variants) |variant| if (variant.index == active) self.activateExecutionEvidence(variant.value.*, state);
     }
@@ -4330,6 +4330,7 @@ pub const SafetyChecker = struct {
 
     fn preserveResultOutcomeProofs(self: *SafetyChecker, value: *facts.ValueFacts, result: facts.ValueFacts) anyerror!void {
         value.generation_outcomes = result.generation_outcomes;
+        value.completed_executions = result.completed_executions;
         const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
         value.fields = fields;
         for (fields) |*field| for (result.fields) |original| if (field.index == original.index) {
@@ -4357,22 +4358,12 @@ pub const SafetyChecker = struct {
         for (summary.outcome_post_states) |outcome| {
             if (!outcome.reachable) continue;
             for (outcome.completed_executions) |path| {
-                const receipt = try self.load_summary_input_value(path, arguments, state);
-                if (receipt.execution_receipts.len == 0) continue;
-                // The place and generation provide the existing proof shape;
-                // completion itself depends only on the captured execution IDs.
-                const storage = try self.resolveSummaryInputPath(path, argument_ids, arguments, state) orelse continue;
-                const generation = try state.storageGeneration(storage);
-                const proof = facts.GenerationOutcome{
-                    .storage = .{ .place = storage },
-                    .generation = generation,
-                    .guard = guard,
-                    .invalidates = false,
-                    .completed_executions = receipt.execution_receipts,
-                    .source = source,
-                };
+                const receipt = try self.loadSummaryInputValue(path, arguments, state, true);
+                var identity: ?facts.ExecutionId = null;
+                if (!collectUniqueExecutionReceipt(receipt, &identity)) continue;
+                const proof = identity orelse continue;
                 if (summary.outputs.len == 1) {
-                    try self.attachOutcomeGeneration(&result, outcome.parent_variants, outcome.variant_index, proof);
+                    try self.attachChoiceOutcome(&result, outcome.parent_variants, outcome.variant_index, proof);
                 } else {
                     const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
                     result.fields = fields;
@@ -4380,7 +4371,7 @@ pub const SafetyChecker = struct {
                         const value = try self.allocator.create(facts.ValueFacts);
                         value.* = field.value.*;
                         field.value = value;
-                        try self.attachOutcomeGeneration(value, outcome.parent_variants, outcome.variant_index, proof);
+                        try self.attachChoiceOutcome(value, outcome.parent_variants, outcome.variant_index, proof);
                     };
                 }
             }
@@ -4836,6 +4827,10 @@ pub const SafetyChecker = struct {
     }
 
     fn attachOutcomeGeneration(self: *SafetyChecker, value: *facts.ValueFacts, parents: []const u32, leaf: u32, proof: facts.GenerationOutcome) anyerror!void {
+        return self.attachChoiceOutcome(value, parents, leaf, proof);
+    }
+
+    fn attachChoiceOutcome(self: *SafetyChecker, value: *facts.ValueFacts, parents: []const u32, leaf: u32, proof: anytype) anyerror!void {
         const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
         value.variants = variants;
         const selected = if (parents.len == 0) leaf else parents[0];
@@ -4845,8 +4840,11 @@ pub const SafetyChecker = struct {
             payload.* = variant.value.*;
             variant.value = payload;
             if (parents.len == 0) {
-                payload.generation_outcomes = try std.mem.concat(self.allocator, facts.GenerationOutcome, &.{ payload.generation_outcomes, &.{proof} });
-            } else try self.attachOutcomeGeneration(payload, parents[1..], leaf, proof);
+                if (@TypeOf(proof) == facts.ExecutionId) {
+                    if (std.mem.indexOfScalar(facts.ExecutionId, payload.completed_executions, proof) == null)
+                        payload.completed_executions = try std.mem.concat(self.allocator, facts.ExecutionId, &.{ payload.completed_executions, &.{proof} });
+                } else payload.generation_outcomes = try std.mem.concat(self.allocator, facts.GenerationOutcome, &.{ payload.generation_outcomes, &.{proof} });
+            } else try self.attachChoiceOutcome(payload, parents[1..], leaf, proof);
             break;
         }
     }
@@ -6395,16 +6393,8 @@ pub const SafetyChecker = struct {
             const id = entry.value_ptr.*;
             const execution = state.executionState(id) orelse continue;
             if (execution.loans.len == 0 or execution.loans[0].generations.len == 0) continue;
-            const storage = execution.loans[0].storage orelse blk: {
-                if (self.call_stack.items.len == 0) continue;
-                const function = self.graph.function(self.call_stack.getLast());
-                if (function.input_bindings.len == 0) continue;
-                break :blk facts.Place{ .root = self.graph.binding_refs.items[function.input_bindings.start] };
-            };
-            const ids = try self.allocator.dupe(facts.ExecutionId, &.{id});
-            const proof = facts.GenerationOutcome{ .storage = .{ .place = storage }, .generation = execution.loans[0].generations[0], .guard = 0, .invalidates = false, .completed_executions = ids };
             for (result.variants) |variant| {
-                if (!valueHasExecution(variant.value.*, id)) try self.attachOutcomeGeneration(result, &.{}, variant.index, proof);
+                if (!valueHasExecution(variant.value.*, id)) try self.attachChoiceOutcome(result, &.{}, variant.index, id);
             }
         }
     }
@@ -6596,6 +6586,11 @@ pub const SafetyChecker = struct {
             try guarded_values.append(self.allocator, a);
             break;
         };
+        var completed_executions: std.ArrayList(facts.ExecutionId) = .empty;
+        for (left.completed_executions) |id| {
+            if (std.mem.indexOfScalar(facts.ExecutionId, right.completed_executions, id) != null)
+                try completed_executions.append(self.allocator, id);
+        }
         var generation_outcomes = std.array_list.Managed(facts.GenerationOutcome).init(self.allocator);
         for (left.generation_outcomes) |outcome| for (right.generation_outcomes) |other| {
             if (outcome.eql(other)) {
@@ -6712,6 +6707,7 @@ pub const SafetyChecker = struct {
             .virtual_no_access = try facts.commonVirtualNoAccess(self.allocator, left.virtual_no_access, right.virtual_no_access),
             .domains = domains,
             .generation_outcomes = try generation_outcomes.toOwnedSlice(),
+            .completed_executions = try completed_executions.toOwnedSlice(self.allocator),
             .choice_selectors = try choice_selectors.toOwnedSlice(self.allocator),
             .choice_observations = try choice_observations.toOwnedSlice(self.allocator),
             .guarded_values = try guarded_values.toOwnedSlice(self.allocator),
@@ -6726,6 +6722,7 @@ pub const SafetyChecker = struct {
         // optional when copying dependencies and must not restore custody.
         result.guarded_values = &.{};
         result.generation_outcomes = &.{};
+        result.completed_executions = &.{};
         var fields: ?[]facts.FieldFacts = null;
         for (value.fields, 0..) |field, index| {
             const child = try self.withoutOwnership(field.value.*) orelse continue;
@@ -6745,7 +6742,7 @@ pub const SafetyChecker = struct {
         }
         if (variants) |updated| result.variants = updated;
         if (fields == null and variants == null and value.owned_roots.len == 0 and
-            value.guarded_values.len == 0 and value.generation_outcomes.len == 0) return null;
+            value.guarded_values.len == 0 and value.generation_outcomes.len == 0 and value.completed_executions.len == 0) return null;
         return result;
     }
 
@@ -10258,11 +10255,8 @@ pub const SafetyChecker = struct {
     }
 
     fn activate_conditional_resources(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
+        for (value.completed_executions) |id| state.completeExecution(id);
         for (value.generation_outcomes) |outcome| {
-            if (outcome.completed_executions.len != 0) {
-                for (outcome.completed_executions) |id| state.completeExecution(id);
-                continue;
-            }
             if (outcome.empties_opaque_storage) {
                 const current = state.domainGenerationIsCurrent(outcome.storage, outcome.generation) and state.tracker.isAlive(outcome.generation);
                 if (current) for (state.opaque_storages.items) |domain| if (domain.storage.eql(outcome.storage) and domain.outcome_guard == outcome.guard) {
@@ -10881,6 +10875,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     for (left.choice_selectors, right.choice_selectors) |a, b| if (!a.eql(b)) return false;
     for (left.choice_observations, right.choice_observations) |a, b| if (!a.eql(b)) return false;
     for (left.guarded_values, right.guarded_values) |a, b| if (!a.eql(b)) return false;
+    if (!std.mem.eql(facts.ExecutionId, left.completed_executions, right.completed_executions)) return false;
     for (left.generation_outcomes, right.generation_outcomes) |a, b| if (!a.eql(b)) return false;
     for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
@@ -15904,6 +15899,44 @@ test "summarized handoff retires only the projected owner" {
     try std.testing.expect(try checker.endRoots(.{ .file_index = 0, .offset = 0 }, &state, roots.items));
     try std.testing.expect(!state.tracker.isAlive(backing));
     try std.testing.expect(state.tracker.isAlive(sibling));
+}
+
+test "a by-value request can certify its exact execution on an error outcome" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first = try state.establishExecution(&.{});
+    const second = try state.establishExecution(&.{});
+    const payload: facts.ValueFacts = .{};
+    const output: facts.ValueFacts = .{ .variants = &.{.{ .index = 1, .value = &payload }} };
+    const summary: facts.SafetySummary = .{
+        .outputs = &.{.{}},
+        .outcome_post_states = &.{.{
+            .output_index = 0,
+            .variant_index = 1,
+            .input_post_states = &.{},
+            .completed_executions = &.{.{ .input_index = 0 }},
+        }},
+    };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const ambiguous = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{
+        .{ .execution_receipts = &.{ first, second } },
+    }, &state, output);
+    try checker.activate_conditional_resources(&state, ambiguous.variants[0].value.*);
+    try std.testing.expect(state.executionPending(first));
+    try std.testing.expect(state.executionPending(second));
+
+    const exact = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{
+        .{ .execution_receipts = &.{first} },
+    }, &state, output);
+    try std.testing.expect(state.executionPending(first));
+    try checker.activate_conditional_resources(&state, exact.variants[0].value.*);
+    try std.testing.expect(!state.executionPending(first));
+    try std.testing.expect(state.executionPending(second));
 }
 
 test "accepted task input retires owned backing but preserves external roots" {

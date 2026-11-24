@@ -104,8 +104,6 @@ pub const GenerationOutcome = struct {
     /// Discharge only hidden contents guarded by this call and generation.
     /// This does not end, initialize or restore a resource.
     empties_opaque_storage: bool = false,
-    /// Completion applies to these exact logical executions after the tag is selected.
-    completed_executions: []const ExecutionId = &.{},
     /// Resource proofs retain identities, never snapshots of caller values.
     resource_state: ?value_state.Initializedness = null,
     owned_roots: []const ValidityRootId = &.{},
@@ -131,7 +129,7 @@ pub const GenerationOutcome = struct {
         return self.generation == other.generation and self.guard == other.guard and
             self.invalidates == other.invalidates and self.empties_opaque_storage == other.empties_opaque_storage and self.resource_state == other.resource_state and
             std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and
-            std.mem.eql(ExecutionId, self.completed_executions, other.completed_executions) and self.storage.eql(other.storage);
+            self.storage.eql(other.storage);
     }
 };
 
@@ -200,6 +198,8 @@ pub const ValueFacts = struct {
     virtual_no_access: []const u32 = &.{},
     domains: []const DomainFacts = &.{},
     generation_outcomes: []const GenerationOutcome = &.{},
+    /// Exact receipts certified complete when this outcome is selected.
+    completed_executions: []const ExecutionId = &.{},
     choice_selectors: []const CallChoiceSelector = &.{},
     choice_observations: []const CallChoiceSelector = &.{},
     guarded_values: []const GuardedValueFacts = &.{},
@@ -250,6 +250,7 @@ pub const ValueFacts = struct {
             .virtual_no_access = self.virtual_no_access,
             .domains = self.domains,
             .generation_outcomes = self.generation_outcomes,
+            .completed_executions = self.completed_executions,
             .choice_selectors = self.choice_selectors,
             .choice_observations = self.choice_observations,
             .guarded_values = self.guarded_values,
@@ -279,6 +280,7 @@ pub const ValueFacts = struct {
     pub fn scalarOpaqueRead(self: ValueFacts) ValueFacts {
         return .{
             .generation_outcomes = self.generation_outcomes,
+            .completed_executions = self.completed_executions,
             .execution_receipts = self.execution_receipts,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
