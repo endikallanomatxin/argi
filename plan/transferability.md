@@ -28,3 +28,20 @@ alias replacement, stale dependencies, outstanding loans and failure cleanup.
 Measure compiler time and peak memory alongside generated code and specialization
 counts. The existing sequential reference-content regressions remain separate
 obligations.
+
+## Native input handoff
+
+The current task adapter copies its input bytes before attempting to start the
+worker. For an owning input, treat this copy as provisional until submission
+succeeds. A failed start discards the provisional bytes and the submitting
+scope cleans up its original value. An accepted start authorizes exactly one
+worker to consume the copy. The submitting scope then retires its original
+cleanup obligation without invoking it. Inline submission follows the same
+ownership rule, including when the worker has already completed on return.
+
+The acceptance proof must originate at the authenticated native submission.
+Carry it through TaskRequest and executor results so a provider cannot
+manufacture acceptance, submit a request twice, or disguise acceptance as a
+failure that would reactivate sender cleanup. The receipt retains execution
+loans until completion. Its lifetime and the actual result's transfer evidence
+are separate from ownership of the request input.
