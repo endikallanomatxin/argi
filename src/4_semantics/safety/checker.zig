@@ -15969,6 +15969,45 @@ test "task input cannot take backing borrowed by a separate execution" {
     try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
 }
 
+test "execution admission distinguishes transferred backing from an ordinary loan" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(1) });
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    try checker.call_stack.append(@enumFromInt(0));
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const reference: facts.ValueFacts = .{ .owned_backing = backing, .dependencies = &.{.{ .root = backing }} };
+    var owner: facts.ValueFacts = .{
+        .intrinsic_backing_owner = backing,
+        .owned_roots = &.{backing},
+        .fields = &.{.{ .index = 0, .value = &reference }},
+    };
+
+    _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+    _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, false);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+
+    // Possible cleanup roots cannot recover missing custody evidence.
+    owner.intrinsic_backing_owner = null;
+    _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+}
+
 test "an uncovered target cannot establish an execution loan" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
