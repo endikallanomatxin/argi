@@ -243,8 +243,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.args.len != signature.inputs.len or x.outputs.len != signature.outputs.len or signature.receiver_input_index >= x.args.len or signature.method_index >= signature.method_count) return error.InvalidBytecode;
                     if (@intFromEnum(signature.virtual_type) >= program.graph.types.items.len or program.graph.semanticType(signature.virtual_type) != .virtual) return error.InvalidBytecode;
                     const handle = program.graph.semanticType(f.slots[x.handle]);
-                    if (handle != .pointer or !types.equal(program.graph, handle.pointer.child, signature.virtual_type) or
-                        (signature.receiver_permission == .read_write and handle.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                    if (handle != .pointer or !types.equal(program.graph, handle.pointer.child, signature.virtual_type)) return error.InvalidBytecode;
                     const contract = program.graph.semanticType(signature.virtual_type).virtual;
                     for (x.args, signature.inputs, 0..) |slot, ty, index| {
                         if (@intFromEnum(ty) >= program.graph.types.items.len) return error.InvalidBytecode;

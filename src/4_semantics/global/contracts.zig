@@ -645,12 +645,6 @@ pub const Resolver = struct {
                 const output_ty = instance.output;
                 const input_fields = global_types.fields(self.graph, input_ty) orelse continue;
                 const output_fields = global_types.fields(self.graph, output_ty) orelse continue;
-                switch (self.core.matchCallInput(input_fields, input)) {
-                    .applicable => {},
-                    else => continue,
-                }
-                if (!try self.core.completeRecordFieldsWithContext(input_fields, input, lexical_context)) continue;
-
                 var self_index: ?u32 = null;
                 var permission: primitives.PointerMutability = .read_only;
                 for (0..input_fields.len) |field_index| {
@@ -665,6 +659,23 @@ pub const Resolver = struct {
                     }
                 }
                 const index = self_index orelse continue;
+                // Dispatch reads the descriptor slot. The captured reference
+                // supplies the operation's authority over the actual resource.
+                var call_fields = input_fields;
+                if (self.graph.semanticType(pointee) == .virtual and permission == .read_write) {
+                    const slot_type = try self.core.pointerType(pointee, .read_only);
+                    const start = self.graph.fields.items.len;
+                    try self.graph.fields.ensureUnusedCapacity(self.allocator, input_fields.len);
+                    self.graph.fields.appendSliceAssumeCapacity(self.graph.fields.items[input_fields.start..][0..input_fields.len]);
+                    self.graph.fields.items[start + index].ty = slot_type;
+                    call_fields.start = @intCast(start);
+                }
+                switch (self.core.matchCallInput(call_fields, input)) {
+                    .applicable => {},
+                    else => continue,
+                }
+                if (!try self.core.completeRecordFieldsWithContext(call_fields, input, lexical_context)) continue;
+
                 const completed = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
                 const handle = self.graph.value_fields.items[completed.fields.start + index].value;
                 const registry: global_sg.GlobalVirtualRegistryId = @enumFromInt(@as(u32, @intCast(self.graph.virtual_registries.items.len)));
