@@ -293,10 +293,10 @@ pub const Resolver = struct {
         const contract_use = self.contractUse(contract_ty) orelse return null;
         const contract_decl = contract_use.declaration;
         const located = self.findContractDefinition(contract_decl) orelse return null;
-        if (located.definition.participants.len != 1 or contract_use.arguments.len != located.definition.parameters.len) {
-            self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence requires every associated element to be bound" };
-            return null;
-        }
+        if (contract_use.arguments.len != located.definition.parameters.len)
+            return self.virtualConstructionFailure(source, "the virtual interface requires every associated element to be bound");
+        if (located.definition.participants.len == 0)
+            return self.virtualConstructionFailure(source, "Virtual requires at least one contract participant");
 
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
@@ -314,6 +314,11 @@ pub const Resolver = struct {
             else => return self.virtualConstructionFailure(source, "Virtual construction requires a reference to the concrete value; use '&value' or '$&value'"),
         };
         const concrete = pointer.child;
+        if (located.definition.participants.len > 1) {
+            const captures = (try self.resolveJointVirtualCaptures(located, concrete, source)) orelse return null;
+            defer self.allocator.free(captures);
+            return self.virtualConstructionFailure(source, "joint virtual dispatch is not supported yet");
+        }
         if (!try self.validateVirtualContract(contract_ty, located, source, pointer.mutability)) return null;
         // A matching erased handle already contains the selected methods and
         // their receiver. Copy it through the supplied reference instead of
@@ -379,6 +384,48 @@ pub const Resolver = struct {
             .ty = virtual_ty,
             .content = .{ .virtualize = virtualize },
         };
+    }
+
+    const JointCapture = struct {
+        field_index: u32,
+        reference_type: global_sg.GlobalTypeId,
+    };
+
+    /// Context layout order and participant order are independent. Keep the
+    /// full reference type for evidence selection and the field for lowering.
+    fn resolveJointVirtualCaptures(self: *Resolver, located: LocatedContractDefinition, context: global_sg.GlobalTypeId, source: primitives.SourceRef) !?[]JointCapture {
+        const context_type = self.graph.semanticType(context);
+        if (context_type != .structural and context_type != .nominal or global_types.isCUnion(self.graph, context)) {
+            _ = self.virtualConstructionFailure(source, "joint Virtual construction requires a reference to a record of captured references");
+            return null;
+        }
+        const fields = global_types.fields(self.graph, context) orelse {
+            _ = self.virtualConstructionFailure(source, "joint Virtual construction requires a reference to a record of captured references");
+            return null;
+        };
+        const module = &self.modules[located.module_index];
+        const parameters = module.semantic.parameterized_storage.comptime_parameters.items;
+        const participants = located.definition.participants;
+        const captures = try self.allocator.alloc(JointCapture, participants.len);
+        var complete = false;
+        defer if (!complete) self.allocator.free(captures);
+        for (parameters[participants.start..][0..participants.len], captures) |parameter, *capture| {
+            const name = module.text(parameter.name);
+            const field_index = for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+                if (std.mem.eql(u8, self.graph.text(field.name), name)) break index;
+            } else {
+                _ = self.virtualConstructionFailure(source, "joint Virtual context is missing a field named for a contract participant");
+                return null;
+            };
+            const field = self.graph.fields.items[fields.start + field_index];
+            if (self.graph.semanticType(field.ty) != .pointer) {
+                _ = self.virtualConstructionFailure(source, "joint Virtual context fields for contract participants must be references");
+                return null;
+            }
+            capture.* = .{ .field_index = @intCast(field_index), .reference_type = field.ty };
+        }
+        complete = true;
+        return captures;
     }
 
     fn virtualConstructionFailure(self: *Resolver, source: primitives.SourceRef, message: []const u8) ?global_sg.Node {
