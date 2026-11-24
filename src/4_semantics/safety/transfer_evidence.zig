@@ -86,7 +86,7 @@ fn provesValue(
 /// An exact read-only observation of immutable scalar backing can be
 /// retained across executions, including after erasure to &Any. The actual
 /// target supplies the guarantee; a read-only reference type alone cannot.
-fn observesImmutableModuleScalar(graph: *const graph_mod.GlobalSemanticGraph, value: facts.ValueFacts) bool {
+pub fn observesImmutableModuleScalar(graph: *const graph_mod.GlobalSemanticGraph, value: facts.ValueFacts) bool {
     if (value.reference_target_incomplete or value.symbolic_pointees.len != 0) return false;
     const place = value.referenced_place orelse return false;
     if (place.projections.len != 0) return false;

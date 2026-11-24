@@ -3092,6 +3092,10 @@ pub const SafetyChecker = struct {
                 return;
             }
             try self.requireLive(self.call_stack.getLast(), source, value, state);
+            // Immutable module scalars have no mutable execution authority
+            // to suspend. The observation still requires a live dependency.
+            if (semantic.pointer.mutability == .read_only and
+                @import("transfer_evidence.zig").observesImmutableModuleScalar(self.graph, value)) return;
             var generations = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             for (value.dependencies) |dependency| try appendRootFact(&generations, dependency.root);
             const roots = try generations.toOwnedSlice();
