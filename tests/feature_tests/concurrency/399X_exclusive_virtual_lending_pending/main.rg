@@ -2,6 +2,9 @@ Update#(.R: Type): Contract = (
     .increment: (.receiver: R) -> (.value: Int32) where { writes(receiver) isolated() }
 )
 Counter := (.value: Int32)
+implement Deinit#(Counter) (
+    .deinit = (.self: $&Counter) -> () {}
+)
 implement Update#($&Counter) (
     .increment = (.receiver: $&Counter) -> (.value: Int32) {
         receiver&.value = receiver&.value + 1
