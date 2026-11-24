@@ -6882,9 +6882,7 @@ pub const Infer = struct {
         result.virtual_receiver_input = null;
         result.concurrent_receiver_inputs = &.{};
         const methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
-        const targets = try self.allocator.alloc(u32, methods.len);
-        for (targets, methods) |*target, method| target.* = @intFromEnum(method);
-        result.virtual_methods = targets;
+        result.virtual_no_access = try self.engine.virtualNoAccess(self.allocator, methods);
 
         const receiver_paths = try self.inferInputPaths(function_id, virtualize.value);
         const receiver_value = try self.allocator.create(facts.ValueEffect);
@@ -7688,7 +7686,7 @@ pub const Infer = struct {
             }
         }
         result.concurrent_receiver = effect.concurrent_receiver;
-        result.virtual_methods = effect.virtual_methods;
+        result.virtual_no_access = effect.virtual_no_access;
         if (effect.virtual_receiver_input) |path| {
             if (path.input_index < arguments.len) {
                 var selected = if (override) |replacement|
@@ -7699,7 +7697,7 @@ pub const Infer = struct {
                 result.concurrent_receiver = selected.concurrent_receiver;
                 result.virtual_receiver_input = selected.virtual_receiver_input;
                 result.concurrent_receiver_inputs = selected.concurrent_receiver_inputs;
-                result.virtual_methods = selected.virtual_methods;
+                result.virtual_no_access = selected.virtual_no_access;
             }
         }
         if (effect.concurrent_receiver_inputs.len != 0) {
@@ -7850,7 +7848,7 @@ pub const Infer = struct {
         }
         result.owns_fresh_backing = false;
         result.concurrent_receiver = false;
-        result.virtual_methods = &.{};
+        result.virtual_no_access = &.{};
         if (result.virtual_receiver_input) |*path| {
             if (projection == .dereference or projection == .dynamic_index)
                 result.virtual_receiver_input = null
@@ -8155,7 +8153,7 @@ pub const Infer = struct {
                 &.{}
             else
                 try self.joinReceiverRequirements(left, right),
-            .virtual_methods = if (std.mem.eql(u32, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
+            .virtual_no_access = try facts.commonVirtualNoAccess(self.allocator, left.virtual_no_access, right.virtual_no_access),
             .virtual_receiver_input = if (left.virtual_receiver_input) |input|
                 if (right.virtual_receiver_input) |other|
                     if (self.inputPathEqual(input, other)) input else null

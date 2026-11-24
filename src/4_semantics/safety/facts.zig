@@ -21,6 +21,7 @@ pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
 pub const ReferenceRelation = base.ReferenceRelation;
 pub const AccessMode = base.AccessMode;
+pub const commonVirtualNoAccess = base.commonVirtualNoAccess;
 
 // Identities name logical executions, not threads or validity generations.
 pub const ExecutionId = enum(u32) { _ };
@@ -193,12 +194,10 @@ pub const ValueFacts = struct {
     symbolic_pointees: []const SymbolicPointeeId = &.{},
     execution_receipts: []const ExecutionId = &.{},
     opaque_provenance: []const OpaqueProvenance = &.{},
-    /// Concrete vtable method identities carried by a `Virtual` value. Keeping
-    /// this in transient safety facts lets exact dispatch survive bindings and
-    /// ordinary value copies without reintroducing graph-object identity.
     /// The erased receiver retains concurrent reference authority.
     concurrent_receiver: bool = false,
-    virtual_methods: []const graph.GlobalFunctionId = &.{},
+    /// Operation indices with verified empty memory effects.
+    virtual_no_access: []const u32 = &.{},
     domains: []const DomainFacts = &.{},
     generation_outcomes: []const GenerationOutcome = &.{},
     choice_selectors: []const CallChoiceSelector = &.{},
@@ -248,7 +247,7 @@ pub const ValueFacts = struct {
             .execution_receipts = self.execution_receipts,
             .opaque_provenance = self.opaque_provenance,
             .concurrent_receiver = self.concurrent_receiver,
-            .virtual_methods = self.virtual_methods,
+            .virtual_no_access = self.virtual_no_access,
             .domains = self.domains,
             .generation_outcomes = self.generation_outcomes,
             .choice_selectors = self.choice_selectors,
@@ -267,7 +266,7 @@ pub const ValueFacts = struct {
         result.mutation_places = &.{};
         result.symbolic_pointees = &.{};
         result.concurrent_receiver = false;
-        result.virtual_methods = &.{};
+        result.virtual_no_access = &.{};
         result.domains = &.{};
         return result;
     }
@@ -484,7 +483,7 @@ test "scalar opaque reads discard container lifetime facts" {
     const binding: graph.GlobalBindingId = @enumFromInt(7);
     const root: ValidityRootId = @enumFromInt(3);
     const capability: StorageCapabilityId = @enumFromInt(2);
-    const method: graph.GlobalFunctionId = @enumFromInt(11);
+    const method: u32 = 11;
     const value = ValueFacts{
         .dependencies = &.{.{ .root = root }},
         .owned_roots = &.{root},
@@ -493,7 +492,7 @@ test "scalar opaque reads discard container lifetime facts" {
         .storage_capabilities = &.{capability},
         .referenced_place = .{ .root = binding },
         .opaque_provenance = &.{.{ .storage = .{ .place = .{ .root = binding } }, .generation = root }},
-        .virtual_methods = &.{method},
+        .virtual_no_access = &.{method},
     };
 
     const scalar = value.scalarOpaqueRead();
@@ -503,16 +502,16 @@ test "scalar opaque reads discard container lifetime facts" {
     try std.testing.expectEqual(@as(usize, 0), scalar.variants.len);
     try std.testing.expectEqual(@as(?Place, null), scalar.referenced_place);
     try std.testing.expectEqual(@as(usize, 0), scalar.opaque_provenance.len);
-    try std.testing.expectEqual(@as(usize, 0), scalar.virtual_methods.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.virtual_no_access.len);
     try std.testing.expect(scalar.integer_address);
     try std.testing.expect(scalar.foreign_storage);
     try std.testing.expectEqualSlices(StorageCapabilityId, &.{capability}, scalar.storage_capabilities);
 }
 
 test "reference copies preserve virtual dispatch identity" {
-    const method: graph.GlobalFunctionId = @enumFromInt(9);
-    const copied = (ValueFacts{ .virtual_methods = &.{method} }).referenceCopy();
-    try std.testing.expectEqualSlices(graph.GlobalFunctionId, &.{method}, copied.virtual_methods);
+    const method: u32 = 9;
+    const copied = (ValueFacts{ .virtual_no_access = &.{method} }).referenceCopy();
+    try std.testing.expectEqualSlices(u32, &.{method}, copied.virtual_no_access);
 }
 
 test "empty safety values retain explicit scalar and structural facts" {
@@ -691,14 +690,14 @@ test "reference offsets retain validity observations without retaining a false t
         .symbolic_pointees = &.{@enumFromInt(1)},
         .dependencies = &.{.{ .root = @enumFromInt(2) }},
         .lexical_frame = 3,
-        .virtual_methods = &.{@enumFromInt(4)},
+        .virtual_no_access = &.{4},
         .domains = &.{.{ .domain_index = 0, .storages = &.{} }},
     };
     const offset = original.derivedReference();
     try std.testing.expectEqual(@as(?Place, null), offset.referenced_place);
     try std.testing.expectEqual(@as(usize, 0), offset.symbolic_pointees.len);
     try std.testing.expectEqual(@as(usize, 0), offset.domains.len);
-    try std.testing.expectEqual(@as(usize, 0), offset.virtual_methods.len);
+    try std.testing.expectEqual(@as(usize, 0), offset.virtual_no_access.len);
     try std.testing.expectEqual(@as(?u32, 3), offset.lexical_frame);
     try std.testing.expectEqualSlices(ValidityDependency, original.dependencies, offset.dependencies);
 }

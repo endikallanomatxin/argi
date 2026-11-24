@@ -70,6 +70,17 @@ pub const Engine = struct {
         if (self.dependency_error) |err| return err;
     }
 
+    pub fn virtualNoAccess(self: *Engine, allocator: std.mem.Allocator, methods: []const graph.GlobalFunctionId) ![]const u32 {
+        var result: std.ArrayList(u32) = .empty;
+        for (methods, 0..) |method, index| {
+            const summary = self.summaryFor(method) orelse continue;
+            if (!summary.unknown_access and summary.input_accesses.len == 0 and
+                summary.global_accesses.len == 0 and summary.guarded_effects.len == 0)
+                try result.append(allocator, @intCast(index));
+        }
+        return result.toOwnedSlice(allocator);
+    }
+
     pub fn summaryFor(self: *Engine, dependency: graph.GlobalFunctionId) ?facts.SafetySummary {
         self.recordDependency(dependency);
         return self.summaries.get(dependency);
@@ -222,7 +233,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
         a.explicit_dependency != b.explicit_dependency or
         a.concurrent_receiver != b.concurrent_receiver or
-        !std.mem.eql(u32, a.virtual_methods, b.virtual_methods) or
+        !std.mem.eql(u32, a.virtual_no_access, b.virtual_no_access) or
         (a.virtual_receiver_input == null) != (b.virtual_receiver_input == null) or
         (a.virtual_receiver_input != null and !inputPathEql(a.virtual_receiver_input.?, b.virtual_receiver_input.?)) or
         a.concurrent_receiver_inputs.len != b.concurrent_receiver_inputs.len or

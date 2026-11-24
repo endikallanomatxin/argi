@@ -1735,7 +1735,10 @@ pub const SafetyChecker = struct {
                 };
                 const receiver_type = self.graph.semanticType(self.graph.node(virtualize.value).ty orelse return error.InvalidVirtualContractType);
                 value.concurrent_receiver = receiver_type == .pointer and receiver_type.pointer.mutability == .concurrent;
-                value.virtual_methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
+                value.virtual_no_access = if (self.active_summaries) |engine|
+                    try engine.virtualNoAccess(self.allocator, self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len])
+                else
+                    &.{};
                 const receiver_storage = if (value.referenced_place) |receiver_place| try self.allocator.dupe(facts.Place, &.{receiver_place}) else &.{};
                 value.domains = try std.mem.concat(self.allocator, facts.DomainFacts, &.{ value.domains, &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = receiver_storage, .symbolic_pointees = value.symbolic_pointees }} });
                 break :blk value;
@@ -3599,7 +3602,7 @@ pub const SafetyChecker = struct {
             var visited = std.array_list.Managed(facts.Place).init(self.allocator);
             defer visited.deinit();
             while (value.referenced_place) |place| {
-                if (value.virtual_methods.len != 0 or value.domains.len != 0) break;
+                if (value.virtual_no_access.len != 0 or value.domains.len != 0) break;
                 if (exact_for_completion and exactObservedPlace(value) == null) return .{};
                 var seen = false;
                 for (visited.items) |previous| if (previous.eql(place)) {
@@ -3613,7 +3616,7 @@ pub const SafetyChecker = struct {
                 value = try self.loadSummaryPlaceValue(state, place, stored);
                 // Aggregate provenance can retain a field's referent. It does
                 // not make the enclosing record another pointer to follow.
-                if (value.fields.len != 0 or value.variants.len != 0 or value.virtual_methods.len != 0 or value.domains.len != 0) break;
+                if (value.fields.len != 0 or value.variants.len != 0 or value.virtual_no_access.len != 0 or value.domains.len != 0) break;
             }
         }
         if (storage == null and value.symbolic_pointees.len == 1) symbolic = value;
@@ -4173,7 +4176,7 @@ pub const SafetyChecker = struct {
                 // allocation metadata alone does not carry that obligation.
                 if (self.valueAtPlace(state, storage)) |stored| {
                     try self.requireMappedOpaqueContentsLive(source, stored, state);
-                    if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
+                    if (stored.domains.len != 0 or stored.virtual_no_access.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
                     for (stored.domains) |domain| for (domain.required_reads) |required| switch (required) {
                         .place => |target| {
                             try self.requirePlaceInitialized(@enumFromInt(0), source, target, state.initializednessAtPlace(target), state);
@@ -4954,12 +4957,8 @@ pub const SafetyChecker = struct {
         return self.projectValueFacts(value, projections);
     }
 
-    fn selectedVirtualHasEmptyAccess(self: *const SafetyChecker, value: facts.ValueFacts, method_index: u32) bool {
-        if (value.reference_target_incomplete or method_index >= value.virtual_methods.len) return false;
-        const engine = self.active_summaries orelse return false;
-        const summary = engine.summaryFor(value.virtual_methods[method_index]) orelse return false;
-        return !summary.unknown_access and summary.input_accesses.len == 0 and
-            summary.global_accesses.len == 0 and summary.guarded_effects.len == 0;
+    fn virtualHasEmptyAccess(value: facts.ValueFacts, method_index: u32) bool {
+        return !value.reference_target_incomplete and std.mem.indexOfScalar(u32, value.virtual_no_access, method_index) != null;
     }
 
     fn collectRetiredInputRoots(self: *SafetyChecker, paths: []const facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
@@ -5035,7 +5034,7 @@ pub const SafetyChecker = struct {
         for (summary.input_accesses) |access| {
             if (access.virtual_method) |method_index| {
                 const value = try self.entryVirtualAccessValue(access.target, arguments, state);
-                if (self.selectedVirtualHasEmptyAccess(value, method_index)) continue;
+                if (virtualHasEmptyAccess(value, method_index)) continue;
                 if (!try self.requireUnknownExecutionAccess(source, "virtual operation", .write, state)) return false;
                 continue;
             }
@@ -6244,15 +6243,11 @@ pub const SafetyChecker = struct {
             result.lexical_frame = input.lexical_frame;
         }
         result.concurrent_receiver = effect.concurrent_receiver;
-        if (effect.virtual_methods.len != 0) {
-            const methods = try self.allocator.alloc(graph_mod.GlobalFunctionId, effect.virtual_methods.len);
-            for (methods, effect.virtual_methods) |*method, target| method.* = @enumFromInt(target);
-            result.virtual_methods = methods;
-        } else result.virtual_methods = &.{};
+        result.virtual_no_access = effect.virtual_no_access;
         if (effect.virtual_receiver_input) |path| {
             const selected = snapshotVirtualEvidence(arguments, path) orelse facts.ValueFacts{};
             result.concurrent_receiver = selected.concurrent_receiver;
-            result.virtual_methods = selected.virtual_methods;
+            result.virtual_no_access = selected.virtual_no_access;
         }
         if (effect.concurrent_receiver_inputs.len != 0) {
             result.concurrent_receiver = for (effect.concurrent_receiver_inputs) |path| {
@@ -6532,7 +6527,7 @@ pub const SafetyChecker = struct {
             current.owned_backing = null;
             current.intrinsic_backing_owner = null;
             current.concurrent_receiver = false;
-            current.virtual_methods = &.{};
+            current.virtual_no_access = &.{};
         }
         return current;
     }
@@ -6711,7 +6706,7 @@ pub const SafetyChecker = struct {
             .intrinsic_backing_owner = if (left.intrinsic_backing_owner == right.intrinsic_backing_owner) left.intrinsic_backing_owner else null,
             .owned_backing = if (left.owned_backing == right.owned_backing) left.owned_backing else null,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
-            .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
+            .virtual_no_access = try facts.commonVirtualNoAccess(self.allocator, left.virtual_no_access, right.virtual_no_access),
             .domains = domains,
             .generation_outcomes = try generation_outcomes.toOwnedSlice(),
             .choice_selectors = try choice_selectors.toOwnedSlice(self.allocator),
@@ -7820,9 +7815,9 @@ pub const SafetyChecker = struct {
         var summary = try self.selectEntryGuardedSummary(try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract, values, state);
         if (summary.unknown_access and call.self_input_index < values.len) {
             if (try self.virtualValue(values[call.self_input_index], state)) |retained| {
-                // The selected method can refine access. Lifetime, ownership
+                // The retained guarantee can refine access. Lifetime, ownership
                 // and declared regions still come from the public contract.
-                if (self.selectedVirtualHasEmptyAccess(retained, call.method_index)) summary.unknown_access = false;
+                if (virtualHasEmptyAccess(retained, call.method_index)) summary.unknown_access = false;
             }
         }
         // Private receiver projections are erased at a virtual boundary.
@@ -9193,7 +9188,7 @@ pub const SafetyChecker = struct {
     fn virtualValue(self: *SafetyChecker, argument: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
         var value = argument;
         for (0..128) |_| {
-            if (value.domains.len != 0 or value.virtual_methods.len != 0) return value;
+            if (value.domains.len != 0 or value.virtual_no_access.len != 0) return value;
             if (value.referenced_place) |wrapper| {
                 const ty = self.domainStorageType(wrapper) orelse return null;
                 if (self.graph.semanticType(ty) != .virtual) return null;
@@ -10873,7 +10868,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
         !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
         !std.mem.eql(facts.StorageCapabilityId, left.acquisition_origins, right.acquisition_origins) or
         left.concurrent_receiver != right.concurrent_receiver or
-        !std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods) or
+        !std.mem.eql(u32, left.virtual_no_access, right.virtual_no_access) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
         left.fields.len != right.fields.len or
@@ -12001,7 +11996,7 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     _ = try summary_state.tracker.establish(.fresh);
     const arguments = [_]facts.ValueFacts{
         .{},                                                                                                                                                      .{},                                               .{},
-        .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }}, .concurrent_receiver = true, .virtual_methods = &.{@enumFromInt(1)} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
+        .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }}, .concurrent_receiver = true, .virtual_no_access = &.{1} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
     };
     var engine = summary_engine.Engine.init(allocator);
     defer engine.deinit();
@@ -16139,10 +16134,10 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     var checker = SafetyChecker.init(a, undefined, &graph);
     defer checker.deinit();
-    const child: facts.ValueFacts = .{ .known_choice_variant = 0, .virtual_methods = &.{@enumFromInt(0)}, .concurrent_receiver = true };
+    const child: facts.ValueFacts = .{ .known_choice_variant = 0, .virtual_no_access = &.{0}, .concurrent_receiver = true };
     const parent: facts.ValueFacts = .{
         .known_choice_variant = 1,
-        .virtual_methods = &.{@enumFromInt(1)},
+        .virtual_no_access = &.{1},
         .concurrent_receiver = true,
         .fields = &.{.{ .index = 0, .value = &child }},
     };
@@ -16151,13 +16146,13 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     const missing = try checker.projectValueFacts(parent, &.{.{ .field = 1 }});
     try std.testing.expect(missing.known_choice_variant == null);
     try std.testing.expect(exact.concurrent_receiver);
-    try std.testing.expectEqual(@as(usize, 1), exact.virtual_methods.len);
+    try std.testing.expectEqual(@as(usize, 1), exact.virtual_no_access.len);
     try std.testing.expect(!missing.concurrent_receiver);
-    try std.testing.expectEqual(@as(usize, 0), missing.virtual_methods.len);
+    try std.testing.expectEqual(@as(usize, 0), missing.virtual_no_access.len);
     const nested = try checker.projectValueFacts(parent, &.{ .{ .field = 1 }, .{ .field = 0 } });
     try std.testing.expect(nested.known_choice_variant == null);
     try std.testing.expect(!nested.concurrent_receiver);
-    try std.testing.expectEqual(@as(usize, 0), nested.virtual_methods.len);
+    try std.testing.expectEqual(@as(usize, 0), nested.virtual_no_access.len);
 }
 
 test "reading through an uncovered target does not select a known choice value" {

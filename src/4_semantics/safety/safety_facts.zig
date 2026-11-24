@@ -217,6 +217,33 @@ pub const ReferenceRelation = struct {
     }
 };
 
+/// Method indices are sorted by interface order. A join keeps only guarantees
+/// established by both alternatives, even if their implementations differ.
+pub fn commonVirtualNoAccess(allocator: std.mem.Allocator, left: []const u32, right: []const u32) ![]const u32 {
+    if (std.mem.eql(u32, left, right)) return left;
+    var common: std.ArrayList(u32) = .empty;
+    var a: usize = 0;
+    var b: usize = 0;
+    while (a < left.len and b < right.len) {
+        switch (std.math.order(left[a], right[b])) {
+            .lt => a += 1,
+            .gt => b += 1,
+            .eq => {
+                try common.append(allocator, left[a]);
+                a += 1;
+                b += 1;
+            },
+        }
+    }
+    return common.toOwnedSlice(allocator);
+}
+
+test "erased access guarantees meet by operation index" {
+    const common = try commonVirtualNoAccess(std.testing.allocator, &.{ 0, 2 }, &.{ 1, 2, 3 });
+    defer std.testing.allocator.free(common);
+    try std.testing.expectEqualSlices(u32, &.{2}, common);
+}
+
 pub const ValueEffect = struct {
     /// An authenticated observation of the sole fresh dependency.
     observes_fresh_backing: bool = false,
@@ -232,8 +259,8 @@ pub const ValueEffect = struct {
     virtual_receiver_input: ?InputPath = null,
     /// Every possible returned receiver must retain concurrent authority.
     concurrent_receiver_inputs: []const InputPath = &.{},
-    /// Exact graph-local targets retained by this descriptor.
-    virtual_methods: []const u32 = &.{},
+    /// Operation indices with verified empty memory effects.
+    virtual_no_access: []const u32 = &.{},
     reference_target_incomplete: bool = false,
     /// Verified reference relation, never a may-dependency or authority.
     /// Missing evidence does not describe an empty access footprint.
