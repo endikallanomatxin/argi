@@ -52,6 +52,14 @@ failure that would reactivate sender cleanup. The receipt retains execution
 loans until completion. Its lifetime and the actual result's transfer evidence
 are separate from ownership of the request input.
 
+The worker's cleanup can end structural subobjects of its owned input.
+Following a stored reference crosses the boundary of that backing and
+still requires preservation of any external loan. The current execution
+ingress supports ordinary mutable loans of plain storage and bounded
+erased capabilities. Extending exclusive lending to ordinary mutable
+references to nonplain storage requires proving preservation at the
+admitted loan's actual boundary.
+
 ## Returning an owned result
 
 The worker checks the actual result before publishing it. A type-level

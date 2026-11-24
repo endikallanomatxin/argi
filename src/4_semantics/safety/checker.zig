@@ -406,7 +406,7 @@ pub const SafetyChecker = struct {
         for (posts) |post| {
             if (post.target.input_index >= function.input.len) continue;
             const field = self.graph.fields.items[function.input.start + post.target.input_index];
-            if (!self.inputTypeHasReferences(field.ty, 0)) continue;
+            if (!self.inputTypeNeedsLoan(field.ty, 0, true)) continue;
             var refers_to_input = isPointer(self.graph, field.ty);
             for (post.target.projections) |projection| if (projection == .dereference) {
                 refers_to_input = true;
@@ -416,12 +416,22 @@ pub const SafetyChecker = struct {
             // An owning/nonplain receiver cannot be an admitted borrowed leaf.
             // Its own lifetime may end inside the worker; effects through any
             // reference fields still have their separate projected obligations.
-            if (isPointer(self.graph, field.ty) and post.target.projections.len == 0 and
-                !self.plainExecutionStorage(self.graph.semanticType(field.ty).pointer.child, 0)) continue;
+            const direct_reference = isPointer(self.graph, field.ty);
+            const projections = if (direct_reference and post.target.projections.len != 0 and
+                post.target.projections[0] == .dereference)
+                post.target.projections[1..]
+            else
+                post.target.projections;
+            if (direct_reference and post.target.storage_domain == null and !self.plainExecutionStorage(self.graph.semanticType(field.ty).pointer.child, 0)) {
+                // A projection inside the receiver stays in its backing.
+                // Dereferencing a stored reference crosses into another loan.
+                for (projections) |projection| {
+                    if (projection == .dereference) break;
+                } else continue;
+            }
             const plain_write = blk: {
-                var target = field.ty;
-                if (isPointer(self.graph, target)) target = self.graph.semanticType(target).pointer.child;
-                for (post.target.projections) |projection| {
+                var target = if (direct_reference) self.graph.semanticType(field.ty).pointer.child else field.ty;
+                for (projections) |projection| {
                     target = switch (projection) {
                         .field => |index| field_ty: {
                             const fields = types.fields(self.graph, target) orelse break :blk false;
@@ -3034,6 +3044,10 @@ pub const SafetyChecker = struct {
             return;
         }
         if (semantic == .pointer) {
+            if (semantic.pointer.mutability == .read_write and !self.plainExecutionStorage(semantic.pointer.child, 0)) {
+                try self.report(source, "execution cannot borrow an ordinary mutable reference to nonplain storage", .{});
+                return;
+            }
             if (value.reference_target_incomplete) {
                 try self.report(source, "borrowed execution requires an authenticated reference target for every alternative", .{});
                 return;
@@ -15509,6 +15523,51 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     try checker.collectExecutionLoans(@enumFromInt(1), incomplete, &state, &loans, source);
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
     try std.testing.expectEqual(prior_errors + 2, diags.list.items.len);
+}
+
+test "worker cleanup can end a structural subobject but must preserve external referents" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const scalar: graph_mod.GlobalTypeId = @enumFromInt(0);
+    const external: graph_mod.GlobalTypeId = @enumFromInt(1);
+    const record: graph_mod.GlobalTypeId = @enumFromInt(2);
+    const receiver: graph_mod.GlobalTypeId = @enumFromInt(3);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name: primitives.StringRange = .{ .start = 0, .len = 0 };
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = scalar, .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .pointer = .{ .child = record, .mutability = .read_write } },
+    });
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = name, .source = source, .ty = external },
+        .{ .name = name, .source = source, .ty = receiver },
+    });
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    const function: graph_mod.Function = .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 1 }, .output = .{ .start = 0, .len = 0 } };
+    var post: facts.PlacePostState = .{
+        .target = .{ .input_index = 0, .projections = &.{ .dereference, .{ .field = 0 } } },
+        .initializedness = .deinitialized,
+        .ends_previous_roots = true,
+    };
+    try std.testing.expect(!checker.borrowedExecutionPostStatesUnsafe(function, &.{post}));
+    post.target.projections = &.{ .dereference, .{ .field = 0 }, .dereference };
+    try std.testing.expect(checker.borrowedExecutionPostStatesUnsafe(function, &.{post}));
+
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    var loans = std.array_list.Managed(facts.ExecutionLoan).init(a);
+    defer loans.deinit();
+    try checker.collectExecutionLoans(receiver, .{ .referenced_place = .{ .root = @enumFromInt(0) } }, &state, &loans, source);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 0), loans.items.len);
 }
 
 test "task input cannot take backing borrowed by a separate execution" {
