@@ -579,6 +579,99 @@ pub const Resolver = struct {
         return changed;
     }
 
+    pub fn resolveVirtualMember(
+        self: *Resolver,
+        module_index: usize,
+        module: *const module_sg.ModuleSemanticGraph,
+        offsets: globalizer.Offsets,
+        call: anytype,
+    ) !resolution.Result {
+        const local = module.semantic.nodes.items[@intFromEnum(call.callee_value.?)];
+        if (local != .pending) return .not_applicable;
+        const pending = module.semantic.pending_operations.items[@intFromEnum(local.pending)];
+        if (pending != .resolve_field) return .not_applicable;
+        const field = pending.resolve_field;
+        const receiver = globalizer.globalNode(offsets, field.value);
+        const receiver_type = self.graph.node(receiver).ty orelse return .deferred;
+        const ty = self.graph.resolvedSemanticType(receiver_type) orelse return .deferred;
+        if (ty != .virtual) return .not_applicable;
+        const node = (try self.makeVirtualMember(
+            receiver,
+            module.text(field.field_name),
+            globalizer.globalNode(offsets, call.input),
+            self.sourceFor(module_index, field.source),
+            call_context.Context.fromModule(offsets, call.owner_function),
+        )) orelse return .deferred;
+        try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, call.node), node);
+        try self.graph.setNode(self.allocator, globalizer.globalNode(offsets, field.node), self.graph.node(receiver));
+        return .resolved;
+    }
+
+    pub fn makeVirtualMember(self: *Resolver, receiver: global_sg.GlobalNodeId, name: []const u8, input_id: global_sg.GlobalNodeId, source: primitives.SourceRef, context: call_context.Context) !?global_sg.Node {
+        const receiver_type = self.graph.node(receiver).ty orelse return null;
+        const ty = self.graph.resolvedSemanticType(receiver_type) orelse return null;
+        if (ty != .virtual) return null;
+        const use = self.contractUse(ty.virtual) orelse return null;
+        const located = self.findContractDefinition(use.declaration) orelse return null;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const input = self.graph.node(input_id);
+        if (input.content != .struct_value_literal) return null;
+        const literal = input.content.struct_value_literal;
+        var transaction = self.graph.beginTransaction(self.allocator);
+        const contract_caches = self.checkpointResolution();
+        const type_caches = self.generics.checkpointCaches();
+        defer if (transaction.active) {
+            transaction.rollback();
+            self.rollbackResolution(contract_caches);
+            self.generics.rollbackCaches(type_caches);
+        };
+
+        for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
+            if (!std.mem.eql(u8, name, self.modules[located.module_index].text(requirement.name))) continue;
+            const instance = (try self.requirementInstanceForContractUse(use, ty.virtual, located, requirement, @intCast(index))) orelse return null;
+            const fields = global_types.fields(self.graph, instance.input) orelse return null;
+            const position = for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, input_index| {
+                const parameter = self.graph.semanticType(field.ty);
+                if (parameter == .pointer and global_types.equal(self.graph, parameter.pointer.child, ty.virtual)) break input_index;
+            } else return null;
+            {
+                const parameter = self.graph.fields.items[fields.start + position];
+                const parameter_type = self.graph.semanticType(parameter.ty);
+                if (parameter_type != .pointer or !global_types.equal(self.graph, parameter_type.pointer.child, ty.virtual)) continue;
+                const virtual_arguments = @import("virtual_arguments.zig");
+                const mapping = try self.allocator.alloc(virtual_arguments.Source, fields.len);
+                defer self.allocator.free(mapping);
+                try virtual_arguments.bind(mapping, &.{@intCast(position)});
+                const address_type = try self.core.pointerType(receiver_type, .read_only);
+                const address: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = address_type, .content = .{ .address_of = receiver } });
+                const field_start = self.graph.value_fields.items.len;
+                try self.graph.value_fields.ensureUnusedCapacity(self.allocator, literal.fields.len + 1);
+                self.graph.value_fields.appendAssumeCapacity(.{ .name = parameter.name, .value = address });
+                for (0..literal.fields.len) |argument_index| {
+                    var argument = self.graph.value_fields.items[literal.fields.start + argument_index];
+                    if (self.graph.text(argument.name).len == 0) {
+                        const target = for (mapping, 0..) |entry, target| {
+                            if (entry == .argument and entry.argument == argument_index) break target;
+                        } else return null;
+                        argument.name = self.graph.fields.items[fields.start + target].name;
+                    }
+                    if (std.mem.eql(u8, self.graph.text(argument.name), self.graph.text(parameter.name))) return null;
+                    self.graph.value_fields.appendAssumeCapacity(argument);
+                }
+                const arguments: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                try self.graph.nodes.append(self.allocator, .{ .source = input.source, .ty = null, .content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = @intCast(field_start), .len = literal.fields.len + 1 },
+                    .assumed_fields = literal.assumed_fields,
+                } } });
+                const node = (try self.makeVirtualOperationCall(name, use.declaration, arguments, source, context, null)) orelse return null;
+                transaction.commit();
+                return node;
+            }
+        }
+        return null;
+    }
+
     fn makeVirtualCall(
         self: *Resolver,
         module_index: usize,

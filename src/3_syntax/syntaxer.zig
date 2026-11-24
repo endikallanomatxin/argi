@@ -1505,8 +1505,7 @@ pub const Syntaxer = struct {
                         const sfa = self.file.data(node).token_and_node;
                         var root = sfa.node;
                         while (self.file.structFieldAccess(root)) |access| root = access.value;
-                        if (self.file.tag(root) != .identifier) break;
-                        qualifier = self.file.mainToken(root);
+                        if (self.file.tag(root) == .identifier) qualifier = self.file.mainToken(root);
                         break :blk sfa.token;
                     } else self.file.mainToken(node);
                     const type_args = try self.addNodeRange(&.{});

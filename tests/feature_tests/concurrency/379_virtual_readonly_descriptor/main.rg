@@ -11,7 +11,8 @@ Wrapper := (.counter: Virtual#(Counter))
 
 advance := (.wrapper: &Wrapper) -> () {
     counter ::= wrapper&.counter
-    Counter#().increment(.receiver = &counter, .amount = 2)
+    wrapper&.counter.increment(1)
+    Counter#().increment(.receiver = &counter, .amount = 1)
 }
 
 main := () -> () {

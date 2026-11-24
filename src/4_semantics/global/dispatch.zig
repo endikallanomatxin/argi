@@ -80,6 +80,8 @@ pub const Resolver = struct {
         // A lexical callable value shadows named functions and constructors.
         if (operation == .resolve_call and operation.resolve_call.callee_value != null) {
             const call = operation.resolve_call;
+            const member = try self.contracts.resolveVirtualMember(module_index, module, o, call);
+            if (member != .not_applicable) return member;
             const callee = globalizer.globalNode(o, call.callee_value.?);
             const ty = self.core.graph.node(callee).ty orelse return .deferred;
             if (self.core.graph.isTypeUnresolved(ty)) return .deferred;

@@ -1091,22 +1091,22 @@ const Context = struct {
             self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
         var callee_value: ?entities.ModuleNodeId = null;
-        if (call.module_qualifier) |qualifier| {
-            if (self.lookupBinding(self.tree.tokenTextFromSource(self.source, qualifier))) |binding| {
-                const base = try self.writer.addResolvedNode(.{
-                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(qualifier).offset },
-                    .ty = binding.ty,
-                    .content = .{ .binding_use = binding.id },
-                });
+        if (self.tree.structFieldAccess(call.callee)) |member| {
+            const local = if (call.module_qualifier) |qualifier|
+                self.lookupBinding(self.tree.tokenTextFromSource(self.source, qualifier)) != null
+            else
+                true;
+            if (local) {
+                const receiver = try self.lowerNode(member.value, null);
                 const field = try self.pending(node, .{ .resolve_field = .{
                     .node = self.nextNodeId(),
-                    .value = base,
+                    .value = receiver.node,
                     .field_name = try self.writer.addString(name_text),
                     .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(call.callee_token).offset },
                 } }, null);
                 callee_value = field.node;
             }
-        } else if (call.contract_type == null) if (self.lookupBinding(name_text)) |binding| {
+        } else if (call.module_qualifier == null and call.contract_type == null) if (self.lookupBinding(name_text)) |binding| {
             callee_value = (try self.resolved(node, binding.ty, .{ .binding_use = binding.id })).node;
         };
         const input = try self.lowerNode(call.input, null);

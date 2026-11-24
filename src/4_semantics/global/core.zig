@@ -1028,6 +1028,7 @@ pub const Resolver = struct {
             return true;
         }
         if (self.graph.types.items[@intFromEnum(source_ty)] == .virtual) {
+            if (self.graph.node(target).ty != null) return true;
             const field_index: u32 = if (std.mem.eql(u8, field_name, "data") or std.mem.eql(u8, field_name, "data_ptr"))
                 0
             else if (std.mem.eql(u8, field_name, "vtable"))
