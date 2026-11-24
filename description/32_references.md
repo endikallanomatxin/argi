@@ -27,6 +27,50 @@ an active mutable borrow excludes other references to the same value. Argi
 permits multiple `$&` and mixed `&`/`$&` aliases in sequential code; it
 checks whether a reference is still valid when the reference is used.
 
+## Concurrent references
+
+A module may implement the empty contract `ConcurrentAlias#(T)` for its own
+nominal value type. This is an audited promise that operations taking a
+`$$&T` can use their receiver simultaneously. The owner of the implementation
+is responsible for synchronization and for the affinity and lifetime rules of
+native handles or external dependencies accessed inside those operations.
+
+`$$&place` starts a shared generation of initialized, writable storage. A
+handle can be copied. Calls through it must use the concurrent interface.
+Direct ordinary reads, writes, moves, cleanup and address formation require
+ordinary storage authority. Structural overlap includes containing values,
+nested fields and array elements. An embedded reference occupies a field;
+its independently owned target has its own generation.
+
+```rg
+shared ::= $$&cell
+first ::= unwrap_or_abort(async#(increment)(.args = (.cell = shared)))
+second ::= unwrap_or_abort(async#(increment)(.args = (.cell = shared)))
+_ = unwrap_or_abort(await($&first))
+_ = unwrap_or_abort(await($&second))
+recover_ordinary(.owner = $&cell)
+```
+
+Recovery names the original place. Every execution retaining the shared
+generation must have certified completion. Recovery retires all copies of the
+handle, including copies stored in other values. Ordinary references created
+before sharing remain stale. The owner retains its cleanup obligation across
+both transitions. Generations and execution loans are compiler facts. Copying
+a handle emits no reference-counting or synchronization operations.
+
+Within the defining module, `trusted_concurrent_view(.shared = handle)` exposes
+a readonly representation view. The author must keep ordinary references to
+protected state inside the lifetime and synchronization scope that authorizes
+them. Task payload transfer and ordinary argument or result dependencies have
+their own checks.
+
+| Interface | Obligation at the trust boundary |
+| --- | --- |
+| Atomic cell | Keep the native cell alive and route simultaneous updates through atomic operations. |
+| Mutex | A guard binds references to the protected value to the current lock acquisition. Releasing the guard must expire them before another acquisition. |
+| Concurrent allocator | Synchronize allocator metadata, preserve each allocation receipt and run deallocation using its retained provider. |
+| Channel | Synchronize send and receive, and check transfer and lifetime obligations for each message independently of the queue. |
+
 ## Validity
 
 A reference is usable only while its target storage and any resources it

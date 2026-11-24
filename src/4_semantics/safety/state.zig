@@ -87,6 +87,7 @@ pub const State = struct {
     reference_writes: std.array_list.Managed(ReferenceStores.Definition),
     executions: std.array_list.Managed(facts.ExecutionState),
     storage_capabilities: std.array_list.Managed(StorageCapabilityState),
+    shared_regions: std.array_list.Managed(facts.Place),
     storage_generations: std.array_list.Managed(StorageGeneration),
     lexical_storage_generations: std.array_list.Managed(facts.ValidityRootId),
     opaque_storages: std.array_list.Managed(OpaqueStorage),
@@ -113,6 +114,7 @@ pub const State = struct {
             .reference_writes = std.array_list.Managed(ReferenceStores.Definition).init(allocator),
             .executions = std.array_list.Managed(facts.ExecutionState).init(allocator),
             .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
+            .shared_regions = std.array_list.Managed(facts.Place).init(allocator),
             .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
             .lexical_storage_generations = std.array_list.Managed(facts.ValidityRootId).init(allocator),
             .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
@@ -130,6 +132,7 @@ pub const State = struct {
         self.reference_writes.deinit();
         self.executions.deinit();
         self.storage_capabilities.deinit();
+        self.shared_regions.deinit();
         self.storage_generations.deinit();
         self.lexical_storage_generations.deinit();
         self.opaque_storages.deinit();
@@ -837,6 +840,12 @@ pub const State = struct {
             }
         }
         self.storage_generations.shrinkRetainingCapacity(kept);
+        var region_index = self.shared_regions.items.len;
+        while (region_index != 0) {
+            region_index -= 1;
+            if (self.shared_regions.items[region_index].root == binding)
+                _ = self.shared_regions.swapRemove(region_index);
+        }
         kept = 0;
         for (self.places.items) |entry| {
             if (entry.storage.root == binding) continue;

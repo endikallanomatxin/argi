@@ -1399,6 +1399,10 @@ const FunctionLower = struct {
                 const target = self.parent.graph.semanticType(cast.target_type);
                 const source_slot = try self.expression(cast.value);
                 const from = self.slots.items[source_slot];
+                if (self.safety_primitive == .trusted_concurrent_view) {
+                    _ = try self.emit(node.source, .{ .readonly = .{ .dst = dst, .src = source_slot } });
+                    return dst;
+                }
                 const source_kind = b.scalarKind(self.parent.graph, from);
                 const target_kind = b.scalarKind(self.parent.graph, cast.target_type);
                 if (source_kind.bounds() != null and target_kind.bounds() != null) {

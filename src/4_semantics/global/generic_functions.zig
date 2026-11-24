@@ -2050,7 +2050,7 @@ pub const Resolver = struct {
                         .pointer => |value| value,
                         else => return false,
                     };
-                    if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
+                    if (!pointer.mutability.accepts(value.mutability)) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
                     if (try self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
                     const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch |err| switch (err) {
@@ -2302,8 +2302,18 @@ pub const Resolver = struct {
             if (global_types.genericInstance(self.graph, ty) == null) return error.ComptimeExecutionPending;
         }
         if (@import("c_abi.zig").isRawPointer(self.graph, ty) or @import("c_abi.zig").isFunctionPointer(self.graph, ty)) return false;
-        if (semantic == .pointer) return borrowable and try self.isPlainDataType(contracts, semantic.pointer.child, depth + 1, false);
-        if (semantic == .virtual or semantic == .definition) return false;
+        if (semantic == .pointer) {
+            if (!borrowable) return false;
+            if (semantic.pointer.mutability == .concurrent) {
+                const marker = standard_contracts.standardDefinition(self.graph, "ConcurrentAlias") orelse return false;
+                return (try contracts.selectConformance(marker, &.{semantic.pointer.child}, null, 0, null)) != null;
+            }
+            return self.isPlainDataType(contracts, semantic.pointer.child, depth + 1, false);
+        }
+        // Borrowable is a layout check. Safety checks the captured receiver
+        // and its regions when it instantiates the execution loan.
+        if (semantic == .virtual) return borrowable;
+        if (semantic == .definition) return false;
         if (semantic == .nullable or semantic == .inferred_errable) return error.ComptimeExecutionPending;
         if (standard_contracts.standardDefinition(self.graph, "Deinit")) |contract| {
             if (try contracts.implements(ty, contract)) return false;
@@ -4104,6 +4114,16 @@ pub const Resolver = struct {
                 if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(path), "integer_conversion.rg")) return error.NoMatchingGenericFunction;
                 return self.resolver.makeIntegerConversionPrimitive(name, arguments, input, self.resolver.sourceFor(self.module_index, source));
             }
+            if (module_path == null and std.mem.eql(u8, name, "__concurrent_representation")) {
+                if (self.parameterized.safety_primitive != .trusted_concurrent_view) return error.NoMatchingGenericFunction;
+                const literal = self.resolver.graph.node(input).content.struct_value_literal;
+                const shared = self.resolver.core.recordFieldValue(literal, 0, "shared") orelse return error.InvalidAddressConversion;
+                const ty = self.resolver.graph.node(shared).ty orelse return error.DeferredGenericFunction;
+                const handle = self.resolver.graph.semanticType(ty);
+                if (handle != .pointer or handle.pointer.mutability != .concurrent) return error.InvalidAddressConversion;
+                const target = try self.resolver.core.pointerType(handle.pointer.child, .read_only);
+                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = target, .content = .{ .explicit_cast = .{ .value = shared, .target_type = target } } };
+            }
             if (module_path == null and std.mem.eql(u8, name, "__reference_address")) {
                 const declaration = self.resolver.graph.declaration(globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration));
                 const path = self.resolver.graph.text(self.resolver.graph.files.items[declaration.source.file_index].path);
@@ -4545,7 +4565,8 @@ pub const Resolver = struct {
                 .pointer_mutability, .pipe_pointer_mutability => |value| value,
                 else => return error.InvalidParameterizedAddressOf,
             };
-            if (detail == .pipe_pointer_mutability and self.resolver.graph.types.items[@intFromEnum(child)] == .pointer)
+            if (detail == .pipe_pointer_mutability and mutability != .concurrent and self.resolver.graph.types.items[@intFromEnum(child)] == .pointer and
+                self.resolver.graph.semanticType(child).pointer.mutability != .concurrent)
                 return self.resolver.graph.node(operands[0]);
             const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });
             var target = operands[0];

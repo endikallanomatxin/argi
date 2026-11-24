@@ -19,6 +19,8 @@ pub const Spec = struct {
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .trusted_concurrent_view, .path = "core/concurrency/ConcurrentAlias.rg", .name = "trusted_concurrent_view", .signatures = &.{"#(.T: Type)(.shared: $$&T) -> (.view: &T)"} },
+    .{ .primitive = .recover_ordinary, .path = "core/concurrency/ConcurrentAlias.rg", .name = "recover_ordinary", .signatures = &.{"#(.T: Type)(.owner: $&T) -> ()"} },
     .{ .primitive = .execution_lend, .path = "core/memory/execution_access.rg", .name = "_execution_lend", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
     .{ .primitive = .execution_complete, .path = "core/memory/execution_access.rg", .name = "_execution_complete", .signatures = &.{"(.receipt: $&_ExecutionReceipt, .join: ?_ExecutionJoin = ..none) -> ()"} },
     .{ .primitive = .execution_input, .path = "core/memory/execution_access.rg", .name = "_execution_input", .signatures = &.{"#(.t: Type)(.invocation: _ExecutionInvocation, .anchor: &Any) -> (.reference: $&t)"} },
@@ -39,8 +41,8 @@ pub const specs = [_]Spec{
     .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/allocation_slots.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any, .index: ?UIntNative = ..none) -> (.reference: $&t)"} },
     .{ .primitive = .native_allocated_storage, .operating_systems = &.{ .linux, .macos }, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_acquire_aligned", .signatures = &.{"(.length: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative)"} },
     .{ .primitive = .native_allocated_storage, .operating_systems = &.{.windows}, .path = "core/platforms/windows/page_mapping.rg", .name = "_memory_acquire_aligned", .signatures = &.{"(.length: UIntNative, .alignment: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
-    .{ .primitive = .native_allocated_storage, .path = "core/memory/heap_allocation/AcquiredStorage.rg", .name = "_acquire_zeroed_c_heap", .signatures = &.{"(.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative)"} },
     .{ .primitive = .acquisition_subaddress, .path = "core/memory/heap_allocation/Memory.rg", .name = "_trusted_acquisition_subaddress", .signatures = &.{"(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative)"} },
+    .{ .primitive = .native_allocated_storage, .path = "core/memory/heap_allocation/AcquiredStorage.rg", .name = "_acquire_zeroed_c_heap", .signatures = &.{"(.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative)"} },
     .{ .primitive = .relocate, .path = "core/memory/relocation.rg", .name = "relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },
     .{ .primitive = .restrict_reference, .path = "core/memory/validity_dependency.rg", .name = "restrict_reference", .signatures = &.{"#(.t: Type)(.input: t, .on: &Any) -> (.reference: t)"} },
     .{ .primitive = .depend_on, .path = "core/memory/validity_dependency.rg", .name = "depend_on", .signatures = &.{"#(.t: Type)(.value: t, .on: &Any) -> (.result: t)"} },
@@ -232,7 +234,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
         .execution_lend => .{ .value = .execution_lend },
         .execution_complete => .{ .value = .execution_complete },
         .execution_input => .{ .value = .execution_input },
-        .none, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata => .{ .value = .empty },
+        .none, .recover_ordinary, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata => .{ .value = .empty },
         // Physical release identity selects an execution boundary. Language
         // consumption remains in checked allocation-owner cleanup, not raw ABI.
         .raw_released_storage => .{ .value = .empty },
@@ -240,7 +242,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
         // Body-backed page acquisition retains the Argi UIntNative ABI;
         // libc acquisition identity also selects its pointer-return ABI.
         .native_allocated_storage => .{ .value = .raw_storage },
-        .acquisition_subaddress => .{ .value = .reference_copy },
+        .acquisition_subaddress, .trusted_concurrent_view => .{ .value = .reference_copy },
         .establish_inherited_reference => .{ .value = .inherited_reference },
         .establish_inherited_storage => .{ .value = .inherited_storage, .consumes_storage_input = 0 },
         .establish_allocation => .{ .value = .allocation, .consumes_storage_input = 0 },
@@ -289,12 +291,14 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .restrict_reference,
         .depend_on,
         .execution_lend,
+        .trusted_concurrent_view,
+        .recover_ordinary,
         .execution_input,
         .trusted_opaque_mark_empty,
         => &.{},
         // Both native page acquisition adapters select fresh OS storage.
         // Their scalar inputs cannot designate a range owned by the caller.
-        .native_allocated_storage => &.{},
+        .native_allocated_storage, .raw_allocated_storage => &.{},
         // Slot establishment checks the receipt's authenticated bounds and
         // logical index. It does not read or initialize the addressed bytes.
         .establish_allocation_slot => &.{.{ .input = 0 }},
@@ -310,7 +314,6 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .none,
         .prepare_allocation_metadata,
         .trusted_opaque_drop,
-        .raw_allocated_storage,
         .raw_released_storage,
         => null,
     };
@@ -328,7 +331,7 @@ pub fn forwardsIdenticalReference(graph: *const @import("../global/graph.zig").G
 /// Other referent types may select a different extent or layout instead.
 pub fn preservesReferenceStorage(graph: *const @import("../global/graph.zig").GlobalSemanticGraph, function: @import("../global/graph.zig").Function) bool {
     switch (function.safety_primitive) {
-        .reinterpret_reference, .mutable_reinterpret_reference, .read_reference => {},
+        .reinterpret_reference, .mutable_reinterpret_reference, .read_reference, .trusted_concurrent_view => {},
         else => return false,
     }
     if (function.input.len != 1 or function.output.len != 1) return false;
@@ -356,10 +359,11 @@ pub const AllocationTransfer = struct {
         return fields.len;
     }
     pub const data_field = 0;
+    pub const deallocator_field = 4;
     pub const backing_reference_field = 11;
     pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
         .{ .field = 3, .input = 4 }, // anchor
-        .{ .field = 4, .input = 3 }, // deallocator
+        .{ .field = deallocator_field, .input = 3 },
     };
 };
 

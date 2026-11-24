@@ -675,7 +675,7 @@ pub fn checkAccessBounds(contract: Contract, summary: facts.SafetySummary) ?Fail
     if (!contract.bounded_access) return null;
     if (summary.unknown_access or summary.global_accesses.len != 0) return .{ .kind = .unknown_access };
     for (summary.input_accesses) |access| {
-        if (access.backing) return .{ .kind = .unknown_access };
+        if (access.backing or access.virtual_method != null) return .{ .kind = .unknown_access };
         var permitted = false;
         for (contract.access_bounds) |bound| {
             if (bound.target.input_index != access.target.input_index or bound.target.storage_domain != access.target.storage_domain) continue;

@@ -198,8 +198,12 @@ const State = struct {
                 try self.walkNode(virtualize.value);
             },
             .virtual_call => |id| {
-                if (self.isolation_source != null) try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                if (self.isolation_source != null) {
+                    const declared = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract;
+                    if (call.self_permission != .concurrent or declared == null or !declared.?.bounded_access)
+                        try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
+                }
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
                 const evidence = @import("contract_evidence.zig");
@@ -345,9 +349,33 @@ const State = struct {
         self.had_error = true;
     }
 
+    fn trustedConcurrentImport(self: *State, imported: graph_mod.Function) bool {
+        if (!imported.flags.is_c_abi or imported.declared_access == null) return false;
+        const caller = self.graph.function(self.current_function orelse return false);
+        const module = self.graph.moduleForDeclaration(caller.declaration) orelse return false;
+        const foreign_module = self.graph.moduleForDeclaration(imported.declaration) orelse return false;
+        if (!self.graph.sameModuleNamespace(module, foreign_module)) return false;
+        const foreign_name = self.graph.text(self.graph.declaration(imported.declaration).name);
+        if (!std.mem.startsWith(u8, foreign_name, "_")) return false;
+        const marker = @import("standard_contracts.zig").standardDefinition(self.graph, "ConcurrentAlias") orelse return false;
+        for (self.graph.fields.items[caller.input.start..][0..caller.input.len]) |field| {
+            const ty = self.graph.semanticType(field.ty);
+            if (ty != .pointer or ty.pointer.mutability != .concurrent) continue;
+            const owner = @import("types.zig").nominalTypeOwner(self.graph, ty.pointer.child) orelse continue;
+            if (!self.graph.sameModuleNamespace(module, owner)) continue;
+            for (self.graph.contract_conformances.items) |evidence| {
+                if (evidence.declaration != marker or !evidence.declaration_validated) continue;
+                const participant = self.graph.generic_arguments.items[evidence.participants.start].value.type;
+                if (@import("types.zig").equal(self.graph, ty.pointer.child, participant)) return true;
+            }
+        }
+        return false;
+    }
+
     fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
         if (function.body == null) if (self.isolation_source) |origin| {
+            if (self.trustedConcurrentImport(function)) return;
             try self.isolationError(origin, "foreign or unresolved functions");
             return;
         };

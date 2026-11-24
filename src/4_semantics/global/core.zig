@@ -1079,7 +1079,7 @@ pub const Resolver = struct {
         };
         if (self.graph.isTypeUnresolved(child)) return .deferred;
         if (value.collapse_existing_pointer) switch (self.graph.types.items[@intFromEnum(child)]) {
-            .pointer => |pointer| if (value.mutability == .read_only or pointer.mutability == .read_write) {
+            .pointer => |pointer| if (value.mutability.accepts(pointer.mutability)) {
                 try self.graph.setNode(self.allocator, globalizer.globalNode(o, value.node), self.graph.node(child_node));
                 return .resolved;
             },
@@ -1387,13 +1387,13 @@ pub const Resolver = struct {
             .pointer => |pointer| pointer,
             else => return false,
         };
-        if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
+        if (!expected_pointer.mutability.accepts(actual_pointer.mutability)) return false;
         if (types.equal(self.graph, actual_pointer.child, expected_pointer.child)) return true;
         // `Any` is the wildcard value type. A reference to a concrete value is
         // compatible with `&Any`/`$&Any`, subject to the mutability rule above.
         // Do not recurse through pointer constructors here: that would make
         // mutable pointer slots covariant (`&&Int32` -> `&&Any`).
-        if (types.isBuiltin(self.graph, expected_pointer.child, .Any)) return true;
+        if (types.isBuiltin(self.graph, expected_pointer.child, .Any)) return expected_pointer.mutability != .concurrent;
         return switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
             .virtual => |contract_type| types.equal(self.graph, contract_type, expected_pointer.child),
             else => false,

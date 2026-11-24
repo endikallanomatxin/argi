@@ -860,6 +860,10 @@ pub const Resolver = struct {
                 const ty = self.graph.semanticType(field.ty);
                 if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, contract_ty)) {
                     receivers += 1;
+                    if (!self.capturesReferenceParticipant(located)) if (conversion_permission) |permission| {
+                        if ((permission == .concurrent or ty.pointer.mutability == .concurrent) and permission != ty.pointer.mutability)
+                            reason = "a virtual receiver must preserve concurrent reference authority";
+                    };
                     if (!self.capturesReferenceParticipant(located) and conversion_permission == .read_only and ty.pointer.mutability == .read_write)
                         reason = "a mutable participant receiver requires a mutable concrete reference ($&T) at conversion";
                 } else if (try contract_safety.containsErasedParticipant(self, field.ty, contract_ty)) {
@@ -1558,7 +1562,7 @@ pub const Resolver = struct {
     fn inferOperationInputPattern(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const expected = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern)];
         const supplied = self.graph.semanticType(actual);
-        if (expected == .resolved and expected.resolved == .pointer and supplied == .pointer and expected.resolved.pointer.mutability == .read_only)
+        if (expected == .resolved and expected.resolved == .pointer and supplied == .pointer and supplied.pointer.mutability != .concurrent and expected.resolved.pointer.mutability == .read_only)
             return self.inferConstraintTypePattern(module_index, expected.resolved.pointer.child, supplied.pointer.child, bindings);
         return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
     }
@@ -1985,18 +1989,24 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn templateParticipantOwner(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId) !?global_sg.GlobalModuleId {
+    fn requiresNominalOwner(self: *const Resolver, declaration: global_sg.GlobalFamilyDefinitionId, name: []const u8) bool {
+        if (!std.mem.eql(u8, name, "ConcurrentAlias") and !std.mem.eql(u8, name, "Transferable")) return false;
+        return standard_contracts.standardDefinition(self.graph, name) == declaration;
+    }
+
+    fn templateParticipantOwner(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, nominal_only: bool) !?global_sg.GlobalModuleId {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const ownerOf = if (nominal_only) &global_types.nominalTypeOwner else &global_types.conformanceParticipantOwner;
         const declaration = switch (storage.types.items[@intFromEnum(pattern)]) {
-            .concrete => |local| return global_types.conformanceParticipantOwner(self.graph, globalizer.globalType(self.offsets[module_index], local)),
+            .concrete => |local| return ownerOf(self.graph, globalizer.globalType(self.offsets[module_index], local)),
             .external => |external| blk: {
                 const reference = self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)];
                 if (try self.core.resolveDefinitionReference(module_index, reference, &.{.type})) |family| break :blk family;
                 const concrete = (try self.core.resolveTypeValue(module_index, reference)) orelse return null;
-                return global_types.conformanceParticipantOwner(self.graph, concrete);
+                return ownerOf(self.graph, concrete);
             },
             .resolved => |resolved| switch (resolved) {
-                .pointer => |pointer| return self.templateParticipantOwner(module_index, pointer.child),
+                .pointer => |pointer| return if (nominal_only) null else self.templateParticipantOwner(module_index, pointer.child, false),
                 .generic => |nominal| try self.generics.resolveParameterizedFamily(module_index, nominal.base),
                 .nominal => |reference| return self.graph.moduleForTypeDefinition(globalizer.globalTypeDefinition(self.offsets[module_index], reference)),
                 else => return null,
@@ -2006,11 +2016,11 @@ pub const Resolver = struct {
         return self.graph.moduleForFamilyDefinition(declaration);
     }
 
-    fn templateOwnsParticipant(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance) !bool {
+    fn templateOwnsParticipant(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance, nominal_only: bool) !bool {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         for (storage.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
             if (argument.value != .type) continue;
-            if (try self.templateParticipantOwner(module_index, argument.value.type)) |owner|
+            if (try self.templateParticipantOwner(module_index, argument.value.type, nominal_only)) |owner|
                 if (self.core.sameDeclarationNamespace(@intFromEnum(owner), module_index)) return true;
         }
         return false;
@@ -2039,9 +2049,19 @@ pub const Resolver = struct {
                     .contract_name = self.graph.familyDefinitionName(declaration),
                     .reason = "",
                 };
+                if (conformance.parameters.len != 0 and self.requiresNominalOwner(declaration, failure.contract_name) and
+                    !try self.templateOwnsParticipant(module_index, conformance, true))
+                {
+                    failure.reason = if (std.mem.eql(u8, failure.contract_name, "Transferable"))
+                        "Transferable requires a nominal value type defined by the implementing module"
+                    else
+                        "ConcurrentAlias requires a nominal value type defined by the implementing module";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
                 if (conformance.parameters.len != 0 and !self.core.sameDeclarationNamespace(located.module_index, module_index) and
                     !(module.is_bundled_core and self.modules[located.module_index].is_bundled_core) and
-                    !try self.templateOwnsParticipant(module_index, conformance))
+                    !try self.templateOwnsParticipant(module_index, conformance, false))
                 {
                     failure.reason = "an implementation must belong to the contract module or a nominal participant module";
                     self.participant_conformance_failure = failure;
@@ -2410,6 +2430,18 @@ pub const Resolver = struct {
                     // Module aliases and generic applications can complete in
                     // the pending-resolution loop after declaration discovery.
                     continue :conformances;
+                }
+            }
+            if (self.requiresNominalOwner(conformance.declaration, failure.contract_name)) {
+                const participant = self.graph.generic_arguments.items[conformance.participants.start].value.type;
+                const owner = global_types.nominalTypeOwner(self.graph, participant);
+                if (owner == null or !self.core.sameDeclarationNamespace(@intFromEnum(owner.?), module_index)) {
+                    failure.reason = if (std.mem.eql(u8, failure.contract_name, "Transferable"))
+                        "Transferable requires a nominal value type defined by the implementing module"
+                    else
+                        "ConcurrentAlias requires a nominal value type defined by the implementing module";
+                    self.participant_conformance_failure = failure;
+                    return;
                 }
             }
             if (!self.core.sameDeclarationNamespace(located.module_index, module_index) and

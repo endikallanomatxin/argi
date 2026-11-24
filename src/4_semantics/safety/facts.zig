@@ -29,6 +29,13 @@ pub const ExecutionLoan = struct {
     symbolic: ?SymbolicPointeeId = null,
     generations: []const ValidityRootId = &.{},
     mode: AccessMode,
+    concurrent_reference: bool = false,
+
+    pub fn allowsOverlap(self: ExecutionLoan, other: AccessMode, other_concurrent: bool) bool {
+        if (self.concurrent_reference or other_concurrent)
+            return self.concurrent_reference and other_concurrent;
+        return self.mode == .read and other == .read;
+    }
 };
 pub const ExecutionState = struct {
     id: ExecutionId,
@@ -185,6 +192,8 @@ pub const ValueFacts = struct {
     /// Concrete vtable method identities carried by a `Virtual` value. Keeping
     /// this in transient safety facts lets exact dispatch survive bindings and
     /// ordinary value copies without reintroducing graph-object identity.
+    /// The erased receiver retains concurrent reference authority.
+    concurrent_receiver: bool = false,
     virtual_methods: []const graph.GlobalFunctionId = &.{},
     domains: []const DomainFacts = &.{},
     generation_outcomes: []const GenerationOutcome = &.{},
@@ -208,6 +217,7 @@ pub const ValueFacts = struct {
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
             .opaque_provenance = self.opaque_provenance,
+            .concurrent_receiver = self.concurrent_receiver,
             .virtual_methods = self.virtual_methods,
             .domains = self.domains,
             .generation_outcomes = self.generation_outcomes,
@@ -225,6 +235,7 @@ pub const ValueFacts = struct {
         result.reference_target_incomplete = true;
         result.mutation_places = &.{};
         result.symbolic_pointees = &.{};
+        result.concurrent_receiver = false;
         result.virtual_methods = &.{};
         result.domains = &.{};
         return result;

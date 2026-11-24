@@ -61,7 +61,11 @@ pub fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_
             try buffer.append(')');
         },
         .pointer => |pointer| {
-            try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
+            try buffer.appendSlice(switch (pointer.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+                .concurrent => "$$&",
+            });
             try appendTypeName(buffer, graph, pointer.child);
         },
         .nullable => |child| {

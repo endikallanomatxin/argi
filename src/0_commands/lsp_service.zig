@@ -1015,7 +1015,11 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
         .nominal => |definition| try writer.writeAll(graph.typeDefinitionName(definition)),
         .definition => |decl| try writer.print("definition({s})", .{graph.familyDefinitionName(decl)}),
         .pointer => |pointer| {
-            try writer.writeAll(if (pointer.mutability == .read_write) "$&" else "&");
+            try writer.writeAll(switch (pointer.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+                .concurrent => "$$&",
+            });
             try writeType(writer, graph, pointer.child);
         },
         .array => |array| {

@@ -62,6 +62,15 @@ pub const StorageSelector = union(enum) {
         };
     }
 
+    /// An entry-relative weak write can project fields and array elements
+    /// without reading an intervening reference or the active variant tag.
+    pub fn isStructuralWriteProjection(self: StorageSelector) bool {
+        return self == .projection and switch (self.projection) {
+            .field, .static_index, .dynamic_index => true,
+            .variant, .dereference => false,
+        };
+    }
+
     pub fn embedded(self: StorageSelector) bool {
         return self == .projection and self.projection != .dereference;
     }
@@ -116,6 +125,9 @@ pub const InputAccess = struct {
     mode: AccessMode,
     /// Access within observed backing, not necessarily within the witness.
     backing: bool = false,
+    /// An unbounded dispatch whose descriptor still has its entry value.
+    /// This requires proof of the selected operation's access effects.
+    virtual_method: ?u32 = null,
 };
 pub const GlobalAccess = struct {
     /// Indexed module binding identity in the retained graph. Summary caches
@@ -207,6 +219,11 @@ pub const ReferenceRelation = struct {
 pub const ValueEffect = struct {
     /// A possible reference result has no retained target-selection recipe.
     /// Lifetime dependencies are retained independently of target precision.
+    /// The erased receiver retains concurrent reference authority.
+    concurrent_receiver: bool = false,
+    virtual_receiver_input: ?InputPath = null,
+    /// Exact graph-local targets retained by this descriptor.
+    virtual_methods: []const u32 = &.{},
     reference_target_incomplete: bool = false,
     /// Verified reference relation, never a may-dependency or authority.
     /// Missing evidence does not describe an empty access footprint.

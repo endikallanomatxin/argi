@@ -1186,7 +1186,7 @@ pub const Session = struct {
             if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
                 return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
 
-            if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
+            if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, contracts, reachable, options.diagnostics))
                 return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
         }
 
@@ -2020,16 +2020,67 @@ fn diagnoseInvalidComparisons(
 fn diagnoseInvalidPointerOperations(
     allocator: std.mem.Allocator,
     graph: *const global_sg.GlobalSemanticGraph,
+    contracts: *contract_mod.Resolver,
     reachable: ?*const reachability_mod.FunctionSet,
     diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
-    for (graph.nodes.items, 0..) |node, raw| {
+    var node_index: usize = 0;
+    while (node_index < graph.nodes.items.len) : (node_index += 1) {
+        // Selecting a generic marker conformance can extend the graph.
+        const node = graph.nodes.items[node_index];
         switch (node.content) {
-            .pointer_assignment, .array_index, .array_store => {},
+            .function_call, .address_of, .dereference, .pointer_assignment, .struct_field_store, .array_index, .array_store => {},
             else => continue,
         }
-        const node_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
+        const node_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(node_index)));
         if (reachable) |set| if (!set.containsNode(node_id)) continue;
+        if (node.content == .function_call) {
+            const callee = graph.function(node.content.function_call.callee);
+            if (callee.safety_primitive != .trusted_concurrent_view) continue;
+            const input = graph.semanticType(graph.fields.items[callee.input.start].ty);
+            const owner = if (input == .pointer and input.pointer.mutability == .concurrent)
+                global_types.nominalTypeOwner(graph, input.pointer.child)
+            else
+                null;
+            if (owner) |module| {
+                if (node.source.file_index < graph.files.items.len) {
+                    const caller = graph.files.items[node.source.file_index].module;
+                    if (contracts.core.sameDeclarationNamespace(@intFromEnum(module), @intFromEnum(caller))) continue;
+                }
+            }
+            if (diagnostics) |sink| try sink.add(diagnosticLocation(graph, sink, node.source), .semantic, "trusted_concurrent_view requires the module defining the nominal value type", .{});
+            return true;
+        }
+        if (node.content == .address_of) {
+            const ty = node.ty orelse continue;
+            const semantic = graph.semanticType(ty);
+            if (semantic == .pointer and semantic.pointer.mutability == .concurrent) {
+                const marker = @import("standard_contracts.zig").standardDefinition(graph, "ConcurrentAlias");
+                const certified = if (marker) |declaration|
+                    (try contracts.selectConformance(declaration, &.{semantic.pointer.child}, null, 0, null)) != null
+                else
+                    false;
+                if (certified) continue;
+                if (diagnostics) |sink| try sink.add(diagnosticLocation(graph, sink, node.source), .semantic, "concurrent sharing requires ConcurrentAlias evidence for the value type", .{});
+                return true;
+            }
+            continue;
+        }
+        const accessed_pointer = switch (node.content) {
+            .dereference => |access| access.pointer,
+            .pointer_assignment => |assignment| assignment.pointer,
+            .struct_field_store => |store| store.struct_ptr,
+            .array_index => |access| access.array_ptr,
+            .array_store => |store| store.array_ptr,
+            else => null,
+        };
+        if (accessed_pointer) |pointer| if (graph.node(pointer).ty) |ty| {
+            const semantic = graph.semanticType(ty);
+            if (semantic == .pointer and semantic.pointer.mutability == .concurrent) {
+                if (diagnostics) |sink| try sink.add(diagnosticLocation(graph, sink, node.source), .semantic, "ordinary dereference of a concurrent reference is forbidden", .{});
+                return true;
+            }
+        };
         switch (node.content) {
             .pointer_assignment => |assignment| {
                 const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
@@ -2048,7 +2099,7 @@ fn diagnoseInvalidPointerOperations(
                         else => continue,
                     };
                     if (global_types.equal(graph, actual_pointer.child, expected_pointer.child) and
-                        (expected_pointer.mutability == .read_only or actual_pointer.mutability == .read_write)) continue;
+                        expected_pointer.mutability.accepts(actual_pointer.mutability)) continue;
                     if (diagnostics) |sink| {
                         var actual_name = std.array_list.Managed(u8).init(allocator);
                         defer actual_name.deinit();
@@ -3686,7 +3737,7 @@ fn diagnoseUnresolvedCall(
                                     continue;
                                 },
                             };
-                            if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) {
+                            if (!expected_pointer.mutability.accepts(actual_pointer.mutability)) {
                                 other_mismatch = true;
                                 continue;
                             }

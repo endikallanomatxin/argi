@@ -1196,6 +1196,7 @@ pub const SafetyChecker = struct {
                         try self.refreshStorageGenerationChecked(node.source, state, storage);
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
+                    if (try self.rejectSharedOverlap(node.source, storage, state)) continue;
                     // Replacement cleanup may end the old value while evaluating
                     // the RHS sequence. Its new value starts a fresh generation.
                     if (previous_state != .deinitialized and state.initializednessAtPlace(storage) == .deinitialized)
@@ -1218,6 +1219,7 @@ pub const SafetyChecker = struct {
                     try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
+                    if (state.shared_regions.items.len != 0) try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const target = try self.project(base, .{ .field = store.field_index });
@@ -1235,6 +1237,7 @@ pub const SafetyChecker = struct {
                         break :blk try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state);
                     } else null;
                     const value = try self.evaluate(function, store.value, state);
+                    if (state.shared_regions.items.len != 0) try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
@@ -1287,6 +1290,7 @@ pub const SafetyChecker = struct {
                         active.pointer = pointer;
                     };
                     const value = try self.evaluate(function, assignment.value, state);
+                    if (state.shared_regions.items.len != 0) try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     if (pointer.referenced_place) |target| {
                         if (!was_deinitialized and state.initializednessAtPlace(target) == .deinitialized and pointer.opaque_provenance.len == 0) {
                             const old_generation = try state.storageGeneration(target);
@@ -1506,7 +1510,7 @@ pub const SafetyChecker = struct {
                 }
                 break :blk value;
             },
-            .address_of => |child| try self.evaluateAddress(function, node.source, child, state, false),
+            .address_of => try self.evaluateAddressNode(function, node, state, false),
             .dereference => |deref| blk: {
                 const pointer = try self.evaluatePointerUse(function, node.source, deref.pointer, state) orelse break :blk .{};
                 try self.requireExecutionPointerAccess(node.source, pointer, .read, state);
@@ -1681,6 +1685,8 @@ pub const SafetyChecker = struct {
                     try self.captureContractStorage(function, virtualize.source, state, receiver_place, virtualize.concrete_type, &dependencies, &visited);
                     value.dependencies = try dependencies.toOwnedSlice();
                 };
+                const receiver_type = self.graph.semanticType(self.graph.node(virtualize.value).ty orelse return error.InvalidVirtualContractType);
+                value.concurrent_receiver = receiver_type == .pointer and receiver_type.pointer.mutability == .concurrent;
                 value.virtual_methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
                 const receiver_storage = if (value.referenced_place) |receiver_place| try self.allocator.dupe(facts.Place, &.{receiver_place}) else &.{};
                 value.domains = try std.mem.concat(self.allocator, facts.DomainFacts, &.{ value.domains, &.{.{ .domain_index = @import("access_bounds.zig").receiver_domain, .storages = receiver_storage, .symbolic_pointees = value.symbolic_pointees }} });
@@ -1906,8 +1912,12 @@ pub const SafetyChecker = struct {
             const summary = if (self.active_summaries) |engine| engine.summaryFor(call.callee) else null;
             const destination = if (callee.safety_primitive == .relocate) index == 1 else if (summary) |effects| initializesInput(effects, index) else false;
             const node = self.graph.node(field.value);
+            if (callee.safety_primitive == .recover_ordinary) {
+                values[index] = try self.recoverOrdinary(caller, node, state);
+                continue;
+            }
             values[index] = if (destination and node.content == .address_of)
-                try self.evaluateAddress(caller, node.source, node.content.address_of, state, true)
+                try self.evaluateAddressNode(caller, node, state, true)
             else
                 try self.evaluate(caller, field.value, state);
         }
@@ -2898,7 +2908,7 @@ pub const SafetyChecker = struct {
         const diagnostics_before = self.diagnostics.list.items.len;
         try self.collectExecutionLoans(ty, inputs, state, &loans, source);
         if (loans.items.len == 0 or self.diagnostics.list.items.len != diagnostics_before) return .{};
-        for (loans.items) |loan| try self.requireExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, state);
+        for (loans.items) |loan| try self.checkExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, loan.concurrent_reference, state);
         if (self.diagnostics.list.items.len != diagnostics_before) return .{};
         const id = try state.establishExecutionAt(try loans.toOwnedSlice(), source);
         // A pending execution retains its backing generations through the
@@ -2950,6 +2960,7 @@ pub const SafetyChecker = struct {
             const initial_len = loans.items.len;
             for (0..@as(usize, domain_count) + 1) |index| {
                 const domain_index: u32 = if (index == 0) @import("access_bounds.zig").receiver_domain else @intCast(index - 1);
+                const concurrent_receiver = index == 0 and value.concurrent_receiver;
                 const domain = self.domainFacts(value, domain_index, state) catch |err| switch (err) {
                     error.MissingVirtualStorageDomain => {
                         loans.shrinkRetainingCapacity(initial_len);
@@ -2971,8 +2982,8 @@ pub const SafetyChecker = struct {
                     try self.report(source, "borrowed execution requires an authenticated target for every virtual region", .{});
                     return;
                 }
-                for (targets) |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .write });
-                for (domain.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = generations, .mode = .write });
+                for (targets) |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .write, .concurrent_reference = concurrent_receiver });
+                for (domain.symbolic_pointees) |identity| try loans.append(.{ .symbolic = identity, .generations = generations, .mode = .write, .concurrent_reference = concurrent_receiver });
                 for (domain.traversals) |step| try loans.append(.{ .storage = step.slot, .generations = generations, .mode = .read });
                 for (domain.required_reads) |required| switch (required) {
                     .place => |place| try loans.append(.{ .storage = place, .generations = generations, .mode = .read }),
@@ -2990,20 +3001,21 @@ pub const SafetyChecker = struct {
             var generations = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             for (value.dependencies) |dependency| try appendRootFact(&generations, dependency.root);
             const roots = try generations.toOwnedSlice();
-            const mode: facts.AccessMode = if (semantic.pointer.mutability == .read_write) .write else .read;
+            const concurrent = semantic.pointer.mutability == .concurrent;
+            const mode: facts.AccessMode = if (semantic.pointer.mutability == .read_only) .read else .write;
             if (value.referenced_place == null and value.symbolic_pointees.len == 0) {
                 try self.report(source, "borrowed execution requires an authenticated reference target", .{});
                 return;
             }
             if (value.referenced_place) |storage|
-                try loans.append(.{ .storage = storage, .generations = roots, .mode = mode });
+                try loans.append(.{ .storage = storage, .generations = roots, .mode = mode, .concurrent_reference = concurrent });
             // Retained alternatives enlarge the conflict footprint of an admitted loan.
             for (value.mutation_places) |storage| {
                 if (value.referenced_place) |exact| if (exact.eql(storage)) continue;
-                try loans.append(.{ .storage = storage, .generations = roots, .mode = mode });
+                try loans.append(.{ .storage = storage, .generations = roots, .mode = mode, .concurrent_reference = concurrent });
             }
             for (value.symbolic_pointees) |identity|
-                try loans.append(.{ .symbolic = identity, .generations = roots, .mode = mode });
+                try loans.append(.{ .symbolic = identity, .generations = roots, .mode = mode, .concurrent_reference = concurrent });
             return;
         }
         if (types.arrayElement(self.graph, ty)) |element| {
@@ -3124,11 +3136,25 @@ pub const SafetyChecker = struct {
         return false;
     }
 
+    fn rejectSharedOverlap(self: *SafetyChecker, source: primitives.SourceRef, storage: ?facts.Place, state: *const FunctionState) !bool {
+        for (state.shared_regions.items) |region| {
+            if (storage) |place| if (!self.storageMayOverlap(place, region)) continue;
+            try self.report(source, "ordinary access overlaps concurrently shared storage", .{});
+            return true;
+        }
+        return false;
+    }
+
     fn requireExecutionAccess(self: *SafetyChecker, source: primitives.SourceRef, storage: ?facts.Place, symbolic: ?facts.SymbolicPointeeId, mode: facts.AccessMode, state: *const FunctionState) !void {
+        return self.checkExecutionAccess(source, storage, symbolic, mode, false, state);
+    }
+
+    fn checkExecutionAccess(self: *SafetyChecker, source: primitives.SourceRef, storage: ?facts.Place, symbolic: ?facts.SymbolicPointeeId, mode: facts.AccessMode, concurrent_reference: bool, state: *const FunctionState) !void {
+        if (!concurrent_reference and try self.rejectSharedOverlap(source, storage, state)) return;
         for (state.executions.items) |execution| {
             if (!execution.pending) continue;
             for (execution.loans) |loan| {
-                if (mode == .read and loan.mode == .read) continue;
+                if (loan.allowsOverlap(mode, concurrent_reference)) continue;
                 // A missing footprint on either side cannot prove independence.
                 const overlaps = if ((storage == null and symbolic == null) or (loan.storage == null and loan.symbolic == null))
                     true
@@ -3178,13 +3204,18 @@ pub const SafetyChecker = struct {
 
     fn requireExecutionPointerAccess(self: *SafetyChecker, source: primitives.SourceRef, pointer: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
         if (pointer.reference_target_incomplete or (pointer.referenced_place == null and pointer.symbolic_pointees.len == 0)) {
+            for (state.shared_regions.items) |region| {
+                if (pointer.lexical_frame) |frame| if (state.frameExcludesStorage(frame, region)) continue;
+                try self.report(source, "cannot prove an ordinary reference independent of concurrently shared storage", .{});
+                return;
+            }
             // A valid lifetime or audited raw-reference construction does not
             // locate these bytes relative to a pending loan. Missing target
             // evidence denotes an unknown footprint, never an empty one.
             for (state.executions.items) |execution| {
                 if (!execution.pending) continue;
                 for (execution.loans) |loan| {
-                    if (mode == .read and loan.mode == .read) continue;
+                    if (loan.allowsOverlap(mode, false)) continue;
                     if (pointer.lexical_frame) |frame| if (loan.storage) |storage| {
                         if (!self.graph.isModuleBinding(storage.root) and state.frameExcludesStorage(frame, storage)) continue;
                     };
@@ -3200,10 +3231,14 @@ pub const SafetyChecker = struct {
     }
 
     fn requireUnknownExecutionAccess(self: *SafetyChecker, source: primitives.SourceRef, operation: []const u8, mode: facts.AccessMode, state: *const FunctionState) !bool {
+        if (state.shared_regions.items.len != 0) {
+            try self.report(source, "{s} has unknown memory effects while storage is concurrently shared", .{operation});
+            return false;
+        }
         for (state.executions.items) |execution| {
             if (!execution.pending) continue;
             for (execution.loans) |loan| {
-                if (mode == .read and loan.mode == .read) continue;
+                if (loan.allowsOverlap(mode, false)) continue;
                 try self.report(source, "{s} has unknown memory effects while a pending execution retains borrowed storage; declare and verify an access bound", .{operation});
                 return false;
             }
@@ -3436,7 +3471,7 @@ pub const SafetyChecker = struct {
                 try visited.append(place);
                 storage = place;
                 const stored = self.valueAtPlace(state, place) orelse break;
-                value = try self.reconstructPlaceValue(state, place, stored);
+                value = try self.loadSummaryPlaceValue(state, place, stored);
                 // Aggregate provenance can retain a field's referent. It does
                 // not make the enclosing record another pointer to follow.
                 if (value.fields.len != 0 or value.variants.len != 0 or value.virtual_methods.len != 0 or value.domains.len != 0) break;
@@ -3614,6 +3649,10 @@ pub const SafetyChecker = struct {
         return self.load_summary_input_value(selected, arguments, state);
     }
 
+    fn loadSummaryPlaceValue(self: *SafetyChecker, state: *FunctionState, place: facts.Place, stored: facts.ValueFacts) !facts.ValueFacts {
+        return self.reconstructPlaceValue(state, place, stored);
+    }
+
     fn hasConcreteAlternatives(pointer: facts.ValueFacts) bool {
         return pointer.referenced_place == null and pointer.symbolic_pointees.len == 0 and pointer.mutation_places.len != 0;
     }
@@ -3638,6 +3677,14 @@ pub const SafetyChecker = struct {
             try self.requireDescendantsInitialized(function, source, storage, state);
         }
         return self.loadConcreteAlternatives(state, pointer);
+    }
+
+    fn loadSummaryStorageContents(self: *SafetyChecker, state: *FunctionState, storage: StorageIdentity) !facts.ValueFacts {
+        const initial = self.domainValue(state, storage) orelse facts.ValueFacts{};
+        return switch (storage) {
+            .place => |place| self.loadSummaryPlaceValue(state, place, initial),
+            .symbolic => |identity| self.reconstructSymbolicValue(state, identity, initial),
+        };
     }
 
     fn dependencyPrimitive(
@@ -4018,6 +4065,7 @@ pub const SafetyChecker = struct {
         }
         return self.diagnostics.list.items.len == before;
     }
+
 
     fn validateSummaryRequiredOpaque(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         const before = self.diagnostics.list.items.len;
@@ -4667,9 +4715,11 @@ pub const SafetyChecker = struct {
     }
 
     fn requireExecutionReceiverAccess(self: *SafetyChecker, source: primitives.SourceRef, receiver: facts.ValueFacts, mode: facts.AccessMode, state: *FunctionState) !void {
-        try self.requireExecutionPointerAccess(source, receiver, mode, state);
+        const retained = try self.virtualValue(receiver, state);
+        const concurrent = if (retained) |value| value.concurrent_receiver and !value.reference_target_incomplete else false;
+        if (!concurrent) try self.requireExecutionPointerAccess(source, receiver, mode, state);
         const pointees = try self.receiverDomainPointees(receiver, state);
-        for (pointees) |identity| try self.requireExecutionAccess(source, null, identity, mode, state);
+        for (pointees) |identity| try self.checkExecutionAccess(source, null, identity, mode, concurrent, state);
         const storages = self.domainStorage(receiver, @import("access_bounds.zig").receiver_domain, state) catch |err| {
             if (err != error.MissingVirtualStorageDomain) return err;
             try self.report(source, "cannot establish captured access region identity: evidence is missing or an intermediate reference changed", .{});
@@ -4677,7 +4727,7 @@ pub const SafetyChecker = struct {
         };
         if (storages.len == 0 and pointees.len == 0)
             try self.report(source, "cannot establish captured access region identity: evidence is missing or an intermediate reference changed", .{});
-        for (storages) |storage| try self.requireExecutionAccess(source, storage, null, mode, state);
+        for (storages) |storage| try self.checkExecutionAccess(source, storage, null, mode, concurrent, state);
     }
 
     fn validateSummaryCaptureObservations(
@@ -4724,6 +4774,46 @@ pub const SafetyChecker = struct {
         return self.projectValueFacts(value, projections);
     }
 
+    fn entryVirtualAccessValue(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        if (path.input_index >= arguments.len or path.storage_domain != null) return .{};
+        var value = arguments[path.input_index];
+        for (path.projections) |projection| {
+            switch (projection) {
+                .dereference => {
+                    const place = exactObservedPlace(value) orelse return .{};
+                    if (state.initializednessAtPlace(place) != .initialized) return .{};
+                    const stored = self.valueAtPlace(state, place) orelse return .{};
+                    value = try self.loadSummaryPlaceValue(state, place, stored);
+                },
+                // Reference provenance carried by sibling fields does not
+                // make this structural field selection ambiguous.
+                .field => value = representedSnapshotProjection(value, projection) orelse return .{},
+                else => return .{},
+            }
+        }
+        return value;
+    }
+
+    fn requireArrayBackingAccess(self: *SafetyChecker, source: primitives.SourceRef, reference: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
+        var unknown = reference.reference_target_incomplete or reference.symbolic_pointees.len != 0;
+        if (!state.tracker.dependenciesAreAlive(reference) or
+            (reference.referenced_place == null and reference.mutation_places.len == 0))
+        {
+            return self.requireExecutionPointerAccess(source, reference.derivedReference(), mode, state);
+        }
+        if (reference.referenced_place) |element| {
+            if (self.arrayBackingRootAtPlace(element)) |root| {
+                try self.requireExecutionAccess(source, root, null, mode, state);
+            } else unknown = true;
+        }
+        for (reference.mutation_places) |element| {
+            if (self.arrayBackingRootAtPlace(element)) |root| {
+                try self.requireExecutionAccess(source, root, null, mode, state);
+            } else unknown = true;
+        }
+        if (unknown) try self.requireExecutionPointerAccess(source, reference.derivedReference(), mode, state);
+    }
+
     fn validateSummaryExecutionAccess(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -4740,7 +4830,7 @@ pub const SafetyChecker = struct {
         const borrowed = for (state.executions.items) |execution| {
             if (execution.pending and execution.loans.len != 0) break true;
         } else false;
-        if (!borrowed) return true;
+        if (!borrowed and state.shared_regions.items.len == 0) return true;
         // May-access effects span the call. A final completion postcondition
         // cannot establish that any particular access happened after it.
         const before = self.diagnostics.list.items.len;
@@ -4748,15 +4838,23 @@ pub const SafetyChecker = struct {
             if (!try self.requireUnknownExecutionAccess(source, "call", .write, state)) return false;
         }
         for (summary.input_accesses) |access| {
+            if (access.virtual_method) |method_index| {
+                const value = try self.entryVirtualAccessValue(access.target, arguments, state);
+                const known = if (method_index < value.virtual_methods.len and !value.reference_target_incomplete)
+                    if (self.active_summaries) |engine| engine.summaryFor(value.virtual_methods[method_index]) else null
+                else
+                    null;
+                if (known) |selected| {
+                    if (!selected.unknown_access and
+                        selected.input_accesses.len == 0 and selected.global_accesses.len == 0 and selected.guarded_effects.len == 0)
+                        continue;
+                }
+                if (!try self.requireUnknownExecutionAccess(source, "virtual operation", .write, state)) return false;
+                continue;
+            }
             if (access.backing) {
                 const observed = try self.referenceObservationInput(access.target, arguments, state);
-                if (state.tracker.dependenciesAreAlive(observed)) {
-                    if (self.arrayBackingRoot(observed)) |root| {
-                        try self.requireExecutionAccess(source, root, null, access.mode, state);
-                        continue;
-                    }
-                }
-                try self.requireExecutionPointerAccess(source, observed.derivedReference(), access.mode, state);
+                try self.requireArrayBackingAccess(source, observed, access.mode, state);
                 continue;
             }
             if (access.target.storage_domain) |domain| {
@@ -5292,7 +5390,7 @@ pub const SafetyChecker = struct {
                     projections = projections[projection_index + 1 ..];
                     break :blk referent;
                 }
-                value = try self.projectValueFacts(value, &.{projection});
+                value = representedSnapshotProjection(value, projection) orelse return null;
             }
             return null;
         };
@@ -5426,11 +5524,12 @@ pub const SafetyChecker = struct {
             if (domain.path.input_index >= arguments.len) continue;
             const value = if (domain.path.projections.len == 0) arguments[domain.path.input_index] else try self.load_summary_input_value(domain.path, arguments, state);
             const selected = try self.domainFacts(value, domain.domain_index, state);
-            for (selected.symbolic_pointees) |identity| if (self.domainValue(state, .{ .symbolic = identity })) |stored| {
+            for (selected.symbolic_pointees) |identity| {
+                const stored = try self.loadSummaryStorageContents(state, .{ .symbolic = identity });
                 if (hasPendingExecution(stored, state)) return true;
-            };
+            }
             for (try self.domainStorage(value, domain.domain_index, state)) |storage| {
-                const stored = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
+                const stored = try self.loadSummaryStorageContents(state, .{ .place = storage });
                 if (hasPendingExecution(stored, state)) return true;
             }
         }
@@ -5916,7 +6015,26 @@ pub const SafetyChecker = struct {
             }
             result.lexical_frame = input.lexical_frame;
         }
+        result.concurrent_receiver = effect.concurrent_receiver;
+        if (effect.virtual_methods.len != 0) {
+            const methods = try self.allocator.alloc(graph_mod.GlobalFunctionId, effect.virtual_methods.len);
+            for (methods, effect.virtual_methods) |*method, target| method.* = @enumFromInt(target);
+            result.virtual_methods = methods;
+        } else result.virtual_methods = &.{};
+        if (effect.virtual_receiver_input) |path| {
+            if (path.input_index < arguments.len) if (snapshotVirtualEvidence(arguments[path.input_index], path.projections)) |selected| {
+                result.concurrent_receiver = selected.concurrent_receiver;
+                result.virtual_methods = selected.virtual_methods;
+            };
+        }
         return result;
+    }
+
+    fn snapshotVirtualEvidence(value: facts.ValueFacts, projections: []const facts.Projection) ?facts.ValueFacts {
+        var selected = value;
+        for (projections) |projection|
+            selected = representedSnapshotProjection(selected, projection) orelse return null;
+        return selected;
     }
 
     /// Select evaluated fields first; only an explicit dereference can load
@@ -6300,6 +6418,7 @@ pub const SafetyChecker = struct {
             .execution_receipts = try executions.toOwnedSlice(),
             .referenced_place = if (!left.reference_target_incomplete and !right.reference_target_incomplete and left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
+            .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
             .domains = domains,
             .generation_outcomes = try generation_outcomes.toOwnedSlice(),
@@ -7330,7 +7449,7 @@ pub const SafetyChecker = struct {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
             const node = self.graph.node(field.value);
             values[index] = if (initializesInput(summary, index) and node.content == .address_of)
-                try self.evaluateAddress(caller, node.source, node.content.address_of, &candidate, true)
+                try self.evaluateAddressNode(caller, node, &candidate, true)
             else
                 try self.evaluate(caller, field.value, &candidate);
         }
@@ -7348,6 +7467,8 @@ pub const SafetyChecker = struct {
                 }
             }
         }
+        if (try self.virtualValue(values[call.self_input_index], &candidate)) |retained|
+            try self.requireLive(caller, input_node.source, retained, &candidate);
         if (!try self.validateConsumedInputAliasing(input_node.source, summary, argument_nodes, values, &candidate)) return .{};
         const consumed = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, false);
         const initialized = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, true);
@@ -7373,7 +7494,22 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !?facts.ValueFacts {
         const inference = self.active_summary_inference orelse return null;
-        const summary = try self.selectEntryGuardedSummary(try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract, values, state);
+        var summary = try self.selectEntryGuardedSummary(try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract, values, state);
+        if (summary.unknown_access and call.self_input_index < values.len) {
+            if (try self.virtualValue(values[call.self_input_index], state)) |retained| {
+                if (!retained.reference_target_incomplete and call.method_index < retained.virtual_methods.len) {
+                    const method = retained.virtual_methods[call.method_index];
+                    if (inference.engine.summaryFor(method)) |concrete| {
+                        // The closed target proves this call touches no tracked
+                        // memory. Keep the erased contract's lifetime and
+                        // ownership effects, and its declared access regions.
+                        if (!concrete.unknown_access and concrete.input_accesses.len == 0 and concrete.global_accesses.len == 0 and
+                            concrete.guarded_effects.len == 0)
+                            summary.unknown_access = false;
+                    }
+                }
+            }
+        }
         // Private receiver projections are erased at a virtual boundary.
         // Validate the receiver contents as well as the handle lifetime.
         if (call.self_input_index < values.len) {
@@ -7725,6 +7861,7 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateCleanupOperation(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, callee: ?graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, self_index: u32, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), storage: facts.Place, state: *FunctionState) anyerror!void {
+        if (try self.rejectSharedOverlap(self.graph.binding(storage.root).source, storage, state)) return;
         const ready = try self.storageReadiness(state, storage);
         if (callee) |id| {
             if (ready == .complete) {
@@ -8224,7 +8361,7 @@ pub const SafetyChecker = struct {
         // Address formation produces a reference value, not a reference slot.
         // Publishing it into the referent would invent initialization before RHS.
         if (node.content == .address_of)
-            return .{ .value = try self.evaluateAddress(function, node.source, node.content.address_of, state, true), .renewable = true };
+            return .{ .value = try self.evaluateAddressNode(function, node, state, true), .renewable = true };
         const access: EvaluatedAccess = switch (node.content) {
             .binding_use => |binding| return .{ .value = try self.evaluate(function, node_id, state), .slot = .{ .root = binding }, .renewable = true },
             .struct_field_access, .array_index, .dereference, .choice_payload_access => try self.evaluateAccess(function, node_id, state),
@@ -8311,6 +8448,89 @@ pub const SafetyChecker = struct {
         return self.addOpaqueReadEnvelope(value, ty, &.{});
     }
 
+    fn lexicalSharePlace(self: *SafetyChecker, id: graph_mod.GlobalNodeId) anyerror!?facts.Place {
+        return switch (self.graph.node(id).content) {
+            .binding_use => |binding| .{ .root = binding },
+            .struct_field_access => |field| try self.project((try self.lexicalSharePlace(field.value)) orelse return null, .{ .field = field.field_index }),
+            .array_index => |element| blk: {
+                const index = self.staticIndex(element.index) orelse return null;
+                const base = self.graph.node(element.array_ptr);
+                const array = if (base.content == .address_of) base.content.address_of else element.array_ptr;
+                const ty = self.graph.node(array).ty orelse return null;
+                if (types.arrayElement(self.graph, ty) == null) return null;
+                break :blk try self.project((try self.lexicalSharePlace(array)) orelse return null, .{ .static_index = index });
+            },
+            else => null,
+        };
+    }
+
+    fn recoverOrdinary(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, node: graph_mod.Node, state: *FunctionState) !facts.ValueFacts {
+        if (node.content != .address_of or self.graph.semanticType(node.ty.?).pointer.mutability != .read_write) {
+            try self.report(node.source, "recovery requires the original lexical owner", .{});
+            return .{};
+        }
+        const child = node.content.address_of;
+        const storage = (try self.lexicalSharePlace(child)) orelse {
+            try self.report(node.source, "recovery requires the original lexical owner", .{});
+            return .{};
+        };
+        const index = for (state.shared_regions.items, 0..) |region, index| {
+            if (region.eql(storage)) break index;
+        } else {
+            try self.report(node.source, "recovery requires concurrently shared storage", .{});
+            return .{};
+        };
+        // Validate against a candidate with ordinary authority. A rejected
+        // recovery must leave the shared mode and its generations intact.
+        var candidate = try self.cloneState(state);
+        defer candidate.deinit();
+        _ = candidate.shared_regions.swapRemove(index);
+        const before = self.diagnostics.list.items.len;
+        try self.requireExecutionAccess(node.source, storage, null, .write, &candidate);
+        if (self.diagnostics.list.items.len != before) return .{};
+        try self.refreshStorageGenerationChecked(node.source, &candidate, storage);
+        if (self.diagnostics.list.items.len != before) return .{};
+        const reference = try self.evaluateAddress(function, node.source, child, &candidate, false);
+        if (self.diagnostics.list.items.len != before) return .{};
+        self.commitState(state, &candidate);
+        return reference;
+    }
+
+    fn evaluateAddressNode(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, node: graph_mod.Node, state: *FunctionState, allow_moved: bool) !facts.ValueFacts {
+        const child = node.content.address_of;
+        const ty = self.graph.semanticType(node.ty orelse return error.InvalidAddressOf);
+        if (ty != .pointer or ty.pointer.mutability != .concurrent)
+            return self.evaluateAddress(function, node.source, child, state, allow_moved);
+
+        // Only a direct lexical place currently carries recovery authority.
+        const storage = (try self.lexicalSharePlace(child)) orelse {
+            try self.report(node.source, "concurrent sharing requires a writable lexical owner", .{});
+            return .{};
+        };
+        const binding = storage.root;
+        if (self.graph.isModuleBinding(binding) or self.functionInputIndex(function, binding) != null or self.graph.binding(binding).mutability != .variable) {
+            try self.report(node.source, "concurrent sharing requires a writable lexical owner", .{});
+            return .{};
+        }
+        const diagnostics_before = self.diagnostics.list.items.len;
+        try self.requireExecutionAccess(node.source, storage, null, .write, state);
+        try self.requirePlaceInitialized(function, node.source, storage, state.initializednessAtPlace(storage), state);
+        try self.requireDescendantsInitialized(function, node.source, storage, state);
+        if (self.diagnostics.list.items.len != diagnostics_before) return .{};
+        var retiring = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer retiring.deinit();
+        for (state.storage_generations.items) |entry| {
+            if (self.storageMayOverlap(storage, entry.storage)) try appendRootFact(&retiring, entry.generation);
+        }
+        if (!try self.endRoots(node.source, state, retiring.items)) return .{};
+        for (state.storage_generations.items) |*entry| {
+            if (self.storageMayOverlap(storage, entry.storage)) entry.needs_current_generation = true;
+        }
+        const reference = try self.evaluateAddress(function, node.source, child, state, false);
+        try appendPlaceFact(&state.shared_regions, storage);
+        return reference;
+    }
+
     fn evaluateAddress(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
@@ -8342,6 +8562,7 @@ pub const SafetyChecker = struct {
         };
         if (captured == null) try self.validateAddressAccess(function, source, child, state);
         const storage = if (captured) |access| access.storage else try self.resolvePlace(child, state);
+        if (try self.rejectSharedOverlap(source, storage, state)) return .{};
         if (storage == null) if (captured) |access| if (access.pointer) |pointer| {
             if (pointer.symbolic_pointees.len != 0) return pointer;
         };
@@ -9160,6 +9381,8 @@ pub const SafetyChecker = struct {
             }
         }
 
+        try joined.shared_regions.appendSlice(left.shared_regions.items);
+        for (right.shared_regions.items) |region| try appendPlaceFact(&joined.shared_regions, region);
         try joined.storage_generations.appendSlice(left.storage_generations.items);
         for (right.storage_generations.items) |candidate| {
             var found = false;
@@ -10200,6 +10423,12 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     };
     if (!left_stores.eql(&right_stores, Equal{})) return false;
     if (!left.samePendingExecutions(right)) return false;
+    if (left.shared_regions.items.len != right.shared_regions.items.len) return false;
+    for (left.shared_regions.items) |region| {
+        for (right.shared_regions.items) |other| {
+            if (other.eql(region)) break;
+        } else return false;
+    }
     if (left.reachable != right.reachable or
         left.tracker.roots.items.len != right.tracker.roots.items.len or
         left.storage_capabilities.items.len != right.storage_capabilities.items.len or
@@ -10319,6 +10548,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
         left.known_choice_variant != right.known_choice_variant or
         !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
         !std.mem.eql(facts.StorageCapabilityId, left.acquisition_origins, right.acquisition_origins) or
+        left.concurrent_receiver != right.concurrent_receiver or
         !std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
@@ -10360,7 +10590,11 @@ fn appendSafetyTypeName(buffer: *std.array_list.Managed(u8), graph: *const graph
         .nominal => |decl| try buffer.appendSlice(graph.typeDefinitionName(decl)),
         .generic => |generic| try buffer.appendSlice(graph.familyDefinitionName(generic.base)),
         .pointer => |pointer| {
-            try buffer.appendSlice(if (pointer.mutability == .read_write) "$&" else "&");
+            try buffer.appendSlice(switch (pointer.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+                .concurrent => "$$&",
+            });
             try appendSafetyTypeName(buffer, graph, pointer.child);
         },
         .array => |array| {
@@ -11442,8 +11676,8 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     _ = try summary_state.tracker.establish(.fresh);
     _ = try summary_state.tracker.establish(.fresh);
     const arguments = [_]facts.ValueFacts{
-        .{},                                                                                 .{},                                               .{},
-        .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
+        .{},                                                                                                                                                      .{},                                               .{},
+        .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }}, .concurrent_receiver = true, .virtual_methods = &.{@enumFromInt(1)} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
     };
     var engine = summary_engine.Engine.init(allocator);
     defer engine.deinit();
@@ -12985,6 +13219,9 @@ test "projected symbolic array elements retain independent generations without e
     try std.testing.expect(checker.symbolicStorageComplete(&right, parent.symbolic_pointees[0]));
     try std.testing.expect(valueDependsOnDeadRootWithOwners(first, .{}, &left));
     try std.testing.expect(!valueDependsOnDeadRootWithOwners(last, .{}, &left));
+    // A wildcard generation does not prove that each candidate is live.
+    // Keep overlap and generation evidence separate at summary boundaries.
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(unknown, .{}, &left));
     const historical = (try checker.projectSymbolicStorage(parent, .{ .static_index = 0 }, &right)).?;
     try std.testing.expectEqual(first.symbolic_pointees[0], historical.symbolic_pointees[0]);
     try std.testing.expect(!valueDependsOnDeadRootWithOwners(historical, .{}, &right));
@@ -14713,6 +14950,8 @@ test "reference relation projections select evaluated values without following c
     try std.testing.expectEqual(@as(?u32, 9), selected.lexical_frame);
     const missing = try checker.instantiateOutput(effect, &.{.{ .referenced_place = slot }}, &state);
     try std.testing.expectEqual(@as(?u32, null), missing.lexical_frame);
+    const absent_field = try checker.referenceObservationInput(effect.reference_relation.?.source, &.{.{ .referenced_place = slot }}, &state);
+    try std.testing.expect(absent_field.referenced_place == null);
     const paths = [_]facts.InputPath{
         .{ .input_index = 0, .projections = &.{.dereference} },
         .{ .input_index = 0, .storage_domain = 0 },

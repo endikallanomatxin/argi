@@ -148,7 +148,7 @@ pub const Engine = struct {
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.unknown_access != b.unknown_access or a.input_accesses.len != b.input_accesses.len or a.global_accesses.len != b.global_accesses.len) return false;
     for (a.input_accesses, b.input_accesses) |left, right|
-        if (left.mode != right.mode or left.backing != right.backing or !inputPathEql(left.target, right.target)) return false;
+        if (left.mode != right.mode or left.backing != right.backing or left.virtual_method != right.virtual_method or !inputPathEql(left.target, right.target)) return false;
     for (a.global_accesses, b.global_accesses) |left, right|
         if (left.binding != right.binding or left.mode != right.mode) return false;
     if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
@@ -213,6 +213,10 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     };
     if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
         a.explicit_dependency != b.explicit_dependency or
+        a.concurrent_receiver != b.concurrent_receiver or
+        !std.mem.eql(u32, a.virtual_methods, b.virtual_methods) or
+        (a.virtual_receiver_input == null) != (b.virtual_receiver_input == null) or
+        (a.virtual_receiver_input != null and !inputPathEql(a.virtual_receiver_input.?, b.virtual_receiver_input.?)) or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_generation_dependencies.len != b.input_generation_dependencies.len or

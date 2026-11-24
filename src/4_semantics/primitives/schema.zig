@@ -125,7 +125,15 @@ test "C scalar aliases follow the target data model" {
     try std.testing.expect(builtinTypeNamedForTarget("CLongDouble", target) == null);
 }
 
-pub const PointerMutability = enum(u8) { read_only, read_write };
+pub const PointerMutability = enum(u8) {
+    read_only,
+    read_write,
+    concurrent,
+
+    pub fn accepts(expected: PointerMutability, actual: PointerMutability) bool {
+        return expected == actual or (expected == .read_only and actual == .read_write);
+    }
+};
 pub const Mutability = enum(u8) { constant, variable };
 pub const ForMode = enum(u8) { value, borrow, mut_borrow, move };
 pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };
@@ -165,6 +173,8 @@ pub const SafetyPrimitive = enum {
     trusted_opaque_relocate,
     trusted_opaque_drop,
     trusted_opaque_mark_empty,
+    trusted_concurrent_view,
+    recover_ordinary,
     execution_lend,
     execution_complete,
     execution_input,

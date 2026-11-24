@@ -451,11 +451,13 @@ const Context = struct {
             .logical_or,
             .address_of,
             .address_of_mut,
+            .address_of_concurrent,
             .dereference,
 
             .type_name,
             .pointer_type,
             .pointer_type_mut,
+            .pointer_type_concurrent,
             .nullable_type,
             .inferred_errable_type,
             .array_type,
@@ -508,11 +510,11 @@ const Context = struct {
             .match_statement => self.lowerMatch(node),
             .defer_statement => self.lowerDefer(node),
             .index_assignment => self.lowerIndexAssignment(node, expected),
-            .address_of, .address_of_mut => self.lowerAddress(node, expected),
+            .address_of, .address_of_mut, .address_of_concurrent => self.lowerAddress(node, expected),
             .dereference => self.lowerDereference(node, expected),
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
             .specialization => self.lowerEntityApplication(node),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .associated_type_projection, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            .type_name, .pointer_type, .pointer_type_mut, .pointer_type_concurrent, .nullable_type, .inferred_errable_type, .array_type, .associated_type_projection, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
             .import_statement => self.lowerImport(node, expected),
             else => return error.UnexpectedBodySyntaxNode,
         };
@@ -643,8 +645,7 @@ const Context = struct {
         const op = self.tree.binaryOperation(node).?;
         // A terminal borrow supplies the pointee result type to the preceding
         // pipe stage, allowing output-only comptime arguments to be inferred.
-        const lhs_expected = if ((self.tree.tag(op.rhs) == .address_of or self.tree.tag(op.rhs) == .address_of_mut) and
-            self.tree.tag(self.tree.addressOf(op.rhs).?.value) == .pipe_placeholder)
+        const lhs_expected = if (self.tree.addressOf(op.rhs) != null and self.tree.tag(self.tree.addressOf(op.rhs).?.value) == .pipe_placeholder)
             if (expected) |ty| try self.pointerChild(ty) else null
         else
             null;
@@ -1686,7 +1687,7 @@ const Context = struct {
 
     fn lowerAddress(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const address = self.tree.addressOf(node).?;
-        const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder;
+        const pipe_placeholder = self.tree.tag(address.value) == .pipe_placeholder and address.mutability != .concurrent;
         const child_expected = if (expected) |ty| try self.pointerChild(ty) else null;
         const value = try self.lowerNode(address.value, child_expected);
         const mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability);

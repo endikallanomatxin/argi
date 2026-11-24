@@ -276,6 +276,25 @@ pub const Syntaxer = struct {
     }
 
     // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
+    fn parseReferencePrefix(self: *Syntaxer) SyntaxerError!syn.PointerMutability {
+        var permission: syn.PointerMutability = .read_only;
+        const location = self.tokenLocation();
+        if (self.tokenIs(.dollar)) {
+            self.advanceOne();
+            permission = .read_write;
+            if (self.tokenIs(.dollar)) {
+                self.advanceOne();
+                permission = .concurrent;
+            }
+        }
+        if (!self.tokenIs(.ampersand)) {
+            try self.diags.add(location, .syntax, "expected '&' after '$' in reference prefix", .{});
+            return SyntaxerError.ExpectedAmpersand;
+        }
+        self.advanceOne();
+        return permission;
+    }
+
     fn parseType(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
         // Allow the annotation to be omitted.
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
@@ -345,33 +364,19 @@ pub const Syntaxer = struct {
             }
             return try self.addNode(.array_type, bracket_token, .{ .token_and_node = .{ .token = length_token, .node = elem_ty_opt.? } });
         } else if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
-            var mutable = false;
             const main_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            var op_loc = self.tokenLocation();
-
-            if (self.tokenIs(.dollar)) {
-                mutable = true;
-                self.advanceOne();
-
-                if (!self.tokenIs(.ampersand)) {
-                    try self.diags.add(op_loc, .syntax, "expected '&' after '$' for mutable pointer type", .{});
-                    return SyntaxerError.ExpectedAmpersand;
-                }
-                op_loc = self.tokenLocation();
-            }
-
-            if (!self.tokenIs(.ampersand)) {
-                try self.diags.add(op_loc, .syntax, "expected '&' for pointer type", .{});
-                return SyntaxerError.ExpectedAmpersand;
-            }
-
-            self.advanceOne();
+            const op_loc = self.tokenLocation();
+            const permission = try self.parseReferencePrefix();
             const base_ty_opt = try self.parseType();
             if (base_ty_opt == null) {
                 try self.diags.add(op_loc, .syntax, "expected type after pointer prefix", .{});
                 return SyntaxerError.ExpectedIdentifier;
             }
-            return try self.addNode(if (mutable) .pointer_type_mut else .pointer_type, main_token, .{ .node = base_ty_opt.? });
+            return try self.addNode(switch (permission) {
+                .read_only => .pointer_type,
+                .read_write => .pointer_type_mut,
+                .concurrent => .pointer_type_concurrent,
+            }, main_token, .{ .node = base_ty_opt.? });
         } else if (self.tokenIs(.open_parenthesis)) {
             if (self.parenthesizedTypeIsChoiceLiteral()) {
                 return try self.parseChoiceTypeLiteral(false);
@@ -1598,7 +1603,7 @@ pub const Syntaxer = struct {
             // A nested pipe binds its own RHS placeholders. Only its left
             // operand may refer to the enclosing pipe's value.
             .pipe_expression => self.hasPipePlaceholder(self.file.binaryOperation(node).?.lhs),
-            .address_of, .address_of_mut, .move_expression, .error_propagation, .error_report_return, .nullable_test, .dereference => self.hasPipePlaceholder(self.file.unaryOperand(node).?),
+            .address_of, .address_of_mut, .address_of_concurrent, .move_expression, .error_propagation, .error_report_return, .nullable_test, .dereference => self.hasPipePlaceholder(self.file.unaryOperand(node).?),
             .error_report_return_block => self.hasPipePlaceholder(self.file.data(node).node_and_node.first),
             .struct_field_access => self.hasPipePlaceholder(self.file.structFieldAccess(node).?.value),
             .choice_payload_access => self.hasPipePlaceholder(self.file.choicePayloadAccess(node).?.value),
@@ -1703,29 +1708,14 @@ pub const Syntaxer = struct {
         }
 
         if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
-            var mutable = false;
             const main_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            var op_loc = self.currentLocation();
-
-            if (self.tokenIs(.dollar)) {
-                mutable = true;
-                self.advanceOne();
-
-                if (!self.tokenIs(.ampersand)) {
-                    try self.diags.add(op_loc, .syntax, "expected '&' after '$' for mutable pointer", .{});
-                    return SyntaxerError.ExpectedAmpersand;
-                }
-                op_loc = self.tokenLocation();
-            }
-
-            if (!self.tokenIs(.ampersand)) {
-                try self.diags.add(op_loc, .syntax, "expected '&' for address-of", .{});
-                return SyntaxerError.ExpectedAmpersand;
-            }
-
-            self.advanceOne();
+            const permission = try self.parseReferencePrefix();
             const inner = try self.parsePrimaryWithErrors(error_postfix); // recursivo
-            return try self.addNode(if (mutable) .address_of_mut else .address_of, main_token, .{ .node = inner });
+            return try self.addNode(switch (permission) {
+                .read_only => .address_of,
+                .read_write => .address_of_mut,
+                .concurrent => .address_of_concurrent,
+            }, main_token, .{ .node = inner });
         }
 
         if (self.tokenIs(.keyword_import)) {

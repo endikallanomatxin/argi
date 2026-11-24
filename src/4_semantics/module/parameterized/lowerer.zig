@@ -2108,7 +2108,7 @@ pub const Context = struct {
 
         if (self.tree.addressOf(node)) |address| {
             if (self.tree.tag(address.value) == .pipe_placeholder) {
-                return self.addPending(node, .address_of, &.{try self.lowerBodyNode(address.value)}, null, null, .{ .pipe_pointer_mutability = if (address.mutability == .read_write) .read_write else .read_only });
+                return self.addPending(node, .address_of, &.{try self.lowerBodyNode(address.value)}, null, null, .{ .pipe_pointer_mutability = graph_mod.pointerMutabilityFromSyntax(address.mutability) });
             }
             if (self.temporary_declarations) |temporaries| {
                 if (!self.syntaxIsAddressable(address.value)) {
@@ -2652,6 +2652,7 @@ fn parameterizedDetailForTag(tag: syn.Node.Tag) ir.PendingExpressionDetail {
         .logical_and => .{ .logical = .and_ },
         .logical_or => .{ .logical = .or_ },
         .address_of => .{ .pointer_mutability = .read_only },
+        .address_of_concurrent => .{ .pointer_mutability = .concurrent },
         .address_of_mut => .{ .pointer_mutability = .read_write },
         else => .none,
     };
@@ -2678,7 +2679,7 @@ fn parameterizedKindForTag(tag: syn.Node.Tag) ir.PendingExpressionKind {
         .for_value, .for_borrow, .for_mut_borrow, .for_move => .for_each,
         .match_statement, .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => .match,
         .defer_statement => .defer_value,
-        .address_of, .address_of_mut => .address_of,
+        .address_of, .address_of_mut, .address_of_concurrent => .address_of,
         .dereference => .dereference,
         .pointer_assignment => .pointer_store,
         .move_expression => .move_value,

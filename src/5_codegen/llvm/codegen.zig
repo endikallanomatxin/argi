@@ -2323,6 +2323,10 @@ pub const CodeGenerator = struct {
         const target_native = types.isBuiltin(self.graph, target, .UIntNative);
         if (source_ptr and target_native) return .{ .value_ref = c.LLVMBuildPtrToInt(self.builder, value.value_ref, target_ref, "ptr.to.int"), .type_ref = target_ref, .ty = target };
         if (source_native and target_ptr) return .{ .value_ref = c.LLVMBuildIntToPtr(self.builder, value.value_ref, target_ref, "int.to.ptr"), .type_ref = target_ref, .ty = target, .reference_view = try self.castReferenceEvidence(target) };
+        if (source_ptr and target_ptr and self.graph.semanticType(source).pointer.mutability == .concurrent and
+            self.graph.semanticType(target).pointer.mutability == .read_only and
+            types.equal(self.graph, self.graph.semanticType(source).pointer.child, self.graph.semanticType(target).pointer.child))
+            return .{ .value_ref = value.value_ref, .type_ref = target_ref, .ty = target, .reference_view = value.reference_view };
         if (source_ptr and target_ptr) return .{ .value_ref = c.LLVMBuildBitCast(self.builder, value.value_ref, target_ref, "ptr.cast"), .type_ref = target_ref, .ty = target };
         return CodegenError.InvalidType;
     }

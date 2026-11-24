@@ -536,7 +536,7 @@ pub const Vm = struct {
                         if (source == .capture) {
                             var receiver = virtual.receiver;
                             const permission = method.receiver_permission;
-                            if (permission == .read_write and receiver.mutability != .read_write) return error.ExecutionReadonlyReference;
+                            if (!permission.accepts(receiver.mutability)) return error.ExecutionReadonlyReference;
                             receiver.mutability = permission;
                             value.* = .{ .reference = receiver };
                         } else {

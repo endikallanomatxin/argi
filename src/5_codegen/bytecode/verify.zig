@@ -206,13 +206,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .erase_reference => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
                     const to = program.graph.semanticType(f.slots[x.dst]);
-                    if (from != .pointer or to != .pointer or to.pointer.mutability != .read_only or !types.isBuiltin(program.graph, to.pointer.child, .Any)) return error.InvalidBytecode;
+                    if (from != .pointer or to != .pointer or from.pointer.mutability == .concurrent or to.pointer.mutability != .read_only or !types.isBuiltin(program.graph, to.pointer.child, .Any)) return error.InvalidBytecode;
                 },
                 .numeric_bytes => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
                     const to = program.graph.semanticType(f.slots[x.dst]);
                     if (from != .pointer or to != .pointer or !types.isBuiltin(program.graph, to.pointer.child, .UInt8) or
-                        (to.pointer.mutability == .read_write and from.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                        (from.pointer.mutability == .concurrent or to.pointer.mutability == .concurrent or !to.pointer.mutability.accepts(from.pointer.mutability))) return error.InvalidBytecode;
                     if (x.permission != to.pointer.mutability or x.endian != program.graph.target.arch.endian()) return error.InvalidBytecode;
                     var arena = std.heap.ArenaAllocator.init(allocator);
                     defer arena.deinit();
@@ -221,7 +221,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 },
                 .offset_reference => |x| {
                     const pointer = program.graph.semanticType(f.slots[x.src]);
-                    if (pointer != .pointer or !types.equal(program.graph, f.slots[x.dst], f.slots[x.src]) or
+                    if (pointer != .pointer or pointer.pointer.mutability == .concurrent or !types.equal(program.graph, f.slots[x.dst], f.slots[x.src]) or
                         !types.isBuiltin(program.graph, f.slots[x.elements], .UIntNative)) return error.InvalidBytecode;
                 },
                 .virtualize => |x| {
@@ -235,7 +235,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                         if (method.receiver_input_index >= implementation.inputs.len) return error.InvalidBytecode;
                         const expected = program.graph.semanticType(implementation.slots[implementation.inputs[method.receiver_input_index]]);
                         if (expected != .pointer or expected.pointer.mutability != method.receiver_permission or !types.equal(program.graph, expected.pointer.child, selected.concrete_type) or
-                            (expected.pointer.mutability == .read_write and receiver.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                            !expected.pointer.mutability.accepts(receiver.pointer.mutability)) return error.InvalidBytecode;
                     }
                 },
                 .virtual_call => |x| {
@@ -243,7 +243,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.args.len != signature.inputs.len or x.outputs.len != signature.outputs.len or signature.receiver_input_index >= x.args.len or signature.method_index >= signature.method_count) return error.InvalidBytecode;
                     if (@intFromEnum(signature.virtual_type) >= program.graph.types.items.len or program.graph.semanticType(signature.virtual_type) != .virtual) return error.InvalidBytecode;
                     const handle = program.graph.semanticType(f.slots[x.handle]);
-                    if (handle != .pointer or !types.equal(program.graph, handle.pointer.child, signature.virtual_type)) return error.InvalidBytecode;
+                    if (handle != .pointer or handle.pointer.mutability == .concurrent or !types.equal(program.graph, handle.pointer.child, signature.virtual_type)) return error.InvalidBytecode;
                     const contract = program.graph.semanticType(signature.virtual_type).virtual;
                     for (x.args, signature.inputs, 0..) |slot, ty, index| {
                         if (@intFromEnum(ty) >= program.graph.types.items.len) return error.InvalidBytecode;
@@ -274,7 +274,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .readonly => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
                     const to = program.graph.semanticType(f.slots[x.dst]);
-                    if (from != .pointer or to != .pointer or from.pointer.mutability != .read_write or to.pointer.mutability != .read_only or !types.equal(program.graph, from.pointer.child, to.pointer.child)) return error.InvalidBytecode;
+                    if (from != .pointer or to != .pointer or to.pointer.mutability != .read_only or !types.equal(program.graph, from.pointer.child, to.pointer.child)) return error.InvalidBytecode;
+                    if (from.pointer.mutability != .read_write) {
+                        const id = function_id orelse return error.InvalidBytecode;
+                        if (from.pointer.mutability != .concurrent or program.graph.function(id).safety_primitive != .trusted_concurrent_view) return error.InvalidBytecode;
+                    }
                 },
                 .integer_cast => |x| {
                     if (x.from.bounds() == null or x.to.bounds() == null or
@@ -694,7 +698,7 @@ fn placeInfo(program: Program, slots: []const Type, place: Place) !struct { ty: 
         },
         .dereference => {
             const pointer = graph.semanticType(ty);
-            if (pointer != .pointer) return error.InvalidBytecode;
+            if (pointer != .pointer or pointer.pointer.mutability == .concurrent) return error.InvalidBytecode;
             writable = pointer.pointer.mutability == .read_write;
             ty = pointer.pointer.child;
         },

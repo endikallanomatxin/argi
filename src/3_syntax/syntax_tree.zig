@@ -155,11 +155,13 @@ pub const Node = struct {
         index_assignment,
         address_of,
         address_of_mut,
+        address_of_concurrent,
         dereference,
         pointer_assignment,
         type_name,
         pointer_type,
         pointer_type_mut,
+        pointer_type_concurrent,
         nullable_type,
         inferred_errable_type,
         array_type,
@@ -189,7 +191,7 @@ pub const Node = struct {
 };
 
 pub const Mutability = enum(u32) { constant, variable };
-pub const PointerMutability = enum(u32) { read_only, read_write };
+pub const PointerMutability = enum(u32) { read_only, read_write, concurrent };
 
 /// A function value has no binding name or declaration-owned parameters.
 pub const FunctionDefinitionExtra = struct {
@@ -891,6 +893,7 @@ pub const FileSyntaxTree = struct {
                 .qualifier_token = tree.data(node).token_and_optional_token.optional.unwrap(),
             } },
             .pointer_type => .{ .pointer = .{ .child = tree.data(node).node, .mutability = .read_only } },
+            .pointer_type_concurrent => .{ .pointer = .{ .child = tree.data(node).node, .mutability = .concurrent } },
             .pointer_type_mut => .{ .pointer = .{ .child = tree.data(node).node, .mutability = .read_write } },
             .nullable_type => .{ .nullable = tree.data(node).node },
             .inferred_errable_type => .{ .inferred_errable = .{ .child = tree.data(node).node, .traced = tree.tokens.items(.content)[@intFromEnum(tree.mainToken(node))] == .double_bang } },
@@ -1005,7 +1008,7 @@ pub const FileSyntaxTree = struct {
 
     pub fn unaryOperand(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
-            .expression_statement, .move_expression, .error_propagation, .error_report_return, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
+            .expression_statement, .move_expression, .error_propagation, .error_report_return, .nullable_test, .defer_statement, .address_of, .address_of_mut, .address_of_concurrent, .dereference => tree.data(node).node,
             .error_report_return_block => tree.data(node).node_and_node.first,
             else => null,
         };
@@ -1021,6 +1024,7 @@ pub const FileSyntaxTree = struct {
         const mutability: PointerMutability = switch (tree.tag(node)) {
             .address_of => .read_only,
             .address_of_mut => .read_write,
+            .address_of_concurrent => .concurrent,
             else => return null,
         };
         return .{ .value = tree.data(node).node, .mutability = mutability };

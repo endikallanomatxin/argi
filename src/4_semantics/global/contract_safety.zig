@@ -324,6 +324,12 @@ pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange
             reason = "refers_to requires matching input and output referent types";
             break;
         }
+        if (input_ty.pointer.mutability != output_ty.pointer.mutability and
+            (input_ty.pointer.mutability == .concurrent or output_ty.pointer.mutability == .concurrent))
+        {
+            reason = "refers_to must preserve concurrent reference authority";
+            break;
+        }
         if (input_ty.pointer.mutability == .read_only and output_ty.pointer.mutability == .read_write) {
             reason = "refers_to cannot grant mutable access from a read-only input";
             break;

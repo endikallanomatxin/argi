@@ -177,6 +177,7 @@ pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.Poin
     return switch (value) {
         .read_only => .read_only,
         .read_write => .read_write,
+        .concurrent => .concurrent,
     };
 }
 

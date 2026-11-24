@@ -263,6 +263,15 @@ fn firstNodeWithTag(tree: *const syntax_tree.FileSyntaxTree, tag: syntax_tree.No
     return @enumFromInt(@as(u32, @intCast(index)));
 }
 
+test "concurrent reference type and sharing expression have distinct syntax" {
+    var tree = try parseTestSource("concurrent.rg", "share := (.v: $$&Cell) -> () { x ::= $$&v }");
+    defer tree.deinit(std.testing.allocator);
+    const pointer = firstNodeWithTag(&tree, .pointer_type_concurrent);
+    const address = firstNodeWithTag(&tree, .address_of_concurrent);
+    try std.testing.expectEqual(syntax_tree.PointerMutability.concurrent, tree.addressOf(address).?.mutability);
+    try std.testing.expectEqual(syntax_tree.PointerMutability.concurrent, tree.typeReference(pointer).?.pointer.mutability);
+}
+
 test "compact syntaxing preserves representative structures" {
     var minimal = try parseTestFile("tests/feature_tests/basics/01_minimal_main/main.rg");
     defer minimal.deinit(std.testing.allocator);

@@ -169,7 +169,11 @@ pub const Lowerer = struct {
                 .Any => "any",
             }),
             .pointer => |pointer| {
-                try buffer.appendSlice(if (pointer.mutability == .read_only) "pro_" else "prw_");
+                try buffer.appendSlice(switch (pointer.mutability) {
+                    .read_only => "pro_",
+                    .read_write => "prw_",
+                    .concurrent => "pcon_",
+                });
                 try self.encodeType(buffer, pointer.child);
             },
             .array => |array| {
