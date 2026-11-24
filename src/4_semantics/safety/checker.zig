@@ -15948,7 +15948,7 @@ test "summarized handoff retires only the projected owner" {
     try std.testing.expect(state.tracker.isAlive(sibling));
 }
 
-test "a by-value request can certify its exact execution on an error outcome" {
+test "an error outcome certifies the exact request captured at entry" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -15979,11 +15979,13 @@ test "a by-value request can certify its exact execution on an error outcome" {
     try std.testing.expect(state.executionPending(first));
     try std.testing.expect(state.executionPending(second));
 
-    const completions = try checker.captureOutcomeCompletions(summary, &.{
-        .{ .execution_receipts = &.{first} },
-    }, &state);
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    try state.setPlace(slot, .initialized, .{ .execution_receipts = &.{first} });
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = slot }};
+    const completions = try checker.captureOutcomeCompletions(summary, &arguments, &state);
     defer allocator.free(completions);
-    const exact = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{}, &state, output, completions);
+    try state.setPlace(slot, .initialized, .{ .execution_receipts = &.{second} });
+    const exact = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &arguments, &state, output, completions);
     try std.testing.expect(state.executionPending(first));
     try checker.activate_conditional_resources(&state, exact.variants[0].value.*);
     try std.testing.expect(!state.executionPending(first));
