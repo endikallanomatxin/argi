@@ -6520,6 +6520,7 @@ pub const SafetyChecker = struct {
             current.owned_backing = null;
             current.intrinsic_backing_owner = null;
             current.concurrent_receiver = false;
+            current.virtual_methods = &.{};
         }
         return current;
     }
@@ -16058,9 +16059,10 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     var checker = SafetyChecker.init(a, undefined, &graph);
     defer checker.deinit();
-    const child: facts.ValueFacts = .{ .known_choice_variant = 0, .concurrent_receiver = true };
+    const child: facts.ValueFacts = .{ .known_choice_variant = 0, .virtual_methods = &.{@enumFromInt(0)}, .concurrent_receiver = true };
     const parent: facts.ValueFacts = .{
         .known_choice_variant = 1,
+        .virtual_methods = &.{@enumFromInt(1)},
         .concurrent_receiver = true,
         .fields = &.{.{ .index = 0, .value = &child }},
     };
@@ -16069,10 +16071,13 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     const missing = try checker.projectValueFacts(parent, &.{.{ .field = 1 }});
     try std.testing.expect(missing.known_choice_variant == null);
     try std.testing.expect(exact.concurrent_receiver);
+    try std.testing.expectEqual(@as(usize, 1), exact.virtual_methods.len);
     try std.testing.expect(!missing.concurrent_receiver);
+    try std.testing.expectEqual(@as(usize, 0), missing.virtual_methods.len);
     const nested = try checker.projectValueFacts(parent, &.{ .{ .field = 1 }, .{ .field = 0 } });
     try std.testing.expect(nested.known_choice_variant == null);
     try std.testing.expect(!nested.concurrent_receiver);
+    try std.testing.expectEqual(@as(usize, 0), nested.virtual_methods.len);
 }
 
 test "reading through an uncovered target does not select a known choice value" {
