@@ -32,8 +32,9 @@ _owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.c
     anchor: UInt8 = 0
     root ::= erase_reference#(UInt8)(.base = &anchor)
     slot ::= _execution_input#(inputs_of#(F))(.invocation = invocation, .anchor = root)
-    -- Only the authenticated, accepted invocation can take this input.
-    args ::= trusted_opaque_move_out#(.t: inputs_of#(F), .storage_type: UInt8)(.storage = $&anchor, .slot = slot)
+    -- The accepted invocation owns the initialized input slot. Moving from
+    -- it preserves the worker ingress facts and consumes the slot once.
+    args ::= ~slot&
     value ::= invoke#(F)(.args = ~args)
     _require_task_output_transfer#(result_of#(F))(.value = &value)
     _initialize_task_output#(result_of#(F))(.invocation = invocation, .value = ~value)
