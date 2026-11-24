@@ -30,16 +30,12 @@ fn provesValue(
     // authenticates receiver and region targets and establishes their loans.
     if (semantic == .virtual) return value.concurrent_receiver;
     if (semantic == .pointer) return semantic.pointer.mutability == .concurrent;
-    var structural_cleanup = false;
-    for (graph.contract_conformances.items) |evidence| {
-        if (evidence.declaration != markers.unconditional and evidence.declaration != markers.structural) continue;
-        if (!evidence.declaration_validated or evidence.participants.len != 1) continue;
-        const participant = graph.generic_arguments.items[evidence.participants.start].value.type;
-        if (!types.equal(graph, ty, participant)) continue;
-        if (evidence.declaration == markers.unconditional) return true;
-        structural_cleanup = true;
-    }
-    if ((types.hasDestructor(graph, ty) and !structural_cleanup) or
+    const guarantee = if (semantic == .nominal or semantic == .generic)
+        nominalGuarantee(graph, ty, markers)
+    else
+        .none;
+    if (guarantee == .unconditional) return true;
+    if ((guarantee != .structural and types.hasDestructor(graph, ty)) or
         @import("../global/c_abi.zig").isRawPointer(graph, ty) or
         @import("../global/c_abi.zig").isFunctionPointer(graph, ty)) return false;
     if (semantic == .builtin)
@@ -75,6 +71,22 @@ fn provesValue(
         return true;
     }
     return false;
+}
+
+const NominalGuarantee = enum { none, structural, unconditional };
+
+fn nominalGuarantee(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, markers: Markers) NominalGuarantee {
+    if (markers.unconditional == null and markers.structural == null) return .none;
+    var guarantee: NominalGuarantee = .none;
+    for (graph.contract_conformances.items) |evidence| {
+        if (evidence.declaration != markers.unconditional and evidence.declaration != markers.structural) continue;
+        if (!evidence.declaration_validated or evidence.participants.len != 1) continue;
+        const participant = graph.generic_arguments.items[evidence.participants.start].value.type;
+        if (!types.equal(graph, ty, participant)) continue;
+        if (evidence.declaration == markers.unconditional) return .unconditional;
+        guarantee = .structural;
+    }
+    return guarantee;
 }
 
 /// An opaque native result slot currently transports bytes and cleanup custody.
