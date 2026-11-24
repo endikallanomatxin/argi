@@ -5790,11 +5790,12 @@ pub const SafetyChecker = struct {
             for (value.execution_receipts) |id| if (std.mem.indexOfScalar(facts.ExecutionId, execution_ids.items, id) == null) try execution_ids.append(id);
         }
         for (effect.fresh_executions) |fresh| {
-            if (!self.inputTypeNeedsLoan(@enumFromInt(fresh.input_type), 0, true)) continue;
+            // Even a scalar-shaped owner can carry backing or execution custody.
+            // The submitted value, rather than its layout, decides admission.
             const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
             const maybe_id: ?facts.ExecutionId = existing orelse blk: {
                 const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries);
-                const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source);
+                const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse capture_source);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
                 if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);
@@ -15633,9 +15634,25 @@ test "task input cannot take backing borrowed by a separate execution" {
     _ = try checker.lendExecution(input_type, wrapped, &state, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expect(state.executionPending(pending));
+
+    checker.active_summary_call_source = source;
+    const input: facts.ValueEffect = .{ .input_dependencies = &.{.{
+        .path = .{ .input_index = 0 },
+        .transfers_ownership = true,
+    }} };
+    const summary_output: facts.ValueEffect = .{ .fresh_executions = &.{.{
+        .source = 0,
+        .input_type = @intFromEnum(input_type),
+        .inputs = &input,
+    }} };
+    const rejected = try checker.instantiateOutput(summary_output, &.{wrapped}, &state);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 0), rejected.execution_receipts.len);
+    try std.testing.expect(state.executionPending(pending));
+
     state.completeExecution(pending);
-    _ = try checker.lendExecution(input_type, wrapped, &state, source);
-    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    _ = try checker.instantiateOutput(summary_output, &.{wrapped}, &state);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
 }
 
 test "an uncovered target cannot establish an execution loan" {
