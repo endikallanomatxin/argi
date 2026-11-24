@@ -147,3 +147,26 @@ The generic-body count includes bodies that did not reach code generation.
 These figures measure the retired release request and its cleanup. A separate
 measurement needs to exercise ownership transfer with the same compilation
 specialization and different value evidence.
+
+## Cost of structural transfer evidence
+
+Build the retained virtual cleanup fixture
+`tests/feature_tests/concurrency/413_owned_task_retained_virtual_cleanup`
+with its original `StructurallyTransferable#(Owner)` declaration and with
+`Transferable#(Owner)` in its place. An x86-64 Linux run on `40a26d847`
+used five alternating builds per declaration, with one frontend worker,
+`--release --no-cache --stats --emit-llvm`, and ran each executable.
+
+| Metric | Unconditional | Structural |
+| --- | ---: | ---: |
+| Median wall time, seconds | 1.88 | 1.88 |
+| Median peak RSS, KiB | 146592 | 146672 |
+| Median safety time, ms | 46.219 | 46.438 |
+| Generic bodies built | 126 | 126 |
+| LLVM functions reported | 117 | 117 |
+| Executable text, bytes | 51538 | 51532 |
+
+Both emitted one owned task worker with the same symbol and 174-byte
+machine code size. This comparison measures the structural proof for an
+owner retaining a virtual handle. The String round trip remains a separate
+workload.
