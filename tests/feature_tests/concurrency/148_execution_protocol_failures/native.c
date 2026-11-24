@@ -95,10 +95,18 @@ static void check_caller_output(void) {
     if (probe_start_buffers(slot, 0, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int))) abort();
     create_fails = 0;
     if (probe_output_accepted(slot, make_owned) || probe_output_take(slot, make_owned) || drops != before) abort();
-    uintptr_t task = probe_start_buffers(slot, 1, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
+    uintptr_t task = probe_start_buffers(slot, 0, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
     if (!task || !probe_output_accepted(slot, make_owned) || probe_output_accepted(slot, calculate) ||
         !probe_output_destroy(slot) || probe_output_take(slot, make_owned)) abort();
     if (probe_task_result(task, sizeof(int)) || probe_take_owned_result(task, drop_result)) abort();
+    join_fails = 1;
+    if (!probe_task_release_storage(task) || !pending_start ||
+        !probe_output_accepted(slot, make_owned) || probe_output_take(slot, make_owned)) abort();
+    join_fails = 0;
+    destroy_fails = 1;
+    if (!probe_task_release_storage(task) || pending_start ||
+        !probe_output_accepted(slot, make_owned) || probe_output_take(slot, make_owned)) abort();
+    destroy_fails = 0;
     if (probe_task_release_storage(task) || !probe_output_accepted(slot, make_owned) ||
         drops != before || !probe_output_destroy(slot)) abort();
     if (probe_output_take(slot, calculate)) abort();
