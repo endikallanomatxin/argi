@@ -6045,6 +6045,7 @@ pub const SafetyChecker = struct {
         const direct_owned_roots = result.owned_roots;
 
         var forwarded_backing: ?facts.ValidityRootId = null;
+        var forwarded_owner: ?facts.ValidityRootId = null;
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             var input = if (dependency.validity_only and dependency.path.projections.len != 0)
@@ -6057,8 +6058,10 @@ pub const SafetyChecker = struct {
             // Every copied alternative contributes, including an unknown
             // target. Validity-only anchors never select referenced storage.
             if (!dependency.validity_only) {
-                if (effect.input_dependencies.len == 1 and !input.reference_target_incomplete)
+                if (effect.input_dependencies.len == 1 and !input.reference_target_incomplete) {
                     forwarded_backing = input.owned_backing;
+                    if (dependency.transfers_ownership) forwarded_owner = input.intrinsic_backing_owner;
+                }
                 unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
                 includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             }
@@ -6191,6 +6194,12 @@ pub const SafetyChecker = struct {
             effect.fields.len == 0 and effect.variants.len == 0)
         {
             result.owned_backing = forwarded_backing;
+        }
+        if (forwarded_owner) |root| {
+            if (!effect.reference_target_incomplete and effect.input_places.len == 0 and
+                effect.input_place_values.len == 0 and effect.variants.len == 0 and
+                effect.fresh_owned_roots.len == 0 and containsRoot(result.owned_roots, root))
+                result.intrinsic_backing_owner = root;
         }
         if (effect.owns_fresh_backing and effect.fresh_owned_roots.len == 1)
             result.intrinsic_backing_owner = fresh_roots.get(effect.fresh_owned_roots[0]);
@@ -12257,6 +12266,7 @@ test "field materialization preserves intrinsic ownership moved from an input" {
     const address = facts.ValueFacts{ .dependencies = &.{.{ .root = root }} };
     const allocation = facts.ValueFacts{
         .owned_roots = &.{root},
+        .intrinsic_backing_owner = root,
         .fields = &.{.{ .index = 0, .value = &address }},
     };
     const address_effect = facts.ValueEffect{
@@ -12268,6 +12278,7 @@ test "field materialization preserves intrinsic ownership moved from an input" {
     }, &.{allocation}, &state);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, transferred.owned_roots);
     try std.testing.expectEqual(root, transferred.fields[0].value.dependencies[0].root);
+    try std.testing.expectEqual(root, transferred.intrinsic_backing_owner.?);
 }
 
 test "field materialization removes ownership derived from replaced fields" {
