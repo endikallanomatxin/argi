@@ -43,7 +43,16 @@ fn resolveNames(a: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGrap
     }
     if (bound.fields.len == 0) {
         if (!external) return .{ .failure = "reads and writes require a reference input" };
-        if (bound.write and !mutable) return .{ .failure = "writes requires a mutable reference input" };
+        // A contract can bound effects on its concurrent participant.
+        // This says where its implementation may act through the trusted
+        // interface; it grants no ordinary dereference or foreign access.
+        const concurrent_participant = if (context.participant) |participant| blk: {
+            const input = graph.semanticType(ty);
+            break :blk input == .pointer and input.pointer.mutability == .concurrent and
+                types.equal(graph, input.pointer.child, participant);
+        } else false;
+        if (bound.write and !mutable and !concurrent_participant)
+            return .{ .failure = "writes requires a mutable reference input" };
         return .{ .bound = bound };
     }
 

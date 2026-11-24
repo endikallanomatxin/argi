@@ -1,5 +1,5 @@
 Verify#(.R: Type): Contract = (
-    .verify: (.receiver: R, .value: Int32) -> () where { reads(receiver) isolated() }
+    .verify: (.receiver: R, .value: Int32) -> () where { writes(receiver) isolated() }
 )
 Expected := (.value: Int32)
 implement ConcurrentAlias#(Expected) ()

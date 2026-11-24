@@ -259,7 +259,10 @@ Every selected implementation must satisfy the bound, including transitive calls
 and selected cleanup. Global or unknown effects cannot satisfy a closed bound.
 Virtual calls use the declared bound, even if a concrete implementation does less.
 Access bounds grant neither generation invalidation nor ownership transfer; those
-effects still need their separate clauses.
+effects still need their separate clauses. A contract's `writes(receiver)` may also
+bound effects through a captured concurrent reference. The bound describes
+the footprint of the trusted operation. The reference mode still governs
+how its implementation may access the receiver.
 
 Virtual dispatch from an isolated callback requires `isolated()` and a
 closed access bound on the called method. Every
