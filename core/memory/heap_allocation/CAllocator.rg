@@ -30,7 +30,7 @@ implement Deallocator#($&CAllocator) (
         .size      : UIntNative,
         .alignment : UIntNative
     ) -> () {
-        aligned_free(.address = data.address, .ffi = self&.ffi)
+        _release_c_storage(.address = data.address, .ffi = self&.ffi)
     }
 )
 
