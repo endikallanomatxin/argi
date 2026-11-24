@@ -10368,9 +10368,29 @@ test "body reference alternative collection only dirties a function for new sour
 }
 
 fn hasReferenceTargetRecipe(effect: facts.ValueEffect) bool {
-    if (effect.input_places.len != 0 or effect.input_place_values.len != 0) return true;
+    if (effect.static_reference != null or effect.input_places.len != 0 or effect.input_place_values.len != 0) return true;
     for (effect.input_dependencies) |dependency| if (!dependency.validity_only) return true;
     return if (effect.reference_relation) |relation| relation.grade == .identity else false;
+}
+
+test "static reference joins preserve unresolved alternatives" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+
+    const observed: facts.ValueEffect = .{ .static_reference = 1 };
+    const forwarded: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const unknown = try infer.joinStorageAlternatives(null, forwarded, .{});
+    const joined = try infer.joinStorageAlternatives(null, observed, unknown);
+    try std.testing.expect(joined.static_reference == null);
+    try std.testing.expect(joined.reference_target_incomplete);
+    try std.testing.expect((try infer.joinStorageAlternatives(null, observed, .{})).reference_target_incomplete);
 }
 
 test "reference alternative joins preserve uncertainty and do not add requirements to identical values" {
