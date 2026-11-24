@@ -199,17 +199,18 @@ const State = struct {
             },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                const selected = if (self.isolation_source != null) self.localVirtualMethod(call) else null;
                 if (self.isolation_source != null) {
                     const declared = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract;
-                    // A checked empty footprint needs no permission to
-                    // access the captured referent. Still visit every method
-                    // below to check foreign calls and once consumption.
+                    const concurrent = if (selected) |method| method.concurrent else call.self_permission == .concurrent;
+                    // A checked empty footprint needs no receiver access.
                     if (declared == null or !declared.?.bounded_access or
-                        (call.self_permission != .concurrent and declared.?.access_bounds.len != 0))
+                        (!concurrent and declared.?.access_bounds.len != 0))
                         try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                 }
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
+                if (selected) |method| return self.walkCall(node_id, method.function);
                 const evidence = @import("contract_evidence.zig");
                 const contract = evidence.virtualContractType(self.graph, call) orelse return error.InvalidVirtualContract;
                 var candidates: evidence.PossibleVirtualMethods = .{ .graph = self.graph, .contract = contract, .method_index = call.method_index };
@@ -310,6 +311,30 @@ const State = struct {
 
             .explicit_cast => |cast| try self.walkNode(cast.value),
         }
+    }
+
+    const LocalVirtualMethod = struct {
+        function: graph_mod.GlobalFunctionId,
+        concurrent: bool,
+    };
+
+    fn localVirtualMethod(self: *const State, call: graph_mod.VirtualCall) ?LocalVirtualMethod {
+        const address = self.graph.node(call.handle).content;
+        if (address != .address_of) return null;
+        const descriptor = self.graph.node(address.address_of).content;
+        if (descriptor != .binding_use or self.graph.isModuleBinding(descriptor.binding_use)) return null;
+        const binding = self.graph.binding(descriptor.binding_use);
+        if (binding.mutability != .constant or binding.deferred_initialization) return null;
+        const initializer = self.graph.node(binding.initialization orelse return null).content;
+        if (initializer != .virtualize) return null;
+        const virtualize = self.graph.virtualizes.items[@intFromEnum(initializer.virtualize)];
+        if (call.method_index >= virtualize.methods.len) return null;
+        const reference = self.graph.resolvedSemanticType(self.graph.node(virtualize.value).ty orelse return null) orelse return null;
+        if (reference != .pointer) return null;
+        return .{
+            .function = self.graph.function_refs.items[virtualize.methods.start + call.method_index],
+            .concurrent = reference.pointer.mutability == .concurrent,
+        };
     }
 
     fn isIsolatedCallback(self: *const State, ty: ?graph_mod.GlobalTypeId) bool {
