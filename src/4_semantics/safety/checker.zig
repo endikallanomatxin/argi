@@ -6146,25 +6146,28 @@ pub const SafetyChecker = struct {
             result.virtual_methods = methods;
         } else result.virtual_methods = &.{};
         if (effect.virtual_receiver_input) |path| {
-            if (path.input_index < arguments.len) if (snapshotVirtualEvidence(arguments[path.input_index], path.projections)) |selected| {
-                result.concurrent_receiver = selected.concurrent_receiver;
-                result.virtual_methods = selected.virtual_methods;
-            };
+            const selected = snapshotVirtualEvidence(arguments, path) orelse facts.ValueFacts{};
+            result.concurrent_receiver = selected.concurrent_receiver;
+            result.virtual_methods = selected.virtual_methods;
         }
         if (effect.concurrent_receiver_inputs.len != 0) {
             result.concurrent_receiver = for (effect.concurrent_receiver_inputs) |path| {
-                if (path.input_index >= arguments.len) break false;
-                const selected = snapshotVirtualEvidence(arguments[path.input_index], path.projections) orelse break false;
+                const selected = snapshotVirtualEvidence(arguments, path) orelse break false;
                 if (!selected.concurrent_receiver) break false;
             } else true;
         }
         return result;
     }
 
-    fn snapshotVirtualEvidence(value: facts.ValueFacts, projections: []const facts.Projection) ?facts.ValueFacts {
-        var selected = value;
-        for (projections) |projection|
+    fn snapshotVirtualEvidence(arguments: []const facts.ValueFacts, path: facts.InputPath) ?facts.ValueFacts {
+        if (path.storage_domain != null or path.input_index >= arguments.len) return null;
+        var selected = arguments[path.input_index];
+        for (path.projections) |projection| {
+            if (projection == .variant) {
+                if (selected.known_choice_variant) |active| if (active != projection.variant) return null;
+            }
             selected = representedSnapshotProjection(selected, projection) orelse return null;
+        }
         return selected;
     }
 
@@ -15653,6 +15656,31 @@ test "an uncovered target cannot establish an execution loan" {
     try checker.collectExecutionLoans(@enumFromInt(1), .{ .symbolic_pointees = &.{@enumFromInt(0)}, .reference_target_incomplete = true }, &state, &loans, .{ .file_index = 0, .offset = 0 });
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "virtual evidence follows only the selected receiver snapshot" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    const shared: facts.ValueFacts = .{ .concurrent_receiver = true };
+    const arguments = [_]facts.ValueFacts{.{
+        .known_choice_variant = 0,
+        .variants = &.{.{ .index = 1, .value = &shared }},
+    }};
+    const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .variant = 1 }} };
+    try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&arguments, path) == null);
+    var unknown = arguments;
+    unknown[0].known_choice_variant = null;
+    try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&unknown, path).?.concurrent_receiver);
+
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const result = try checker.instantiateOutput(.{
+        .concurrent_receiver = true,
+        .virtual_receiver_input = path,
+    }, &arguments, &state);
+    try std.testing.expect(!result.concurrent_receiver);
 }
 
 test "an uncovered projection cannot reuse a sibling choice discriminant" {
