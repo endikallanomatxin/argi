@@ -14204,6 +14204,20 @@ test "allocation acquisition origin survives consumption without restoring permi
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, data.acquisition_origins);
     try std.testing.expectEqual(@as(usize, 0), data.storage_capabilities.len);
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
+    const anchor_origin = try state.establishCapability();
+    const dependency = try inference.primitiveValueEffect(.depend_on, 0, null);
+    const release = try checker.projectValueFacts(summarized, &.{.{ .field = primitive_transfer.AllocationTransfer.storage_address_field }});
+    const restrict_arguments = [_]facts.ValueFacts{ release, .{
+        .acquisition_origins = &.{anchor_origin},
+        .storage_capabilities = &.{anchor_origin},
+    } };
+    const checked_address = try checker.dependencyPrimitive(&restrict_arguments, .depend_on);
+    const summarized_address = try checker.instantiateOutput(dependency, &restrict_arguments, &state);
+    for ([_]facts.ValueFacts{ checked_address, summarized_address }) |address| {
+        try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, address.acquisition_origins);
+        try std.testing.expectEqual(@as(usize, 0), address.storage_capabilities.len);
+        try std.testing.expect(address.explicit_dependency);
+    }
     const forwarded = try checker.instantiateOutput(.{ .input_acquisition_origins = &.{.{ .input_index = 0 }} }, &.{data}, &state);
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, forwarded.acquisition_origins);
     try std.testing.expectEqual(@as(usize, 0), forwarded.storage_capabilities.len);
