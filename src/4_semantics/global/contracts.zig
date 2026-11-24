@@ -328,7 +328,8 @@ pub const Resolver = struct {
         }
         var evidence_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer evidence_bindings.deinit(self.allocator);
-        const evidence = try self.selectConformance(contract_decl, &.{concrete}, &evidence_bindings, 0, null) orelse {
+        const participant = if (self.capturesReferenceParticipant(located)) handle_ty else concrete;
+        const evidence = try self.selectConformance(contract_decl, &.{participant}, &evidence_bindings, 0, null) orelse {
             self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = "the concrete type has no selected conformance for this contract" };
             return null;
         };
@@ -347,15 +348,8 @@ pub const Resolver = struct {
             // never re-enter global overload lookup when a type is erased.
             const implementation = try self.resolveOperationBinding(self.graph.contract_conformances.items[evidence.tuple], method_index);
             try methods.append(self.allocator, implementation);
-            const erased = (try self.requirementInstanceForContractUse(contract_use, contract_ty, located, requirement, @intCast(method_index))) orelse return null;
-            const fields = global_types.fields(self.graph, erased.input) orelse return error.InvalidContractRequirementInput;
-            for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-                const ty = self.graph.semanticType(field.ty);
-                if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, contract_ty)) {
-                    try receiver_indices.append(self.allocator, @intCast(index));
-                    break;
-                }
-            }
+            const position = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located)) orelse return error.InvalidContractRequirementInput;
+            try receiver_indices.append(self.allocator, position);
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
         try self.graph.function_refs.appendSlice(self.allocator, methods.items);
@@ -368,7 +362,7 @@ pub const Resolver = struct {
             try self.graph.virtual_registry_refs.append(self.allocator, registry);
         }
         const virtual_ty = try self.generics.internType(.{ .virtual = contract_ty });
-        const domains = (try self.resolveStorageDomains(contract_use, concrete, located, source)) orelse return null;
+        const domains = (try self.resolveStorageDomains(contract_use, participant, concrete, located, source)) orelse return null;
         const virtualize: global_sg.GlobalVirtualizeId = @enumFromInt(@as(u32, @intCast(self.graph.virtualizes.items.len)));
         try self.graph.virtualizes.append(self.allocator, .{
             .value = handle,
@@ -399,10 +393,10 @@ pub const Resolver = struct {
         function: global_sg.GlobalFunctionId,
     };
 
-    fn resolveStorageDomains(self: *Resolver, use: ContractUse, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
+    fn resolveStorageDomains(self: *Resolver, use: ContractUse, participant: global_sg.GlobalTypeId, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        if (try self.selectConformance(use.declaration, &.{concrete}, &bindings, 0, null)) |selection| {
+        if (try self.selectConformance(use.declaration, &.{participant}, &bindings, 0, null)) |selection| {
             if (try self.associatedArgumentsMatch(located, &bindings, use.arguments)) {
                 const evidence = self.graph.contract_conformances.items[selection.tuple];
                 const owner: usize = @intFromEnum(evidence.context);
@@ -630,10 +624,7 @@ pub const Resolver = struct {
             if (!std.mem.eql(u8, name, self.modules[located.module_index].text(requirement.name))) continue;
             const instance = (try self.requirementInstanceForContractUse(use, ty.virtual, located, requirement, @intCast(index))) orelse return null;
             const fields = global_types.fields(self.graph, instance.input) orelse return null;
-            const position = for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, input_index| {
-                const parameter = self.graph.semanticType(field.ty);
-                if (parameter == .pointer and global_types.equal(self.graph, parameter.pointer.child, ty.virtual)) break input_index;
-            } else return null;
+            const position = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located)) orelse return null;
             {
                 const parameter = self.graph.fields.items[fields.start + position];
                 const parameter_type = self.graph.semanticType(parameter.ty);
@@ -771,24 +762,12 @@ pub const Resolver = struct {
                 const output_ty = instance.output;
                 const input_fields = global_types.fields(self.graph, input_ty) orelse continue;
                 const output_fields = global_types.fields(self.graph, output_ty) orelse continue;
-                var self_index: ?u32 = null;
-                var permission: primitives.PointerMutability = .read_only;
-                for (0..input_fields.len) |field_index| {
-                    const field = self.graph.fields.items[input_fields.start + @as(u32, @intCast(field_index))];
-                    switch (self.graph.types.items[@intFromEnum(field.ty)]) {
-                        .pointer => |pointer| if (global_types.equal(self.graph, pointer.child, contract_ty)) {
-                            self_index = @intCast(field_index);
-                            permission = pointer.mutability;
-                            break;
-                        },
-                        else => {},
-                    }
-                }
-                const index = self_index orelse continue;
+                const index = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located)) orelse continue;
+                const permission = self.graph.semanticType(self.graph.fields.items[input_fields.start + index].ty).pointer.mutability;
                 // Dispatch reads the descriptor slot. The captured reference
                 // supplies the operation's authority over the actual resource.
                 var call_fields = input_fields;
-                if (self.graph.semanticType(pointee) == .virtual and permission == .read_write) {
+                if (self.graph.semanticType(pointee) == .virtual and permission != .read_only) {
                     const slot_type = try self.core.pointerType(pointee, .read_only);
                     const start = self.graph.fields.items.len;
                     try self.graph.fields.ensureUnusedCapacity(self.allocator, input_fields.len);
@@ -883,7 +862,7 @@ pub const Resolver = struct {
                 const ty = self.graph.semanticType(field.ty);
                 if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, contract_ty)) {
                     receivers += 1;
-                    if (conversion_permission == .read_only and ty.pointer.mutability == .read_write)
+                    if (!self.capturesReferenceParticipant(located) and conversion_permission == .read_only and ty.pointer.mutability == .read_write)
                         reason = "a mutable participant receiver requires a mutable concrete reference ($&T) at conversion";
                 } else if (try contract_safety.containsErasedParticipant(self, field.ty, contract_ty)) {
                     reason = "the hidden participant is only allowed as a direct borrowed receiver (&T or $&T)";
@@ -944,7 +923,10 @@ pub const Resolver = struct {
         // The unary participant is hidden by this handle; its fixed signature
         // uses the erased receiver identity.
         if (located.definition.participants.len != 1) return null;
-        bindings.types[located.definition.participants.start] = self_type;
+        bindings.types[located.definition.participants.start] = if (self.capturesReferenceParticipant(located))
+            try self.core.pointerType(self_type, .read_write)
+        else
+            self_type;
         const signature = try self.instantiateRequiredSignature(located.module_index, requirement, &bindings) orelse return null;
         return .{ .declaration = contract_use.declaration, .method_index = method_index, .input = signature.input, .output = signature.output };
     }
@@ -3070,6 +3052,37 @@ pub const Resolver = struct {
         try self.graph.completeVirtualSignature(self.allocator, registry_id, contract, fields.len, instance.output);
     }
 
+    fn capturePosition(self: *const Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, direct: bool) ?u32 {
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const signature = requirement.signature orelse return null;
+        const input = storage.ir.representation(signature.input);
+        if (input != .resolved or input.resolved != .structural) return null;
+        const fields = input.resolved.structural.fields;
+        var found: ?u32 = null;
+        for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+            const pattern = storage.ir.representation(field.ty);
+            const participant = if (direct)
+                field.ty
+            else if (pattern == .resolved and pattern.resolved == .pointer)
+                pattern.resolved.pointer.child
+            else
+                continue;
+            if (!self.isUnaryReceiverParticipantType(located, participant)) continue;
+            if (found != null) return null;
+            found = @intCast(index);
+        }
+        return found;
+    }
+
+    fn capturesReferenceParticipant(self: *const Resolver, located: LocatedContractDefinition) bool {
+        if (located.definition.participants.len != 1 or located.definition.requirements.len == 0) return false;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+            if (self.capturePosition(located, requirement, true) == null) return false;
+        }
+        return true;
+    }
+
     fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedContractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
         // Identify the receiver from the requirement's symbolic participant,
         // never from coincident concrete argument types. Explicit unary
@@ -3085,7 +3098,12 @@ pub const Resolver = struct {
     fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef, selection: primitives.ContractOperationIdentity) !void {
         const declared = requirement.safety_contract orelse return;
         const function = self.graph.function(method);
-        if (try contract_safety.methodSafetyContractFailure(self, function.input, function.output, output, concrete, located, declared, false)) |reason| {
+        const participant_type = self.graph.semanticType(concrete);
+        const referent = if (self.capturesReferenceParticipant(located) and participant_type == .pointer)
+            participant_type.pointer.child
+        else
+            concrete;
+        if (try contract_safety.methodSafetyContractFailure(self, function.input, function.output, output, referent, located, declared, false)) |reason| {
             self.virtual_signature_failure = .{ .source = source, .method_name = self.modules[located.module_index].text(requirement.name), .reason = reason, .static_contract = true };
             return;
         }
@@ -3094,7 +3112,7 @@ pub const Resolver = struct {
         for (self.graph.contract_safety_conformances.items) |existing| {
             if (std.meta.eql(existing.selection, selection) and existing.method == method) return;
         }
-        const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output, .{ .participant = concrete, .domains = located.definition.domains }) catch |err| switch (err) {
+        const contract = contract_safety.globalSafetyContract(self, located.module_index, declared, function.input, output, .{ .participant = referent, .domains = located.definition.domains }) catch |err| switch (err) {
             error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {
                 self.virtual_signature_failure = .{
                     .source = source,
@@ -3127,15 +3145,8 @@ pub const Resolver = struct {
         }
         const contract_decl = self.graph.familyForDeclaration(globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)).?;
         const use = ContractUse{ .declaration = contract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
-        const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, located, source)) orelse return;
-        var receiver: ?u32 = null;
-        for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
-            const ty = self.graph.resolvedSemanticType(field.ty) orelse continue;
-            if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, concrete)) {
-                receiver = @intCast(index);
-                break;
-            }
-        }
+        const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, referent, located, source)) orelse return;
+        const receiver = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located));
         try self.graph.contract_safety_conformances.append(self.allocator, .{ .selection = selection, .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
     }
 
