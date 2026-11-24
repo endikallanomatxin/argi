@@ -175,6 +175,7 @@ fn verifyVirtualImplementation(graph: *const graph_mod.GlobalSemanticGraph, desc
     const function = graph.function(method);
     try require(descriptor.receiver_input_index < function.input.len);
     if (descriptor.safety_contract) |contract| {
+        try require(!contract.isolated or contract.bounded_access);
         try require(contract.output_count == function.output.len);
         for (contract.invalidates) |index| try require(index < function.input.len);
         for (contract.dependencies) |dependency| try require(dependency.input_index < function.input.len);

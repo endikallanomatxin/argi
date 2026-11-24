@@ -29,11 +29,24 @@ pub fn verifyContinuation(allocator: std.mem.Allocator, graph: *const graph_mod.
 pub fn verifyModule(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, path: []const u8) !void {
     var roots = try @import("reachability.zig").moduleRoots(allocator, graph, path);
     defer roots.deinit();
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .diagnostics = diagnostics,
+        .seen_once = Uses.init(allocator),
+        .active_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+    };
+    defer state.seen_once.deinit();
+    defer state.active_functions.deinit();
+    // Supplier proofs are independent of which root the editor checks.
+    try state.verifyVirtualIsolation();
+    if (state.had_error) return error.Reported;
+
     var entries = roots.values.keyIterator();
     while (entries.next()) |entry| {
-        var uses = Uses.init(allocator);
-        defer uses.deinit();
-        try verifyContinuation(allocator, graph, diagnostics, entry.*, &uses);
+        state.seen_once.clearRetainingCapacity();
+        try state.walkFunction(entry.*);
+        if (state.had_error) return error.Reported;
     }
 }
 

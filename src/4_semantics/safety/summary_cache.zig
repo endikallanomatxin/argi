@@ -200,7 +200,7 @@ fn covers(available: []const Selector, wanted: []const Selector) bool {
     return true;
 }
 
-test "virtual cache keys preserve declared access bounds" {
+test "virtual cache keys preserve declared access bounds and isolation" {
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(std.testing.allocator);
     const declaration: g.VirtualMethodRegistry = .{
@@ -220,6 +220,9 @@ test "virtual cache keys preserve declared access bounds" {
     try std.testing.expect(!virtualsMatch(&graph, dependencies));
     graph.virtual_registries.items[0] = declaration;
     graph.virtual_registries.items[0].safety_contract.?.bounded_access = false;
+    try std.testing.expect(!virtualsMatch(&graph, dependencies));
+    graph.virtual_registries.items[0] = declaration;
+    graph.virtual_registries.items[0].safety_contract.?.isolated = true;
     try std.testing.expect(!virtualsMatch(&graph, dependencies));
     graph.virtual_registries.items[0] = declaration;
     graph.virtual_registries.items[0].safety_contract.?.access_bounds = &.{.{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } }};
