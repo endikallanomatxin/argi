@@ -6007,7 +6007,6 @@ pub const SafetyChecker = struct {
             input = try self.renewPostCaptureInput(input, dependency.path, effect, arguments, state);
             if (dependency.transfers_ownership and dependency.path.projections.len != 0)
                 try self.activate_conditional_resources(state, input);
-            if (!dependency.transfers_ownership) input.owned_roots = &.{};
             // Every copied alternative contributes, including an unknown
             // target. Validity-only anchors never select referenced storage.
             if (!dependency.validity_only) {
@@ -6026,6 +6025,8 @@ pub const SafetyChecker = struct {
                     for (roots.items) |root| try appendDependencyFact(&borrowed, .{ .root = root });
                 };
                 input = .{ .explicit_dependency = input.explicit_dependency, .dependencies = try borrowed.toOwnedSlice() };
+            } else if (!dependency.transfers_ownership) {
+                input = (try self.withoutOwnership(input)) orelse input;
             }
             result = try self.mergeValueFacts(result, input);
         }
@@ -6586,6 +6587,36 @@ pub const SafetyChecker = struct {
             .choice_observations = try choice_observations.toOwnedSlice(self.allocator),
             .guarded_values = try guarded_values.toOwnedSlice(self.allocator),
         };
+    }
+
+    fn withoutOwnership(self: *SafetyChecker, value: facts.ValueFacts) anyerror!?facts.ValueFacts {
+        var result = value;
+        result.owned_roots = &.{};
+        // Guarded snapshots can recover whole owners. Their refinement is
+        // optional when copying dependencies and must not restore custody.
+        result.guarded_values = &.{};
+        result.generation_outcomes = &.{};
+        var fields: ?[]facts.FieldFacts = null;
+        for (value.fields, 0..) |field, index| {
+            const child = try self.withoutOwnership(field.value.*) orelse continue;
+            if (fields == null) fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = child;
+            fields.?[index].value = stored;
+        }
+        if (fields) |updated| result.fields = updated;
+        var variants: ?[]facts.VariantFacts = null;
+        for (value.variants, 0..) |variant, index| {
+            const child = try self.withoutOwnership(variant.value.*) orelse continue;
+            if (variants == null) variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = child;
+            variants.?[index].value = stored;
+        }
+        if (variants) |updated| result.variants = updated;
+        if (fields == null and variants == null and value.owned_roots.len == 0 and
+            value.guarded_values.len == 0 and value.generation_outcomes.len == 0) return null;
+        return result;
     }
 
     fn withoutOwnedRoots(
@@ -12083,6 +12114,31 @@ test "activating choice payloads never revives consumed storage capabilities" {
         try std.testing.expectEqual(@as(usize, 1), state.storage_capabilities.items.len);
         try std.testing.expectEqual(.consumed, state.capabilityState(@enumFromInt(0)));
     }
+}
+
+test "copying input dependencies does not copy nested ownership" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    const child: facts.ValueFacts = .{
+        .owned_roots = &.{root},
+        .dependencies = &.{.{ .root = root }},
+    };
+    const wrapped: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &child }} };
+    const copied = try checker.instantiateOutput(.{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }},
+    }, &.{wrapped}, &state);
+    try std.testing.expect(!valueContainsOwnedRoot(copied, root));
+    try std.testing.expect(valueDependsOnRoot(copied, root));
+    const moved = try checker.instantiateOutput(.{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
+    }, &.{wrapped}, &state);
+    try std.testing.expect(valueContainsOwnedRoot(moved, root));
 }
 
 test "field materialization preserves intrinsic ownership moved from an input" {
