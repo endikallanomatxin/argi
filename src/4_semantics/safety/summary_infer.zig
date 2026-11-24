@@ -142,7 +142,7 @@ pub const Infer = struct {
         }
 
         fn addBackingInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode, backing: bool) !void {
-            for (self.inputs.items) |*existing| if (existing.backing == backing and summaries.inputPathEql(existing.target, target)) {
+            for (self.inputs.items) |*existing| if (existing.virtual_method == null and existing.backing == backing and summaries.inputPathEql(existing.target, target)) {
                 if (mode == .write) existing.mode = .write;
                 return;
             };
@@ -155,6 +155,13 @@ pub const Infer = struct {
                 return;
             };
             try self.globals.append(.{ .binding = binding, .mode = mode });
+        }
+
+        fn addVirtualAccess(self: *AccessEffects, access: facts.InputAccess) !void {
+            for (self.inputs.items) |existing| {
+                if (existing.virtual_method == access.virtual_method and summaries.inputPathEql(existing.target, access.target)) return;
+            }
+            try self.inputs.append(access);
         }
 
         fn closeVirtualAccess(self: *AccessEffects) !void {
@@ -5526,7 +5533,27 @@ pub const Infer = struct {
             try self.recordTransferRequirement(function, target, arguments);
         }
         for (summary.input_accesses) |access| {
-            if (access.virtual_method != null) {
+            if (access.virtual_method) |method| {
+                // Cleanup supplies the value actually held at this point.
+                // Its projected descriptor proof describes that snapshot even
+                // when earlier operations changed other access targets.
+                if (override) |captured| {
+                    if (captured.input_index == access.target.input_index and access.target.projections.len != 0 and
+                        access.target.projections[0] == .dereference and access.target.storage_domain == null)
+                    {
+                        var descriptor = captured.effect;
+                        for (access.target.projections[1..]) |projection|
+                            descriptor = try self.projectValueEffect(descriptor, projection);
+                        if (!descriptor.reference_target_incomplete and
+                            std.mem.indexOfScalar(u32, descriptor.virtual_no_access, method) != null) continue;
+                        if (!descriptor.reference_target_incomplete) if (descriptor.virtual_receiver_input) |origin| {
+                            var translated = access;
+                            translated.target = origin;
+                            try sink.addVirtualAccess(translated);
+                            continue;
+                        };
+                    }
+                }
                 if (sink.deferred_virtual == null and override == null and access.target.input_index < arguments.len) {
                     var argument = arguments[access.target.input_index].value;
                     var suffix = access.target.projections;
