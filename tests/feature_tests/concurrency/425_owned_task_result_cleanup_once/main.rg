@@ -64,6 +64,13 @@ main := (.system: System) -> () {
         task ::= unwrap_or_abort(async_owned#(forward_through_helper)(.args = (.input = ~input, .direct = false), .executor = executor, .ffi = system.ffi))
         owner ::= unwrap_or_abort(await($&task))
         if owner.value != 42 or drops != 2 { abort }
+        match await($&task) {
+            ..ok ~duplicate { abort }
+            ..error failure {
+                if is(.value = failure.reason, .variant = ..already_awaited) == false { abort }
+            }
+        }
+        if drops != 2 { abort }
     }
     if drops != 3 { abort }
     {
