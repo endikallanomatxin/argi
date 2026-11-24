@@ -694,12 +694,23 @@ pub const Resolver = struct {
         return .resolved;
     }
 
+    fn operationVisible(self: *const Resolver, name: []const u8, owner: usize, caller: usize) bool {
+        return !std.mem.startsWith(u8, name, "_") or
+            self.graph.sameModuleNamespace(@enumFromInt(owner), @enumFromInt(caller)) or
+            (self.modules[owner].is_bundled_core and self.modules[caller].is_bundled_core);
+    }
+
     pub fn makeVirtualMember(self: *Resolver, receiver: global_sg.GlobalNodeId, name: []const u8, input_id: global_sg.GlobalNodeId, source: primitives.SourceRef, context: call_context.Context) !?global_sg.Node {
         const receiver_type = self.graph.node(receiver).ty orelse return null;
         const ty = self.graph.resolvedSemanticType(receiver_type) orelse return null;
         if (ty != .virtual) return null;
         const use = self.contractUse(ty.virtual) orelse return null;
         const located = self.findContractDefinition(use.declaration) orelse return null;
+        const caller = self.graph.files.items[source.file_index].module;
+        if (!self.operationVisible(name, located.module_index, @intFromEnum(caller))) {
+            self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "contract operation is private to its defining module" };
+            return null;
+        }
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         const input = self.graph.node(input_id);
         if (input.content != .struct_value_literal) return null;
@@ -825,6 +836,8 @@ pub const Resolver = struct {
             const contract_use = self.contractUse(contract_ty) orelse continue;
             if (contract) |declaration| if (declaration != contract_use.declaration) continue;
             const located = self.findContractDefinition(contract_use.declaration) orelse continue;
+            const caller = self.graph.files.items[source.file_index].module;
+            if (!self.operationVisible(method_name, located.module_index, @intFromEnum(caller))) continue;
             if (expected_associations) |expected| {
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
@@ -1888,9 +1901,7 @@ pub const Resolver = struct {
             .operation = name,
             .reason = "",
         };
-        if (std.mem.startsWith(u8, name, "_") and module_index != located.module_index and
-            !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
-        {
+        if (!self.operationVisible(name, located.module_index, module_index)) {
             failure.reason = "contract operation is private to its defining module";
             self.participant_conformance_failure = failure;
             return null;
