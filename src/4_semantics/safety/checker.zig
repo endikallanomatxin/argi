@@ -5944,6 +5944,12 @@ pub const SafetyChecker = struct {
         var unknown_reference_source = false;
         var place_alternatives = std.array_list.Managed(facts.Place).init(self.allocator);
         defer place_alternatives.deinit();
+        if (effect.static_reference) |binding| {
+            const storage: facts.Place = .{ .root = @enumFromInt(binding) };
+            includeReferenceAlternative(&referenced_place, &has_referent, storage);
+            try appendPlaceFact(&place_alternatives, storage);
+            try appendDependencyFact(&dependencies, .{ .root = try self.observeStorageGeneration(state, storage) });
+        }
         for (effect.input_places) |path| {
             const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state);
             includeReferenceAlternative(&referenced_place, &has_referent, target);

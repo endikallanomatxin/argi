@@ -83,9 +83,14 @@ fn provesValue(
 fn observesImmutableModuleScalar(graph: *const graph_mod.GlobalSemanticGraph, value: facts.ValueFacts) bool {
     if (value.reference_target_incomplete or value.symbolic_pointees.len != 0) return false;
     const place = value.referenced_place orelse return false;
-    if (place.projections.len != 0 or !graph.isModuleBinding(place.root)) return false;
+    if (place.projections.len != 0) return false;
     for (value.mutation_places) |candidate| if (!candidate.eql(place)) return false;
-    const binding = graph.binding(place.root);
+    return isImmutableModuleScalar(graph, place.root);
+}
+
+pub fn isImmutableModuleScalar(graph: *const graph_mod.GlobalSemanticGraph, root: graph_mod.GlobalBindingId) bool {
+    if (!graph.isModuleBinding(root)) return false;
+    const binding = graph.binding(root);
     if (binding.mutability != .constant) return false;
     const backing = graph.resolvedSemanticType(binding.ty) orelse return false;
     return backing == .builtin and backing.builtin != .Any and backing.builtin != .Type;

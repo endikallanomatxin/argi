@@ -217,6 +217,8 @@ pub const ReferenceRelation = struct {
 };
 
 pub const ValueEffect = struct {
+    /// Exact read-only observation of immutable module scalar storage.
+    static_reference: ?u32 = null,
     /// A possible reference result has no retained target-selection recipe.
     /// Lifetime dependencies are retained independently of target precision.
     /// The erased receiver retains concurrent reference authority.

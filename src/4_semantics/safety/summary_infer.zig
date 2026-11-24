@@ -6131,6 +6131,12 @@ pub const Infer = struct {
             .move_value => |value| try self.withOwnershipTransfer(try self.inferExpression(function_id, value)),
             .denied_implicit_copy => |value| try self.inferExpression(function_id, value),
             .address_of => |value| blk: {
+                const addressed = self.graph.node(value).content;
+                if (addressed == .binding_use and @import("transfer_evidence.zig").isImmutableModuleScalar(self.graph, addressed.binding_use)) {
+                    const ty = self.graph.resolvedSemanticType(node.ty orelse break :blk .{}) orelse break :blk .{};
+                    if (ty == .pointer and ty.pointer.mutability == .read_only)
+                        break :blk .{ .static_reference = @intFromEnum(addressed.binding_use) };
+                }
                 if (self.graph.node(value).content == .array_index) {
                     const index = self.graph.node(value).content.array_index;
                     // Borrow the array pointer's backing lifetime, not the
@@ -7398,6 +7404,7 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
+            .static_reference = effect.static_reference,
             .concurrent_receiver = effect.concurrent_receiver,
             .explicit_dependency = effect.explicit_dependency,
             .fresh_dependencies = effect.fresh_dependencies,
@@ -7622,7 +7629,14 @@ pub const Infer = struct {
             else
                 try self.withoutOwnershipTransfer(argument);
             if (dependency.validity_only) argument = try self.validityOnlyEffect(argument);
+            const static_reference = if (effect.input_dependencies.len == 1 and effect.input_places.len == 0 and
+                effect.input_place_values.len == 0 and effect.fields.len == 0 and effect.variants.len == 0)
+                argument.static_reference
+            else
+                null;
             result = try self.mergeValueEffects(result, argument);
+            if (static_reference != null and effect.static_reference == null)
+                result.static_reference = static_reference;
         }
 
         if (effect.fields.len != 0) {
@@ -7797,6 +7811,7 @@ pub const Infer = struct {
             .dereference => {},
         }
         var result = effect;
+        result.static_reference = null;
         result.concurrent_receiver = false;
         result.virtual_methods = &.{};
         if (result.virtual_receiver_input) |*path| {
@@ -8089,6 +8104,7 @@ pub const Infer = struct {
         }
 
         return .{
+            .static_reference = if (left.static_reference == right.static_reference) left.static_reference else null,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
             .concurrent_receiver_inputs = if (left.virtual_receiver_input != null and right.virtual_receiver_input != null and
                 left.virtual_receiver_input.?.eql(right.virtual_receiver_input.?))
