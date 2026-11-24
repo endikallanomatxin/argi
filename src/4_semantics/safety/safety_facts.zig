@@ -220,6 +220,8 @@ pub const ReferenceRelation = struct {
 pub const ValueEffect = struct {
     /// An authenticated observation of the sole fresh dependency.
     observes_fresh_backing: bool = false,
+    /// Copies address bits from an exact input snapshot.
+    input_backing_observation: ?InputPath = null,
     owns_fresh_backing: bool = false,
     /// Exact read-only observation of immutable module scalar storage.
     static_reference: ?u32 = null,

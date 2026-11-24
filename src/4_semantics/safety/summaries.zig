@@ -199,6 +199,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
+    if (a.input_backing_observation) |path| {
+        if (b.input_backing_observation == null or !inputPathEql(path, b.input_backing_observation.?)) return false;
+    } else if (b.input_backing_observation != null) return false;
     if (a.static_reference != b.static_reference or a.observes_fresh_backing != b.observes_fresh_backing or a.owns_fresh_backing != b.owns_fresh_backing) return false;
     if (a.reference_relation) |path| {
         if (b.reference_relation == null or !path.eql(b.reference_relation.?)) return false;

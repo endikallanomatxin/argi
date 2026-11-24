@@ -6206,6 +6206,10 @@ pub const SafetyChecker = struct {
         {
             result.owned_backing = forwarded_backing;
         }
+        if (effect.input_backing_observation) |path| {
+            if (snapshotVirtualEvidence(arguments, path)) |input|
+                result.owned_backing = input.owned_backing;
+        }
         if (forwarded_owner) |root| {
             if (!effect.reference_target_incomplete and effect.input_places.len == 0 and
                 effect.input_place_values.len == 0 and effect.variants.len == 0 and

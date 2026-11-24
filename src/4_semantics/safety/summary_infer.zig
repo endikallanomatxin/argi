@@ -6122,6 +6122,7 @@ pub const Infer = struct {
             },
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index| blk: {
                 var effect = try self.inputValueEffect(index, &.{});
+                effect.input_backing_observation = .{ .input_index = index };
                 const ty = self.graph.semanticType(self.graph.binding(binding).ty);
                 if (ty == .virtual or ty == .array or types.fields(self.graph, self.graph.binding(binding).ty) != null or
                     types.variants(self.graph, self.graph.binding(binding).ty) != null)
@@ -7729,6 +7730,19 @@ pub const Infer = struct {
         }
         result.observes_fresh_backing = effect.observes_fresh_backing and result.fresh_dependencies.len == 1 and
             effect.fresh_dependencies.len == 1 and result.fresh_dependencies[0] == effect.fresh_dependencies[0];
+        if (effect.input_backing_observation) |path| {
+            if (path.storage_domain == null and path.input_index < arguments.len) {
+                var selected = if (override) |replacement|
+                    if (replacement.input_index == path.input_index) replacement.effect else try context.effect(path.input_index)
+                else
+                    try context.effect(path.input_index);
+                for (path.projections) |projection| selected = try self.projectValueEffect(selected, projection);
+                result.input_backing_observation = selected.input_backing_observation;
+                if (selected.observes_fresh_backing and selected.fresh_dependencies.len == 1 and
+                    result.fresh_dependencies.len == 1 and selected.fresh_dependencies[0] == result.fresh_dependencies[0])
+                    result.observes_fresh_backing = true;
+            }
+        }
         return result;
     }
 
@@ -7828,6 +7842,12 @@ pub const Infer = struct {
         var result = effect;
         result.static_reference = null;
         result.observes_fresh_backing = false;
+        if (result.input_backing_observation) |*path| {
+            if (projection == .dereference or projection == .dynamic_index)
+                result.input_backing_observation = null
+            else
+                path.projections = try self.appendProjection(path.projections, projection);
+        }
         result.owns_fresh_backing = false;
         result.concurrent_receiver = false;
         result.virtual_methods = &.{};
@@ -8123,6 +8143,10 @@ pub const Infer = struct {
 
         return .{
             .static_reference = if (left.static_reference == right.static_reference) left.static_reference else null,
+            .input_backing_observation = if (left.input_backing_observation) |path| blk: {
+                const other = right.input_backing_observation orelse break :blk null;
+                break :blk if (path.eql(other)) path else null;
+            } else null,
             .owns_fresh_backing = left.owns_fresh_backing and right.owns_fresh_backing and fresh_owned.items.len == 1,
             .observes_fresh_backing = left.observes_fresh_backing and right.observes_fresh_backing and fresh_dependencies.items.len == 1,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
@@ -10405,6 +10429,25 @@ fn hasReferenceTargetRecipe(effect: facts.ValueEffect) bool {
     if (effect.static_reference != null or effect.input_places.len != 0 or effect.input_place_values.len != 0) return true;
     for (effect.input_dependencies) |dependency| if (!dependency.validity_only) return true;
     return if (effect.reference_relation) |relation| relation.grade == .identity else false;
+}
+
+test "address snapshot recipe is lost when an alternative changes the value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    const path: facts.InputPath = .{ .input_index = 0 };
+    const copied: facts.ValueEffect = .{
+        .input_backing_observation = path,
+        .input_dependencies = &.{.{ .path = path, .validity_only = true }},
+    };
+    var changed = copied;
+    changed.input_backing_observation = null;
+    try std.testing.expect((try infer.joinStorageAlternatives(null, copied, changed)).input_backing_observation == null);
+    try std.testing.expect((try infer.joinStorageAlternatives(null, copied, copied)).input_backing_observation.?.eql(path));
 }
 
 test "static reference joins preserve unresolved alternatives" {
