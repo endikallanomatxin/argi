@@ -1,7 +1,6 @@
 -- Scheduling is independent of I/O capabilities. The erased ABI transports
--- audited inputs and plain results; typed packaging remains in async/await.
-_TaskResultCleanup(.storage: UIntNative) -> (): CFunctionPointer
-_TaskEntry(.invocation: _ExecutionInvocation) -> (.cleanup: _TaskResultCleanup): CFunctionPointer(.isolated = true)
+-- audited inputs and results; typed packaging remains in async/await.
+_TaskEntry(.invocation: _ExecutionInvocation) -> (): CFunctionPointer(.isolated = true)
 
 -- Entry, layout and source are one authenticated request. Providers can forward
 -- it, but cannot change an entry's buffer bounds or retain the source borrow.

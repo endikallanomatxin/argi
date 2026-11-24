@@ -23,8 +23,6 @@ struct argi_task {
     uintptr_t output_size;
     uintptr_t input_alignment, output_alignment;
     int joined;
-    argi_task_result_cleanup result_cleanup;
-    int owner_claimed;
 };
 
 static void argi_task_entry(void *context) {
@@ -34,7 +32,7 @@ static void argi_task_entry(void *context) {
         task->input_size, task->output_size,
         task->input_alignment, task->output_alignment
     };
-    task->result_cleanup = task->buffer_start(invocation);
+    task->buffer_start(invocation);
 }
 
 /* Allocate at least one byte even for an empty value, so the callback receives
@@ -175,19 +173,11 @@ int32_t _argi_execution_reclaim(uintptr_t handle) {
     return argi_task_join((struct argi_task *)handle);
 }
 
-uintptr_t _argi_task_take_owned_result(uintptr_t handle, argi_task_result_cleanup cleanup) {
-    struct argi_task *task = (struct argi_task *)handle;
-    if (!task || task->caller_output || !cleanup || argi_task_join(task)) return 0;
-    if (task->result_cleanup != cleanup || task->owner_claimed) return 0;
-    task->owner_claimed = 1;
-    return (uintptr_t)task->output;
-}
-
 uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size) {
     if (!handle) return 0;
     struct argi_task *task = (struct argi_task *)handle;
     if (task->caller_output || size != task->output_size) return 0;
-    if (argi_task_join(task) || task->result_cleanup || !task->output) return 0;
+    if (argi_task_join(task) || !task->output) return 0;
     return (uintptr_t)task->output;
 }
 
@@ -195,7 +185,7 @@ struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_
     struct argi_task_result_block result = {{0}, 0};
     if (!handle) return result;
     const struct argi_task *task = (const struct argi_task *)handle;
-    if (task->caller_output || !task->joined || task->result_cleanup || offset >= task->output_size) return result;
+    if (task->caller_output || !task->joined || offset >= task->output_size) return result;
     uintptr_t count = task->output_size - offset;
     if (count > sizeof(result.bytes)) count = sizeof(result.bytes);
     memcpy(result.bytes, (const unsigned char *)task->output + offset, count);
@@ -203,28 +193,18 @@ struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_
     return result;
 }
 
-static int32_t argi_task_destroy(uintptr_t handle, int allow_cleanup) {
+int32_t _argi_task_release_storage(uintptr_t handle) {
     if (!handle) return -1;
     struct argi_task *task = (struct argi_task *)handle;
     if (argi_task_join(task)) return -1;
-    if (!task->caller_output && !allow_cleanup && task->result_cleanup && !task->owner_claimed) return -1;
     if (task->thread && _argi_thread_destroy(task->thread)) return -1;
     if (task->caller_output) {
         task->caller_output->published = task->output;
         task->caller_output->state = OUTPUT_PUBLISHED;
         task->output = NULL;
-    } else if (task->result_cleanup && !task->owner_claimed)
-        task->result_cleanup((uintptr_t)task->output);
+    }
     argi_task_aligned_free(task->output);
     argi_task_aligned_free(task->input);
     free(task);
     return 0;
-}
-
-int32_t _argi_task_release_storage(uintptr_t handle) {
-    return argi_task_destroy(handle, 0);
-}
-
-int32_t _argi_task_destroy(uintptr_t handle) {
-    return argi_task_destroy(handle, 1);
 }

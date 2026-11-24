@@ -10,9 +10,7 @@ struct argi_execution_invocation {
     uintptr_t input_size, output_size;
     uintptr_t input_alignment, output_alignment;
 };
-typedef void (*argi_task_result_cleanup)(uintptr_t storage);
-/* Return NULL for plain output or its typed destructor for owned output. */
-typedef argi_task_result_cleanup (*argi_task_buffer_start)(struct argi_execution_invocation invocation);
+typedef void (*argi_task_buffer_start)(struct argi_execution_invocation invocation);
 /* Byte copies transport representations; they establish neither Argi reference
    validity nor ownership transfer.
    The worker owns input reads and output publication until join. The handle
@@ -45,10 +43,6 @@ int32_t _argi_task_output_destroy(uintptr_t slot);
 /* Certified reclaim performs synchronization itself; a flag supplied by the
    caller cannot stand in for successful joining. Failure retains the loan. */
 int32_t _argi_execution_reclaim(uintptr_t handle);
-/* Successful join publishes the initialized output and its worker-returned
-   destructor. A matching consumer can claim the owner once, then must move
-   it out before releasing the backing storage. */
-uintptr_t _argi_task_take_owned_result(uintptr_t handle, argi_task_result_cleanup cleanup);
 /* Joining publishes the result for repeatable inspection until destruction.
    Invalid sizes fail before join. The typed owner controls delivery. */
 uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size);
@@ -57,9 +51,7 @@ uintptr_t _argi_task_join_result(uintptr_t handle, uintptr_t size);
    returns count zero; the unused suffix is always initialized to zero. */
 struct argi_task_result_block { uint8_t bytes[32]; uintptr_t count; };
 struct argi_task_result_block _argi_task_result_block(uintptr_t handle, uintptr_t offset);
-/* Release can free plain or already claimed storage. A pending owner leaves
-   the handle intact. This entry never invokes a result destructor. */
+/* Join and release the task, publishing caller-owned output.
+   Failure retains the handle and payload. */
 int32_t _argi_task_release_storage(uintptr_t handle);
-/* Destroy joins if necessary; a join failure retains the handle and payload. */
-int32_t _argi_task_destroy(uintptr_t handle);
 #endif

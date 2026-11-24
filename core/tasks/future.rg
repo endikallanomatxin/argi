@@ -18,17 +18,16 @@ implement#(.T: Type) Deinit#(Future#(T)) (
 -- The native adapter keeps both aligned buffers live for this entire callback.
 -- Local anchors bound these trusted borrows to that callback, not to an
 -- arbitrary foreign address. Input reference leaves are checked at submission.
-_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.cleanup: _TaskResultCleanup): CFunction {
+_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (): CFunction {
     anchor: UInt8 = 0
     root ::= erase_reference#(UInt8)(.base = &anchor)
     input_ref ::= _execution_input#(inputs_of#(F))(.invocation = invocation, .anchor = root)
     args ::= input_ref&
     value ::= invoke#(F)(.args = ~args)
     _initialize_task_output#(result_of#(F))(.invocation = invocation, .value = ~value)
-    cleanup = zeroed#(.t: _TaskResultCleanup)()
 }
 
-_owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.cleanup: _TaskResultCleanup): CFunction {
+_owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (): CFunction {
     anchor: UInt8 = 0
     root ::= erase_reference#(UInt8)(.base = &anchor)
     slot ::= _execution_input#(inputs_of#(F))(.invocation = invocation, .anchor = root)
@@ -38,7 +37,6 @@ _owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.c
     value ::= invoke#(F)(.args = ~args)
     _require_task_output_transfer#(result_of#(F))(.value = &value)
     _initialize_task_output#(result_of#(F))(.invocation = invocation, .value = ~value)
-    cleanup = zeroed#(.t: _TaskResultCleanup)()
 }
 
 async := #(.F: Function) (

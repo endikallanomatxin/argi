@@ -7,33 +7,30 @@
 #include <string.h>
 
 struct input { uintptr_t gate; uintptr_t entered; int value; };
-static argi_task_result_cleanup calculate(struct argi_execution_invocation invocation) {
+static void calculate(struct argi_execution_invocation invocation) {
     uintptr_t input_address = invocation.input, output_address = invocation.output;
     if (!invocation.identity || invocation.input_size != sizeof(struct input) || invocation.output_size != sizeof(int)) abort();
     const struct input *input = (const struct input *)input_address;
     _argi_atomic_u32_store(input->entered, 1);
     while (!_argi_atomic_u32_load(input->gate)) {}
     *(int *)output_address = input->value * 2;
-    return NULL;
 }
-static argi_task_result_cleanup buffers(struct argi_execution_invocation invocation) {
+static void buffers(struct argi_execution_invocation invocation) {
     uintptr_t input = invocation.input, output = invocation.output;
     if (!invocation.identity || invocation.input_size != sizeof(int)) abort();
     if (!input || !output || input % 64 || output % 64) abort();
     *(int *)output = *(const int *)input * 2;
-    return NULL;
 }
-static argi_task_result_cleanup empty_buffers(struct argi_execution_invocation invocation) {
+static void empty_buffers(struct argi_execution_invocation invocation) {
     uintptr_t input = invocation.input, output = invocation.output;
     if (!invocation.identity || invocation.input_size || invocation.output_size) abort();
     if (!input || !output || input % 64 || output % 64) abort();
-    return NULL;
 }
 struct destroy_job { uintptr_t task; uintptr_t entered; int result; };
 static void destroy_task(void *context) {
     struct destroy_job *job = context;
     _argi_atomic_u32_store(job->entered, 1);
-    job->result = _argi_task_destroy(job->task);
+    job->result = _argi_task_release_storage(job->task);
 }
 
 struct owned_payload {
@@ -49,43 +46,28 @@ static void drop_owned_payload(uintptr_t storage) {
     ++*owner->drops;
 }
 
-static argi_task_result_cleanup produce_owned_payload(struct argi_execution_invocation invocation) {
+static void produce_owned_payload(struct argi_execution_invocation invocation) {
     struct owned_payload *owner = (struct owned_payload *)invocation.output;
     owner->drops = *(unsigned *const *)invocation.input;
     owner->value = malloc(sizeof(*owner->value));
     if (!owner->value) abort();
     *owner->value = 42;
-    return drop_owned_payload;
 }
 
 static void check_threaded_owned_result(void) {
     unsigned drops = 0;
     unsigned *counter = &drops;
-    uintptr_t task = _argi_task_create_buffers(produce_owned_payload, &counter, sizeof(counter),
-        sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
-    if (!task || _argi_task_destroy(task) || drops != 1) abort();
-
-    task = _argi_task_create_buffers(produce_owned_payload, &counter, sizeof(counter),
-        sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
-    if (!task) abort();
-    uintptr_t slot = _argi_task_take_owned_result(task, drop_owned_payload);
+    uintptr_t slot = _argi_task_output_create(produce_owned_payload);
     if (!slot) abort();
-    struct owned_payload moved = *(struct owned_payload *)slot;
-    if (_argi_task_release_storage(task) || drops != 1) abort();
-    drop_owned_payload((uintptr_t)&moved);
-    if (drops != 2) abort();
-
-    slot = _argi_task_output_create(produce_owned_payload);
-    if (!slot) abort();
-    task = _argi_task_start_buffers(slot, 0, produce_owned_payload, &counter,
+    uintptr_t task = _argi_task_start_buffers(slot, 0, produce_owned_payload, &counter,
         sizeof(counter), sizeof(struct owned_payload), _Alignof(unsigned *), _Alignof(struct owned_payload));
-    if (!task || _argi_task_release_storage(task) || drops != 2) abort();
+    if (!task || _argi_task_release_storage(task) || drops != 0) abort();
     uintptr_t published = _argi_task_output_take(slot, produce_owned_payload);
     if (!published) abort();
-    moved = *(struct owned_payload *)published;
+    struct owned_payload moved = *(struct owned_payload *)published;
     if (_argi_task_output_destroy(slot)) abort();
     drop_owned_payload((uintptr_t)&moved);
-    if (drops != 3) abort();
+    if (drops != 1) abort();
 }
 
 int32_t argi_task_probe(void) {
@@ -99,7 +81,7 @@ int32_t argi_task_probe(void) {
     uintptr_t inline_result = _argi_task_join_result(inline_task, sizeof(original));
     if (!inline_result || *(int *)inline_result != 42) abort();
     if (_argi_execution_reclaim(inline_task) || _argi_task_join_result(inline_task, sizeof(original)) != inline_result) abort();
-    if (_argi_task_destroy(inline_task)) abort();
+    if (_argi_task_release_storage(inline_task)) abort();
     if (_argi_task_create_buffers(NULL, &original, sizeof(original), sizeof(original), 64, 64)) abort();
     if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 3, 64)) abort();
     if (_argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 0)) abort();
@@ -125,7 +107,7 @@ int32_t argi_task_probe(void) {
     if (block.count) abort();
 
     if (_argi_task_join_result(buffer_task, sizeof(original)) != result_address) abort();
-    if (_argi_task_destroy(buffer_task)) abort();
+    if (_argi_task_release_storage(buffer_task)) abort();
     original = 21;
     buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), sizeof(original), 64, 64);
     if (!buffer_task) abort();
@@ -140,13 +122,13 @@ int32_t argi_task_probe(void) {
     if (!other) abort();
     uintptr_t other_result = _argi_task_join_result(other, sizeof(other_input));
     if (!other_result || other_result == result_address || *(int *)other_result != 10) abort();
-    if (_argi_task_destroy(other) || *(int *)result_address != 42) abort();
-    if (_argi_task_destroy(buffer_task)) abort();
-    if (_argi_task_join_result(0, 0) || !_argi_task_destroy(0)) abort();
+    if (_argi_task_release_storage(other) || *(int *)result_address != 42) abort();
+    if (_argi_task_release_storage(buffer_task)) abort();
+    if (_argi_task_join_result(0, 0) || !_argi_task_release_storage(0)) abort();
     buffer_task = _argi_task_create_buffers(empty_buffers, 0, 0, 0, 64, 64);
     if (!buffer_task) abort();
     result_address = _argi_task_join_result(buffer_task, 0);
-    if (!result_address || result_address % 64 || _argi_task_destroy(buffer_task)) abort();
+    if (!result_address || result_address % 64 || _argi_task_release_storage(buffer_task)) abort();
     buffer_task = _argi_task_create_buffers(buffers, &original, sizeof(original), 80, 64, 64);
     if (!buffer_task || !_argi_task_join_result(buffer_task, 80)) abort();
     block = _argi_task_result_block(buffer_task, 0);
@@ -157,7 +139,7 @@ int32_t argi_task_probe(void) {
     block = _argi_task_result_block(buffer_task, 64);
     if (block.count != 16) abort();
     for (size_t i = 0; i < sizeof(block.bytes); ++i) if (block.bytes[i]) abort();
-    if (_argi_task_result_block(buffer_task, 80).count || _argi_task_destroy(buffer_task)) abort();
+    if (_argi_task_result_block(buffer_task, 80).count || _argi_task_release_storage(buffer_task)) abort();
     uintptr_t gate = _argi_atomic_u32_create(0), entered = _argi_atomic_u32_create(0);
     if (!gate || !entered) abort();
     struct input source = { gate, entered, 21 };
@@ -173,7 +155,7 @@ int32_t argi_task_probe(void) {
     result_address = _argi_task_join_result(moved, sizeof(int));
     if (!result_address || *(int *)result_address != 42) abort();
     if (_argi_task_join_result(moved, sizeof(int)) != result_address) abort();
-    if (_argi_task_destroy(moved)) abort();
+    if (_argi_task_release_storage(moved)) abort();
 
     _argi_atomic_u32_store(gate, 0);
     _argi_atomic_u32_store(entered, 0);
