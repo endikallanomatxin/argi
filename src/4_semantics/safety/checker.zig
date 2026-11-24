@@ -6421,8 +6421,7 @@ pub const SafetyChecker = struct {
         while (iterator.next()) |entry| {
             if (!freshEffectContains(effect, entry.key_ptr.*)) continue;
             const id = entry.value_ptr.*;
-            const execution = state.executionState(id) orelse continue;
-            if (execution.loans.len == 0 or execution.loans[0].generations.len == 0) continue;
+            if (!state.executionPending(id)) continue;
             for (result.variants) |variant| {
                 if (!valueHasExecution(variant.value.*, id)) try self.attachChoiceOutcome(result, &.{}, variant.index, id);
             }
@@ -15950,6 +15949,33 @@ test "summarized handoff retires only the projected owner" {
     try std.testing.expect(try checker.endRoots(.{ .file_index = 0, .offset = 0 }, &state, roots.items));
     try std.testing.expect(!state.tracker.isAlive(backing));
     try std.testing.expect(state.tracker.isAlive(sibling));
+}
+
+test "a receipt-free outcome discharges an owned task without loans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const id = try state.establishExecution(&.{});
+    var executions = std.AutoHashMap(facts.FreshEffectSource, facts.ExecutionId).init(allocator);
+    defer executions.deinit();
+    try executions.put(0, id);
+    checker.active_fresh_executions = &executions;
+    const receipt: facts.ValueFacts = .{ .execution_receipts = &.{id} };
+    var result: facts.ValueFacts = .{ .variants = &.{
+        .{ .index = 0, .value = &receipt },
+        .{ .index = 1, .value = &facts.empty_value_facts },
+    } };
+    try checker.attachAbsentFreshExecutions(.{
+        .fresh_executions = &.{.{ .source = 0, .inputs = &facts.empty_value_effect, .input_type = 0, .transfers_custody = true }},
+    }, &result, &state);
+    try checker.activate_conditional_resources(&state, result.variants[0].value.*);
+    try std.testing.expect(state.executionPending(id));
+    try checker.activate_conditional_resources(&state, result.variants[1].value.*);
+    try std.testing.expect(!state.executionPending(id));
 }
 
 test "an error outcome certifies the exact request captured at entry" {
