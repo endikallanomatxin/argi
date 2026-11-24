@@ -576,39 +576,78 @@ pub fn replaceValueRoots(
     sources: []const ValidityRootId,
     replacement: ValidityRootId,
 ) !ValueFacts {
+    return (try replaceValueRootsIfChanged(allocator, value, sources, replacement)) orelse value;
+}
+
+fn replaceValueRootsIfChanged(
+    allocator: std.mem.Allocator,
+    value: ValueFacts,
+    sources: []const ValidityRootId,
+    replacement: ValidityRootId,
+) !?ValueFacts {
     var result = value;
-    var dependencies = std.array_list.Managed(ValidityDependency).init(allocator);
+    var changed = false;
     for (value.dependencies) |dependency| {
-        const next = if (std.mem.indexOfScalar(ValidityRootId, sources, dependency.root) != null) replacement else dependency.root;
-        var present = false;
-        for (dependencies.items) |entry| if (entry.root == next) {
-            present = true;
-            break;
-        };
-        if (!present) try dependencies.append(.{ .root = next });
+        if (dependency.root == replacement or std.mem.indexOfScalar(ValidityRootId, sources, dependency.root) == null) continue;
+        var dependencies: std.ArrayList(ValidityDependency) = .empty;
+        for (value.dependencies) |entry| {
+            const root = if (std.mem.indexOfScalar(ValidityRootId, sources, entry.root) != null) replacement else entry.root;
+            for (dependencies.items) |existing| {
+                if (existing.root == root) break;
+            } else try dependencies.append(allocator, .{ .root = root });
+        }
+        result.dependencies = try dependencies.toOwnedSlice(allocator);
+        changed = true;
+        break;
     }
-    result.dependencies = try dependencies.toOwnedSlice();
-    var owned_roots = std.array_list.Managed(ValidityRootId).init(allocator);
-    for (value.owned_roots) |root| {
-        const next = if (std.mem.indexOfScalar(ValidityRootId, sources, root) != null) replacement else root;
-        if (std.mem.indexOfScalar(ValidityRootId, owned_roots.items, next) == null) try owned_roots.append(next);
+    for (value.owned_roots) |owned| {
+        if (owned == replacement or std.mem.indexOfScalar(ValidityRootId, sources, owned) == null) continue;
+        var roots: std.ArrayList(ValidityRootId) = .empty;
+        for (value.owned_roots) |entry| {
+            const root = if (std.mem.indexOfScalar(ValidityRootId, sources, entry) != null) replacement else entry;
+            if (std.mem.indexOfScalar(ValidityRootId, roots.items, root) == null) try roots.append(allocator, root);
+        }
+        result.owned_roots = try roots.toOwnedSlice(allocator);
+        changed = true;
+        break;
     }
-    result.owned_roots = try owned_roots.toOwnedSlice();
-    const fields = try allocator.alloc(FieldFacts, value.fields.len);
-    for (value.fields, 0..) |field, index| {
-        const stored = try allocator.create(ValueFacts);
-        stored.* = try replaceValueRoots(allocator, field.value.*, sources, replacement);
-        fields[index] = .{ .index = field.index, .value = stored };
+    inline for (.{ "fields", "variants" }) |member| {
+        const entries = @field(value, member);
+        var updated: ?[]std.meta.Elem(@TypeOf(entries)) = null;
+        for (entries, 0..) |entry, index| {
+            const child = try replaceValueRootsIfChanged(allocator, entry.value.*, sources, replacement) orelse continue;
+            if (updated == null) updated = try allocator.dupe(std.meta.Elem(@TypeOf(entries)), entries);
+            const stored = try allocator.create(ValueFacts);
+            stored.* = child;
+            updated.?[index].value = stored;
+        }
+        if (updated) |entries_updated| {
+            @field(result, member) = entries_updated;
+            changed = true;
+        }
     }
-    result.fields = fields;
-    const variants = try allocator.alloc(VariantFacts, value.variants.len);
-    for (value.variants, 0..) |variant, index| {
-        const stored = try allocator.create(ValueFacts);
-        stored.* = try replaceValueRoots(allocator, variant.value.*, sources, replacement);
-        variants[index] = .{ .index = variant.index, .value = stored };
-    }
-    result.variants = variants;
-    return result;
+    return if (changed) result else null;
+}
+
+test "rebasing ownership preserves unrelated fact fragments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const old: ValidityRootId = @enumFromInt(0);
+    const renewed: ValidityRootId = @enumFromInt(1);
+    const external: ValidityRootId = @enumFromInt(2);
+    const internal: ValueFacts = .{ .dependencies = &.{.{ .root = old }} };
+    const unrelated: ValueFacts = .{ .dependencies = &.{.{ .root = external }} };
+    const owner: ValueFacts = .{
+        .owned_roots = &.{old},
+        .fields = &.{ .{ .index = 0, .value = &internal }, .{ .index = 1, .value = &unrelated } },
+    };
+    const result = try replaceValueRoots(arena.allocator(), owner, &.{old}, renewed);
+    try std.testing.expectEqual(renewed, result.owned_roots[0]);
+    try std.testing.expectEqual(renewed, result.fields[0].value.dependencies[0].root);
+    try std.testing.expectEqual(&unrelated, result.fields[1].value);
+    try std.testing.expectEqual(old, internal.dependencies[0].root);
+    const unchanged = try replaceValueRoots(arena.allocator(), result, &.{old}, renewed);
+    try std.testing.expectEqual(result.fields.ptr, unchanged.fields.ptr);
 }
 
 test "Safety root materialization does not publish partial gaps on allocation failure" {
