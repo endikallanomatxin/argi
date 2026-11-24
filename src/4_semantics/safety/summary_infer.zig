@@ -7937,7 +7937,8 @@ pub const Infer = struct {
         else
             null;
         const reference_value = if (value_type) |ty| self.graph.semanticType(ty) == .pointer else true;
-        if (reference_value and hasReferenceTargetRecipe(left) != hasReferenceTargetRecipe(right))
+        if (reference_value and (left.static_reference != right.static_reference or
+            hasReferenceTargetRecipe(left) != hasReferenceTargetRecipe(right)))
             result.reference_target_incomplete = true;
         // A universal relation survives only when every alternative agrees on
         // its source. Strength can weaken, but a missing source never becomes
@@ -10391,6 +10392,13 @@ test "static reference joins preserve unresolved alternatives" {
     try std.testing.expect(joined.static_reference == null);
     try std.testing.expect(joined.reference_target_incomplete);
     try std.testing.expect((try infer.joinStorageAlternatives(null, observed, .{})).reference_target_incomplete);
+    const either = try infer.joinStorageAlternatives(null, observed, forwarded);
+    try std.testing.expect(either.static_reference == null);
+    try std.testing.expect(either.reference_target_incomplete);
+    try std.testing.expectEqual(@as(usize, 1), either.input_dependencies.len);
+    const distinct = try infer.joinStorageAlternatives(null, observed, .{ .static_reference = 2 });
+    try std.testing.expect(distinct.static_reference == null);
+    try std.testing.expect(distinct.reference_target_incomplete);
 }
 
 test "reference alternative joins preserve uncertainty and do not add requirements to identical values" {
