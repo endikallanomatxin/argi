@@ -112,6 +112,21 @@ fn nominalGuarantee(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
     return guarantee;
 }
 
+/// A reference may travel inside the owner of its backing. The enclosing
+/// value must establish custody independently of the reference, and every
+/// retained dependency must travel with that custody.
+pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.ValidityRootId) bool {
+    const root = owner orelse return false;
+    if (reference.owned_backing != root or reference.reference_target_incomplete or
+        reference.referenced_place != null or reference.mutation_places.len != 0 or
+        reference.symbolic_pointees.len != 0 or reference.opaque_provenance.len != 0 or
+        reference.domains.len != 0 or reference.execution_receipts.len != 0)
+        return false;
+    if (reference.dependencies.len == 0) return false;
+    for (reference.dependencies) |dependency| if (dependency.root != root) return false;
+    return true;
+}
+
 /// An opaque native result slot currently transports bytes and cleanup custody.
 pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
     if (depth >= 64 or value.explicit_dependency or value.dependencies.len != 0 or value.owned_roots.len != 0 or
@@ -195,4 +210,22 @@ test "native task result transport rejects execution and storage evidence in a p
     // concurrent receiver authority or authenticate its backing.
     child = .{ .virtual_methods = &.{@enumFromInt(0)} };
     try std.testing.expect(!requiresResultMetadata(result, 0));
+}
+
+test "owned backing transport requires matching custody and no external loan" {
+    const std = @import("std");
+    const owned: facts.ValidityRootId = @enumFromInt(0);
+    const external: facts.ValidityRootId = @enumFromInt(1);
+    var reference: facts.ValueFacts = .{
+        .owned_backing = owned,
+        .dependencies = &.{.{ .root = owned }},
+    };
+    try std.testing.expect(observesTransferredBacking(reference, owned));
+    try std.testing.expect(!observesTransferredBacking(reference, null));
+    try std.testing.expect(!observesTransferredBacking(reference, external));
+    reference.dependencies = &.{ .{ .root = owned }, .{ .root = external } };
+    try std.testing.expect(!observesTransferredBacking(reference, owned));
+    reference.dependencies = &.{.{ .root = owned }};
+    reference.reference_target_incomplete = true;
+    try std.testing.expect(!observesTransferredBacking(reference, owned));
 }
