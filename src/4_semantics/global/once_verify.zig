@@ -199,18 +199,16 @@ const State = struct {
             },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
-                const selected = if (self.isolation_source != null) self.localVirtualMethod(call) else null;
                 if (self.isolation_source != null) {
                     const declared = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract;
-                    const concurrent = if (selected) |method| method.concurrent else call.self_permission == .concurrent;
-                    // A checked empty footprint needs no receiver access.
-                    if (declared == null or !declared.?.bounded_access or
-                        (!concurrent and declared.?.access_bounds.len != 0))
+                    // The interface bounds access. Execution ingress checks the
+                    // authority for each retained region, including exclusive
+                    // loans of ordinary capabilities.
+                    if (declared == null or !declared.?.bounded_access)
                         try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                 }
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
-                if (selected) |method| return self.walkCall(node_id, method.function);
                 const evidence = @import("contract_evidence.zig");
                 const contract = evidence.virtualContractType(self.graph, call) orelse return error.InvalidVirtualContract;
                 var candidates: evidence.PossibleVirtualMethods = .{ .graph = self.graph, .contract = contract, .method_index = call.method_index };
@@ -310,50 +308,6 @@ const State = struct {
             },
 
             .explicit_cast => |cast| try self.walkNode(cast.value),
-        }
-    }
-
-    const LocalVirtualMethod = struct {
-        function: graph_mod.GlobalFunctionId,
-        concurrent: bool,
-    };
-
-    fn localVirtualMethod(self: *const State, call: graph_mod.VirtualCall) ?LocalVirtualMethod {
-        const address = self.graph.node(call.handle).content;
-        if (address != .address_of) return null;
-        var remaining: u32 = 64;
-        const descriptor = self.immutableValue(address.address_of, &remaining) orelse return null;
-        const initializer = self.graph.node(descriptor).content;
-        if (initializer != .virtualize) return null;
-        const virtualize = self.graph.virtualizes.items[@intFromEnum(initializer.virtualize)];
-        if (call.method_index >= virtualize.methods.len) return null;
-        const reference = self.graph.resolvedSemanticType(self.graph.node(virtualize.value).ty orelse return null) orelse return null;
-        if (reference != .pointer) return null;
-        return .{
-            .function = self.graph.function_refs.items[virtualize.methods.start + call.method_index],
-            .concurrent = reference.pointer.mutability == .concurrent,
-        };
-    }
-
-    fn immutableValue(self: *const State, expression: graph_mod.GlobalNodeId, remaining: *u32) ?graph_mod.GlobalNodeId {
-        if (remaining.* == 0) return null;
-        remaining.* -= 1;
-        switch (self.graph.node(expression).content) {
-            .binding_use => |id| {
-                if (self.graph.isModuleBinding(id)) return null;
-                const initializer = @import("lexical_storage.zig").immutableInitializer(self.graph, id) orelse return null;
-                return self.immutableValue(initializer, remaining);
-            },
-            .struct_field_access => |field| {
-                const ty = self.graph.node(field.value).ty orelse return null;
-                if (@import("types.zig").isCUnion(self.graph, ty)) return null;
-                const aggregate = self.immutableValue(field.value, remaining) orelse return null;
-                const literal = self.graph.node(aggregate).content;
-                if (literal != .struct_value_literal or field.field_index >= literal.struct_value_literal.fields.len) return null;
-                const item = self.graph.value_fields.items[literal.struct_value_literal.fields.start + field.field_index];
-                return self.immutableValue(item.value, remaining);
-            },
-            else => return expression,
         }
     }
 
