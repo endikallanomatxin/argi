@@ -312,3 +312,13 @@ same shared provider. The second rejection is a precision gap: agreeing
 transfer guarantees must survive a choice without equating the backing
 identities of the alternatives. Both experiments use an ordinary function
 boundary and the same nominal String type.
+
+The same probe succeeds when both arms forward the same owned input.
+Moving the choice between two independent owners directly into the caller
+still fails. The concrete join in ValueFacts therefore needs to preserve
+owner-relative evidence even before that evidence is expressed in a
+function summary. The join currently keeps each backing marker only when
+its root ID matches across arms. A union of roots would lose the pairing
+between an observation and its enclosing owner. A collective proof needs
+to establish that pairing on every incoming value and survive only
+mutations that preserve it.
