@@ -32,15 +32,19 @@ forward := (.input: Owner) -> (.owner: Owner) {
     owner = ~input
 }
 
-forward_through_helper := (.input: Owner) -> (.owner: Owner) {
-    owner = forward(.input = ~input)
+forward_through_helper := (.input: Owner, .direct: Bool) -> (.owner: Owner) {
+    if direct {
+        owner = ~input
+    } else {
+        owner = forward(.input = ~input)
+    }
 }
 
 run := (.ffi: $&ForeignFunctionInterface, .start: Bool) -> () {
     provider ::= DiscardingExecutor(.ffi = ffi, .start = start)
     executor ::= Virtual#(Executor)($&provider)
     input ::= Owner(42)
-    match async_owned#(forward_through_helper)(.args = (.input = ~input), .executor = executor, .ffi = ffi) {
+    match async_owned#(forward_through_helper)(.args = (.input = ~input, .direct = false), .executor = executor, .ffi = ffi) {
         ..ok ~unexpected { abort }
         ..error failure {
             if is(.value = failure.reason, .variant = ..task_start_failed) == false { abort }
@@ -57,14 +61,14 @@ main := (.system: System) -> () {
     executor ::= Virtual#(Executor)($&provider)
     {
         input ::= Owner(42)
-        task ::= unwrap_or_abort(async_owned#(forward_through_helper)(.args = (.input = ~input), .executor = executor, .ffi = system.ffi))
+        task ::= unwrap_or_abort(async_owned#(forward_through_helper)(.args = (.input = ~input, .direct = false), .executor = executor, .ffi = system.ffi))
         owner ::= unwrap_or_abort(await($&task))
         if owner.value != 42 or drops != 2 { abort }
     }
     if drops != 3 { abort }
     {
         input ::= Owner(42)
-        task ::= unwrap_or_abort(async_owned#(forward_through_helper)(.args = (.input = ~input), .executor = executor, .ffi = system.ffi))
+        task ::= unwrap_or_abort(async_owned#(forward_through_helper)(.args = (.input = ~input, .direct = true), .executor = executor, .ffi = system.ffi))
         if drops != 3 { abort }
     }
     if drops != 4 { abort }

@@ -1438,7 +1438,22 @@ pub const Infer = struct {
     fn forwardedCalls(self: *Infer, function: graph_mod.Function, mode: ForwardingMode) ![]const @import("lexical_forwarding.zig").ForwardedCall {
         const block = self.graph.blocks.items[@intFromEnum(function.body orelse return &.{})];
         var calls: std.ArrayList(@import("lexical_forwarding.zig").ForwardedCall) = .empty;
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
+        var nodes: std.ArrayList(graph_mod.GlobalNodeId) = .empty;
+        defer nodes.deinit(self.allocator);
+        try nodes.appendSlice(self.allocator, self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]);
+        while (nodes.pop()) |node| {
+            if (mode == .owning and self.graph.node(node).content == .if_statement) {
+                const branch = self.graph.node(node).content.if_statement;
+                const alternative = branch.else_block orelse continue;
+                for ([_]graph_mod.GlobalBlockId{ branch.then_block, alternative }) |id| {
+                    const arm = self.graph.blocks.items[@intFromEnum(id)];
+                    if (arm.nodes.len != 1) continue;
+                    const child = self.graph.node_refs.items[arm.nodes.start];
+                    if (self.graph.node(child).content == .assignment)
+                        try nodes.append(self.allocator, child);
+                }
+                continue;
+            }
             var value = switch (self.graph.node(node).content) {
                 .assignment => |assignment| assignment.value,
                 .binding_declaration => |binding| self.graph.binding(binding).initialization orelse continue,
