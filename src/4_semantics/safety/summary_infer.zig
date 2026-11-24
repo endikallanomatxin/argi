@@ -116,6 +116,7 @@ pub const Infer = struct {
         unstable_targets: bool = false,
         reference_writes: bool = false,
         transfers: std.array_list.Managed(facts.InputPath),
+        retired_owners: std.array_list.Managed(facts.InputPath),
         unresolved_transfer: bool = false,
         deferred_virtual: ?facts.InputAccess = null,
         deferred_virtual_only_call: bool = false,
@@ -125,6 +126,7 @@ pub const Infer = struct {
                 .inputs = .init(allocator),
                 .globals = .init(allocator),
                 .transfers = .init(allocator),
+                .retired_owners = .init(allocator),
             };
         }
 
@@ -132,6 +134,7 @@ pub const Infer = struct {
             self.inputs.deinit();
             self.globals.deinit();
             self.transfers.deinit();
+            self.retired_owners.deinit();
         }
 
         fn addInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode) !void {
@@ -981,6 +984,7 @@ pub const Infer = struct {
             .outputs = outputs,
             .required_live_inputs = previous.required_live_inputs,
             .required_transfers = previous.required_transfers,
+            .retired_input_owners = previous.retired_input_owners,
             .unresolved_transfer = previous.unresolved_transfer,
             .required_opaque_inputs = previous.required_opaque_inputs,
             .storage_capability_uses = previous.storage_capability_uses,
@@ -1327,6 +1331,7 @@ pub const Infer = struct {
             .storage_observation_conflicts = try observation_conflicts.toOwnedSlice(),
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .required_transfers = try accesses.transfers.toOwnedSlice(),
+            .retired_input_owners = try accesses.retired_owners.toOwnedSlice(),
             .unresolved_transfer = accesses.unresolved_transfer,
             .required_opaque_inputs = try required_opaque_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
@@ -5219,6 +5224,11 @@ pub const Infer = struct {
             .struct_field_store => |write| try self.recordPointeeAccess(function, write.struct_ptr, .{ .field = write.field_index }, .write),
             .array_store => |write| try self.recordPointeeAccess(function, write.array_ptr, if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index, .write),
             .function_call => |call| {
+                if (self.graph.function(call.callee).safety_primitive == .task_input_handoff) {
+                    if (self.structArguments(call.input)) |arguments|
+                        try self.recordRetiredOwner(function, .{ .input_index = 0 }, arguments);
+                    return;
+                }
                 if (self.graph.function(call.callee).safety_primitive == .require_task_input_transfer) {
                     const arguments = self.structArguments(call.input) orelse {
                         sink.unresolved_transfer = true;
@@ -5316,6 +5326,12 @@ pub const Infer = struct {
         var path = (try self.entryVirtualDescriptor(function, argument, 0)) orelse return null;
         path.projections = try std.mem.concat(self.allocator, facts.Projection, &.{ path.projections, suffix });
         return path;
+    }
+
+    fn recordRetiredOwner(self: *Infer, function: graph_mod.GlobalFunctionId, target: facts.InputPath, arguments: []const graph_mod.ValueField) !void {
+        if (target.input_index >= arguments.len) return;
+        if (try self.transferArgumentPath(function, target, arguments[target.input_index].value)) |path|
+            try appendInputPath(&self.access_sink.?.retired_owners, path);
     }
 
     fn recordTransferRequirement(self: *Infer, function: graph_mod.GlobalFunctionId, target: facts.InputPath, arguments: []const graph_mod.ValueField) !void {
@@ -5484,9 +5500,16 @@ pub const Infer = struct {
         }
         const arguments = self.structArguments(input) orelse {
             if (summary.input_accesses.len != 0) sink.unknown = true;
-            if (summary.required_transfers.len != 0) sink.unresolved_transfer = true;
+            if (summary.required_transfers.len != 0 or summary.retired_input_owners.len != 0) sink.unresolved_transfer = true;
             return;
         };
+        for (summary.retired_input_owners) |target| {
+            if (override != null) {
+                sink.unresolved_transfer = true;
+                break;
+            }
+            try self.recordRetiredOwner(function, target, arguments);
+        }
         for (summary.required_transfers) |target| {
             if (override != null) {
                 sink.unresolved_transfer = true;

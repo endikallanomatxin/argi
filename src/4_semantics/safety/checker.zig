@@ -702,7 +702,7 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot verify safety contract for this implementation", .{});
             return;
         };
-        if (dispatch == .erased and (summary.required_transfers.len != 0 or summary.unresolved_transfer)) {
+        if (dispatch == .erased and (summary.required_transfers.len != 0 or summary.retired_input_owners.len != 0 or summary.unresolved_transfer)) {
             try self.report(source, "virtual operation cannot erase an unpublished ownership-transfer requirement", .{});
             return;
         }
@@ -2078,7 +2078,14 @@ pub const SafetyChecker = struct {
             effects.outcome_post_states = &.{};
             break;
         };
+        var retired_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer retired_roots.deinit();
+        for (complete_summary.retired_input_owners) |path| {
+            const owner = try self.entryVirtualAccessValue(path, values, state);
+            try collectOwnedRoots(owner, &retired_roots);
+        }
         const result = try self.applyOutcomeSummary(source, effects, argument_nodes, values, state);
+        _ = try self.endRoots(source, state, retired_roots.items);
         try self.activateReturningExecutionEvidence(complete_summary, values, state);
         return try self.attachGeneralValueGuards(summary, prepared, result);
     }

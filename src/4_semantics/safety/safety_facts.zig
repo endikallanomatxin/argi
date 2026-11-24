@@ -372,6 +372,8 @@ pub const SafetySummary = struct {
     required_live_inputs: []const InputPath = &.{},
     required_transfers: []const InputPath = &.{},
     unresolved_transfer: bool = false,
+    /// A native handoff may end the sender observations of these input owners.
+    retired_input_owners: []const InputPath = &.{},
     /// Using stored elements requires their hidden external dependencies;
     /// merely accessing or freeing allocation metadata does not.
     required_opaque_inputs: []const InputPath = &.{},
