@@ -136,7 +136,8 @@ pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.Val
 
 /// An opaque native result slot currently transports bytes and cleanup custody.
 pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
-    if (depth >= 64 or value.explicit_dependency or value.dependencies.len != 0 or value.owned_roots.len != 0 or
+    if (depth >= 64 or value.owned_backing != null or value.intrinsic_backing_owner != null or
+        value.explicit_dependency or value.dependencies.len != 0 or value.owned_roots.len != 0 or
         value.foreign_storage or value.storage_capabilities.len != 0 or value.storage_capability_incomplete or value.acquisition_origins.len != 0 or
         value.referenced_place != null or value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len != 0 or
         value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0 or
@@ -208,6 +209,12 @@ test "native task result transport rejects execution and storage evidence in a p
         .guard = 1,
         .invalidates = true,
     }};
+    try std.testing.expect(requiresResultMetadata(result, 0));
+
+    child = .{ .owned_backing = @enumFromInt(0) };
+    try std.testing.expect(requiresResultMetadata(result, 0));
+
+    child = .{ .intrinsic_backing_owner = @enumFromInt(0) };
     try std.testing.expect(requiresResultMetadata(result, 0));
 
     child = .{ .concurrent_receiver = true };
