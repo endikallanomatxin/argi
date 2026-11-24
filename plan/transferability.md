@@ -296,3 +296,9 @@ and nominal String type, that submission fails at the static transfer
 requirement. The shared variant runs the worker and updates a byte in its
 owned backing. Thus the temporary access bound does not itself certify
 transferability of the erased deallocator.
+
+The same bounded-release Allocation probe rejects submission after the
+caller writes zero to data.address. The rejection also holds when a
+separate function writes the bits through a mutable reference to that field.
+The nominal owner and its private cleanup bounds remain present, but they
+do not authenticate a replacement public data address.
