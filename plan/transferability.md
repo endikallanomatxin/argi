@@ -266,3 +266,10 @@ or custody, so the compiler used for production keeps the check.
 The forwarding worker still fails at output preparation in the same
 experiment. Output custody and its latent cleanup need their own
 verified effects before admitting a String round trip.
+
+The structural Allocation probe reaches the raw data address check with
+matching owner custody and a represented address field. The address field
+retains its backing lifetime, but its forwarding recipe is validity-only.
+That recipe may also describe scalar results derived from an address, so it
+cannot restore an authenticated observation. Scalar address forwarding
+needs evidence of the value relation independently of its lifetime.
