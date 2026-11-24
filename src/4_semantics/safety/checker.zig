@@ -2916,6 +2916,10 @@ pub const SafetyChecker = struct {
     /// its OS thread and of the validity roots it borrows. Receipt moves retain
     /// these identities; only certified completion discharges them.
     fn lendExecution(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, inputs: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef) !facts.ValueFacts {
+        if (hasPendingExecution(inputs, state)) {
+            try self.report(source, "cannot send a pending execution through a task input", .{});
+            return .{};
+        }
         var loans = std.array_list.Managed(facts.ExecutionLoan).init(self.allocator);
         defer loans.deinit();
         const diagnostics_before = self.diagnostics.list.items.len;
@@ -15404,6 +15408,13 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     } };
     const receipt = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
     try std.testing.expectEqual(@as(usize, 1), receipt.execution_receipts.len);
+    var retained = provider;
+    retained.execution_receipts = receipt.execution_receipts;
+    const diagnostics_before = diags.list.items.len;
+    const nested = try checker.lendExecution(@enumFromInt(1), retained, &state, source);
+    try std.testing.expectEqual(@as(usize, 0), nested.execution_receipts.len);
+    try std.testing.expectEqual(diagnostics_before + 1, diags.list.items.len);
+
     const conflicting = try checker.lendExecution(@enumFromInt(1), provider, &state, source);
     try std.testing.expectEqual(@as(usize, 0), conflicting.execution_receipts.len);
     try std.testing.expectEqual(@as(usize, 1), state.executions.items.len);
