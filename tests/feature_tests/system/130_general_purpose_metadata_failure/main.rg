@@ -2,9 +2,9 @@ ReleaseCounter := (.memory: $&Memory, .releases: UIntNative = 0)
 FailSecond := (.release: $&ReleaseCounter, .requests: UIntNative = 0)
 
 implement Deallocator#($&ReleaseCounter) (
-    .deallocate = (.self: $&ReleaseCounter, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative) -> () {
+    .deallocate = (.self: $&ReleaseCounter, .request: Deallocation) -> () {
         self&.releases = self&.releases + 1
-        Deallocator#().deallocate(.self = self&.memory, .data = data, .size = size, .alignment = alignment)
+        Deallocator#().deallocate(.self = self&.memory, .request = ~request)
     }
 )
 

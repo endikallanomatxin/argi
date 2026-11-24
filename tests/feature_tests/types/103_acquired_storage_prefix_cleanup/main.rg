@@ -30,10 +30,12 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
 implement Deallocator#($&TrackingDeallocator) (
     .deallocate = (
         .self      : $&TrackingDeallocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
+        size ::= layout.size
+        alignment ::= layout.alignment
         self&.released_size = size
         self&.released_alignment = alignment
         aligned_free(.address = data.address, .ffi = self&.ffi)

@@ -106,10 +106,11 @@ implement Allocator#(FailFourthAllocator) (
 implement Deallocator#($&FailFourthAllocator) (
     .deallocate = (
         .self      : $&FailFourthAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
+        size ::= layout.size
         -- The first backing request can include typed metadata. Both completed
         -- element copies must be released before that physical block.
         if size == self&.array_backing_size {

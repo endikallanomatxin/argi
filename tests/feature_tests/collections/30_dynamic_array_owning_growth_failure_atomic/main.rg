@@ -143,10 +143,10 @@ implement Allocator#(FailSecondAllocator) (
 implement Deallocator#($&FailSecondAllocator) (
     .deallocate = (
         .self      : $&FailSecondAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
         self&.deallocations = self&.deallocations + 1
         address :: UIntNative = data.address
         free(.address = address, .ffi = self&.ffi)

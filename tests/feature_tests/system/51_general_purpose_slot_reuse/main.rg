@@ -153,14 +153,12 @@ implement Allocator#(TrackingAllocator) (
 implement Deallocator#($&TrackingAllocator) (
     .deallocate = (
         .self      : $&TrackingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
         self&.deallocations = self&.deallocations + 1
         Deallocator#(
         ).deallocate(
-            .self = self&.backing&.memory, .data = data, .size = size, .alignment = alignment
+            .self = self&.backing&.memory, .request = ~request
         )
     }
 )

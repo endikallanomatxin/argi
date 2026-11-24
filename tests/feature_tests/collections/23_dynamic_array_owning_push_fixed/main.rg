@@ -130,10 +130,10 @@ implement Allocator#(BackingAllocator) (
 implement Deallocator#($&BackingAllocator) (
     .deallocate = (
         .self      : $&BackingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
         backing_freed_after_elements = [
             first_drops == 1
             and second_drops == 1

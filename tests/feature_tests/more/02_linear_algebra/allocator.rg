@@ -13,8 +13,6 @@ implement Allocator#(RefusingAllocator) (
 implement Deallocator#($&RefusingAllocator) (
     .deallocate = (
         .self      : $&RefusingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {}
 )

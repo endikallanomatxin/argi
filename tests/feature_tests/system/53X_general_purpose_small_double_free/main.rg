@@ -13,9 +13,10 @@ main := (.system: System) -> (.status_code: Int32) {
                 ..ok ~second_payload {
                     second_allocation ::= ~second_payload
                     deinit(.self = $&first_allocation)
+                    request ::= trusted_deallocation_request(.data = first_data, .size = 8, .alignment = 8, .ffi = system.ffi)
                     Deallocator#(
                     ).deallocate(
-                        .self = $&allocator, .data = first_data, .size = 8, .alignment = 8
+                        .self = $&allocator, .request = ~request
                     )
                     status_code = 0
                 }

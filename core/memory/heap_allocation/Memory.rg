@@ -90,10 +90,11 @@ map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
 implement Deallocator#($&Memory) (
     .deallocate = (
         .self      : $&Memory,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
+        size ::= layout.size
         assume ffi := self&._ffi
         physical_size ::= page_allocator_round_up(
             .size = size, .alignment = self&._page_size

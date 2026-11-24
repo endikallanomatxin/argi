@@ -294,10 +294,12 @@ implement Allocator#(GeneralPurposeAllocator) (
 implement Deallocator#($&GeneralPurposeAllocator) (
     .deallocate = (
         .self      : $&GeneralPurposeAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
+        size ::= layout.size
+        alignment ::= layout.alignment
         slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
 
         if slot_size > self&._bucket_size / 2 {

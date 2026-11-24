@@ -26,10 +26,10 @@ implement Allocator#(CAllocator) (
 implement Deallocator#($&CAllocator) (
     .deallocate = (
         .self      : $&CAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
         aligned_free(.address = data.address, .ffi = self&.ffi)
     }
 )
@@ -40,8 +40,11 @@ implement ConcurrentAlias#(CAllocator) ()
 
 implement Deallocator#($$&CAllocator) (
     .deallocate = (
-        .self: $$&CAllocator, .data: RawPointer#(UInt8), .size: UIntNative, .alignment: UIntNative
+        .self: $$&CAllocator,
+        .request: Deallocation
     ) -> () {
+        layout ::= deallocation_layout(&request)
+        data ::= layout.data
         view ::= trusted_concurrent_view(.shared = self)
         _release_c_storage(.address = data.address, .ffi = view&.ffi)
     }
