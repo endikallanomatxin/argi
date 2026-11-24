@@ -108,9 +108,9 @@ establish_allocation := (
 
 implement Deinit#(Allocation) (
     .deinit = (.self: $&Allocation) -> () {
-        -- Cleanup may touch backing metadata; an ended region cannot be released.
-        live ::= self&.anchor&
-        data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
+        -- Release requires the backing lifetime, without loading the anchor.
+        address ::= depend_on#(UIntNative)(.value = self&._storage_address, .on = self&.anchor).result
+        data ::= raw_pointer#(.t: UInt8)(.address = address).raw
         self&._deallocator._deallocate(
             .data      = data
             .size      = self&._release_size
