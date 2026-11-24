@@ -6,23 +6,23 @@ _atomic_destroy(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_atomic_u3
 
 _atomic_load(.handle: UIntNative) -> (.value: UInt32): CFunction(
     .symbol = "_argi_atomic_u32_load"
-) where { no_access() }
+) where { no_access() isolated() }
 
 _atomic_store(.handle: UIntNative, .value: UInt32) -> (): CFunction(
     .symbol = "_argi_atomic_u32_store"
-) where { no_access() }
+) where { no_access() isolated() }
 
 _atomic_exchange(.handle: UIntNative, .value: UInt32) -> (.previous: UInt32): CFunction(
     .symbol = "_argi_atomic_u32_exchange"
-) where { no_access() }
+) where { no_access() isolated() }
 
 _atomic_add(.handle: UIntNative, .value: UInt32) -> (.previous: UInt32): CFunction(
     .symbol = "_argi_atomic_u32_fetch_add"
-) where { no_access() }
+) where { no_access() isolated() }
 
 _atomic_compare(.handle: UIntNative, .expected: UInt32, .desired: UInt32) -> (.packed: UInt64): CFunction(
     .symbol = "_argi_atomic_u32_compare_exchange"
-) where { no_access() }
+) where { no_access() isolated() }
 
 -- All operations use sequential consistency. Native storage is private and
 -- stable across owner moves. The owner retains FFI permission and releases
