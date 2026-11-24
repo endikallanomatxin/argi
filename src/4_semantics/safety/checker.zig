@@ -3430,6 +3430,17 @@ pub const SafetyChecker = struct {
                         .{ .dependencies = try self.oneDependency(root), .acquisition_origins = origins }
                     else
                         .{};
+                    if (index == shape.data_field) {
+                        const allocation_type = self.graph.fields.items[self.graph.function(callee).output.start].ty;
+                        if (self.fieldTypeAt(allocation_type, @intCast(index))) |data_type| {
+                            if (@import("../global/c_abi.zig").isRawPointer(self.graph, data_type)) {
+                                const address = try self.allocator.create(facts.ValueFacts);
+                                address.* = value.*;
+                                address.owned_backing = root;
+                                value.fields = try self.allocator.dupe(facts.FieldFacts, &.{.{ .index = 0, .value = address }});
+                            }
+                        }
+                    }
                     for (shape.borrowed_fields) |borrowed| if (index == borrowed.field) {
                         value.* = values[borrowed.input];
                         value.owned_roots = &.{};

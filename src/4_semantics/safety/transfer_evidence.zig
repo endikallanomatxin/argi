@@ -41,8 +41,11 @@ fn provesValue(
         .none;
     if (guarantee == .unconditional) return true;
     const owner = value.intrinsic_backing_owner orelse enclosing_owner;
+    // Use only the facts of the current address slot. A whole-container
+    // dependency can survive a write that replaces the address.
+    if (@import("../global/c_abi.zig").isRawPointer(graph, ty))
+        return observesTransferredBacking(fieldValue(value, 0), owner);
     if ((guarantee != .structural and types.hasDestructor(graph, ty)) or
-        @import("../global/c_abi.zig").isRawPointer(graph, ty) or
         @import("../global/c_abi.zig").isFunctionPointer(graph, ty)) return false;
     if (semantic == .builtin)
         return semantic.builtin != .Any and semantic.builtin != .Type;

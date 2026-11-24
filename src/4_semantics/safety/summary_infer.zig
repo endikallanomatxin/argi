@@ -8310,6 +8310,17 @@ pub const Infer = struct {
         const data = try self.allocator.create(facts.ValueEffect);
         data.* = .{ .fresh_dependencies = try self.oneFresh(source), .input_acquisition_origins = try self.oneInputPath(0, &.{}) };
         fields[shape.data_field].value = data;
+        const allocation_type = self.graph.fields.items[self.graph.function(callee).output.start].ty;
+        const layout = types.fields(self.graph, allocation_type) orelse return error.InvalidAllocationPrimitive;
+        if (@import("../global/c_abi.zig").isRawPointer(self.graph, self.graph.fields.items[layout.start + shape.data_field].ty)) {
+            const address = try self.allocator.create(facts.ValueEffect);
+            address.* = data.*;
+            address.observes_fresh_backing = true;
+            const raw = try self.allocator.create(facts.ValueEffect);
+            raw.* = data.*;
+            raw.fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = address }});
+            fields[shape.data_field].value = raw;
+        }
         // The private release address observes the same acquisition. Its
         // provenance grants neither another receipt nor release authority.
         if (fields.len > shape.storage_address_field) fields[shape.storage_address_field].value = data;
