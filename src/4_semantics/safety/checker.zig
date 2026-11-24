@@ -1122,6 +1122,14 @@ pub const SafetyChecker = struct {
         if (depth > 64) return true;
         if (isPointer(self.graph, ty) or (include_virtual and self.graph.semanticType(ty) == .virtual)) return true;
         if (types.arrayElement(self.graph, ty)) |element| return self.inputTypeNeedsLoan(element, depth + 1, include_virtual);
+        if (include_virtual) if (types.variants(self.graph, ty)) |variants| {
+            for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| {
+                if (variant.payload_type) |payload| {
+                    if (self.inputTypeNeedsLoan(payload, depth + 1, true)) return true;
+                }
+            }
+            return false;
+        };
         const fields = types.fields(self.graph, ty) orelse return false;
         for (self.graph.fields.items[fields.start..][0..fields.len]) |field| if (self.inputTypeNeedsLoan(field.ty, depth + 1, include_virtual)) return true;
         return false;
@@ -3028,6 +3036,13 @@ pub const SafetyChecker = struct {
             const length = types.arrayLength(self.graph, ty).?;
             for (0..length) |index|
                 try self.collectExecutionLoans(element, try self.projectValueFacts(value, &.{.{ .static_index = index }}), state, loans, source);
+            return;
+        }
+        if (types.variants(self.graph, ty) != null) {
+            // The loan summary cannot yet transport a reference leaf under a
+            // choice payload. Reject it before any execution is established.
+            if (self.inputTypeNeedsLoan(ty, 0, true))
+                try self.report(source, "execution inputs cannot retain references through choice payloads", .{});
             return;
         }
         if (types.fields(self.graph, ty)) |fields| for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
