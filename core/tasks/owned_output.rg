@@ -29,9 +29,7 @@ implement#(.T: Type) Deinit#(_OwnedTaskOutput#(T)) (
         } #else {
             address ::= _claim_task_output(.slot = self&._slot, .entry = self&._entry)
             if address != 0 {
-                anchor ::= erase_reference#(_OwnedTaskOutput#(T))(.base = self)
-                slot ::= trusted_establish_inherited_reference#(T)(.raw = raw_pointer#(T)(.address = address), .root = anchor)
-                trusted_opaque_drop#(.t: T)(.slot = slot)
+                discarded ::= _extract_task_output#(T)(.self = self, .address = address)
             }
         }
         if _destroy_task_output(.slot = self&._slot) != 0 { abort }
@@ -48,6 +46,12 @@ _withdraw_task_output := #(.T: Type) (.task: $&TaskReceipt) -> (.output: _OwnedT
 _take_task_output := #(.T: Type) (.self: $&_OwnedTaskOutput#(T)) -> (.result: T) {
     address ::= _claim_task_output(.ffi = self&._ffi, .slot = self&._slot, .entry = self&._entry)
     if address == 0 { abort }
+    result = _extract_task_output#(T)(.self = self, .address = address)
+}
+
+-- The caller obtained address from a successful one-shot claim on self.
+-- Extraction transfers cleanup to the ordinary typed lexical owner.
+_extract_task_output := #(.T: Type) (.self: $&_OwnedTaskOutput#(T), .address: UIntNative) -> (.result: T) {
     anchor ::= erase_reference#(_OwnedTaskOutput#(T))(.base = self)
     slot ::= trusted_establish_inherited_reference#(T)(.raw = raw_pointer#(T)(.address = address), .root = anchor)
     result = trusted_opaque_move_out#(.t: T, .storage_type: _OwnedTaskOutput#(T))(.storage = self, .slot = slot)
