@@ -61,8 +61,13 @@ pub fn lowerDiagnosed(
 
 /// Reuse the contract grammar for audited native declarations and checked C bodies.
 /// Access clauses do not grant lifetime, ownership or synchronization evidence.
-pub fn lowerNativeAccess(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph, files: []const graph_mod.FileInput, file_index: u32, declaration: syn.FunctionDeclaration, diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics) !?[]const primitives.MethodSafetyContract.AccessBound {
-    const node = declaration.safety_contract orelse return null;
+pub const NativeAccess = struct {
+    bounds: ?[]const primitives.MethodSafetyContract.AccessBound = null,
+    isolated_import: bool = false,
+};
+
+pub fn lowerNativeAccess(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph, files: []const graph_mod.FileInput, file_index: u32, declaration: syn.FunctionDeclaration, diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics) !NativeAccess {
+    const node = declaration.safety_contract orelse return .{};
     const tree = files[file_index].tree;
     const source = files[file_index].source;
     var ctx = Context{
@@ -90,6 +95,16 @@ pub fn lowerNativeAccess(allocator: std.mem.Allocator, graph: *graph_mod.ModuleS
             unreachable;
         };
         const name = tree.tokenTextFromSource(source, call.callee_token);
+        if (std.mem.eql(u8, name, "isolated")) {
+            const function_name = tree.tokenTextFromSource(source, declaration.name_token);
+            if (!files[file_index].is_bundled_core or !declaration.c_abi or declaration.c_function_pointer or
+                declaration.body != null or !std.mem.startsWith(u8, function_name, "_"))
+            {
+                try ctx.contractError(statement, "native isolated() requires a private bundled-core C import");
+                unreachable;
+            }
+            continue;
+        }
         if (!std.mem.eql(u8, name, "reads") and !std.mem.eql(u8, name, "writes") and !std.mem.eql(u8, name, "no_access")) {
             try ctx.contractError(statement, "native access contracts support only reads, writes and no_access");
             unreachable;
@@ -102,10 +117,10 @@ pub fn lowerNativeAccess(allocator: std.mem.Allocator, graph: *graph_mod.ModuleS
         .safety_contract = node,
     }, &.{})).?;
     defer contract.deinit(allocator);
-    if (!contract.bounded_access) return null;
+    if (!contract.bounded_access) return .{};
     const bounds = contract.access_bounds;
     contract.access_bounds = &.{};
-    return bounds;
+    return .{ .bounds = bounds, .isolated_import = contract.isolated };
 }
 
 pub const EntryCaptureSource = struct {

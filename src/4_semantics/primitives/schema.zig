@@ -203,7 +203,8 @@ pub const FunctionFlags = packed struct(u32) {
     is_comptime_entry: bool = false,
     is_comptime_host_entry: bool = false,
     is_isolated_callback: bool = false,
-    reserved: u16 = 0,
+    is_audited_isolated_import: bool = false,
+    reserved: u15 = 0,
     // Trusted metadata identities retain ordinary function-body safety.
     is_source_location_id: bool = false,
     is_source_location_resolver: bool = false,

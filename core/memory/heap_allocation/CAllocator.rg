@@ -47,7 +47,12 @@ implement Deallocator#($$&CAllocator) (
     }
 )
 
-_release_c_storage(.address: UIntNative) -> (): CFunction(.symbol = "_argi_c_aligned_release") where { no_access() }
+-- The platform heap synchronizes its own metadata. This private import
+-- releases the block supplied by the caller under its release custody.
+_release_c_storage(.address: UIntNative) -> (): CFunction(.symbol = "_argi_c_aligned_release") where {
+    no_access()
+    isolated()
+}
 
 allocate_shared_c_storage := (
     .self: $$&CAllocator, .size: UIntNative, .alignment: UIntNative, .zeroed: Bool = false

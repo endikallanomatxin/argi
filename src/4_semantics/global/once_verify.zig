@@ -449,7 +449,7 @@ const State = struct {
     fn walkCall(self: *State, call_node: graph_mod.GlobalNodeId, callee: graph_mod.GlobalFunctionId) anyerror!void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
         if (function.body == null) if (self.isolation_source) |origin| {
-            if (self.trustedConcurrentImport(function)) return;
+            if (function.flags.is_audited_isolated_import or self.trustedConcurrentImport(function)) return;
             try self.isolationError(origin, "foreign or unresolved functions");
             return;
         };

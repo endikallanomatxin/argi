@@ -192,7 +192,7 @@ const Context = struct {
                 .output_type = previous.output_type,
                 .body = body,
                 .foreign_symbol = foreign.symbol,
-                .declared_access = declared_access,
+                .declared_access = declared_access.bounds,
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
@@ -203,6 +203,7 @@ const Context = struct {
                     .is_c_abi = declaration.c_abi,
                     .is_c_function_pointer = declaration.c_function_pointer,
                     .is_isolated_callback = isolated,
+                    .is_audited_isolated_import = declared_access.isolated_import,
                     .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = inferred_error_reasons,
                 },
