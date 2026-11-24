@@ -201,7 +201,11 @@ const State = struct {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                 if (self.isolation_source != null) {
                     const declared = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract;
-                    if (call.self_permission != .concurrent or declared == null or !declared.?.bounded_access)
+                    // A checked empty footprint needs no permission to
+                    // access the captured referent. Still visit every method
+                    // below to check foreign calls and once consumption.
+                    if (declared == null or !declared.?.bounded_access or
+                        (call.self_permission != .concurrent and declared.?.access_bounds.len != 0))
                         try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                 }
                 try self.walkNode(call.handle);
