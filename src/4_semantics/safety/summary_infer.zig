@@ -7865,6 +7865,12 @@ pub const Infer = struct {
     fn joinStorageAlternatives(self: *Infer, value_type: ?graph_mod.GlobalTypeId, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
         if (summaries.valueEffectEql(left, right)) return left;
         var result = try self.mergeValueEffects(left, right);
+        // An alternative can have no payload facts and still return any tag.
+        // Only matching discriminants justify excluding other cases.
+        result.known_choice_variant = if (left.known_choice_variant == right.known_choice_variant)
+            left.known_choice_variant
+        else
+            null;
         const reference_value = if (value_type) |ty| self.graph.semanticType(ty) == .pointer else true;
         if (reference_value and hasReferenceTargetRecipe(left) != hasReferenceTargetRecipe(right))
             result.reference_target_incomplete = true;
@@ -9870,13 +9876,16 @@ test "unknown choice alternatives cannot preserve another branch's reference pro
     for ([_]facts.ValueEffect{ .{}, .{ .known_choice_variant = 0 } }) |unknown| {
         const joined = try infer.joinStorageAlternatives(null, known, unknown);
         try std.testing.expect(joined.variants[0].value.reference_relation == null);
+        try std.testing.expectEqual(unknown.known_choice_variant, joined.known_choice_variant);
         const reverse = try infer.joinStorageAlternatives(null, unknown, known);
         try std.testing.expect(reverse.variants[0].value.reference_relation == null);
+        try std.testing.expectEqual(unknown.known_choice_variant, reverse.known_choice_variant);
     }
     // A branch known to return another case cannot supply this payload.
     const other_case = facts.ValueEffect{ .known_choice_variant = 1 };
     const joined = try infer.joinStorageAlternatives(null, known, other_case);
     try std.testing.expect(joined.variants[0].value.reference_relation != null);
+    try std.testing.expect(joined.known_choice_variant == null);
 }
 
 test "typed alternative joins distinguish a scalar value origin from native address evidence" {
