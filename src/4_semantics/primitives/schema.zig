@@ -228,6 +228,7 @@ pub const MethodSafetyContract = struct {
     /// General selectors may combine entry inputs and distinct returned values.
     general_conditions: bool = false,
     bounded_access: bool = false,
+    isolated: bool = false,
     access_bounds: []const AccessBound = &.{},
     output_count: u32,
     dependencies: []const Dependency = &.{},

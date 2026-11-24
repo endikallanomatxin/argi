@@ -18,6 +18,8 @@ pub fn verifyContinuation(allocator: std.mem.Allocator, graph: *const graph_mod.
     };
     defer uses.* = state.seen_once;
     defer state.active_functions.deinit();
+    try state.verifyVirtualIsolation();
+    if (state.had_error) return error.Reported;
     try state.walkFunction(entry);
     if (state.had_error) return error.Reported;
 }
@@ -50,6 +52,9 @@ pub fn verify(
     };
     defer state.seen_once.deinit();
     defer state.active_functions.deinit();
+
+    try state.verifyVirtualIsolation();
+    if (state.had_error) return error.Reported;
 
     var has_entry = false;
     for (graph.functions.items, 0..) |function, raw| {
@@ -92,6 +97,36 @@ const State = struct {
     had_error: bool = false,
     callback_source: ?graph_mod.GlobalNodeId = null,
     isolation_source: ?graph_mod.GlobalNodeId = null,
+    verifying_virtual_interface: bool = false,
+
+    fn verifyVirtualIsolation(self: *State) !void {
+        for (self.graph.virtual_registries.items) |registry| {
+            if (registry.safety_contract) |declared| {
+                if (declared.isolated) break;
+            }
+        } else return;
+
+        self.verifying_virtual_interface = true;
+        defer self.verifying_virtual_interface = false;
+        var checked: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, void) = .empty;
+        defer checked.deinit(self.allocator);
+        for (self.graph.nodes.items, 0..) |node, index| {
+            if (node.content != .virtualize) continue;
+            const construction = self.graph.virtualizes.items[@intFromEnum(node.content.virtualize)];
+            for (self.graph.virtual_registry_refs.items[construction.safety_methods.start..][0..construction.safety_methods.len], 0..) |registry_id, method_index| {
+                const contract = self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract orelse continue;
+                if (!contract.isolated) continue;
+                const method = self.graph.function_refs.items[construction.methods.start + method_index];
+                if ((try checked.getOrPut(self.allocator, method)).found_existing) continue;
+                const origin: graph_mod.GlobalNodeId = @enumFromInt(index);
+                self.isolation_source = origin;
+                self.callback_source = origin;
+                defer self.isolation_source = null;
+                defer self.callback_source = null;
+                try self.walkCall(origin, method);
+            }
+        }
+    }
 
     fn walkFunction(self: *State, function_id: graph_mod.GlobalFunctionId) anyerror!void {
         if (self.active_functions.contains(function_id)) return;
@@ -199,16 +234,20 @@ const State = struct {
             },
             .virtual_call => |id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                const declared = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract;
                 if (self.isolation_source != null) {
-                    const declared = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract;
                     // The interface bounds access. Execution ingress checks the
                     // authority for each retained region, including exclusive
                     // loans of ordinary capabilities.
-                    if (declared == null or !declared.?.bounded_access)
+                    if (declared == null or !declared.?.bounded_access or
+                        (self.verifying_virtual_interface and !declared.?.isolated))
                         try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                 }
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
+                // Each table entry for this interface is checked at its
+                // construction, including the repeatability requirement.
+                if (declared != null and declared.?.isolated) return;
                 const evidence = @import("contract_evidence.zig");
                 const contract = evidence.virtualContractType(self.graph, call) orelse return error.InvalidVirtualContract;
                 var candidates: evidence.PossibleVirtualMethods = .{ .graph = self.graph, .contract = contract, .method_index = call.method_index };
@@ -322,7 +361,12 @@ const State = struct {
     fn checkGlobalBinding(self: *State, binding: graph_mod.GlobalBindingId) !void {
         const origin = self.isolation_source orelse return;
         if (!self.graph.isModuleBinding(binding) or @import("types.zig").isStaticBinding(self.graph, binding)) return;
-        if (!self.plainGlobalType(self.graph.binding(binding).ty, 0)) try self.isolationError(origin, "nonplain global storage");
+        const declared = self.graph.binding(binding);
+        if (self.verifying_virtual_interface and declared.mutability == .variable) {
+            try self.isolationError(origin, "mutable global storage");
+            return;
+        }
+        if (!self.plainGlobalType(declared.ty, 0)) try self.isolationError(origin, "nonplain global storage");
     }
 
     fn plainGlobalType(self: *const State, ty: graph_mod.GlobalTypeId, depth: usize) bool {
@@ -348,7 +392,8 @@ const State = struct {
     }
 
     fn isolationError(self: *State, address: graph_mod.GlobalNodeId, reason: []const u8) !void {
-        try self.diagnostics.add(self.location(self.graph.node(address).source), .semantic, "isolated callback cannot access {s}", .{reason});
+        const subject = if (self.verifying_virtual_interface) "isolated virtual implementation" else "isolated callback";
+        try self.diagnostics.add(self.location(self.graph.node(address).source), .semantic, "{s} cannot access {s}", .{ subject, reason });
         self.had_error = true;
     }
 

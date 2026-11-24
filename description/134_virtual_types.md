@@ -261,6 +261,14 @@ Virtual calls use the declared bound, even if a concrete implementation does les
 Access bounds grant neither generation invalidation nor ownership transfer; those
 effects still need their separate clauses.
 
+A method with a closed access bound may also declare `isolated()`. Every
+virtual construction checks that its selected method can execute repeatedly
+in an isolated callback. The check covers direct callees, cleanup, mutable
+global access and foreign calls. Nested virtual operations must publish the
+same guarantee. A call through that interface uses the checked guarantee
+without inspecting possible table entries. Lifetime and execution authority
+for the captured references are checked independently.
+
 Bounds cover the directly referenced storage and its structural subobjects.
 Following a reference stored within that region reaches another region: declaring
 `writes(self)` cannot hide an access to an external allocator or counter.

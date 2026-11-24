@@ -1,5 +1,5 @@
 Update#(.R: Type): Contract = (
-    .increment: (.receiver: R) -> (.value: Int32) where writes(receiver)
+    .increment: (.receiver: R) -> (.value: Int32) where { writes(receiver) isolated() }
 )
 Counter := (.value: Int32)
 implement Update#($&Counter) (

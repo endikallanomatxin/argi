@@ -488,6 +488,7 @@ pub const Context = struct {
         const node = requirement.safety_contract orelse return null;
         var general_conditions = false;
         var bounded_access = false;
+        var isolated = false;
         var access_bounds: std.ArrayList(primitives.MethodSafetyContract.AccessBound) = .empty;
         defer access_bounds.deinit(self.allocator);
         errdefer for (access_bounds.items) |bound| {
@@ -552,8 +553,8 @@ pub const Context = struct {
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
                     var transferred = false;
                     defer if (!transferred) effect.deinit(self.allocator);
-                    if (effect.bounded_access) {
-                        try self.contractError(statement, "access bounds must be declared outside on clauses");
+                    if (effect.bounded_access or effect.isolated) {
+                        try self.contractError(statement, "access bounds and isolation must be declared outside on clauses");
                         unreachable;
                     }
                     if (effect.retained_inputs.len != 0) {
@@ -605,12 +606,18 @@ pub const Context = struct {
                     continue;
                 }
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
+                if (try self.lowerIsolationClause(clause, &isolated)) continue;
                 try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources, &bounded_access, &access_bounds);
             }
-        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources, &bounded_access, &access_bounds);
+        } else if (!try self.lowerIsolationClause(node, &isolated)) try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &execution_transfers, &completed_executions, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources, &bounded_access, &access_bounds);
+        if (isolated and !bounded_access) {
+            try self.contractError(node, "isolated requires declared reads, writes or no_access");
+            unreachable;
+        }
         var result: primitives.MethodSafetyContract = .{
             .general_conditions = general_conditions,
             .bounded_access = bounded_access,
+            .isolated = isolated,
             .output_count = @intCast((try self.contractSignatureFields(requirement.output)).count()),
             .source = self.sourceRef(node),
         };
@@ -632,6 +639,18 @@ pub const Context = struct {
         result.execution_transfers = try execution_transfers.toOwnedSlice(self.allocator);
         result.completed_executions = try completed_executions.toOwnedSlice(self.allocator);
         return result;
+    }
+
+    fn lowerIsolationClause(self: *Context, node: syn.NodeIndex, isolated: *bool) !bool {
+        const call = self.tree.functionCall(node) orelse return false;
+        if (call.module_qualifier != null or call.specialization_arguments != null or
+            !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, call.callee_token), "isolated")) return false;
+        if (isolated.* or self.tree.structValueLiteral(call.input).?.fields.len != 0) {
+            try self.contractError(node, "isolated requires no arguments and may appear only once");
+            unreachable;
+        }
+        isolated.* = true;
+        return true;
     }
 
     fn contractError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {
