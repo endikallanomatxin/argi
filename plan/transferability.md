@@ -352,3 +352,12 @@ publication, retain its external dependencies on the receipt, and renew
 only internal observations at extraction. Certification of completion
 controls when that effect can be extracted. Cleanup needs the same
 published evidence and must consume the same custody on failure.
+
+The allocation-count fixtures for local String and ring buffers release raw
+addresses through public libc free. That operation accepts an arbitrary
+address and its footprint cannot be declared empty: the address does not
+authenticate the identity or custody of the released block. The private
+CAllocator release import has a stronger caller precondition and cannot
+justify the public operation's effects. An unconditional isolated Deallocator
+interface therefore rejects valid sequential providers. Admission must
+instead use guarantees of the captured capability at the execution boundary.
