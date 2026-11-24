@@ -37,7 +37,9 @@ run := (.ffi: $&ForeignFunctionInterface, .start: Bool) -> () {
     executor ::= Virtual#(Executor)($&provider)
     match async_owned#(produce)(.args = (), .executor = executor, .ffi = ffi) {
         ..ok ~unexpected { abort }
-        ..error _ {}
+        ..error failure {
+            if is(.value = failure.reason, .variant = ..task_start_failed) == false { abort }
+        }
     }
 }
 
@@ -46,4 +48,12 @@ main := (.system: System) -> () {
     if drops != 0 { abort }
     run(.ffi = system.ffi, .start = true)
     if drops != 1 { abort }
+    provider ::= ThreadedExecutor(.ffi = system.ffi)
+    executor ::= Virtual#(Executor)($&provider)
+    {
+        task ::= unwrap_or_abort(async_owned#(produce)(.args = (), .executor = executor, .ffi = system.ffi))
+        owner ::= unwrap_or_abort(await($&task))
+        if owner.value != 42 or drops != 1 { abort }
+    }
+    if drops != 2 { abort }
 }
