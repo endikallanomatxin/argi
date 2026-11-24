@@ -1,6 +1,7 @@
 const graph_mod = @import("../global/graph.zig");
 const types = @import("../global/types.zig");
 const standard_contracts = @import("../global/standard_contracts.zig");
+const std = @import("std");
 const facts = @import("facts.zig");
 
 /// A proof about the value's current contents. Callers separately check loans,
@@ -40,7 +41,7 @@ fn provesValue(
     else
         .none;
     if (guarantee == .unconditional) return true;
-    const owner = value.intrinsic_backing_owner orelse enclosing_owner;
+    const owner = backingOwner(value, enclosing_owner);
     // Use only the facts of the current address slot. A whole-container
     // dependency can survive a write that replaces the address.
     if (@import("../global/c_abi.zig").isRawPointer(graph, ty))
@@ -117,6 +118,12 @@ fn nominalGuarantee(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.G
     return guarantee;
 }
 
+/// Only local custody establishes a new enclosing backing relationship.
+pub fn backingOwner(value: facts.ValueFacts, enclosing_owner: ?facts.ValidityRootId) ?facts.ValidityRootId {
+    const root = value.intrinsic_backing_owner orelse return enclosing_owner;
+    return if (std.mem.indexOfScalar(facts.ValidityRootId, value.owned_roots, root) != null) root else null;
+}
+
 /// A reference may travel inside the owner of its backing. The enclosing
 /// value must establish custody independently of the reference, and every
 /// retained dependency must travel with that custody.
@@ -154,7 +161,6 @@ fn fieldValue(value: facts.ValueFacts, index: usize) facts.ValueFacts {
 }
 
 test "erased transfer evidence belongs to the captured value" {
-    const std = @import("std");
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -173,7 +179,6 @@ test "erased transfer evidence belongs to the captured value" {
 }
 
 test "an aggregate proof follows its current erased field" {
-    const std = @import("std");
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -198,7 +203,6 @@ test "an aggregate proof follows its current erased field" {
 }
 
 test "native task result transport rejects execution and storage evidence in a payload" {
-    const std = @import("std");
     var child: facts.ValueFacts = .{};
     const result: facts.ValueFacts = .{ .variants = &.{.{ .index = 0, .value = &child }} };
     try std.testing.expect(!requiresResultMetadata(result, 0));
@@ -227,7 +231,6 @@ test "native task result transport rejects execution and storage evidence in a p
 }
 
 test "owned backing transport requires matching custody and no external loan" {
-    const std = @import("std");
     const owned: facts.ValidityRootId = @enumFromInt(0);
     const external: facts.ValidityRootId = @enumFromInt(1);
     var reference: facts.ValueFacts = .{
@@ -249,7 +252,6 @@ test "owned backing transport requires matching custody and no external loan" {
 }
 
 test "structural transfer distinguishes an internal reference from a detached one" {
-    const std = @import("std");
     const a = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
@@ -272,6 +274,9 @@ test "structural transfer distinguishes an internal reference from a detached on
     };
     try std.testing.expect(proves(&graph, @enumFromInt(2), container));
     try std.testing.expect(!proves(&graph, @enumFromInt(1), reference));
+    container.owned_roots = &.{};
+    try std.testing.expect(!proves(&graph, @enumFromInt(2), container));
+    container.owned_roots = &.{backing};
     container.intrinsic_backing_owner = null;
     try std.testing.expect(!proves(&graph, @enumFromInt(2), container));
 }

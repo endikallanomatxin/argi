@@ -3019,7 +3019,7 @@ pub const SafetyChecker = struct {
     }
 
     fn collectExecutionLoansIn(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef, transfers_custody: bool, enclosing_owner: ?facts.ValidityRootId) anyerror!void {
-        const owner = if (transfers_custody) value.intrinsic_backing_owner orelse enclosing_owner else null;
+        const owner = if (transfers_custody) @import("transfer_evidence.zig").backingOwner(value, enclosing_owner) else null;
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
         if (semantic == .virtual) {
             if (value.reference_target_incomplete) {
