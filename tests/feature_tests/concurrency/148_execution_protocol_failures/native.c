@@ -105,6 +105,49 @@ static void check_caller_output(void) {
     if (drops != before + 1) abort();
 }
 
+static unsigned input_drops;
+static void drop_input(int *input) {
+    if (*input != 37) abort();
+    free(input);
+    ++input_drops;
+}
+
+static argi_task_result_cleanup consume_input(struct argi_execution_invocation invocation) {
+    if (invocation.input_size != sizeof(int *) || invocation.output_size != 0) abort();
+    drop_input(*(int **)invocation.input);
+    return NULL;
+}
+
+static void check_owned_input(void) {
+    /* The input buffer contains a copy of an owning representation. The
+       caller retains its ownership when start fails. */
+    int *owner = malloc(sizeof(*owner));
+    if (!owner) abort();
+    *owner = 37;
+    create_fails = 1;
+    if (probe_task_create(consume_input, &owner, sizeof(owner), 0, _Alignof(int *), 1)) abort();
+    if (input_drops != 0) abort();
+    drop_input(owner);
+    create_fails = 0;
+
+    /* A successful start delegates destruction to the callback, including
+       when the worker runs before create returns or the task is discarded. */
+    for (int mode = 0; mode < 3; ++mode) {
+        unsigned before = input_drops;
+        owner = malloc(sizeof(*owner));
+        if (!owner) abort();
+        *owner = 37;
+        run_on_create = mode == 1;
+        uintptr_t task = mode == 2
+            ? probe_task_inline(consume_input, &owner, sizeof(owner), 0, _Alignof(int *), 1)
+            : probe_task_create(consume_input, &owner, sizeof(owner), 0, _Alignof(int *), 1);
+        if (!task || input_drops != before + (mode != 0)) abort();
+        owner = NULL;
+        if (probe_task_destroy(task) || input_drops != before + 1) abort();
+    }
+    run_on_create = 0;
+}
+
 int32_t execution_protocol_probe(void) {
     int input = 21;
     create_fails = 1;
@@ -143,5 +186,6 @@ int32_t execution_protocol_probe(void) {
     if (probe_task_destroy(task) || calls != 4 || pending_start || joins != joined + 1) abort();
     check_owned_result();
     check_caller_output();
+    check_owned_input();
     return 0;
 }
