@@ -10,6 +10,8 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include "../shared/process_arguments.h"
 extern char **environ;
@@ -151,3 +153,9 @@ int32_t _argi_process_stream_write(uintptr_t handle, uint8_t byte) {
 #include "../shared/atomic.c"
 #include "../shared/thread.c"
 #include "../shared/task.c"
+
+uintptr_t _argi_acquire_zeroed_c_heap(uintptr_t alignment, uintptr_t size) {
+    void *storage = aligned_alloc(alignment, size);
+    if (storage) memset(storage, 0, size);
+    return (uintptr_t)storage;
+}

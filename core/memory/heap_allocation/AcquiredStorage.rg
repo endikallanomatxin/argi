@@ -36,7 +36,7 @@ acquired_storage_alignment := (.storage: &AcquiredStorage) -> (.alignment: UIntN
 }
 
 acquire_heap_storage := (
-    .size: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
+    .size: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface, .zeroed: Bool = false
 ) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) {
 
     _require_allocation_alignment(.alignment = alignment)
@@ -58,9 +58,12 @@ acquire_heap_storage := (
         }
     }
 
-    address ::= aligned_alloc(
-        .alignment = physical_alignment, .size = physical_size, .ffi = ffi
-    ).address
+    address :: UIntNative = 0
+    if zeroed {
+        address = _acquire_zeroed_c_heap(.alignment = physical_alignment, .size = physical_size, .ffi = ffi).address
+    } else {
+        address = aligned_alloc(.alignment = physical_alignment, .size = physical_size, .ffi = ffi).address
+    }
 
     if address == 0 {
         result = ..error(.reason = ..out_of_memory)
@@ -71,6 +74,16 @@ acquire_heap_storage := (
 
     result = ..ok(._address = address, ._size = size, ._alignment = alignment)
 }
+
+-- This operation initializes only the newly acquired physical block. Its
+-- inputs cannot name existing language storage.
+_acquire_zeroed_c_heap := (.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNative) {
+    address = _native_acquire_zeroed_c_heap(.alignment = alignment, .size = size, .ffi = ffi).address
+}
+
+_native_acquire_zeroed_c_heap(.alignment: UIntNative, .size: UIntNative) -> (.address: UIntNative): CFunction(
+    .symbol = "_argi_acquire_zeroed_c_heap"
+) where { no_access() }
 
 acquire_page_storage := (.memory: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
     .result : Errable#(AcquiredStorage, (..out_of_memory))
