@@ -125,6 +125,16 @@ int32_t _argi_task_output_accepted(uintptr_t storage, argi_task_buffer_start ent
     return slot && slot->entry == entry && slot->state != OUTPUT_EMPTY;
 }
 
+int32_t _argi_task_output_detach(uintptr_t storage, uintptr_t handle, argi_task_buffer_start entry) {
+    struct argi_task_output *slot = (struct argi_task_output *)storage;
+    struct argi_task *task = (struct argi_task *)handle;
+    if (!slot || !task || slot->entry != entry || slot->state != OUTPUT_SUBMITTED ||
+        task->caller_output != slot) return -1;
+    task->caller_output = NULL;
+    slot->state = OUTPUT_CLAIMED;
+    return 0;
+}
+
 uintptr_t _argi_task_start_buffers(uintptr_t storage, int32_t inline_run,
     argi_task_buffer_start entry, const void *input, uintptr_t input_size,
     uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment) {

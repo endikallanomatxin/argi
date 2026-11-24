@@ -13,6 +13,7 @@
 #define _argi_execution_reclaim probe_reclaim
 #define _argi_task_output_create probe_output_create
 #define _argi_task_output_accepted probe_output_accepted
+#define _argi_task_output_detach probe_output_detach
 #define _argi_task_start_buffers probe_start_buffers
 #define _argi_task_output_take probe_output_take
 #define _argi_task_output_destroy probe_output_destroy
@@ -108,6 +109,23 @@ static void check_caller_output(void) {
     if (drops != before + 1) abort();
 }
 
+static void check_detached_output(void) {
+    int input = 21;
+    uintptr_t slot = probe_output_create(calculate);
+    uintptr_t unrelated = probe_output_create(calculate);
+    if (!slot || !unrelated || !probe_output_detach(slot, 0, calculate)) abort();
+    uintptr_t task = probe_start_buffers(slot, 0, calculate, &input, sizeof(input),
+        sizeof(int), _Alignof(int), _Alignof(int));
+    if (!task || !probe_output_detach(slot, task, make_owned) ||
+        !probe_output_detach(unrelated, task, calculate)) abort();
+    if (probe_output_detach(slot, task, calculate) ||
+        !probe_output_detach(slot, task, calculate) ||
+        !probe_output_accepted(slot, calculate) || probe_output_take(slot, calculate)) abort();
+    if (probe_output_destroy(slot) || probe_output_destroy(unrelated)) abort();
+    uintptr_t value = probe_task_result(task, sizeof(int));
+    if (!value || *(int *)value != 42 || probe_task_destroy(task)) abort();
+}
+
 static unsigned input_drops;
 static void drop_input(int *input) {
     if (*input != 37) abort();
@@ -189,6 +207,7 @@ int32_t execution_protocol_probe(void) {
     if (probe_task_destroy(task) || calls != 4 || pending_start || joins != joined + 1) abort();
     check_owned_result();
     check_caller_output();
+    check_detached_output();
     check_owned_input();
     return 0;
 }

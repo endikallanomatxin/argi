@@ -31,6 +31,9 @@ uintptr_t _argi_task_output_create(argi_task_buffer_start entry);
 /* Acceptance survives join, receipt release, and output extraction. Only
    the slot owner may query it after the submit call returns. */
 int32_t _argi_task_output_accepted(uintptr_t slot, argi_task_buffer_start entry);
+/* Transfer output custody from the acceptance slot back to its live task.
+   The slot remains an acceptance proof and can be destroyed afterwards. */
+int32_t _argi_task_output_detach(uintptr_t slot, uintptr_t task, argi_task_buffer_start entry);
 /* A zero slot selects output owned by the task receipt. */
 uintptr_t _argi_task_start_buffers(uintptr_t slot, int32_t inline_run,
     argi_task_buffer_start entry, const void *input, uintptr_t input_size,
