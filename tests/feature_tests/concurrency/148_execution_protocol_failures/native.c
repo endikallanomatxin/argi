@@ -12,6 +12,7 @@
 #define _argi_task_destroy probe_task_destroy
 #define _argi_execution_reclaim probe_reclaim
 #define _argi_task_output_create probe_output_create
+#define _argi_task_output_accepted probe_output_accepted
 #define _argi_task_start_buffers probe_start_buffers
 #define _argi_task_output_take probe_output_take
 #define _argi_task_output_destroy probe_output_destroy
@@ -88,18 +89,20 @@ static void check_caller_output(void) {
     int input = 21;
     unsigned before = drops;
     uintptr_t slot = probe_output_create(make_owned);
-    if (!slot || probe_output_take(slot, make_owned)) abort();
+    if (!slot || probe_output_accepted(slot, make_owned) || probe_output_take(slot, make_owned)) abort();
     create_fails = 1;
     if (probe_start_buffers(slot, 0, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int))) abort();
     create_fails = 0;
-    if (probe_output_take(slot, make_owned) || drops != before) abort();
+    if (probe_output_accepted(slot, make_owned) || probe_output_take(slot, make_owned) || drops != before) abort();
     uintptr_t task = probe_start_buffers(slot, 1, make_owned, &input, sizeof(int), sizeof(int), _Alignof(int), _Alignof(int));
-    if (!task || !probe_output_destroy(slot) || probe_output_take(slot, make_owned)) abort();
+    if (!task || !probe_output_accepted(slot, make_owned) || probe_output_accepted(slot, calculate) ||
+        !probe_output_destroy(slot) || probe_output_take(slot, make_owned)) abort();
     if (probe_task_result(task, sizeof(int)) || probe_take_owned_result(task, drop_result)) abort();
-    if (probe_task_release_storage(task) || drops != before || !probe_output_destroy(slot)) abort();
+    if (probe_task_release_storage(task) || !probe_output_accepted(slot, make_owned) ||
+        drops != before || !probe_output_destroy(slot)) abort();
     if (probe_output_take(slot, calculate)) abort();
     uintptr_t value = probe_output_take(slot, make_owned);
-    if (!value || probe_output_take(slot, make_owned)) abort();
+    if (!value || !probe_output_accepted(slot, make_owned) || probe_output_take(slot, make_owned)) abort();
     drop_result(value);
     if (probe_output_destroy(slot)) abort();
     if (drops != before + 1) abort();

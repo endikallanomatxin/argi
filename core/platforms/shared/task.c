@@ -120,6 +120,11 @@ uintptr_t _argi_task_output_create(argi_task_buffer_start entry) {
     return (uintptr_t)slot;
 }
 
+int32_t _argi_task_output_accepted(uintptr_t storage, argi_task_buffer_start entry) {
+    const struct argi_task_output *slot = (const struct argi_task_output *)storage;
+    return slot && slot->entry == entry && slot->state != OUTPUT_EMPTY;
+}
+
 uintptr_t _argi_task_start_buffers(uintptr_t storage, int32_t inline_run,
     argi_task_buffer_start entry, const void *input, uintptr_t input_size,
     uintptr_t output_size, uintptr_t input_alignment, uintptr_t output_alignment) {
