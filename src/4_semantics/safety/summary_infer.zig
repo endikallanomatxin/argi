@@ -8108,6 +8108,7 @@ pub const Infer = struct {
 
         return .{
             .static_reference = if (left.static_reference == right.static_reference) left.static_reference else null,
+            .observes_fresh_backing = left.observes_fresh_backing and right.observes_fresh_backing and fresh_dependencies.items.len == 1,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
             .concurrent_receiver_inputs = if (left.virtual_receiver_input != null and right.virtual_receiver_input != null and
                 left.virtual_receiver_input.?.eql(right.virtual_receiver_input.?))

@@ -6638,6 +6638,7 @@ pub const SafetyChecker = struct {
             .execution_receipts = try executions.toOwnedSlice(),
             .referenced_place = if (!left.reference_target_incomplete and !right.reference_target_incomplete and left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
+            .owned_backing = if (left.owned_backing == right.owned_backing) left.owned_backing else null,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
             .domains = domains,
@@ -15744,6 +15745,25 @@ test "worker cleanup can end a structural subobject but must preserve external r
     try checker.collectExecutionLoans(receiver, .{ .referenced_place = .{ .root = @enumFromInt(0) } }, &state, &loans, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+}
+
+test "joining observations requires agreement on owned backing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var checker = SafetyChecker.init(arena.allocator(), undefined, undefined);
+    defer checker.deinit();
+    const first: facts.ValidityRootId = @enumFromInt(0);
+    const external: facts.ValidityRootId = @enumFromInt(1);
+    const observed: facts.ValueFacts = .{ .owned_backing = first, .dependencies = &.{.{ .root = first }} };
+    const with_dependency: facts.ValueFacts = .{
+        .owned_backing = first,
+        .dependencies = &.{ .{ .root = first }, .{ .root = external } },
+    };
+    const joined = try checker.mergeValueFacts(observed, with_dependency);
+    try std.testing.expectEqual(first, joined.owned_backing.?);
+    try std.testing.expect(valueDependsOnRoot(joined, external));
+    try std.testing.expect((try checker.mergeValueFacts(observed, .{})).owned_backing == null);
+    try std.testing.expect((try checker.mergeValueFacts(observed, .{ .owned_backing = external })).owned_backing == null);
 }
 
 test "summarized handoff retires only the projected owner" {
