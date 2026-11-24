@@ -33,6 +33,10 @@ pub const Regions = struct {
     context: ?v.ContextId = null,
 
     pub fn acquire(self: *Regions, storage: *storage_mod.Storage, length: usize, alignment: usize) !Handle {
+        return self.acquireWithInitialization(storage, length, alignment, false);
+    }
+
+    pub fn acquireWithInitialization(self: *Regions, storage: *storage_mod.Storage, length: usize, alignment: usize, zeroed: bool) !Handle {
         if (self.context) |owner| if (owner != storage.context) return error.ExecutionForeignReference;
         if (alignment == 0 or !std.math.isPowerOfTwo(alignment)) return error.ExecutionInvalidAlignment;
         const id: RegionId = @enumFromInt(std.math.cast(u32, self.entries.items.len) orelse return error.ExecutionAcquisitionLimit);
@@ -46,7 +50,8 @@ pub const Regions = struct {
         errdefer storage.allocator.free(bytes);
         const initialized = try storage.allocator.alloc(u8, bitmap_length);
         errdefer storage.allocator.free(initialized);
-        @memset(initialized, 0);
+        if (zeroed) @memset(bytes, 0);
+        @memset(initialized, if (zeroed) 0xff else 0);
         const address_ = try reserveAddress(length, alignment);
         try storage.charge(charge);
         self.entries.appendAssumeCapacity(.{ .address = address_, .length = length, .alignment = alignment, .bytes = bytes, .initialized = initialized });

@@ -2597,6 +2597,19 @@ test "argi repl preserves choice defaults across specializations" {
     );
 }
 
+test "argi repl reads zeroed aligned heap acquisition" {
+    const commands =
+        \\provider ::= Virtual#(Deallocator)($&CAllocator(.ffi = ffi))
+        \\receipt ::= unwrap_or_abort(acquire_heap_storage(.size = 65, .alignment = 64, .ffi = ffi, .zeroed = true))
+        \\storage ::= establish_allocation(.storage = ~receipt, .size = 65, .alignment = 64, .deallocator = provider)
+        \\last_raw ::= raw_pointer#(UInt8)(.address = storage.data.address + 64).raw
+        \\last ::= trusted_establish_allocation_slot#(UInt8)(.allocation = &storage, .slot = last_raw, .anchor = storage.anchor)
+        \\last&
+        \\
+    ;
+    try expectReplFixture(null, commands, "_0 = 0\n");
+}
+
 test "argi repl supplies persistent allocator capabilities across reset" {
     try expectReplFixture(
         null,

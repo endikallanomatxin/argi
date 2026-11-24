@@ -1,7 +1,8 @@
+const std = @import("std");
 const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 
-pub const Operation = union(enum) { allocate: struct { size: usize, alignment: ?usize }, release };
+pub const Operation = union(enum) { allocate: struct { size: usize, alignment: ?usize, zeroed: bool = false }, release };
 
 /// Runtime adapters for selected bundled-core declarations, never name-based
 /// dispatch for user functions. Keep logical ffi inputs in the checked call.
@@ -15,6 +16,18 @@ pub fn classify(graph: *const g.GlobalSemanticGraph, id: g.GlobalFunctionId) ?Op
         if (fields.len == 1) return .{ .allocate = .{ .size = 0, .alignment = null } };
         if (fields.len == 2) return .{ .allocate = .{ .size = 1, .alignment = 0 } };
         return null;
+    }
+    const declaration = graph.declaration(function.declaration);
+    if (declaration.source.file_index < graph.files.items.len) {
+        const file = graph.files.items[declaration.source.file_index];
+        if (graph.modules.items[@intFromEnum(file.module)].is_bundled_core) {
+            const symbol = @import("host_signature.zig").symbol(graph, id);
+            if (std.mem.eql(u8, symbol, "_argi_acquire_zeroed_c_heap") and fields.len == 2 and
+                function.output.len == 1 and types.isBuiltin(graph, graph.fields.items[function.output.start].ty, .UIntNative))
+                return .{ .allocate = .{ .size = 1, .alignment = 0, .zeroed = true } };
+            if (std.mem.eql(u8, symbol, "_argi_c_aligned_release") and fields.len == 1 and function.output.len == 0)
+                return .release;
+        }
     }
     if (function.safety_primitive == .raw_released_storage and fields.len == 1 and function.output.len == 0) return .release;
     return null;

@@ -609,7 +609,7 @@ pub const Vm = struct {
                         .allocate => |signature| {
                             const size = std.math.cast(usize, (try slots.get(x.args[signature.size])).integer) orelse return error.ExecutionMemoryLimit;
                             const alignment = if (signature.alignment) |index| std.math.cast(usize, (try slots.get(x.args[index])).integer) orelse return error.ExecutionInvalidAlignment else @alignOf(u128);
-                            const acquired = storage.acquisitions.acquire(storage, size, alignment) catch |err| switch (err) {
+                            const acquired = storage.acquisitions.acquireWithInitialization(storage, size, alignment, signature.zeroed) catch |err| switch (err) {
                                 error.OutOfMemory => {
                                     try slots.put(x.outputs[0], .{ .integer = 0 });
                                     continue;
