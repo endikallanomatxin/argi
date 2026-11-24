@@ -94,7 +94,8 @@ pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
     if (depth >= 64 or value.explicit_dependency or value.dependencies.len != 0 or value.owned_roots.len != 0 or
         value.foreign_storage or value.storage_capabilities.len != 0 or value.storage_capability_incomplete or value.acquisition_origins.len != 0 or
         value.referenced_place != null or value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len != 0 or
-        value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0) return true;
+        value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0 or
+        value.generation_outcomes.len != 0 or value.concurrent_receiver) return true;
     for (value.fields) |field| if (requiresResultMetadata(field.value.*, depth + 1)) return true;
     for (value.variants) |variant| if (requiresResultMetadata(variant.value.*, depth + 1)) return true;
     for (value.guarded_values) |guard| if (requiresResultMetadata(guard.value.*, depth + 1)) return true;
@@ -148,4 +149,27 @@ test "an aggregate proof follows its current erased field" {
     try std.testing.expect(proves(&graph, @enumFromInt(1), record));
     handle.concurrent_receiver = false;
     try std.testing.expect(!proves(&graph, @enumFromInt(1), record));
+}
+
+test "native task result transport rejects execution and storage evidence in a payload" {
+    const std = @import("std");
+    var child: facts.ValueFacts = .{};
+    const result: facts.ValueFacts = .{ .variants = &.{.{ .index = 0, .value = &child }} };
+    try std.testing.expect(!requiresResultMetadata(result, 0));
+
+    child.generation_outcomes = &.{.{
+        .storage = .{ .place = .{ .root = @enumFromInt(0) } },
+        .generation = @enumFromInt(0),
+        .guard = 1,
+        .invalidates = true,
+    }};
+    try std.testing.expect(requiresResultMetadata(result, 0));
+
+    child = .{ .concurrent_receiver = true };
+    try std.testing.expect(requiresResultMetadata(result, 0));
+
+    // Concrete dispatch identity can be discarded. It cannot establish
+    // concurrent receiver authority or authenticate its backing.
+    child = .{ .virtual_methods = &.{@enumFromInt(0)} };
+    try std.testing.expect(!requiresResultMetadata(result, 0));
 }

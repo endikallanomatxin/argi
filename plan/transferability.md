@@ -62,6 +62,22 @@ other static storage evidence require a summary that can reestablish those
 facts at the join, so publication rejects them today. The caller either
 takes the occupied result by move or joins and runs its typed cleanup.
 
+Reconstruct result facts from the worker's checked output effect. Instantiate
+its input-relative facts from the input admitted at submission. Keep the
+result effect with the authenticated output custody, including through
+forwarding and receipt moves. A join can discharge an execution loan, while
+dependencies retained by the result still have to be live for withdrawal or
+discard. Fresh roots created by the worker need fresh identities in the
+joining analysis. Every internal observation of the same root must use the
+same identity, including the address and backing reference in an Allocation.
+A returned input owner instead retains the identity established at submission.
+
+The result type alone cannot recover either relation. Neither path requires
+the identity of any erased deallocator implementation. The native output
+slot retains its existing representation. Checked withdrawal and discard
+need to consume the same custody, including on error paths where a worker
+was accepted before submission returned a failure.
+
 ## Erased deallocation capability
 
 Deallocator selects evidence using the full captured reference type. A local
