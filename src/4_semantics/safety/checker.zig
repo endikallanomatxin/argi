@@ -6516,11 +6516,12 @@ pub const SafetyChecker = struct {
             }
         }
         // Flat dependencies can conservatively describe an uncovered path.
-        // A discriminant is usable only when the projection selected its slot.
+        // Discriminants and capability guarantees require selecting their slot.
         if (!exact_projection) {
             current.known_choice_variant = null;
             current.owned_backing = null;
             current.intrinsic_backing_owner = null;
+            current.concurrent_receiver = false;
         }
         return current;
     }
@@ -16058,17 +16059,21 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     var graph: graph_mod.GlobalSemanticGraph = .{};
     var checker = SafetyChecker.init(a, undefined, &graph);
     defer checker.deinit();
-    const child: facts.ValueFacts = .{ .known_choice_variant = 0 };
+    const child: facts.ValueFacts = .{ .known_choice_variant = 0, .concurrent_receiver = true };
     const parent: facts.ValueFacts = .{
         .known_choice_variant = 1,
+        .concurrent_receiver = true,
         .fields = &.{.{ .index = 0, .value = &child }},
     };
     const exact = try checker.projectValueFacts(parent, &.{.{ .field = 0 }});
     try std.testing.expectEqual(@as(?u32, 0), exact.known_choice_variant);
     const missing = try checker.projectValueFacts(parent, &.{.{ .field = 1 }});
     try std.testing.expect(missing.known_choice_variant == null);
+    try std.testing.expect(exact.concurrent_receiver);
+    try std.testing.expect(!missing.concurrent_receiver);
     const nested = try checker.projectValueFacts(parent, &.{ .{ .field = 1 }, .{ .field = 0 } });
     try std.testing.expect(nested.known_choice_variant == null);
+    try std.testing.expect(!nested.concurrent_receiver);
 }
 
 test "reading through an uncovered target does not select a known choice value" {
