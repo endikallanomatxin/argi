@@ -219,6 +219,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         !std.mem.eql(u32, a.virtual_methods, b.virtual_methods) or
         (a.virtual_receiver_input == null) != (b.virtual_receiver_input == null) or
         (a.virtual_receiver_input != null and !inputPathEql(a.virtual_receiver_input.?, b.virtual_receiver_input.?)) or
+        a.concurrent_receiver_inputs.len != b.concurrent_receiver_inputs.len or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_generation_dependencies.len != b.input_generation_dependencies.len or
@@ -238,6 +239,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         a.foreign_storage != b.foreign_storage or a.storage_capability_incomplete != b.storage_capability_incomplete or
         a.reference_target_incomplete != b.reference_target_incomplete) return false;
 
+    for (a.concurrent_receiver_inputs, b.concurrent_receiver_inputs) |left, right|
+        if (!inputPathEql(left, right)) return false;
     for (a.input_dependencies, b.input_dependencies) |left, right| {
         if (left.transfers_ownership != right.transfers_ownership or
             left.validity_only != right.validity_only or

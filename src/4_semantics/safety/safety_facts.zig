@@ -222,6 +222,8 @@ pub const ValueEffect = struct {
     /// The erased receiver retains concurrent reference authority.
     concurrent_receiver: bool = false,
     virtual_receiver_input: ?InputPath = null,
+    /// Every possible returned receiver must retain concurrent authority.
+    concurrent_receiver_inputs: []const InputPath = &.{},
     /// Exact graph-local targets retained by this descriptor.
     virtual_methods: []const u32 = &.{},
     reference_target_incomplete: bool = false,

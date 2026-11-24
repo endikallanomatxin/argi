@@ -6840,6 +6840,7 @@ pub const Infer = struct {
         const receiver_type = self.graph.semanticType(self.graph.node(virtualize.value).ty orelse return error.InvalidVirtualContractType);
         result.concurrent_receiver = receiver_type == .pointer and receiver_type.pointer.mutability == .concurrent;
         result.virtual_receiver_input = null;
+        result.concurrent_receiver_inputs = &.{};
         const methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
         const targets = try self.allocator.alloc(u32, methods.len);
         for (targets, methods) |*target, method| target.* = @intFromEnum(method);
@@ -7644,8 +7645,28 @@ pub const Infer = struct {
                 for (path.projections) |projection| selected = try self.projectValueEffect(selected, projection);
                 result.concurrent_receiver = selected.concurrent_receiver;
                 result.virtual_receiver_input = selected.virtual_receiver_input;
+                result.concurrent_receiver_inputs = selected.concurrent_receiver_inputs;
                 result.virtual_methods = selected.virtual_methods;
             }
+        }
+        if (effect.concurrent_receiver_inputs.len != 0) {
+            var required: facts.ValueEffect = .{ .concurrent_receiver = true };
+            for (effect.concurrent_receiver_inputs) |path| {
+                if (path.input_index >= arguments.len) {
+                    required = .{};
+                    break;
+                }
+                var selected = if (override) |replacement|
+                    if (replacement.input_index == path.input_index) replacement.effect else try context.effect(path.input_index)
+                else
+                    try context.effect(path.input_index);
+                for (path.projections) |projection| selected = try self.projectValueEffect(selected, projection);
+                required.concurrent_receiver_inputs = try self.joinReceiverRequirements(required, selected);
+                required.concurrent_receiver = required.concurrent_receiver and selected.concurrent_receiver;
+                if (!required.concurrent_receiver and required.concurrent_receiver_inputs.len == 0) break;
+            }
+            result.concurrent_receiver = required.concurrent_receiver;
+            result.concurrent_receiver_inputs = required.concurrent_receiver_inputs;
         }
         return result;
     }
@@ -7665,7 +7686,7 @@ pub const Infer = struct {
     }
 
     fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
-        if (effect.virtual_receiver_input != null) return true;
+        if (effect.virtual_receiver_input != null or effect.concurrent_receiver_inputs.len != 0) return true;
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.reference_relation != null) return true;
         if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
@@ -7733,6 +7754,15 @@ pub const Infer = struct {
                 result.virtual_receiver_input = null
             else
                 path.projections = try self.appendProjection(path.projections, projection);
+        }
+        if (result.concurrent_receiver_inputs.len != 0) {
+            if (projection == .dereference or projection == .dynamic_index) {
+                result.concurrent_receiver_inputs = &.{};
+            } else {
+                const paths = try self.allocator.dupe(facts.InputPath, result.concurrent_receiver_inputs);
+                for (paths) |*path| path.projections = try self.appendProjection(path.projections, projection);
+                result.concurrent_receiver_inputs = paths;
+            }
         }
         // Projected contents are not the forwarded reference value.
         result.reference_relation = null;
@@ -8004,6 +8034,11 @@ pub const Infer = struct {
 
         return .{
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
+            .concurrent_receiver_inputs = if (left.virtual_receiver_input != null and right.virtual_receiver_input != null and
+                left.virtual_receiver_input.?.eql(right.virtual_receiver_input.?))
+                &.{}
+            else
+                try self.joinReceiverRequirements(left, right),
             .virtual_methods = if (std.mem.eql(u32, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
             .virtual_receiver_input = if (left.virtual_receiver_input) |input|
                 if (right.virtual_receiver_input) |other|
@@ -8270,6 +8305,20 @@ pub const Infer = struct {
             if (!found) try result.append(entry);
         }
         return result.toOwnedSlice();
+    }
+
+    fn receiverRequirements(effect: *const facts.ValueEffect) ?[]const facts.InputPath {
+        if (effect.concurrent_receiver) return &.{};
+        if (effect.concurrent_receiver_inputs.len != 0) return effect.concurrent_receiver_inputs;
+        if (effect.virtual_receiver_input) |*path| return @as(*const [1]facts.InputPath, path);
+        return null;
+    }
+
+    fn joinReceiverRequirements(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) ![]const facts.InputPath {
+        const first = receiverRequirements(&left) orelse return &.{};
+        const second = receiverRequirements(&right) orelse return &.{};
+        const paths = try self.union_input_paths(first, second);
+        return if (paths.len <= 8) paths else &.{};
     }
 
     fn union_input_paths(self: *Infer, left: []const facts.InputPath, right: []const facts.InputPath) ![]const facts.InputPath {

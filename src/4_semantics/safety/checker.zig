@@ -6111,6 +6111,13 @@ pub const SafetyChecker = struct {
                 result.virtual_methods = selected.virtual_methods;
             };
         }
+        if (effect.concurrent_receiver_inputs.len != 0) {
+            result.concurrent_receiver = for (effect.concurrent_receiver_inputs) |path| {
+                if (path.input_index >= arguments.len) break false;
+                const selected = snapshotVirtualEvidence(arguments[path.input_index], path.projections) orelse break false;
+                if (!selected.concurrent_receiver) break false;
+            } else true;
+        }
         return result;
     }
 
