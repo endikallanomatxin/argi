@@ -4837,6 +4837,14 @@ pub const SafetyChecker = struct {
         return self.projectValueFacts(value, projections);
     }
 
+    fn selectedVirtualHasEmptyAccess(self: *const SafetyChecker, value: facts.ValueFacts, method_index: u32) bool {
+        if (value.reference_target_incomplete or method_index >= value.virtual_methods.len) return false;
+        const engine = self.active_summaries orelse return false;
+        const summary = engine.summaryFor(value.virtual_methods[method_index]) orelse return false;
+        return !summary.unknown_access and summary.input_accesses.len == 0 and
+            summary.global_accesses.len == 0 and summary.guarded_effects.len == 0;
+    }
+
     fn entryVirtualAccessValue(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         if (path.input_index >= arguments.len or path.storage_domain != null) return .{};
         var value = arguments[path.input_index];
@@ -4903,15 +4911,7 @@ pub const SafetyChecker = struct {
         for (summary.input_accesses) |access| {
             if (access.virtual_method) |method_index| {
                 const value = try self.entryVirtualAccessValue(access.target, arguments, state);
-                const known = if (method_index < value.virtual_methods.len and !value.reference_target_incomplete)
-                    if (self.active_summaries) |engine| engine.summaryFor(value.virtual_methods[method_index]) else null
-                else
-                    null;
-                if (known) |selected| {
-                    if (!selected.unknown_access and
-                        selected.input_accesses.len == 0 and selected.global_accesses.len == 0 and selected.guarded_effects.len == 0)
-                        continue;
-                }
+                if (self.selectedVirtualHasEmptyAccess(value, method_index)) continue;
                 if (!try self.requireUnknownExecutionAccess(source, "virtual operation", .write, state)) return false;
                 continue;
             }
@@ -7560,17 +7560,9 @@ pub const SafetyChecker = struct {
         var summary = try self.selectEntryGuardedSummary(try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract, values, state);
         if (summary.unknown_access and call.self_input_index < values.len) {
             if (try self.virtualValue(values[call.self_input_index], state)) |retained| {
-                if (!retained.reference_target_incomplete and call.method_index < retained.virtual_methods.len) {
-                    const method = retained.virtual_methods[call.method_index];
-                    if (inference.engine.summaryFor(method)) |concrete| {
-                        // The closed target proves this call touches no tracked
-                        // memory. Keep the erased contract's lifetime and
-                        // ownership effects, and its declared access regions.
-                        if (!concrete.unknown_access and concrete.input_accesses.len == 0 and concrete.global_accesses.len == 0 and
-                            concrete.guarded_effects.len == 0)
-                            summary.unknown_access = false;
-                    }
-                }
+                // The selected method can refine access. Lifetime, ownership
+                // and declared regions still come from the public contract.
+                if (self.selectedVirtualHasEmptyAccess(retained, call.method_index)) summary.unknown_access = false;
             }
         }
         // Private receiver projections are erased at a virtual boundary.
@@ -8071,8 +8063,6 @@ pub const SafetyChecker = struct {
         if (self.active_summaries) |engine| {
             if (engine.summaryFor(deinit_fn)) |summary| {
                 if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, &candidate)) return;
-                if (summary.unknown_access and
-                    !try self.requireUnknownExecutionAccess(input_node.source, "automatic cleanup call", .write, &candidate)) return;
                 try self.applySummaryEffects(input_node.source, summary, argument_ids, values, &candidate);
             } else {
                 try self.evaluateResolvedDeinitBody(deinit_fn, values, &candidate);
