@@ -2955,7 +2955,10 @@ pub const SafetyChecker = struct {
         }
         // A pending execution may observe the backing through a separate
         // reference, even when the submitted owner contains no reference leaf.
-        for (inputs.owned_roots) |root| {
+        var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer owned.deinit();
+        try collectOwnedRoots(inputs, &owned);
+        for (owned.items) |root| {
             if (!pendingExecutionBorrowsRoot(state, root)) continue;
             try self.report(source, "cannot submit an owner whose backing is borrowed by a pending execution", .{});
             return .{};
@@ -15597,12 +15600,20 @@ test "task input cannot take backing borrowed by a separate execution" {
     defer diags.deinit();
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(a);
-    try graph.types.append(a, .{ .builtin = .Int32 });
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name: primitives.StringRange = .{ .start = 0, .len = 0 };
+    const input_type: graph_mod.GlobalTypeId = @enumFromInt(2);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(a, .{ .name = name, .source = source, .ty = @enumFromInt(0) });
+    try graph.variants.append(a, .{ .name = name, .source = source, .value = 0, .payload_type = @enumFromInt(1) });
     var checker = SafetyChecker.init(a, &diags, &graph);
     defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(a);
     defer state.deinit();
-    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
     const root = try state.tracker.establish(.fresh);
     const loans = try a.dupe(facts.ExecutionLoan, &.{.{
         .storage = .{ .root = @enumFromInt(0) },
@@ -15611,11 +15622,16 @@ test "task input cannot take backing borrowed by a separate execution" {
     }});
     const pending = try state.establishExecutionAt(loans, source);
     const owner: facts.ValueFacts = .{ .owned_roots = &.{root} };
-    _ = try checker.lendExecution(@enumFromInt(0), owner, &state, source);
+    const payload: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &owner }} };
+    const wrapped: facts.ValueFacts = .{
+        .variants = &.{.{ .index = 0, .value = &payload }},
+        .known_choice_variant = 0,
+    };
+    _ = try checker.lendExecution(input_type, wrapped, &state, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expect(state.executionPending(pending));
     state.completeExecution(pending);
-    _ = try checker.lendExecution(@enumFromInt(0), owner, &state, source);
+    _ = try checker.lendExecution(input_type, wrapped, &state, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
