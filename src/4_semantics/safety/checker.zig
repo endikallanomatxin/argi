@@ -4306,6 +4306,8 @@ pub const SafetyChecker = struct {
         return true;
     }
     fn applyOutcomeSummary(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        const completions = try self.captureOutcomeCompletions(summary, arguments, state);
+        defer self.allocator.free(completions);
         var capture = false;
         for (summary.outputs) |output| if (hasOpaqueOutputDependencies(output)) {
             capture = true;
@@ -4313,7 +4315,7 @@ pub const SafetyChecker = struct {
         };
         if (!capture) {
             const result = try self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
-            return self.attachSummaryOpaqueEmptyProofs(source, summary, argument_ids, arguments, state, result);
+            return self.attachSummaryOpaqueEmptyProofs(source, summary, argument_ids, arguments, state, result, completions);
         }
         // Capture only the hidden contents' provenance before emptying them.
         // Returned owners keep these obligations; no caller place is restored.
@@ -4325,7 +4327,7 @@ pub const SafetyChecker = struct {
         // This adds provenance to the same result, rather than joining two
         // possible values. Keep its existing discriminant proofs intact.
         try self.preserveResultOutcomeProofs(&combined, result);
-        return self.attachSummaryOpaqueEmptyProofs(source, summary, argument_ids, arguments, state, combined);
+        return self.attachSummaryOpaqueEmptyProofs(source, summary, argument_ids, arguments, state, combined, completions);
     }
 
     fn preserveResultOutcomeProofs(self: *SafetyChecker, value: *facts.ValueFacts, result: facts.ValueFacts) anyerror!void {
@@ -4351,17 +4353,36 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn attachSummaryOpaqueEmptyProofs(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initial: facts.ValueFacts) !facts.ValueFacts {
-        var result = initial;
-        const guard = self.next_outcome_guard;
-        self.next_outcome_guard += 1;
-        for (summary.outcome_post_states) |outcome| {
+    const OutcomeCompletion = struct {
+        outcome: usize,
+        execution: facts.ExecutionId,
+    };
+
+    fn captureOutcomeCompletions(self: *SafetyChecker, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) ![]OutcomeCompletion {
+        var result: std.ArrayList(OutcomeCompletion) = .empty;
+        errdefer result.deinit(self.allocator);
+        for (summary.outcome_post_states, 0..) |outcome, index| {
             if (!outcome.reachable) continue;
             for (outcome.completed_executions) |path| {
                 const receipt = try self.loadSummaryInputValue(path, arguments, state, true);
                 var identity: ?facts.ExecutionId = null;
                 if (!collectUniqueExecutionReceipt(receipt, &identity)) continue;
-                const proof = identity orelse continue;
+                if (identity) |execution| try result.append(self.allocator, .{ .outcome = index, .execution = execution });
+            }
+        }
+        return result.toOwnedSlice(self.allocator);
+    }
+
+    fn attachSummaryOpaqueEmptyProofs(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initial: facts.ValueFacts, completions: []const OutcomeCompletion) !facts.ValueFacts {
+        var result = initial;
+        const guard = self.next_outcome_guard;
+        self.next_outcome_guard += 1;
+        var pending = completions;
+        for (summary.outcome_post_states, 0..) |outcome, index| {
+            if (!outcome.reachable) continue;
+            while (pending.len != 0 and pending[0].outcome == index) {
+                const proof = pending[0].execution;
+                pending = pending[1..];
                 if (summary.outputs.len == 1) {
                     try self.attachChoiceOutcome(&result, outcome.parent_variants, outcome.variant_index, proof);
                 } else {
@@ -15949,16 +15970,20 @@ test "a by-value request can certify its exact execution on an error outcome" {
         }},
     };
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
-    const ambiguous = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{
+    const ambiguous_completions = try checker.captureOutcomeCompletions(summary, &.{
         .{ .execution_receipts = &.{ first, second } },
-    }, &state, output);
+    }, &state);
+    defer allocator.free(ambiguous_completions);
+    const ambiguous = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{}, &state, output, ambiguous_completions);
     try checker.activate_conditional_resources(&state, ambiguous.variants[0].value.*);
     try std.testing.expect(state.executionPending(first));
     try std.testing.expect(state.executionPending(second));
 
-    const exact = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{
+    const completions = try checker.captureOutcomeCompletions(summary, &.{
         .{ .execution_receipts = &.{first} },
-    }, &state, output);
+    }, &state);
+    defer allocator.free(completions);
+    const exact = try checker.attachSummaryOpaqueEmptyProofs(source, summary, &.{}, &.{}, &state, output, completions);
     try std.testing.expect(state.executionPending(first));
     try checker.activate_conditional_resources(&state, exact.variants[0].value.*);
     try std.testing.expect(!state.executionPending(first));
