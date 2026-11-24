@@ -25,7 +25,8 @@ pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
     defer links.deinit();
     try links.append(input);
     var assigned = false;
-    for (graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (graph.node(id).content) {
+    const nodes = graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+    for (nodes) |id| switch (graph.node(id).content) {
         .binding_declaration => |binding| {
             const record = graph.binding(binding);
             if (record.deferred_initialization or binding == output or linksContains(links.items, binding)) return false;
@@ -58,6 +59,10 @@ pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
         .return_statement => |ret| return ret.expression == null and assigned,
         else => if (owning or !independentExpression(graph, id, links.items, output, 0)) return false,
     };
+    if (block.ret_val) |tail| {
+        if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, tail) == null and
+            (owning or !independentExpression(graph, tail, links.items, output, 0))) return false;
+    }
     return assigned;
 }
 
@@ -239,6 +244,11 @@ test "reference forwarding permits independent moved owners without consuming it
     graph.node_refs.items[0] = @enumFromInt(7);
     graph.blocks.items[0].nodes = .{ .start = 0, .len = 1 };
     try std.testing.expect(try proves(a, &graph, function, relation, true));
+    graph.blocks.items[0].ret_val = @enumFromInt(7);
+    try std.testing.expect(try proves(a, &graph, function, relation, true));
+    graph.blocks.items[0].ret_val = @enumFromInt(5);
+    try std.testing.expect(!try proves(a, &graph, function, relation, true));
+    graph.blocks.items[0].ret_val = null;
     graph.nodes.items[7].content.if_statement.condition = @enumFromInt(3);
     try std.testing.expect(!try proves(a, &graph, function, relation, true));
 }
