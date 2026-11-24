@@ -334,3 +334,21 @@ The output proof needs that relationship even if execution storage gains a
 way to preserve metadata. Suppressing the typed drop leaks the occupied
 result and serves only to isolate the diagnostic; the production path
 must retain cleanup on both successful and failed submission.
+
+The native adapter now has a single result custody path. A worker initializes
+its output, native release publishes the buffer, and the typed receiver
+claims the buffer for either extraction or cleanup. The old worker-returned
+cleanup callback has been removed.
+
+The current generic opaque move also loses information needed by the
+round trip. Insertion collects hidden external dependencies and ends
+owned roots. Extraction issues a fresh root and restores hidden external
+dependencies, but has no recipe to reconstruct which fields observe the
+new backing or which guarantees the erased capability carries. That
+behavior is appropriate for a storage domain with unknown occupancy.
+The task protocol can distinguish the exact single value published by a
+verified worker. It can use a caller-instantiated output effect at
+publication, retain its external dependencies on the receipt, and renew
+only internal observations at extraction. Certification of completion
+controls when that effect can be extracted. Cleanup needs the same
+published evidence and must consume the same custody on failure.
