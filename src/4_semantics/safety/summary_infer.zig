@@ -7715,6 +7715,8 @@ pub const Infer = struct {
             result.concurrent_receiver = required.concurrent_receiver;
             result.concurrent_receiver_inputs = required.concurrent_receiver_inputs;
         }
+        result.owns_fresh_backing = effect.owns_fresh_backing and result.fresh_owned_roots.len == 1 and
+            effect.fresh_owned_roots.len == 1 and result.fresh_owned_roots[0] == effect.fresh_owned_roots[0];
         result.observes_fresh_backing = effect.observes_fresh_backing and result.fresh_dependencies.len == 1 and
             effect.fresh_dependencies.len == 1 and result.fresh_dependencies[0] == effect.fresh_dependencies[0];
         return result;
@@ -7816,6 +7818,7 @@ pub const Infer = struct {
         var result = effect;
         result.static_reference = null;
         result.observes_fresh_backing = false;
+        result.owns_fresh_backing = false;
         result.concurrent_receiver = false;
         result.virtual_methods = &.{};
         if (result.virtual_receiver_input) |*path| {
@@ -8110,6 +8113,7 @@ pub const Infer = struct {
 
         return .{
             .static_reference = if (left.static_reference == right.static_reference) left.static_reference else null,
+            .owns_fresh_backing = left.owns_fresh_backing and right.owns_fresh_backing and fresh_owned.items.len == 1,
             .observes_fresh_backing = left.observes_fresh_backing and right.observes_fresh_backing and fresh_dependencies.items.len == 1,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
             .concurrent_receiver_inputs = if (left.virtual_receiver_input != null and right.virtual_receiver_input != null and
@@ -8316,7 +8320,7 @@ pub const Infer = struct {
                 value.virtual_receiver_input = .{ .input_index = borrowed.input };
             fields[borrowed.field].value = value;
         }
-        return .{ .fresh_owned_roots = try self.oneFresh(source), .fields = fields };
+        return .{ .fresh_owned_roots = try self.oneFresh(source), .owns_fresh_backing = true, .fields = fields };
     }
 
     fn oneFresh(self: *Infer, source: facts.FreshEffectSource) ![]const facts.FreshEffectSource {

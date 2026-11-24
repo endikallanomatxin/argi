@@ -3420,12 +3420,14 @@ pub const SafetyChecker = struct {
                     for (shape.borrowed_fields) |borrowed| if (index == borrowed.field) {
                         value.* = values[borrowed.input];
                         value.owned_roots = &.{};
+                        value.intrinsic_backing_owner = null;
                     };
                     field.* = .{ .index = @intCast(index), .value = value };
                 }
                 var result: facts.ValueFacts = .{ .owned_roots = try self.oneRoot(root) };
                 for (fields) |field| result = try self.mergeValueFacts(result, field.value.*);
                 result.fields = fields;
+                result.intrinsic_backing_owner = root;
                 result.variants = &.{};
                 result.known_choice_variant = null;
                 result.explicit_dependency = false;
@@ -6177,6 +6179,8 @@ pub const SafetyChecker = struct {
         {
             result.owned_backing = forwarded_backing;
         }
+        if (effect.owns_fresh_backing and effect.fresh_owned_roots.len == 1)
+            result.intrinsic_backing_owner = fresh_roots.get(effect.fresh_owned_roots[0]);
         try self.attachAbsentFreshExecutions(effect, &result, state);
         if (effect.reference_relation) |relation| {
             const path = relation.source;
@@ -6479,6 +6483,7 @@ pub const SafetyChecker = struct {
         if (!exact_projection) {
             current.known_choice_variant = null;
             current.owned_backing = null;
+            current.intrinsic_backing_owner = null;
         }
         return current;
     }
@@ -6654,6 +6659,7 @@ pub const SafetyChecker = struct {
             .execution_receipts = try executions.toOwnedSlice(),
             .referenced_place = if (!left.reference_target_incomplete and !right.reference_target_incomplete and left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
+            .intrinsic_backing_owner = if (left.intrinsic_backing_owner == right.intrinsic_backing_owner) left.intrinsic_backing_owner else null,
             .owned_backing = if (left.owned_backing == right.owned_backing) left.owned_backing else null,
             .concurrent_receiver = left.concurrent_receiver and right.concurrent_receiver,
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
@@ -6668,6 +6674,7 @@ pub const SafetyChecker = struct {
     fn withoutOwnership(self: *SafetyChecker, value: facts.ValueFacts) anyerror!?facts.ValueFacts {
         var result = value;
         result.owned_roots = &.{};
+        result.intrinsic_backing_owner = null;
         // Guarded snapshots can recover whole owners. Their refinement is
         // optional when copying dependencies and must not restore custody.
         result.guarded_values = &.{};
@@ -6703,6 +6710,9 @@ pub const SafetyChecker = struct {
         // A moved payload no longer belongs to the choice. Remove its roots
         // from the residual aggregate without changing historical aliases.
         var result = value;
+        if (value.intrinsic_backing_owner) |root| {
+            if (containsRoot(removed, root)) result.intrinsic_backing_owner = null;
+        }
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         for (value.dependencies) |dependency| if (!containsRoot(removed, dependency.root)) try appendDependencyFact(&dependencies, dependency);
         result.dependencies = try dependencies.toOwnedSlice();
@@ -10779,6 +10789,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.intrinsic_backing_owner != right.intrinsic_backing_owner) return false;
     if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
@@ -11963,6 +11974,7 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     try std.testing.expectEqual(@as(usize, 0), backing.owned_roots.len);
     try std.testing.expect(valueDependsOnRoot(backing, backing_root));
     try std.testing.expectEqual(backing_root, backing.owned_backing.?);
+    try std.testing.expectEqual(backing_root, direct.intrinsic_backing_owner.?);
     try std.testing.expect(!valueDependsOnRoot(backing, anchor_root));
     try std.testing.expect(!valueDependsOnRoot(backing, deallocator_root));
 }

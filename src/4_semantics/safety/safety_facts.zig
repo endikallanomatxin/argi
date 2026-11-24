@@ -219,6 +219,7 @@ pub const ReferenceRelation = struct {
 pub const ValueEffect = struct {
     /// An authenticated observation of the sole fresh dependency.
     observes_fresh_backing: bool = false,
+    owns_fresh_backing: bool = false,
     /// Exact read-only observation of immutable module scalar storage.
     static_reference: ?u32 = null,
     /// A possible reference result has no retained target-selection recipe.
