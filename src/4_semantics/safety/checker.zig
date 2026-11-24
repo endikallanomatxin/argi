@@ -1077,6 +1077,19 @@ pub const SafetyChecker = struct {
             result.domains = &.{};
             return result;
         }
+        if (types.variants(self.graph, ty)) |layout| {
+            var variants: std.ArrayList(facts.VariantFacts) = .empty;
+            for (self.graph.variants.items[layout.start..][0..layout.len], 0..) |variant, index| {
+                const payload = variant.payload_type orelse continue;
+                if (!self.inputTypeNeedsLoan(payload, 0, true)) continue;
+                const child = try self.allocator.create(facts.ValueFacts);
+                const nested = try self.appendInputProjection(prefix, .{ .variant = @intCast(index) });
+                child.* = try self.seedInputValue(payload, state, shared_backing, shared_generation, summary, nested);
+                try variants.append(self.allocator, .{ .index = @intCast(index), .value = child });
+            }
+            return .{ .variants = try variants.toOwnedSlice(self.allocator) };
+        }
+
         // Copied input records retain one identity per reference leaf. Empty
         // siblings remain explicit so projection never inherits another leaf's
         // facts. Plain scalar records allocate no field facts.
@@ -1092,7 +1105,7 @@ pub const SafetyChecker = struct {
         var fields: ?[]facts.FieldFacts = null;
         var result: facts.ValueFacts = .{};
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
-            const aggregate = types.arrayElement(self.graph, field.ty) != null or types.fields(self.graph, field.ty) != null;
+            const aggregate = types.arrayElement(self.graph, field.ty) != null or types.fields(self.graph, field.ty) != null or types.variants(self.graph, field.ty) != null;
             const projected = try self.appendInputProjection(prefix, .{ .field = @intCast(index) });
             const nested = if (aggregate or isPointer(self.graph, field.ty) or self.graph.semanticType(field.ty) == .virtual or requiresStorageAuthorization(summary, projected, true)) projected else prefix;
             const child = try self.seedInputValue(field.ty, state, shared_backing, shared_generation, summary, nested);
@@ -3050,24 +3063,30 @@ pub const SafetyChecker = struct {
             if (!self.inputTypeNeedsLoan(element, 0, true)) return;
             const length = types.arrayLength(self.graph, ty).?;
             for (0..length) |index|
-                try self.collectExecutionLoans(element, try self.projectValueFacts(value, &.{.{ .static_index = index }}), state, loans, source);
+                try self.collectExecutionLoans(element, representedSnapshotProjection(value, .{ .static_index = index }) orelse .{}, state, loans, source);
             return;
         }
-        if (types.variants(self.graph, ty) != null) {
-            // The loan summary cannot yet transport a reference leaf under a
-            // choice payload. Reject it before any execution is established.
-            if (self.inputTypeNeedsLoan(ty, 0, true))
-                try self.report(source, "execution inputs cannot retain references through choice payloads", .{});
+        if (types.variants(self.graph, ty)) |layout| {
+            for (self.graph.variants.items[layout.start..][0..layout.len], 0..) |variant, index| {
+                if (value.known_choice_variant) |active| if (active != index) continue;
+                const payload = variant.payload_type orelse continue;
+                if (!self.inputTypeNeedsLoan(payload, 0, true)) continue;
+                const child = representedSnapshotProjection(value, .{ .variant = @intCast(index) }) orelse {
+                    try self.report(source, "execution input is missing loan evidence for a possible choice payload", .{});
+                    return;
+                };
+                try self.collectExecutionLoans(payload, child, state, loans, source);
+            }
             return;
         }
         if (types.fields(self.graph, ty)) |fields| for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
             if (self.inputTypeNeedsLoan(field.ty, 0, true))
-                try self.collectExecutionLoans(field.ty, try self.projectValueFacts(value, &.{.{ .field = @intCast(index) }}), state, loans, source);
+                try self.collectExecutionLoans(field.ty, representedSnapshotProjection(value, .{ .field = @intCast(index) }) orelse .{}, state, loans, source);
         };
     }
 
     fn seedExecutionValue(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, state: *FunctionState, backing: *?facts.ValidityRootId, generation: *?facts.ValidityRootId) anyerror!facts.ValueFacts {
-        if (isPointer(self.graph, ty) or self.graph.semanticType(ty) == .virtual) return self.seedInputValue(ty, state, backing, generation, null, .{ .input_index = 0 });
+        if (isPointer(self.graph, ty) or self.graph.semanticType(ty) == .virtual or types.variants(self.graph, ty) != null) return self.seedInputValue(ty, state, backing, generation, null, .{ .input_index = 0 });
         var result: facts.ValueFacts = .{};
         if (!self.inputTypeNeedsLoan(ty, 0, true)) return result;
         if (types.arrayElement(self.graph, ty)) |element| {
