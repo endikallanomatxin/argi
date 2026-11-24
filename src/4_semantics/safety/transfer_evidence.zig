@@ -143,15 +143,19 @@ pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.Val
 
 /// An opaque native result slot currently transports bytes and cleanup custody.
 pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
-    if (depth >= 64 or value.owned_backing != null or value.intrinsic_backing_owner != null or
-        value.explicit_dependency or value.dependencies.len != 0 or value.owned_roots.len != 0 or
-        value.foreign_storage or value.storage_capabilities.len != 0 or value.storage_capability_incomplete or value.acquisition_origins.len != 0 or
-        value.referenced_place != null or value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len != 0 or
-        value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0 or
-        value.generation_outcomes.len != 0 or value.completed_executions.len != 0 or value.concurrent_receiver) return true;
+    if (depth >= 64) return true;
+
+    // The native slot has no fact payload. Structural shape and the known
+    // discriminant may be forgotten: the result still carries their bytes.
+    // Any other evidence needs an explicit transport rule before admission.
+    var metadata = value;
+    metadata.fields = &.{};
+    metadata.variants = &.{};
+    metadata.known_choice_variant = null;
+    if (!facts.isEmptyValue(metadata)) return true;
+
     var children = value.structuralChildren();
     while (children.next()) |child| if (requiresResultMetadata(child.*, depth + 1)) return true;
-    for (value.guarded_values) |guard| if (requiresResultMetadata(guard.value.*, depth + 1)) return true;
     return false;
 }
 
