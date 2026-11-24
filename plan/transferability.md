@@ -61,10 +61,19 @@ cannot establish that the destructor confines itself to those capabilities.
 Keep that destructor obligation explicit and validate the dependency when
 applying the proof at the execution boundary.
 
-An unbounded virtual call inside a cleanup currently collapses to unknown
-memory effects in the encompassing summary. Preserve that obligation as a
-method selection on an entry-relative handle whenever its identity is stable.
-At use, discharge it only with the retained operation's verified effects, or
-with the published interface's bound. Retargeting the handle, losing its
-identity, or merging incompatible alternatives must preserve the unknown
-effect. This applies to ordinary wrappers as well as destructors.
+A virtual implementation must prove the access guarantee published by its
+interface. A caller combines that guarantee with the authority and temporal
+dependencies retained by the handle. A transfer proof does not require a
+concrete method identity. Selected methods may improve local precision, while
+an unbounded interface remains insufficient when access authorization depends
+on a bound. Forwarding and cleanup summaries carry the same requirements.
+
+Transferability, temporal validity, storage identity and access authority
+answer distinct questions. An unknown target may prevent proving disjoint
+access while leaving a retained transfer guarantee intact. A live backing
+root proves neither transferability nor synchronization. An exclusive loan
+temporarily restricts the sender and returns authority on completion.
+Ownership transfer moves cleanup responsibility. Concurrent sharing grants
+simultaneous access through a verified interface. Use the corresponding
+evidence at each boundary and keep it out of runtime layouts and
+specialization keys.
