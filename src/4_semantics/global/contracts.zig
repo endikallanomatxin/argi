@@ -643,8 +643,21 @@ pub const Resolver = struct {
                 defer self.allocator.free(mapping);
                 try virtual_arguments.bind(mapping, &.{@intCast(position)});
                 const address_type = try self.core.pointerType(receiver_type, .read_only);
+                const temporary = if (self.virtualDescriptorIsPlace(receiver)) null else blk: {
+                    const binding: global_sg.GlobalBindingId = @enumFromInt(self.graph.bindings.items.len);
+                    try self.graph.bindings.append(self.allocator, .{
+                        .name = try self.graph.addString(self.allocator, "_virtual_descriptor"),
+                        .source = source,
+                        .ty = receiver_type,
+                        .initialization = receiver,
+                        .mutability = .constant,
+                    });
+                    const use_node: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                    try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = receiver_type, .content = .{ .binding_use = binding } });
+                    break :blk .{ .binding = binding, .use_node = use_node };
+                };
                 const address: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-                try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = address_type, .content = .{ .address_of = receiver } });
+                try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = address_type, .content = .{ .address_of = if (temporary) |slot| slot.use_node else receiver } });
                 const field_start = self.graph.value_fields.items.len;
                 try self.graph.value_fields.ensureUnusedCapacity(self.allocator, literal.fields.len + 1);
                 self.graph.value_fields.appendAssumeCapacity(.{ .name = parameter.name, .value = address });
@@ -664,12 +677,32 @@ pub const Resolver = struct {
                     .fields = .{ .start = @intCast(field_start), .len = literal.fields.len + 1 },
                     .assumed_fields = literal.assumed_fields,
                 } } });
-                const node = (try self.makeVirtualOperationCall(name, use.declaration, arguments, source, context, null)) orelse return null;
+                var node = (try self.makeVirtualOperationCall(name, use.declaration, arguments, source, context, null)) orelse return null;
+                if (temporary) |slot| {
+                    const declaration: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                    try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = null, .content = .{ .binding_declaration = slot.binding } });
+                    const result: global_sg.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                    try self.graph.nodes.append(self.allocator, node);
+                    const start: u32 = @intCast(self.graph.node_refs.items.len);
+                    try self.graph.node_refs.appendSlice(self.allocator, &.{ declaration, result });
+                    const block: global_sg.GlobalBlockId = @enumFromInt(self.graph.blocks.items.len);
+                    try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 2 }, .ret_val = result });
+                    node.content = .{ .value_sequence = block };
+                }
                 transaction.commit();
                 return node;
             }
         }
         return null;
+    }
+
+    fn virtualDescriptorIsPlace(self: *const Resolver, value: global_sg.GlobalNodeId) bool {
+        return switch (self.graph.node(value).content) {
+            .binding_use, .dereference, .array_index => true,
+            .struct_field_access => |field| self.virtualDescriptorIsPlace(field.value),
+            .choice_payload_access => |payload| self.virtualDescriptorIsPlace(payload.value),
+            else => false,
+        };
     }
 
     fn makeVirtualCall(
