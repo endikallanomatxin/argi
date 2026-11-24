@@ -81,3 +81,11 @@ admission proof also needs an access bound that covers the selected allocator,
 including backing providers its operations can reach. Ordinary direct-call
 summary instantiation is a reference for preserving the result dependencies;
 it does not discharge that separate execution obligation.
+
+The compile-only `await_escape` case keeps the executor in the caller and the
+allocator in the factory. The worker result crosses both a consuming await
+helper and the factory return. Once submission admits this worker, the factory
+return must be rejected for retaining the local provider. A rejection at
+submission also prevents the escape but does not test the return obligation.
+At 0a955da36 the public entry compiles this example with its unsupported
+submission branch. Build this control without running it.
