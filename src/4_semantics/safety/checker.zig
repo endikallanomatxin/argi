@@ -6460,7 +6460,10 @@ pub const SafetyChecker = struct {
         }
         // Flat dependencies can conservatively describe an uncovered path.
         // A discriminant is usable only when the projection selected its slot.
-        if (!exact_projection) current.known_choice_variant = null;
+        if (!exact_projection) {
+            current.known_choice_variant = null;
+            current.owned_backing = null;
+        }
         return current;
     }
 
@@ -10572,6 +10575,7 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
 }
 
 fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
     for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;

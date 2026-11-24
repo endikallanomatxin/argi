@@ -230,6 +230,7 @@ pub const ValueFacts = struct {
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
+            .owned_backing = self.owned_backing,
             .explicit_dependency = self.explicit_dependency,
             .dependencies = self.dependencies,
             .integer_address = self.integer_address,
@@ -258,6 +259,7 @@ pub const ValueFacts = struct {
     /// slot or extent and stored identities need not match the base reference.
     pub fn derivedReference(self: ValueFacts) ValueFacts {
         var result = self.referenceCopy();
+        result.owned_backing = null;
         result.referenced_place = null;
         result.reference_target_incomplete = true;
         result.mutation_places = &.{};
@@ -643,7 +645,7 @@ test "rebasing ownership preserves unrelated fact fragments" {
     const old: ValidityRootId = @enumFromInt(0);
     const renewed: ValidityRootId = @enumFromInt(1);
     const external: ValidityRootId = @enumFromInt(2);
-    const internal: ValueFacts = .{ .dependencies = &.{.{ .root = old }} };
+    const internal: ValueFacts = .{ .owned_backing = old, .dependencies = &.{.{ .root = old }} };
     const unrelated: ValueFacts = .{ .dependencies = &.{.{ .root = external }} };
     const owner: ValueFacts = .{
         .owned_roots = &.{old},
@@ -652,6 +654,8 @@ test "rebasing ownership preserves unrelated fact fragments" {
     const result = try replaceValueRoots(arena.allocator(), owner, &.{old}, renewed);
     try std.testing.expectEqual(renewed, result.owned_roots[0]);
     try std.testing.expectEqual(renewed, result.fields[0].value.dependencies[0].root);
+    try std.testing.expectEqual(renewed, result.fields[0].value.referenceCopy().owned_backing.?);
+    try std.testing.expect(result.fields[0].value.derivedReference().owned_backing == null);
     try std.testing.expectEqual(&unrelated, result.fields[1].value);
     try std.testing.expectEqual(old, internal.dependencies[0].root);
     const unchanged = try replaceValueRoots(arena.allocator(), result, &.{old}, renewed);
