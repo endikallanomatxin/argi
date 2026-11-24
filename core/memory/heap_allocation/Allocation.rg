@@ -43,6 +43,11 @@ Allocation := (
     ._storage_reference: ?&UInt8 = ..none
 )
 
+-- Cleanup uses the authenticated bounds and the retained release
+-- capability. Transferability depends on the current backing, anchor and
+-- deallocator of this particular allocation.
+implement StructurallyTransferable#(Allocation) ()
+
 -- Compiler-owned temporal boundary used after a physical allocator has
 -- returned backing storage. Each allocation owns a fresh temporal root.
 -- Region-backed storage also retains the generation of its backing anchor.
