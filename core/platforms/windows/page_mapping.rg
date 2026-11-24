@@ -17,6 +17,11 @@
         result = ..ok(._address = address, ._size = length, ._alignment = alignment)
     }
 
-    _memory_release_aligned(.address: UIntNative, .length: UIntNative) -> (.status: Int32): ExternFunction
+    -- Callers hold custody of the reservation, including the private header
+    -- used by the adapter. Release accesses no other Argi storage.
+    _memory_release_aligned(.address: UIntNative, .length: UIntNative) -> (.status: Int32): ExternFunction where {
+        no_access()
+        isolated()
+    }
 
 }
