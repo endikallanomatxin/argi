@@ -314,34 +314,43 @@ pub const Resolver = struct {
             else => return self.virtualConstructionFailure(source, "Virtual construction requires a reference to the concrete value; use '&value' or '$&value'"),
         };
         const concrete = pointer.child;
-        if (located.definition.participants.len > 1) {
-            const captures = (try self.resolveJointVirtualCaptures(located, concrete, source)) orelse return null;
-            defer self.allocator.free(captures);
-            return self.virtualConstructionFailure(source, "joint virtual dispatch is not supported yet");
+        const joint = located.definition.participants.len > 1;
+        if (!joint) {
+            if (!try self.validateVirtualContract(contract_ty, located, source, pointer.mutability)) return null;
+            // A matching erased handle already retains its selected evidence.
+            const concrete_type = self.graph.semanticType(concrete);
+            if (concrete_type == .virtual and global_types.equal(self.graph, concrete_type.virtual, contract_ty)) {
+                return .{
+                    .source = source,
+                    .ty = concrete,
+                    .content = .{ .dereference = .{ .pointer = handle, .pointer_type = handle_ty, .ty = concrete } },
+                };
+            }
         }
-        if (!try self.validateVirtualContract(contract_ty, located, source, pointer.mutability)) return null;
-        // A matching erased handle already contains the selected methods and
-        // their receiver. Copy it through the supplied reference instead of
-        // looking for a concrete conformance for the virtual type itself.
-        const concrete_type = self.graph.semanticType(concrete);
-        if (concrete_type == .virtual and global_types.equal(self.graph, concrete_type.virtual, contract_ty)) {
-            return .{
-                .source = source,
-                .ty = concrete,
-                .content = .{ .dereference = .{ .pointer = handle, .pointer_type = handle_ty, .ty = concrete } },
-            };
-        }
+
+        const participant = if (self.capturesReferenceParticipant(located)) handle_ty else concrete;
+        const captures = if (joint)
+            (try self.resolveJointVirtualCaptures(located, concrete, source)) orelse return null
+        else
+            null;
+        defer if (captures) |items| self.allocator.free(items);
+        const participants: []const global_sg.GlobalTypeId = if (captures) |items| blk: {
+            const tuple = try self.allocator.alloc(global_sg.GlobalTypeId, items.len);
+            for (items, tuple) |capture, *ty| ty.* = capture.reference_type;
+            break :blk tuple;
+        } else &.{participant};
+        defer if (captures != null) self.allocator.free(participants);
+
         var evidence_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer evidence_bindings.deinit(self.allocator);
-        const participant = if (self.capturesReferenceParticipant(located)) handle_ty else concrete;
-        const evidence = try self.selectConformance(contract_decl, &.{participant}, &evidence_bindings, 0, null) orelse {
-            self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = "the concrete type has no selected conformance for this contract" };
-            return null;
-        };
-        if (!try self.associatedArgumentsMatch(located, &evidence_bindings, contract_use.arguments)) {
-            self.virtual_signature_failure = .{ .source = source, .method_name = "Virtual", .reason = "selected conformance has incompatible associated elements for the virtual interface" };
-            return null;
-        }
+        const evidence = try self.selectConformance(contract_decl, participants, &evidence_bindings, 0, null) orelse
+            return self.virtualConstructionFailure(source, if (joint)
+                "the captured reference types have no selected conformance for this contract"
+            else
+                "the concrete type has no selected conformance for this contract");
+        if (!try self.associatedArgumentsMatch(located, &evidence_bindings, contract_use.arguments))
+            return self.virtualConstructionFailure(source, "selected conformance has incompatible associated elements for the virtual interface");
+        if (joint) return self.virtualConstructionFailure(source, "joint virtual dispatch is not supported yet");
 
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer methods.deinit(self.allocator);
