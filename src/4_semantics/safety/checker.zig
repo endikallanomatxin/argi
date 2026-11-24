@@ -6029,6 +6029,7 @@ pub const SafetyChecker = struct {
         result.dependencies = try dependencies.toOwnedSlice();
         const direct_owned_roots = result.owned_roots;
 
+        var forwarded_backing: ?facts.ValidityRootId = null;
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             var input = if (dependency.validity_only and dependency.path.projections.len != 0)
@@ -6041,6 +6042,8 @@ pub const SafetyChecker = struct {
             // Every copied alternative contributes, including an unknown
             // target. Validity-only anchors never select referenced storage.
             if (!dependency.validity_only) {
+                if (effect.input_dependencies.len == 1 and !input.reference_target_incomplete)
+                    forwarded_backing = input.owned_backing;
                 unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
                 includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             }
@@ -6167,6 +6170,12 @@ pub const SafetyChecker = struct {
             effect.fields.len == 0 and effect.variants.len == 0)
         {
             result.owned_backing = fresh_roots.get(effect.fresh_dependencies[0]);
+        }
+        if (forwarded_backing != null and !effect.reference_target_incomplete and referenced_place == null and
+            effect.input_places.len == 0 and effect.input_place_values.len == 0 and
+            effect.fields.len == 0 and effect.variants.len == 0)
+        {
+            result.owned_backing = forwarded_backing;
         }
         try self.attachAbsentFreshExecutions(effect, &result, state);
         if (effect.reference_relation) |relation| {
@@ -15772,6 +15781,12 @@ test "fresh backing observation retains an independent validity anchor" {
     try std.testing.expect(backing != external);
     try std.testing.expect(valueDependsOnRoot(anchored, backing));
     try std.testing.expect(valueDependsOnRoot(anchored, external));
+    var forwarding: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const forwarded = try checker.instantiateOutput(forwarding, &.{anchored}, &state);
+    try std.testing.expectEqual(backing, forwarded.owned_backing.?);
+    forwarding.reference_target_incomplete = true;
+    const partial = try checker.instantiateOutput(forwarding, &.{anchored}, &state);
+    try std.testing.expect(partial.owned_backing == null);
 }
 
 test "joining observations requires agreement on owned backing" {
