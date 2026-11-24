@@ -2961,6 +2961,10 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot send a pending execution through a task input", .{});
             return .{};
         }
+        if (valueDependsOnDeadRoot(try self.refineGeneralValue(inputs, state), state)) {
+            try self.report(source, "task input depends on a root that has ended", .{});
+            return .{};
+        }
         // A pending execution may observe the backing through a separate
         // reference, even when the submitted owner contains no reference leaf.
         var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
@@ -15908,6 +15912,32 @@ test "accepted task input retires owned backing but preserves external roots" {
     _ = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .task_input_handoff, &.{}, &.{input}, &state, .{ .file_index = 0, .offset = 0 });
     try std.testing.expect(!state.tracker.dependenciesAreAlive(alias));
     try std.testing.expect(state.tracker.isAlive(external));
+}
+
+test "task input lifetime checks include represented scalar leaves" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .UInt8 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    try std.testing.expect(try checker.endRoots(source, &state, &.{root}));
+    const leaf: facts.ValueFacts = .{ .dependencies = &.{.{ .root = root }} };
+    const inputs: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &leaf }} };
+    _ = try checker.admitExecution(@enumFromInt(1), inputs, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
 test "task input cannot take backing borrowed by a separate execution" {
