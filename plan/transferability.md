@@ -289,3 +289,10 @@ attached to cleanup of that lexical owner on exit. Moving the reservation
 between helpers cannot make destruction of an occupied output bounded.
 The caller needs the latent cleanup effects of the actual result and must
 check them at the point where output custody may be discharged.
+
+The bounded-release probe also builds the sending function with an ordinary
+CAllocator capture passed through string_with_length. With the same worker
+and nominal String type, that submission fails at the static transfer
+requirement. The shared variant runs the worker and updates a byte in its
+owned backing. Thus the temporary access bound does not itself certify
+transferability of the erased deallocator.
