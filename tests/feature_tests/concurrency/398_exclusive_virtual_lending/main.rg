@@ -2,6 +2,11 @@ Update#(.R: Type): Contract = (
     .increment: (.receiver: R) -> (.value: Int32) where { writes(receiver) isolated() }
 )
 Counter := (.value: Int32)
+implement Deinit#(Counter) (
+    .deinit = (.self: $&Counter) -> () {
+        if self&.value != 43 { abort }
+    }
+)
 implement Update#($&Counter) (
     .increment = (.receiver: $&Counter) -> (.value: Int32) {
         receiver&.value = receiver&.value + 1
@@ -19,4 +24,5 @@ main := (.system: System) -> () {
     future ::= unwrap_or_abort(async#(worker)(.args = (.view = view)))
     if unwrap_or_abort(await($&future)) != 42 { abort }
     if counter.value != 42 { abort }
+    counter.value = 43
 }
