@@ -125,7 +125,9 @@ pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.Val
     if (reference.owned_backing != root or reference.reference_target_incomplete or
         reference.referenced_place != null or reference.mutation_places.len != 0 or
         reference.symbolic_pointees.len != 0 or reference.opaque_provenance.len != 0 or
-        reference.domains.len != 0 or reference.execution_receipts.len != 0)
+        reference.domains.len != 0 or reference.execution_receipts.len != 0 or
+        reference.fields.len != 0 or reference.variants.len != 0 or
+        reference.guarded_values.len != 0 or reference.generation_outcomes.len != 0)
         return false;
     if (reference.dependencies.len == 0) return false;
     for (reference.dependencies) |dependency| if (dependency.root != root) return false;
@@ -231,6 +233,10 @@ test "owned backing transport requires matching custody and no external loan" {
     reference.dependencies = &.{ .{ .root = owned }, .{ .root = external } };
     try std.testing.expect(!observesTransferredBacking(reference, owned));
     reference.dependencies = &.{.{ .root = owned }};
+    const hidden: facts.ValueFacts = .{ .dependencies = &.{.{ .root = external }} };
+    reference.fields = &.{.{ .index = 0, .value = &hidden }};
+    try std.testing.expect(!observesTransferredBacking(reference, owned));
+    reference.fields = &.{};
     reference.reference_target_incomplete = true;
     try std.testing.expect(!observesTransferredBacking(reference, owned));
 }
