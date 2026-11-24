@@ -10,6 +10,12 @@ the receiving execution. Temporal dependencies, pending loans and cleanup
 ownership remain separate obligations. A type guarantee grants no permission to
 transfer a reference to the type.
 
+The nominal owner may instead declare StructurallyTransferable. This vouches
+that use and cleanup rely on the guarantees of the current fields or active
+payload. The checker still proves each component transferable, so values
+with a retained local and a retained concurrent handle can differ. String
+uses this conformance to delegate its proof to its Allocation and shape.
+
 Virtual construction can carry static evidence about the actual captured
 capability, including its receiver permission and retained dependencies. Two
 handles for the same contract can have different evidence. Derive aggregate

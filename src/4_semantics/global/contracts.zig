@@ -2095,7 +2095,8 @@ pub const Resolver = struct {
     }
 
     fn requiresNominalOwner(self: *const Resolver, declaration: global_sg.GlobalFamilyDefinitionId, name: []const u8) bool {
-        if (!std.mem.eql(u8, name, "ConcurrentAlias") and !std.mem.eql(u8, name, "Transferable")) return false;
+        if (!std.mem.eql(u8, name, "ConcurrentAlias") and !std.mem.eql(u8, name, "Transferable") and
+            !std.mem.eql(u8, name, "StructurallyTransferable")) return false;
         return standard_contracts.standardDefinition(self.graph, name) == declaration;
     }
 
@@ -2159,6 +2160,8 @@ pub const Resolver = struct {
                 {
                     failure.reason = if (std.mem.eql(u8, failure.contract_name, "Transferable"))
                         "Transferable requires a nominal value type defined by the implementing module"
+                    else if (std.mem.eql(u8, failure.contract_name, "StructurallyTransferable"))
+                        "StructurallyTransferable requires a nominal value type defined by the implementing module"
                     else
                         "ConcurrentAlias requires a nominal value type defined by the implementing module";
                     self.participant_conformance_failure = failure;
@@ -2543,6 +2546,8 @@ pub const Resolver = struct {
                 if (owner == null or !self.core.sameDeclarationNamespace(@intFromEnum(owner.?), module_index)) {
                     failure.reason = if (std.mem.eql(u8, failure.contract_name, "Transferable"))
                         "Transferable requires a nominal value type defined by the implementing module"
+                    else if (std.mem.eql(u8, failure.contract_name, "StructurallyTransferable"))
+                        "StructurallyTransferable requires a nominal value type defined by the implementing module"
                     else
                         "ConcurrentAlias requires a nominal value type defined by the implementing module";
                     self.participant_conformance_failure = failure;

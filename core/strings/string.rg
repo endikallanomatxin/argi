@@ -14,6 +14,8 @@ _string_max_result_length := () -> (.length: UIntNative) {
 
 _StringShape := (.marker: UInt8)
 
+implement Transferable#(_StringShape) ()
+
 implement Deinit#(_StringShape) (.deinit = (.self: $&_StringShape) -> () {})
 
 String := (
@@ -100,6 +102,8 @@ implement Init#(String, StringInitArgs) (
         result = string_with_length(.allocator = allocator, .length = length)
     }
 )
+
+implement StructurallyTransferable#(String) ()
 
 implement Deinit#(String) (
     .deinit = (.self: $&String) -> () {

@@ -10,7 +10,7 @@ implement Verify#($$&Expected) (
     }
 )
 Owner := (.verifier: Virtual#(Verify), .value: Int32)
-implement Transferable#(Owner) ()
+implement StructurallyTransferable#(Owner) ()
 implement Deinit#(Owner) (
     .deinit = (.self: $&Owner) -> () {
         self&.verifier.verify(.value = self&.value)

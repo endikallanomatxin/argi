@@ -6,14 +6,22 @@ const facts = @import("facts.zig");
 /// A proof about the value's current contents. Callers separately check loans,
 /// live dependencies and the transfer of destruction authority.
 pub fn proves(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts) bool {
-    return provesValue(graph, ty, value, standard_contracts.standardDefinition(graph, "Transferable"), 0);
+    return provesValue(graph, ty, value, .{
+        .unconditional = standard_contracts.standardDefinition(graph, "Transferable"),
+        .structural = standard_contracts.standardDefinition(graph, "StructurallyTransferable"),
+    }, 0);
 }
+
+const Markers = struct {
+    unconditional: ?graph_mod.GlobalFamilyDefinitionId,
+    structural: ?graph_mod.GlobalFamilyDefinitionId,
+};
 
 fn provesValue(
     graph: *const graph_mod.GlobalSemanticGraph,
     ty: graph_mod.GlobalTypeId,
     value: facts.ValueFacts,
-    marker: ?graph_mod.GlobalFamilyDefinitionId,
+    markers: Markers,
     depth: usize,
 ) bool {
     if (depth >= 64) return false;
@@ -22,34 +30,35 @@ fn provesValue(
     // authenticates receiver and region targets and establishes their loans.
     if (semantic == .virtual) return value.concurrent_receiver;
     if (semantic == .pointer) return semantic.pointer.mutability == .concurrent;
-    if (marker) |declaration| {
-        for (graph.contract_conformances.items) |evidence| {
-            if (evidence.declaration != declaration or !evidence.declaration_validated or evidence.participants.len != 1) continue;
-            const participant = graph.generic_arguments.items[evidence.participants.start].value.type;
-            if (types.equal(graph, ty, participant)) return true;
-        }
+    var structural_cleanup = false;
+    for (graph.contract_conformances.items) |evidence| {
+        if (evidence.declaration != markers.unconditional and evidence.declaration != markers.structural) continue;
+        if (!evidence.declaration_validated or evidence.participants.len != 1) continue;
+        const participant = graph.generic_arguments.items[evidence.participants.start].value.type;
+        if (!types.equal(graph, ty, participant)) continue;
+        if (evidence.declaration == markers.unconditional) return true;
+        structural_cleanup = true;
     }
-    // The destructor may access resources not described by the value layout.
-    // Such types need a published guarantee covering their cleanup.
-    if (types.hasDestructor(graph, ty) or @import("../global/c_abi.zig").isRawPointer(graph, ty) or
+    if ((types.hasDestructor(graph, ty) and !structural_cleanup) or
+        @import("../global/c_abi.zig").isRawPointer(graph, ty) or
         @import("../global/c_abi.zig").isFunctionPointer(graph, ty)) return false;
     if (semantic == .builtin)
         return semantic.builtin != .Any and semantic.builtin != .Type;
     if (types.arrayElement(graph, ty)) |element| {
         const count = types.arrayLength(graph, ty) orelse return false;
         if (count == 0) return value.fields.len == 0;
-        if (value.fields.len == 0) return provesValue(graph, element, .{}, marker, depth + 1);
-        const missing_proves = provesValue(graph, element, .{}, marker, depth + 1);
+        if (value.fields.len == 0) return provesValue(graph, element, .{}, markers, depth + 1);
+        const missing_proves = provesValue(graph, element, .{}, markers, depth + 1);
         if (!missing_proves and value.fields.len != count) return false;
         for (value.fields, 0..) |entry, index| {
             if (entry.index >= count or (!missing_proves and entry.index != index)) return false;
-            if (!provesValue(graph, element, entry.value.*, marker, depth + 1)) return false;
+            if (!provesValue(graph, element, entry.value.*, markers, depth + 1)) return false;
         }
         return true;
     }
     if (types.fields(graph, ty)) |fields| {
         for (graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            if (!provesValue(graph, field.ty, fieldValue(value, index), marker, depth + 1)) return false;
+            if (!provesValue(graph, field.ty, fieldValue(value, index), markers, depth + 1)) return false;
         }
         return true;
     }
@@ -61,7 +70,7 @@ fn provesValue(
             const selected = for (value.variants) |entry| {
                 if (entry.index == index) break entry.value.*;
             } else facts.ValueFacts{};
-            if (!provesValue(graph, payload, selected, marker, depth + 1)) return false;
+            if (!provesValue(graph, payload, selected, markers, depth + 1)) return false;
         }
         return true;
     }
