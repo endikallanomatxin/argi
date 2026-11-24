@@ -18,16 +18,10 @@ fn provesValue(
 ) bool {
     if (depth >= 64) return false;
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
-    if (semantic == .virtual) {
-        if (!value.concurrent_receiver or value.reference_target_incomplete or value.domains.len != 1) return false;
-        const receiver = value.domains[0];
-        return receiver.domain_index == @import("access_bounds.zig").receiver_domain and
-            (receiver.storages.len != 0 or receiver.symbolic_pointees.len != 0) and
-            receiver.traversals.len == 0 and receiver.required_reads.len == 0;
-    }
-    if (semantic == .pointer)
-        return semantic.pointer.mutability == .concurrent and !value.reference_target_incomplete and
-            (value.referenced_place != null or value.symbolic_pointees.len != 0);
+    // A capture's mode is a value guarantee. Execution admission separately
+    // authenticates receiver and region targets and establishes their loans.
+    if (semantic == .virtual) return value.concurrent_receiver;
+    if (semantic == .pointer) return semantic.pointer.mutability == .concurrent;
     if (marker) |declaration| {
         for (graph.contract_conformances.items) |evidence| {
             if (evidence.declaration != declaration or !evidence.declaration_validated or evidence.participants.len != 1) continue;
@@ -92,10 +86,9 @@ test "erased transfer evidence belongs to the captured value" {
     };
     try std.testing.expect(!proves(&graph, ty, .{ .domains = &.{receiver} }));
     try std.testing.expect(proves(&graph, ty, .{ .concurrent_receiver = true, .domains = &.{receiver} }));
-    try std.testing.expect(!proves(&graph, ty, .{
+    try std.testing.expect(proves(&graph, ty, .{
         .concurrent_receiver = true,
         .reference_target_incomplete = true,
-        .domains = &.{receiver},
     }));
 }
 

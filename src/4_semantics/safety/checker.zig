@@ -2962,6 +2962,10 @@ pub const SafetyChecker = struct {
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
         if (semantic == .virtual) {
+            if (value.reference_target_incomplete) {
+                try self.report(source, "borrowed execution requires an authenticated virtual target for every alternative", .{});
+                return;
+            }
             // The handle is copied. Its receiver remains in the submitting
             // execution and needs independent authority until completion.
             const contract = @import("../global/contract_evidence.zig").contractDefinition(self.graph, semantic.virtual) orelse return error.InvalidVirtualContractType;
@@ -15378,6 +15382,14 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     }, &state, &loans, .{ .file_index = 0, .offset = 0 });
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
     try std.testing.expectEqual(prior_errors + 1, diags.list.items.len);
+
+    var incomplete = provider;
+    incomplete.concurrent_receiver = true;
+    incomplete.reference_target_incomplete = true;
+    try std.testing.expect(@import("transfer_evidence.zig").proves(&graph, @enumFromInt(1), incomplete));
+    try checker.collectExecutionLoans(@enumFromInt(1), incomplete, &state, &loans, source);
+    try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+    try std.testing.expectEqual(prior_errors + 2, diags.list.items.len);
 }
 
 test "an uncovered target cannot establish an execution loan" {
