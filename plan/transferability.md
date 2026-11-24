@@ -281,3 +281,11 @@ its size. After await and recovery of ordinary allocator authority, writing
 through the old slot alias fails because the allocation root has ended.
 Recovery is important in this probe: before it, the ordinary access check
 can reject the write earlier because the allocator is still shared.
+
+Inlining native output reservation into async_owned moves the unknown
+effect diagnostic to the lexical _OwnedTaskOutput construction site.
+The reservation import already publishes no_access(). The diagnostic is
+attached to cleanup of that lexical owner on exit. Moving the reservation
+between helpers cannot make destruction of an occupied output bounded.
+The caller needs the latent cleanup effects of the actual result and must
+check them at the point where output custody may be discharged.
