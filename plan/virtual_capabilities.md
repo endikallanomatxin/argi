@@ -21,6 +21,22 @@ calling convention. A single direct reference can occupy the context pointer.
 Multiple independent captures use a borrowed context record with an explicit
 storage lifetime. Copying the descriptor copies its context and table pointers.
 
+For joint capture, borrow a record whose fields bind the erased participants
+by name. For example, `Virtual#(CopyBetween)(&context)` can bind `.Source`
+to an ordinary read reference and `.Destination` to an ordinary mutable
+reference. A method signature with `(.destination: Destination, .count:
+UIntNative, .source: Source)` exposes only `.count`. The adapter selects
+each reference from the corresponding context field in implementation input
+order, including when another method declares those inputs in a different
+order. The existing single-reference constructor still binds a unary
+participant directly.
+
+The context borrow must keep the selected field values stable. A design
+that permits retargeting a capture slot must reestablish its effects and
+authority before dispatch. Capturing two references does not establish their
+independence. An operation that needs disjointness must preserve its overlap
+obligation through the public call.
+
 ## Safety and transfer
 
 Translate each captured input path into a path rooted at the corresponding

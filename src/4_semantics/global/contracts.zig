@@ -655,9 +655,7 @@ pub const Resolver = struct {
                 for (0..literal.fields.len) |argument_index| {
                     var argument = self.graph.value_fields.items[literal.fields.start + argument_index];
                     if (self.graph.text(argument.name).len == 0) {
-                        const target = for (mapping, 0..) |entry, target| {
-                            if (entry == .argument and entry.argument == argument_index) break target;
-                        } else return null;
+                        const target = virtual_arguments.inputForArgument(mapping, argument_index) orelse return null;
                         argument.name = self.graph.fields.items[fields.start + target].name;
                     }
                     if (std.mem.eql(u8, self.graph.text(argument.name), self.graph.text(parameter.name))) return null;

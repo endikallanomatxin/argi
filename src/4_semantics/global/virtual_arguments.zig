@@ -32,6 +32,14 @@ pub fn sourceForInput(input: u32, captures: []const u32) Source {
     return .{ .argument = input - preceding };
 }
 
+/// Find the full signature slot corresponding to a residual argument.
+pub fn inputForArgument(positions: []const Source, argument: usize) ?usize {
+    for (positions, 0..) |position, index| {
+        if (position == .argument and position.argument == argument) return index;
+    }
+    return null;
+}
+
 test "virtual binding keeps capture order and residual argument order independent" {
     var positions: [5]Source = undefined;
     try bind(&positions, &.{ 3, 1 });
@@ -44,6 +52,10 @@ test "virtual binding keeps capture order and residual argument order independen
     }, positions);
     for (positions, 0..) |position, index|
         try std.testing.expectEqualDeep(position, sourceForInput(@intCast(index), &.{ 3, 1 }));
+    try std.testing.expectEqual(@as(?usize, 0), inputForArgument(&positions, 0));
+    try std.testing.expectEqual(@as(?usize, 2), inputForArgument(&positions, 1));
+    try std.testing.expectEqual(@as(?usize, 4), inputForArgument(&positions, 2));
+    try std.testing.expectEqual(@as(?usize, null), inputForArgument(&positions, 3));
     try std.testing.expectError(error.InvalidVirtualCapture, bind(&positions, &.{ 1, 1 }));
     try std.testing.expectError(error.InvalidVirtualCapture, bind(&positions, &.{5}));
 }
