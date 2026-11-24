@@ -2581,10 +2581,14 @@ pub const CodeGenerator = struct {
         // give every implementation the same slot type.
         const semantic_input = types.fields(self.graph, call.input_type) orelse return CodegenError.InvalidType;
         if (semantic_input.len != fields.len) return CodegenError.InvalidType;
+        const virtual_arguments = @import("../../4_semantics/global/virtual_arguments.zig");
+        const positions = try self.allocator.alloc(virtual_arguments.Source, fields.len);
+        defer self.allocator.free(positions);
+        virtual_arguments.bind(positions, &.{call.self_input_index}) catch return CodegenError.InvalidType;
         const abi_fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, fields.len);
         defer self.allocator.free(abi_fields);
-        for (0..fields.len) |index| {
-            abi_fields[index] = if (index == call.self_input_index)
+        for (positions, 0..) |position, index| {
+            abi_fields[index] = if (position == .capture)
                 c.LLVMPointerType(c.LLVMInt8Type(), 0)
             else
                 try self.toLLVMType((self.graph.fields.items[semantic_input.start + @as(u32, @intCast(index))]).ty);
@@ -2594,8 +2598,8 @@ pub const CodeGenerator = struct {
         const evidence_type = try self.fieldsEvidenceType(semantic_input);
         var input_evidence: ?c.LLVMValueRef = if (evidence_type) |ty| c.LLVMConstNull(ty) else null;
         var evidence_offset: usize = 0;
-        for (fields, 0..) |field, index| {
-            const argument: TypedValue = if (index == call.self_input_index)
+        for (fields, positions, 0..) |field, position, index| {
+            const argument: TypedValue = if (position == .capture)
                 .{ .value_ref = concrete_ptr, .type_ref = abi_fields[index], .reference_view = if (handle_ptr.reference_view) |view| reference_evidence.loadOptional(self.builder, try reference_evidence.referencesPointer(self.builder, view)) else null }
             else
                 (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
