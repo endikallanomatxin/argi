@@ -6356,9 +6356,13 @@ pub const SafetyChecker = struct {
         value: facts.ValueFacts,
         projections: []const facts.Projection,
     ) !facts.ValueFacts {
+        return self.projectValueFactsAt(value, projections, null);
+    }
+
+    fn projectValueFactsAt(self: *SafetyChecker, value: facts.ValueFacts, projections: []const facts.Projection, target: ?facts.Place) !facts.ValueFacts {
         var current = value;
         var exact_projection = true;
-        for (projections) |projection| {
+        for (projections, 0..) |projection, step| {
             switch (projection) {
                 .field => |wanted| {
                     var found: ?facts.ValueFacts = null;
@@ -6401,11 +6405,15 @@ pub const SafetyChecker = struct {
                 },
                 .dynamic_index => {
                     if (current.fields.len != 0) {
-                        var merged = current.fields[0].value.*;
-                        for (current.fields[1..]) |field|
-                            merged = try self.joinObservedSymbolicValues(merged, field.value.*, null, null, &.{});
-                        merged.foreign_storage = merged.foreign_storage or current.foreign_storage;
-                        current = merged;
+                        const length = if (target) |place| length: {
+                            const parent: facts.Place = .{
+                                .root = place.root,
+                                .projections = place.projections[0 .. place.projections.len - projections.len + step],
+                            };
+                            const ty = self.domainStorageType(parent) orelse break :length null;
+                            break :length types.arrayLength(self.graph, ty);
+                        } else null;
+                        current = try self.joinArrayElementFacts(current, length);
                     } else {
                         exact_projection = false;
                         current.lexical_frame = null;
@@ -6421,6 +6429,21 @@ pub const SafetyChecker = struct {
         // A discriminant is usable only when the projection selected its slot.
         if (!exact_projection) current.known_choice_variant = null;
         return current;
+    }
+
+    fn joinArrayElementFacts(self: *SafetyChecker, array: facts.ValueFacts, length: ?u64) !facts.ValueFacts {
+        var complete = length == null or length.? == array.fields.len;
+        var merged = array.fields[0].value.*;
+        for (array.fields, 0..) |field, index| {
+            if (length != null) complete = complete and field.index == index;
+            if (index != 0) merged = try self.joinObservedSymbolicValues(merged, field.value.*, null, null, &.{});
+        }
+        if (!complete) merged = try self.joinObservedSymbolicValues(merged, .{
+            .dependencies = array.dependencies,
+            .reference_target_incomplete = true,
+        }, null, null, &.{});
+        merged.foreign_storage = merged.foreign_storage or array.foreign_storage;
+        return merged;
     }
 
     fn withoutLexicalFrames(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
@@ -6661,7 +6684,7 @@ pub const SafetyChecker = struct {
             projection_count -= 1;
             const prefix = facts.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
             if (state.getPlace(prefix)) |ancestor|
-                return self.projectValueFacts(ancestor.value, storage.projections[projection_count..]) catch null;
+                return self.projectValueFactsAt(ancestor.value, storage.projections[projection_count..], storage) catch null;
         }
         return null;
     }
@@ -12702,6 +12725,38 @@ test "array concrete projections select and merge element facts" {
     } };
     const outcome = try checker.projectValueFacts(outcomes, &.{.dynamic_index});
     try std.testing.expect(!outcome.variants[0].value.storage_capability_incomplete);
+}
+
+test "dynamic storage projections reject incomplete receiver evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .virtual = @enumFromInt(0) },
+        .{ .array = .{ .element = @enumFromInt(0), .length = 2 } },
+    });
+    try graph.bindings.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(1),
+        .mutability = .variable,
+    });
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const array: facts.Place = .{ .root = @enumFromInt(0) };
+    const selected: facts.Place = .{ .root = array.root, .projections = &.{.dynamic_index} };
+    const shared: facts.ValueFacts = .{ .concurrent_receiver = true };
+    try state.setPlace(array, .initialized, .{ .fields = &.{.{ .index = 0, .value = &shared }} });
+    try std.testing.expect(!checker.valueAtPlace(&state, selected).?.concurrent_receiver);
+    try state.setPlace(array, .initialized, .{ .fields = &.{
+        .{ .index = 0, .value = &shared },
+        .{ .index = 1, .value = &shared },
+    } });
+    try std.testing.expect(checker.valueAtPlace(&state, selected).?.concurrent_receiver);
 }
 
 test "large numeric literals keep no per-element safety records" {
