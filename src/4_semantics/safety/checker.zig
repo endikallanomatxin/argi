@@ -5832,8 +5832,6 @@ pub const SafetyChecker = struct {
         result.execution_receipts = try execution_ids.toOwnedSlice();
         for (effect.fresh_dependencies) |fresh| {
             const root = try self.instantiateFreshRoot(fresh, state, fresh_roots);
-            if (effect.observes_fresh_backing and effect.fresh_dependencies.len == 1)
-                result.owned_backing = root;
             try appendDependencyFact(&dependencies, .{ .root = root });
         }
         for (effect.opaque_generation_dependencies) |input_path| {
@@ -6160,6 +6158,15 @@ pub const SafetyChecker = struct {
         if ((unknown_reference_source or effect.reference_target_incomplete) and (hasReferenceTarget(result) or effect.input_places.len != 0)) {
             result.reference_target_incomplete = true;
             result.referenced_place = null;
+        }
+        // A validity-only anchor contributes a lifetime without changing the
+        // address observed by the authenticated fresh-backing recipe.
+        if (effect.observes_fresh_backing and effect.fresh_dependencies.len == 1 and
+            !unknown_reference_source and !result.reference_target_incomplete and
+            !has_referent and effect.input_place_values.len == 0 and
+            effect.fields.len == 0 and effect.variants.len == 0)
+        {
+            result.owned_backing = fresh_roots.get(effect.fresh_dependencies[0]);
         }
         try self.attachAbsentFreshExecutions(effect, &result, state);
         if (effect.reference_relation) |relation| {
@@ -15745,6 +15752,26 @@ test "worker cleanup can end a structural subobject but must preserve external r
     try checker.collectExecutionLoans(receiver, .{ .referenced_place = .{ .root = @enumFromInt(0) } }, &state, &loans, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+}
+
+test "fresh backing observation retains an independent validity anchor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const external = try state.tracker.establish(.fresh);
+    const anchored = try checker.instantiateOutput(.{
+        .observes_fresh_backing = true,
+        .fresh_dependencies = &.{1},
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .validity_only = true }},
+    }, &.{.{ .dependencies = &.{.{ .root = external }} }}, &state);
+    const backing = anchored.owned_backing.?;
+    try std.testing.expect(backing != external);
+    try std.testing.expect(valueDependsOnRoot(anchored, backing));
+    try std.testing.expect(valueDependsOnRoot(anchored, external));
 }
 
 test "joining observations requires agreement on owned backing" {
