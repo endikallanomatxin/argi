@@ -245,3 +245,12 @@ unknown effects while the allocator is shared. The result needs a checked
 publication and cleanup summary even when the worker does no work beyond
 moving the input. An unconditional input conformance does not provide that
 summary.
+
+Tracing the submission in that temporary core identifies two distinct
+observations with missing targets. The erased default anchor (`&Any`)
+arrives without any root or acquisition origin after summary instantiation.
+The optional `&UInt8` backing observation arrives with an owned resource
+root and acquisition origins but without a lexical or symbolic target.
+The former needs preservation of immutable static backing through a
+summary. The latter needs an owner-relative relationship whose validity
+follows custody. A missing target by itself cannot justify either case.

@@ -3076,7 +3076,10 @@ pub const SafetyChecker = struct {
             const concurrent = semantic.pointer.mutability == .concurrent;
             const mode: facts.AccessMode = if (semantic.pointer.mutability == .read_only) .read else .write;
             if (value.referenced_place == null and value.symbolic_pointees.len == 0) {
-                try self.report(source, "borrowed execution requires an authenticated reference target", .{});
+                var name = std.array_list.Managed(u8).init(self.allocator);
+                defer name.deinit();
+                try @import("../global/type_names.zig").appendTypeName(&name, self.graph, ty);
+                try self.report(source, "borrowed execution requires an authenticated reference target for '{s}'", .{name.items});
                 return;
             }
             if (value.referenced_place) |storage|
