@@ -226,3 +226,22 @@ Both emitted one owned task worker with the same symbol and 174-byte
 machine code size. This comparison measures the structural proof for an
 owner retaining a virtual handle. The String round trip remains a separate
 workload.
+
+## Allocation transfer boundary probe
+
+The shared String submission fixture reaches execution loan collection when
+run with a temporary bounded Deallocator interface and an unconditional
+`Transferable#(Allocation)` hypothesis. It still fails with
+"borrowed execution requires an authenticated reference target". The
+hypothesis is only a probe and cannot be used as the Allocation guarantee.
+The transfer proof and the admission of external loans are separate checks.
+The latter needs to distinguish owner-relative backing observations from
+references that require an external target.
+
+Changing the worker to forward its String input to the result exposes a
+different earlier check. The allocating output preparation call has an
+unknown effect while execution loans are retained, and the caller reports
+unknown effects while the allocator is shared. The result needs a checked
+publication and cleanup summary even when the worker does no work beyond
+moving the input. An unconditional input conformance does not provide that
+summary.
