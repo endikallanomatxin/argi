@@ -254,7 +254,12 @@ const State = struct {
                     // loans of ordinary capabilities.
                     if (declared == null or !declared.?.bounded_access or
                         (self.verifying_virtual_interface and !declared.?.isolated))
+                    {
                         try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
+                        // The rejected interface cannot authorize this call.
+                        // Candidate bodies cannot supply the missing guarantee.
+                        return;
+                    }
                 }
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
