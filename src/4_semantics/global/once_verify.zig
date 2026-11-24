@@ -230,6 +230,7 @@ const State = struct {
                 if (auto.targetNode()) |target| try self.walkNode(target);
                 if (auto.input) |input| try self.walkNode(input);
                 if (auto.deinit_fn) |callee| try self.walkCall(node_id, callee);
+                if (self.callback_source != null) try self.walkCleanupFields(node_id, auto.fields);
             },
             // Cleanup targets describe already-evaluated argument identities.
             // Only the ordinary callee/input nodes execute at this boundary.
@@ -363,6 +364,15 @@ const State = struct {
             },
 
             .explicit_cast => |cast| try self.walkNode(cast.value),
+        }
+    }
+
+    fn walkCleanupFields(self: *State, origin: graph_mod.GlobalNodeId, range: @import("../primitives/schema.zig").Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
+        for (self.graph.auto_deinit_fields.items[range.start..][0..range.len]) |field| {
+            if (field.repeat_count == 0) continue;
+            if (field.input) |input| try self.walkNode(input);
+            if (field.deinit_fn) |callee| try self.walkCall(origin, callee);
+            try self.walkCleanupFields(origin, field.fields);
         }
     }
 
