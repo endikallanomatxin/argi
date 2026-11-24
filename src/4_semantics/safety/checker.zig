@@ -7871,6 +7871,8 @@ pub const SafetyChecker = struct {
         if (self.active_summaries) |engine| {
             if (engine.summaryFor(deinit_fn)) |summary| {
                 if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, &candidate)) return;
+                if (summary.unknown_access and
+                    !try self.requireUnknownExecutionAccess(input_node.source, "automatic cleanup call", .write, &candidate)) return;
                 try self.applySummaryEffects(input_node.source, summary, argument_ids, values, &candidate);
             } else {
                 try self.evaluateResolvedDeinitBody(deinit_fn, values, &candidate);

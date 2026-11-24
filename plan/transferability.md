@@ -48,14 +48,11 @@ are separate from ownership of the request input.
 
 ## Erased deallocation capability
 
-The current Deallocator signature takes an ordinary mutable receiver. A
-ConcurrentAlias conformance on the provider alone cannot make that receiver
-concurrent. Keep that signature for existing local providers. To use it through
-a concurrent capability, select an adapter whose ordinary receiver is an
-independently loaned descriptor, and whose retained provider is accessed only
-through its certified concurrent interface. The descriptor's ordinary loan
-still needs to be tracked until completion. The receiver permission bit alone
-cannot certify this adapter, since it only describes the direct receiver.
+Deallocator selects evidence using the full captured reference type. A local
+provider can implement the contract for an ordinary mutable reference and a
+concurrent provider for a concurrent reference. Both use the same public
+virtual type. A call reads the descriptor and applies the selected operation
+with its captured authority.
 
 Resource-owning types also need a compositional cleanup guarantee. In
 particular, proving that the current Allocation has a suitable deallocator
@@ -63,3 +60,11 @@ requires accounting for its backing mode and anchor. A recursive field walk
 cannot establish that the destructor confines itself to those capabilities.
 Keep that destructor obligation explicit and validate the dependency when
 applying the proof at the execution boundary.
+
+An unbounded virtual call inside a cleanup currently collapses to unknown
+memory effects in the encompassing summary. Preserve that obligation as a
+method selection on an entry-relative handle whenever its identity is stable.
+At use, discharge it only with the retained operation's verified effects, or
+with the published interface's bound. Retargeting the handle, losing its
+identity, or merging incompatible alternatives must preserve the unknown
+effect. This applies to ordinary wrappers as well as destructors.
