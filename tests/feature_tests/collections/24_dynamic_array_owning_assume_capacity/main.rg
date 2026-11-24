@@ -128,7 +128,7 @@ implement Allocator#(BackingAllocator) (
     }
 )
 
-implement Deallocator#(BackingAllocator) (
+implement Deallocator#($&BackingAllocator) (
     .deallocate = (
         .self      : $&BackingAllocator,
         .data      : RawPointer#(.t: UInt8),

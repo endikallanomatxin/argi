@@ -150,7 +150,7 @@ implement Allocator#(TrackingAllocator) (
     }
 )
 
-implement Deallocator#(TrackingAllocator) (
+implement Deallocator#($&TrackingAllocator) (
     .deallocate = (
         .self      : $&TrackingAllocator,
         .data      : RawPointer#(.t: UInt8),

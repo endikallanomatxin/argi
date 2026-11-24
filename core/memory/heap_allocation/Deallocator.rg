@@ -1,6 +1,6 @@
-Deallocator#(.Provider: Type): Contract = (
+Deallocator#(.Receiver: Type): Contract = (
     .deallocate : (
-        .self      : $&Provider,
+        .self      : Receiver,
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,
         .alignment : UIntNative

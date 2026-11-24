@@ -259,6 +259,10 @@ void _argi_process_cleanup(void) {
 #include "../shared/thread.c"
 #include "../shared/task.c"
 
+void _argi_c_aligned_release(uintptr_t address) {
+    _aligned_free((void *)address);
+}
+
 uintptr_t _argi_acquire_zeroed_c_heap(uintptr_t alignment, uintptr_t size) {
     void *storage = _aligned_malloc(size, alignment);
     if (storage) memset(storage, 0, size);

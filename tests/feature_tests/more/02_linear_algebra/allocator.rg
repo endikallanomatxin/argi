@@ -10,7 +10,7 @@ implement Allocator#(RefusingAllocator) (
     }
 )
 
-implement Deallocator#(RefusingAllocator) (
+implement Deallocator#($&RefusingAllocator) (
     .deallocate = (
         .self      : $&RefusingAllocator,
         .data      : RawPointer#(.t: UInt8),

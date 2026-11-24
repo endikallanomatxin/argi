@@ -53,7 +53,7 @@ implement Allocator#(FailFirstAllocator) (
     }
 )
 
-implement Deallocator#(FailFirstAllocator) (
+implement Deallocator#($&FailFirstAllocator) (
     .deallocate = (
         .self      : $&FailFirstAllocator,
         .data      : RawPointer#(.t: UInt8),

@@ -140,7 +140,7 @@ implement Allocator#(FailSecondAllocator) (
     }
 )
 
-implement Deallocator#(FailSecondAllocator) (
+implement Deallocator#($&FailSecondAllocator) (
     .deallocate = (
         .self      : $&FailSecondAllocator,
         .data      : RawPointer#(.t: UInt8),

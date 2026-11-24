@@ -50,7 +50,7 @@ implement Allocator#(CountingAllocator) (
     }
 )
 
-implement Deallocator#(CountingAllocator) (
+implement Deallocator#($&CountingAllocator) (
     .deallocate = (
         .self      : $&CountingAllocator,
         .data      : RawPointer#(.t: UInt8),

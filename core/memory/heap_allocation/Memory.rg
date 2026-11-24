@@ -87,7 +87,7 @@ map_pages := (.self: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
     }
 }
 
-implement Deallocator#(Memory) (
+implement Deallocator#($&Memory) (
     .deallocate = (
         .self      : $&Memory,
         .data      : RawPointer#(.t: UInt8),

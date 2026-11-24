@@ -24,7 +24,7 @@ implement Allocator#(SweepAllocator) (
     }
 )
 
-implement Deallocator#(SweepAllocator) (
+implement Deallocator#($&SweepAllocator) (
     .deallocate = (.self: $&SweepAllocator, .data: RawPointer#(.t: UInt8), .size: UIntNative, .alignment: UIntNative) -> () {
         self&.live = self&.live - 1
         address :: UIntNative = data.address

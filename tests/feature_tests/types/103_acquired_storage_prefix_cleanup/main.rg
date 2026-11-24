@@ -27,7 +27,7 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
     if tracker.released_size != 32 or tracker.released_alignment != 16 { status_code = 2 }
 }
 
-implement Deallocator#(TrackingDeallocator) (
+implement Deallocator#($&TrackingDeallocator) (
     .deallocate = (
         .self      : $&TrackingDeallocator,
         .data      : RawPointer#(.t: UInt8),

@@ -49,6 +49,18 @@ string_with_length := (
     result = ..ok ~out
 }
 
+string_with_shared_c_storage := (
+    .allocator: $$&CAllocator, .length: UIntNative
+) -> (.result: Errable#(String, (..out_of_memory))) {
+    if length > _string_max_result_length().length {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+
+    allocation ::= allocate_shared_c_storage(.self = allocator, .size = length + 1, .alignment = 1, .zeroed = true)!
+    result = ..ok(._allocation = ~allocation, ._length = length, ._shape = (.marker = 0))
+}
+
 string_with_capacity := (
     .allocator: Virtual#(Allocator), .capacity: UIntNative
 ) -> (.result: Errable#(String, (..out_of_memory))) {

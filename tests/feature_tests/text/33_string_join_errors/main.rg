@@ -24,7 +24,7 @@ implement Allocator#(FailingAllocator) (
     }
 )
 
-implement Deallocator#(FailingAllocator) (
+implement Deallocator#($&FailingAllocator) (
     .deallocate = (
         .self      : $&FailingAllocator,
         .data      : RawPointer#(.t: UInt8),
