@@ -6316,6 +6316,7 @@ pub const SafetyChecker = struct {
         projections: []const facts.Projection,
     ) !facts.ValueFacts {
         var current = value;
+        var exact_projection = true;
         for (projections) |projection| {
             switch (projection) {
                 .field => |wanted| {
@@ -6324,7 +6325,12 @@ pub const SafetyChecker = struct {
                         found = field.value.*;
                         break;
                     };
-                    if (found) |selected| current = selected else current.lexical_frame = null;
+                    if (found) |selected| {
+                        current = selected;
+                    } else {
+                        exact_projection = false;
+                        current.lexical_frame = null;
+                    }
                 },
                 .variant => |wanted| {
                     var found: ?facts.ValueFacts = null;
@@ -6332,7 +6338,12 @@ pub const SafetyChecker = struct {
                         found = variant.value.*;
                         break;
                     };
-                    if (found) |selected| current = selected else current.lexical_frame = null;
+                    if (found) |selected| {
+                        current = selected;
+                    } else {
+                        exact_projection = false;
+                        current.lexical_frame = null;
+                    }
                 },
                 .static_index => |wanted| {
                     var found: ?facts.ValueFacts = null;
@@ -6340,7 +6351,12 @@ pub const SafetyChecker = struct {
                         found = field.value.*;
                         break;
                     };
-                    if (found) |selected| current = selected else current.lexical_frame = null;
+                    if (found) |selected| {
+                        current = selected;
+                    } else {
+                        exact_projection = false;
+                        current.lexical_frame = null;
+                    }
                 },
                 .dynamic_index => {
                     if (current.fields.len != 0) {
@@ -6349,11 +6365,20 @@ pub const SafetyChecker = struct {
                             merged = try self.joinObservedSymbolicValues(merged, field.value.*, null, null, &.{});
                         merged.foreign_storage = merged.foreign_storage or current.foreign_storage;
                         current = merged;
-                    } else current.lexical_frame = null;
+                    } else {
+                        exact_projection = false;
+                        current.lexical_frame = null;
+                    }
                 },
-                .dereference => current.lexical_frame = null,
+                .dereference => {
+                    exact_projection = false;
+                    current.lexical_frame = null;
+                },
             }
         }
+        // Flat dependencies can conservatively describe an uncovered path.
+        // A discriminant is usable only when the projection selected its slot.
+        if (!exact_projection) current.known_choice_variant = null;
         return current;
     }
 
@@ -15466,6 +15491,24 @@ test "an uncovered target cannot establish an execution loan" {
     try checker.collectExecutionLoans(@enumFromInt(1), .{ .symbolic_pointees = &.{@enumFromInt(0)}, .reference_target_incomplete = true }, &state, &loans, .{ .file_index = 0, .offset = 0 });
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "an uncovered projection cannot reuse a sibling choice discriminant" {
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    const child: facts.ValueFacts = .{ .known_choice_variant = 0 };
+    const parent: facts.ValueFacts = .{
+        .known_choice_variant = 1,
+        .fields = &.{.{ .index = 0, .value = &child }},
+    };
+    const exact = try checker.projectValueFacts(parent, &.{.{ .field = 0 }});
+    try std.testing.expectEqual(@as(?u32, 0), exact.known_choice_variant);
+    const missing = try checker.projectValueFacts(parent, &.{.{ .field = 1 }});
+    try std.testing.expect(missing.known_choice_variant == null);
+    const nested = try checker.projectValueFacts(parent, &.{ .{ .field = 1 }, .{ .field = 0 } });
+    try std.testing.expect(nested.known_choice_variant == null);
 }
 
 test "reading through an uncovered target does not select a known choice value" {
