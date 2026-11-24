@@ -2080,10 +2080,7 @@ pub const SafetyChecker = struct {
         };
         var retired_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer retired_roots.deinit();
-        for (complete_summary.retired_input_owners) |path| {
-            const owner = try self.entryVirtualAccessValue(path, values, state);
-            try collectOwnedRoots(owner, &retired_roots);
-        }
+        try self.collectRetiredInputRoots(complete_summary.retired_input_owners, values, state, &retired_roots);
         const result = try self.applyOutcomeSummary(source, effects, argument_nodes, values, state);
         _ = try self.endRoots(source, state, retired_roots.items);
         try self.activateReturningExecutionEvidence(complete_summary, values, state);
@@ -4924,6 +4921,13 @@ pub const SafetyChecker = struct {
             summary.global_accesses.len == 0 and summary.guarded_effects.len == 0;
     }
 
+    fn collectRetiredInputRoots(self: *SafetyChecker, paths: []const facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
+        for (paths) |path| {
+            const owner = try self.entryVirtualAccessValue(path, arguments, state);
+            try collectOwnedRoots(owner, roots);
+        }
+    }
+
     fn entryVirtualAccessValue(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         if (path.input_index >= arguments.len or path.storage_domain != null) return .{};
         var value = arguments[path.input_index];
@@ -4937,7 +4941,7 @@ pub const SafetyChecker = struct {
                 },
                 // Reference provenance carried by sibling fields does not
                 // make this structural field selection ambiguous.
-                .field => value = representedSnapshotProjection(value, projection) orelse return .{},
+                .field, .static_index => value = representedSnapshotProjection(value, projection) orelse return .{},
                 else => return .{},
             }
         }
@@ -15723,6 +15727,35 @@ test "worker cleanup can end a structural subobject but must preserve external r
     try checker.collectExecutionLoans(receiver, .{ .referenced_place = .{ .root = @enumFromInt(0) } }, &state, &loans, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+}
+
+test "summarized handoff retires only the projected owner" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const sibling = try state.tracker.establish(.fresh);
+    const first: facts.ValueFacts = .{ .owned_roots = &.{backing} };
+    const second: facts.ValueFacts = .{ .owned_roots = &.{sibling} };
+    const array: facts.ValueFacts = .{
+        .owned_roots = &.{ backing, sibling },
+        .fields = &.{ .{ .index = 0, .value = &first }, .{ .index = 1, .value = &second } },
+    };
+    const wrapper: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &array }} };
+    var roots = std.array_list.Managed(facts.ValidityRootId).init(a);
+    defer roots.deinit();
+    try checker.collectRetiredInputRoots(&.{.{
+        .input_index = 0,
+        .projections = &.{ .{ .field = 0 }, .{ .static_index = 0 } },
+    }}, &.{wrapper}, &state, &roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{backing}, roots.items);
+    try std.testing.expect(try checker.endRoots(.{ .file_index = 0, .offset = 0 }, &state, roots.items));
+    try std.testing.expect(!state.tracker.isAlive(backing));
+    try std.testing.expect(state.tracker.isAlive(sibling));
 }
 
 test "accepted task input retires owned backing but preserves external roots" {

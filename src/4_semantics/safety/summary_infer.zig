@@ -5310,6 +5310,14 @@ pub const Infer = struct {
                 path.projections = try self.appendProjection(path.projections, .{ .field = field.field_index });
                 break :blk path;
             },
+            .array_index => |access| blk: {
+                const index = self.staticIndex(access.index) orelse break :blk null;
+                const pointer = self.graph.node(access.array_ptr).content;
+                if (pointer != .address_of) break :blk null;
+                var path = (try self.entryVirtualDescriptor(function, pointer.address_of, depth + 1)) orelse break :blk null;
+                path.projections = try self.appendProjection(path.projections, .{ .static_index = index });
+                break :blk path;
+            },
             .move_value => |value| try self.entryVirtualDescriptor(function, value, depth + 1),
             else => null,
         };
