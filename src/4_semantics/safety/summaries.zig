@@ -168,6 +168,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         if (!inputPathEql(left.target, right.target) or left.minimum != right.minimum or left.maximum != right.maximum or left.requires_authorization != right.requires_authorization) return false;
     if (a.outputs.len != b.outputs.len or
         a.required_live_inputs.len != b.required_live_inputs.len or
+        a.required_transfers.len != b.required_transfers.len or a.unresolved_transfer != b.unresolved_transfer or
         a.required_opaque_inputs.len != b.required_opaque_inputs.len or
         a.input_post_states.len != b.input_post_states.len or
         a.outcome_post_states.len != b.outcome_post_states.len or
@@ -176,6 +177,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 
     for (a.outputs, b.outputs) |left, right| if (!valueEffectEql(left, right)) return false;
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.required_transfers, b.required_transfers) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.required_opaque_inputs, b.required_opaque_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
     for (a.outcome_post_states, b.outcome_post_states) |left, right| {

@@ -115,6 +115,8 @@ pub const Infer = struct {
         has_loops: bool = false,
         unstable_targets: bool = false,
         reference_writes: bool = false,
+        transfers: std.array_list.Managed(facts.InputPath),
+        unresolved_transfer: bool = false,
         deferred_virtual: ?facts.InputAccess = null,
         deferred_virtual_only_call: bool = false,
 
@@ -122,12 +124,14 @@ pub const Infer = struct {
             return .{
                 .inputs = .init(allocator),
                 .globals = .init(allocator),
+                .transfers = .init(allocator),
             };
         }
 
         fn deinit(self: *AccessEffects) void {
             self.inputs.deinit();
             self.globals.deinit();
+            self.transfers.deinit();
         }
 
         fn addInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode) !void {
@@ -976,6 +980,8 @@ pub const Infer = struct {
             .unknown_access = previous.unknown_access,
             .outputs = outputs,
             .required_live_inputs = previous.required_live_inputs,
+            .required_transfers = previous.required_transfers,
+            .unresolved_transfer = previous.unresolved_transfer,
             .required_opaque_inputs = previous.required_opaque_inputs,
             .storage_capability_uses = previous.storage_capability_uses,
             .storage_capability_conflicts = previous.storage_capability_conflicts,
@@ -1305,6 +1311,11 @@ pub const Infer = struct {
         }
         profile.accumulate(self.profile_io, start, &self.capability_ns);
         try accesses.closeVirtualAccess();
+        if (accesses.unknown or accesses.reference_writes or accesses.unstable_targets) {
+            for (accesses.transfers.items) |target| for (target.projections) |projection| {
+                if (projection == .dereference) accesses.unresolved_transfer = true;
+            };
+        }
         var summary: facts.SafetySummary = .{
             .input_accesses = try accesses.inputs.toOwnedSlice(),
             .global_accesses = try accesses.globals.toOwnedSlice(),
@@ -1315,6 +1326,8 @@ pub const Infer = struct {
             .storage_observations = try observations.toOwnedSlice(),
             .storage_observation_conflicts = try observation_conflicts.toOwnedSlice(),
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
+            .required_transfers = try accesses.transfers.toOwnedSlice(),
+            .unresolved_transfer = accesses.unresolved_transfer,
             .required_opaque_inputs = try required_opaque_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
             .outcome_post_states = outcome_post_states,
@@ -5205,6 +5218,14 @@ pub const Infer = struct {
             .struct_field_store => |write| try self.recordPointeeAccess(function, write.struct_ptr, .{ .field = write.field_index }, .write),
             .array_store => |write| try self.recordPointeeAccess(function, write.array_ptr, if (self.staticIndex(write.index)) |index| .{ .static_index = index } else .dynamic_index, .write),
             .function_call => |call| {
+                if (self.graph.function(call.callee).safety_primitive == .require_task_input_transfer) {
+                    const arguments = self.structArguments(call.input) orelse {
+                        sink.unresolved_transfer = true;
+                        return;
+                    };
+                    try self.recordTransferRequirement(function, .{ .input_index = 0, .projections = &.{.dereference} }, arguments);
+                    return;
+                }
                 if (self.engine.summaryFor(call.callee)) |summary| {
                     try self.composeAccesses(function, summary, call.input, null, call.callee);
                 } else sink.unknown = true;
@@ -5281,6 +5302,25 @@ pub const Infer = struct {
             .move_value => |value| try self.entryVirtualDescriptor(function, value, depth + 1),
             else => null,
         };
+    }
+
+    pub fn transferArgumentPath(self: *Infer, function: graph_mod.GlobalFunctionId, target: facts.InputPath, argument_node: graph_mod.GlobalNodeId) !?facts.InputPath {
+        if (target.storage_domain != null) return null;
+        var argument = argument_node;
+        var suffix = target.projections;
+        if (self.graph.node(argument).content == .address_of and suffix.len != 0 and suffix[0] == .dereference) {
+            argument = self.graph.node(argument).content.address_of;
+            suffix = suffix[1..];
+        }
+        var path = (try self.entryVirtualDescriptor(function, argument, 0)) orelse return null;
+        path.projections = try std.mem.concat(self.allocator, facts.Projection, &.{ path.projections, suffix });
+        return path;
+    }
+
+    fn recordTransferRequirement(self: *Infer, function: graph_mod.GlobalFunctionId, target: facts.InputPath, arguments: []const graph_mod.ValueField) !void {
+        if (target.input_index >= arguments.len) return;
+        if (try self.transferArgumentPath(function, target, arguments[target.input_index].value)) |path|
+            try appendInputPath(&self.access_sink.?.transfers, path);
     }
 
     fn recordPointeeAccess(self: *Infer, function: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId, projection: ?facts.Projection, mode: facts.AccessMode) !void {
@@ -5426,6 +5466,7 @@ pub const Infer = struct {
         defer self.reading_access_targets = previous;
         const sink = self.access_sink.?;
         sink.unknown = sink.unknown or summary.unknown_access;
+        sink.unresolved_transfer = sink.unresolved_transfer or summary.unresolved_transfer;
         if (self.accessTargetsMayChange(summary, callee)) sink.unstable_targets = true;
         if (callee) |id| for (summary.input_post_states) |post| {
             if (post.initialization == .preserved) continue;
@@ -5442,8 +5483,16 @@ pub const Infer = struct {
         }
         const arguments = self.structArguments(input) orelse {
             if (summary.input_accesses.len != 0) sink.unknown = true;
+            if (summary.required_transfers.len != 0) sink.unresolved_transfer = true;
             return;
         };
+        for (summary.required_transfers) |target| {
+            if (override != null) {
+                sink.unresolved_transfer = true;
+                break;
+            }
+            try self.recordTransferRequirement(function, target, arguments);
+        }
         for (summary.input_accesses) |access| {
             if (access.virtual_method != null) {
                 if (sink.deferred_virtual == null and override == null and access.target.input_index < arguments.len) {

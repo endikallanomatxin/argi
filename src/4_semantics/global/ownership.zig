@@ -98,6 +98,10 @@ pub const Resolver = struct {
     pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         const body = function.body orelse return true;
+        if (function.safety_primitive == .task_input_handoff) {
+            if (self.graph.blocks.items[@intFromEnum(body)].nodes.len != 0) return error.InvalidTaskHandoff;
+            return true;
+        }
         try self.materializeOutputInitializers(function, body);
         if (!self.functionReadyForCleanup(function, body)) return false;
         if (function.safety_primitive == .trusted_opaque_drop) {

@@ -28,6 +28,17 @@ _task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.cleanup
     cleanup = zeroed#(.t: _TaskResultCleanup)()
 }
 
+_owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.cleanup: _TaskResultCleanup): CFunction {
+    anchor: UInt8 = 0
+    root ::= erase_reference#(UInt8)(.base = &anchor)
+    slot ::= _execution_input#(inputs_of#(F))(.invocation = invocation, .anchor = root)
+    -- Only the authenticated, accepted invocation can take this input.
+    args ::= trusted_opaque_move_out#(.t: inputs_of#(F), .storage_type: UInt8)(.storage = $&anchor, .slot = slot)
+    value ::= invoke#(F)(.args = ~args)
+    _initialize_task_output#(result_of#(F))(.invocation = invocation, .value = ~value)
+    cleanup = zeroed#(.t: _TaskResultCleanup)()
+}
+
 async := #(.F: Function) (
     .args: inputs_of#(F), .executor: Virtual#(Executor)
 ) -> (.result: Errable#(Future#(result_of#(F)), (..task_start_failed, ..unsupported_task_value, ..executor_mismatch))) {
@@ -64,23 +75,49 @@ _prepare_task_request := #(.F: Function) (
     )
 }
 
--- A checked caller must establish transfer authority for the worker inputs
--- and result before selecting this private submission path.
-_submit_owned_task := #(.F: Function) (
+-- Retire the sender only after the native adapter authenticates acceptance.
+_retire_task_input := #(.T: Type) (.value: T) -> () {
+    -- The authenticated native slot has transferred this input to its worker.
+    -- Moving the local value into this sink clears its cleanup without a drop.
+}
+
+_require_task_input_transfer := #(.T: Type) (.value: &T) -> () {}
+
+-- Submit a moved input with static transfer evidence and a plain result.
+async_owned := #(.F: Function) (
     .args: inputs_of#(F), .executor: Virtual#(Executor), .ffi: $&ForeignFunctionInterface
-) -> (.result: Errable#(Future#(result_of#(F)), (..task_start_failed, ..executor_mismatch))) {
-    prepared ::= ~args
-    entry ::= _TaskEntry(.function = _task_worker#(F))
+) -> (.result: Errable#(Future#(result_of#(F)), (..task_start_failed, ..executor_mismatch, ..unsupported_task_value))) {
+    #if is_plain_data(.type = result_of#(F)) == false {
+        result = ..error(.reason = ..unsupported_task_value)
+        return
+    }
+
+    prepared: inputs_of#(F) = ~args
+    _require_task_input_transfer#(inputs_of#(F))(.value = &prepared)
+    entry ::= _TaskEntry(.function = _owned_task_worker#(F))
     output ::= _prepare_task_output#(result_of#(F))(.entry = entry, .ffi = ffi)!
     request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = output._slot,
         .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_lend(.inputs = prepared))
-    task ::= Executor#().submit(.self = $&executor, .request = ~request)!
-    if task._entry != entry or task._output_slot != output._slot {
-        result = ..error(.reason = ..executor_mismatch)
-        return
+    submitted ::= Executor#().submit(.self = $&executor, .request = ~request)
+    accepted ::= _task_output_accepted(.slot = output._slot, .entry = entry, .ffi = ffi).accepted != 0
+    if accepted { _retire_task_input#(inputs_of#(F))(.value = ~prepared) }
+    match submitted {
+        ..error _ { result = ..error(.reason = ..task_start_failed) }
+        ..ok ~task {
+            if accepted == false { abort }
+            if task._entry != entry or task._output_slot != output._slot {
+                result = ..error(.reason = ..executor_mismatch)
+                return
+            }
+            #if is_plain_data(.type = result_of#(F)) {
+                if _detach_task_output(.slot = output._slot, .task = task._handle, .entry = entry, .ffi = ffi) != 0 { abort }
+                task._output_slot = 0
+            } #else {
+                output._slot = 0
+            }
+            result = ..ok(._task = ~task)
+        }
     }
-    output._slot = 0
-    result = ..ok(._task = ~task)
 }
 
 await := #(.T: Type) (.self: $&Future#(T)) -> (

@@ -368,6 +368,8 @@ pub const SafetySummary = struct {
     storage_observations: []const InputPath = &.{},
     storage_observation_conflicts: []const StorageObservationConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
+    required_transfers: []const InputPath = &.{},
+    unresolved_transfer: bool = false,
     /// Using stored elements requires their hidden external dependencies;
     /// merely accessing or freeing allocation metadata does not.
     required_opaque_inputs: []const InputPath = &.{},

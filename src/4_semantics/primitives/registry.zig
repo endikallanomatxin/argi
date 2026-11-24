@@ -22,6 +22,8 @@ pub const specs = [_]Spec{
     .{ .primitive = .trusted_concurrent_view, .path = "core/concurrency/ConcurrentAlias.rg", .name = "trusted_concurrent_view", .signatures = &.{"#(.T: Type)(.shared: $$&T) -> (.view: &T)"} },
     .{ .primitive = .recover_ordinary, .path = "core/concurrency/ConcurrentAlias.rg", .name = "recover_ordinary", .signatures = &.{"#(.T: Type)(.owner: $&T) -> ()"} },
     .{ .primitive = .execution_lend, .path = "core/memory/execution_access.rg", .name = "_execution_lend", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
+    .{ .primitive = .task_input_handoff, .path = "core/tasks/future.rg", .name = "_retire_task_input", .signatures = &.{"#(.T: Type)(.value: T) -> ()"} },
+    .{ .primitive = .require_task_input_transfer, .path = "core/tasks/future.rg", .name = "_require_task_input_transfer", .signatures = &.{"#(.T: Type)(.value: &T) -> ()"} },
     .{ .primitive = .execution_complete, .path = "core/memory/execution_access.rg", .name = "_execution_complete", .signatures = &.{"(.receipt: $&_ExecutionReceipt, .join: ?_ExecutionJoin = ..none) -> ()"} },
     .{ .primitive = .execution_input, .path = "core/memory/execution_access.rg", .name = "_execution_input", .signatures = &.{"#(.t: Type)(.invocation: _ExecutionInvocation, .anchor: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .prepare_allocation_metadata, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_prepare_allocation_metadata", .signatures = &.{"#(.t: Type)(.allocation: &Allocation) -> (.state: UIntNative)"} },
@@ -234,7 +236,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
         .execution_lend => .{ .value = .execution_lend },
         .execution_complete => .{ .value = .execution_complete },
         .execution_input => .{ .value = .execution_input },
-        .none, .recover_ordinary, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata => .{ .value = .empty },
+        .none, .recover_ordinary, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata, .task_input_handoff, .require_task_input_transfer => .{ .value = .empty },
         // Physical release identity selects an execution boundary. Language
         // consumption remains in checked allocation-owner cleanup, not raw ABI.
         .raw_released_storage => .{ .value = .empty },
@@ -294,6 +296,8 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .trusted_concurrent_view,
         .recover_ordinary,
         .execution_input,
+        .task_input_handoff,
+        .require_task_input_transfer,
         .trusted_opaque_mark_empty,
         => &.{},
         // Both native page acquisition adapters select fresh OS storage.

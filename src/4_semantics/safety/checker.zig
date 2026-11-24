@@ -692,6 +692,10 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot verify safety contract for this implementation", .{});
             return;
         };
+        if (dispatch == .erased and (summary.required_transfers.len != 0 or summary.unresolved_transfer)) {
+            try self.report(source, "virtual operation cannot erase an unpublished ownership-transfer requirement", .{});
+            return;
+        }
         var scalar_invalidates: std.ArrayList(u32) = .empty;
         try scalar_invalidates.appendSlice(self.allocator, declared.invalidates);
         try self.collectOutcomeInvalidations(declared.outcomes, &scalar_invalidates);
@@ -1994,6 +1998,7 @@ pub const SafetyChecker = struct {
         defer self.active_summary_call_source = previous_source;
         const engine = self.active_summaries orelse return null;
         const complete_summary = engine.summaryFor(callee) orelse return null;
+        if (!try self.validateTransferRequirements(source, callee, complete_summary, argument_nodes, values, state)) return facts.ValueFacts{};
         const summary = try self.selectEntryGuardedSummary(complete_summary, values, state);
         var executions = std.AutoHashMap(facts.FreshEffectSource, facts.ExecutionId).init(self.allocator);
         defer executions.deinit();
@@ -4066,7 +4071,6 @@ pub const SafetyChecker = struct {
         return self.diagnostics.list.items.len == before;
     }
 
-
     fn validateSummaryRequiredOpaque(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         const before = self.diagnostics.list.items.len;
         for (summary.required_opaque_inputs) |path| {
@@ -4119,6 +4123,50 @@ pub const SafetyChecker = struct {
     /// Guard only represented generation changes and whole-resource transitions.
     /// Unrepresented value writes and capabilities retain their conservative
     /// summary. A guard never restores a saved caller snapshot.
+    fn validateTransferRequirements(self: *SafetyChecker, source: primitives.SourceRef, callee: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, argument_nodes: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
+        if (summary.unresolved_transfer) {
+            try self.report(source, "cannot establish ownership transfer through an unresolved input", .{});
+            return false;
+        }
+        if (summary.required_transfers.len == 0) return true;
+        const caller = self.call_stack.getLast();
+        const flags = self.graph.function(caller).flags;
+        const outer = if (!flags.is_entry and !flags.is_test and !flags.is_c_abi and !flags.is_comptime_entry and !flags.is_deinit)
+            self.active_summaries.?.summaryFor(caller)
+        else
+            null;
+        const function = self.graph.function(callee);
+        for (summary.required_transfers) |target| {
+            const ty = (@import("access_bounds.zig").selectedType(self.graph, function, target) catch {
+                try self.report(source, "cannot identify the value submitted for ownership transfer", .{});
+                return false;
+            }).ty;
+            const value = try self.entryVirtualAccessValue(target, arguments, state);
+            if (@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
+                const before = self.diagnostics.list.items.len;
+                try self.requireLive(caller, source, value, state);
+                if (self.diagnostics.list.items.len != before) return false;
+            } else {
+                if (outer) |forwarding| if (!forwarding.unresolved_transfer and target.input_index < argument_nodes.len) {
+                    if (self.active_summary_inference) |inference| {
+                        const argument = self.graph.value_fields.items[@intFromEnum(argument_nodes[target.input_index])].value;
+                        if (try inference.transferArgumentPath(caller, target, argument)) |path| {
+                            for (forwarding.required_transfers) |required| {
+                                if (sameInputPath(path, required)) break;
+                            } else {
+                                try self.report(source, "task input lacks a static ownership-transfer guarantee", .{});
+                                return false;
+                            }
+                            continue;
+                        }
+                    }
+                };
+                try self.report(source, "task input lacks a static ownership-transfer guarantee", .{});
+                return false;
+            }
+        }
+        return true;
+    }
     fn applyOutcomeSummary(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         var capture = false;
         for (summary.outputs) |output| if (hasOpaqueOutputDependencies(output)) {
