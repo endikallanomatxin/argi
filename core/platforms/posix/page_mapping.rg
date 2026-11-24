@@ -14,7 +14,13 @@
         .file_descriptor : Int32,
         .offset          : UIntNative
     ) -> (.address: UIntNative): ExternFunction
-    _memory_munmap(.address: UIntNative, .length: UIntNative) -> (.status: Int32): ExternFunction
+    -- Callers hold custody of the specified mapping or of the padding being
+    -- trimmed. Unmapping changes that range's lifetime and accesses no other
+    -- Argi storage.
+    _memory_munmap(.address: UIntNative, .length: UIntNative) -> (.status: Int32): ExternFunction where {
+        no_access()
+        isolated()
+    }
 
     _memory_map_anonymous := (.length: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
         .address : UIntNative

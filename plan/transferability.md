@@ -93,6 +93,21 @@ cannot establish that the destructor confines itself to those capabilities.
 Keep that destructor obligation explicit and validate the dependency when
 applying the proof at the execution boundary.
 
+A receiver-only bound on the entire Deallocator interface is insufficient.
+Building the dynamic-array fixture with `writes(self) isolated()` on that
+interface rejects GeneralPurposeAllocator's conformance. Its release path
+can traverse separately acquired bookkeeping and destroy nested allocations.
+The receiver slot and its structural fields do not describe those accesses.
+The POSIX page release is independently bounded at its private native
+boundary because its callers hold custody of the mapping range.
+
+A release guarantee for an erased capability must account for the storage
+being released and for provider state reached by the operation. Widening a
+receiver region to include all memory reachable from the provider would
+also broaden the authority granted to callers, including callers with
+exclusive loans. Local providers must remain usable with the same erased
+interface even when their capabilities cannot fulfill the transfer proof.
+
 A virtual implementation must prove the access guarantee published by its
 interface. A caller combines that guarantee with the authority and temporal
 dependencies retained by the handle. A transfer proof does not require a
