@@ -524,20 +524,26 @@ pub const Vm = struct {
                     const signature = &x.signature;
                     if (!types.equal(unit.graph, signature.virtual_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
                     const method = selected.methods[signature.method_index];
-                    if (method.receiver_input_index != signature.receiver_input_index) return error.ExecutionInvalidVirtual;
                     const target = virtual.program.resolve(method.function).?;
                     const callee = target.body;
                     if (callee.inputs.len != x.args.len or callee.outputs.len != x.outputs.len) return error.ExecutionInvalidVirtual;
+                    if (method.receiver_input_index >= callee.inputs.len or signature.receiver_input_index >= x.args.len) return error.ExecutionInvalidVirtual;
                     if (self.context().allocation_profile) |counts| counts.call_input_cells +|= x.args.len;
                     const values = try self.transfer(&transfers, x.args.len);
-                    for (values, x.args, callee.inputs, 0..) |*value, slot, input, index| {
-                        if (index == signature.receiver_input_index) {
+                    const virtual_arguments = @import("../4_semantics/global/virtual_arguments.zig");
+                    for (values, callee.inputs, 0..) |*value, input, index| {
+                        const source = virtual_arguments.sourceForInput(@intCast(index), &.{method.receiver_input_index});
+                        if (source == .capture) {
                             var receiver = virtual.receiver;
                             const permission = method.receiver_permission;
                             if (permission == .read_write and (pointer.reference.mutability != .read_write or receiver.mutability != .read_write)) return error.ExecutionReadonlyReference;
                             receiver.mutability = permission;
                             value.* = .{ .reference = receiver };
                         } else {
+                            // The signature still has a placeholder for its
+                            // capture. Residual arguments keep declaration order.
+                            const argument = source.argument;
+                            const slot = x.args[argument + @as(u32, @intFromBool(argument >= signature.receiver_input_index))];
                             if (!types.equal(unit.graph, f.slots[slot], callee.slots[input])) return error.ExecutionInvalidVirtual;
                             value.* = try slots.get(slot);
                         }
