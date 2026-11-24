@@ -28,14 +28,15 @@ implement Deinit#(Owner) (
     }
 )
 
-produce := () -> (.owner: Owner) {
-    owner = Owner(42)
+forward := (.input: Owner) -> (.owner: Owner) {
+    owner = ~input
 }
 
 run := (.ffi: $&ForeignFunctionInterface, .start: Bool) -> () {
     provider ::= DiscardingExecutor(.ffi = ffi, .start = start)
     executor ::= Virtual#(Executor)($&provider)
-    match async_owned#(produce)(.args = (), .executor = executor, .ffi = ffi) {
+    input ::= Owner(42)
+    match async_owned#(forward)(.args = (.input = ~input), .executor = executor, .ffi = ffi) {
         ..ok ~unexpected { abort }
         ..error failure {
             if is(.value = failure.reason, .variant = ..task_start_failed) == false { abort }
@@ -45,20 +46,22 @@ run := (.ffi: $&ForeignFunctionInterface, .start: Bool) -> () {
 
 main := (.system: System) -> () {
     run(.ffi = system.ffi, .start = false)
-    if drops != 0 { abort }
-    run(.ffi = system.ffi, .start = true)
     if drops != 1 { abort }
+    run(.ffi = system.ffi, .start = true)
+    if drops != 2 { abort }
     provider ::= ThreadedExecutor(.ffi = system.ffi)
     executor ::= Virtual#(Executor)($&provider)
     {
-        task ::= unwrap_or_abort(async_owned#(produce)(.args = (), .executor = executor, .ffi = system.ffi))
+        input ::= Owner(42)
+        task ::= unwrap_or_abort(async_owned#(forward)(.args = (.input = ~input), .executor = executor, .ffi = system.ffi))
         owner ::= unwrap_or_abort(await($&task))
-        if owner.value != 42 or drops != 1 { abort }
-    }
-    if drops != 2 { abort }
-    {
-        task ::= unwrap_or_abort(async_owned#(produce)(.args = (), .executor = executor, .ffi = system.ffi))
-        if drops != 2 { abort }
+        if owner.value != 42 or drops != 2 { abort }
     }
     if drops != 3 { abort }
+    {
+        input ::= Owner(42)
+        task ::= unwrap_or_abort(async_owned#(forward)(.args = (.input = ~input), .executor = executor, .ffi = system.ffi))
+        if drops != 3 { abort }
+    }
+    if drops != 4 { abort }
 }
