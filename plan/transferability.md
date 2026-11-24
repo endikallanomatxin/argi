@@ -90,12 +90,19 @@ specialization keys.
 
 ### Deallocator access bounds
 
-The existing receiver bounds cannot express the full deallocation interface.
-Applying `reads(self)` to Deallocator in the local/shared String cleanup
-fixture rejects the Memory provider because its page release has an unknown
-footprint. Applying `writes(self)` instead rejects the concurrent CAllocator:
-an ordinary write bound requires a writable reference, whereas the concurrent
-capture only grants access via its trusted interface.
+The local/shared String cleanup fixture accepts both CAllocator captures
+under an experimental `writes(self) isolated()` interface once the private
+C heap release declares audited isolation. The same experiment rejects
+Memory at its native page release. Temporarily marking that import
+`no_access() isolated()` allows the fixture to run, but the annotation
+alone cannot prove that the supplied raw range is under release custody.
+The platform imports therefore keep their conservative footprints.
+
+The general-purpose slot reuse fixture still rejects the experimental
+interface even with the page annotation. Its general-purpose provider
+touches dynamically addressed metadata, and its tracking adapter accesses
+a provider behind a stored reference. Neither effect follows from a bound
+on receiver storage.
 
 Keep the acquired block's release effect separate from access to provider
 state. The former is authorized by Allocation's custody and acquisition bounds.
