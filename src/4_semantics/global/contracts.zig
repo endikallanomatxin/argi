@@ -2094,10 +2094,16 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn requiresNominalOwner(self: *const Resolver, declaration: global_sg.GlobalFamilyDefinitionId, name: []const u8) bool {
-        if (!std.mem.eql(u8, name, "ConcurrentAlias") and !std.mem.eql(u8, name, "Transferable") and
-            !std.mem.eql(u8, name, "StructurallyTransferable")) return false;
-        return standard_contracts.standardDefinition(self.graph, name) == declaration;
+    fn nominalOwnerRequirement(self: *const Resolver, declaration: global_sg.GlobalFamilyDefinitionId, name: []const u8) ?[]const u8 {
+        const message = if (std.mem.eql(u8, name, "ConcurrentAlias"))
+            "ConcurrentAlias requires a nominal value type defined by the implementing module"
+        else if (std.mem.eql(u8, name, "Transferable"))
+            "Transferable requires a nominal value type defined by the implementing module"
+        else if (std.mem.eql(u8, name, "StructurallyTransferable"))
+            "StructurallyTransferable requires a nominal value type defined by the implementing module"
+        else
+            return null;
+        return if (standard_contracts.standardDefinition(self.graph, name) == declaration) message else null;
     }
 
     fn templateParticipantOwner(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, nominal_only: bool) !?global_sg.GlobalModuleId {
@@ -2155,17 +2161,14 @@ pub const Resolver = struct {
                     .contract_name = self.graph.familyDefinitionName(declaration),
                     .reason = "",
                 };
-                if (conformance.parameters.len != 0 and self.requiresNominalOwner(declaration, failure.contract_name) and
-                    !try self.templateOwnsParticipant(module_index, conformance, true))
-                {
-                    failure.reason = if (std.mem.eql(u8, failure.contract_name, "Transferable"))
-                        "Transferable requires a nominal value type defined by the implementing module"
-                    else if (std.mem.eql(u8, failure.contract_name, "StructurallyTransferable"))
-                        "StructurallyTransferable requires a nominal value type defined by the implementing module"
-                    else
-                        "ConcurrentAlias requires a nominal value type defined by the implementing module";
-                    self.participant_conformance_failure = failure;
-                    return;
+                if (conformance.parameters.len != 0) {
+                    if (self.nominalOwnerRequirement(declaration, failure.contract_name)) |message| {
+                        if (!try self.templateOwnsParticipant(module_index, conformance, true)) {
+                            failure.reason = message;
+                            self.participant_conformance_failure = failure;
+                            return;
+                        }
+                    }
                 }
                 if (conformance.parameters.len != 0 and !self.core.sameDeclarationNamespace(located.module_index, module_index) and
                     !(module.is_bundled_core and self.modules[located.module_index].is_bundled_core) and
@@ -2540,16 +2543,11 @@ pub const Resolver = struct {
                     continue :conformances;
                 }
             }
-            if (self.requiresNominalOwner(conformance.declaration, failure.contract_name)) {
+            if (self.nominalOwnerRequirement(conformance.declaration, failure.contract_name)) |message| {
                 const participant = self.graph.generic_arguments.items[conformance.participants.start].value.type;
                 const owner = global_types.nominalTypeOwner(self.graph, participant);
                 if (owner == null or !self.core.sameDeclarationNamespace(@intFromEnum(owner.?), module_index)) {
-                    failure.reason = if (std.mem.eql(u8, failure.contract_name, "Transferable"))
-                        "Transferable requires a nominal value type defined by the implementing module"
-                    else if (std.mem.eql(u8, failure.contract_name, "StructurallyTransferable"))
-                        "StructurallyTransferable requires a nominal value type defined by the implementing module"
-                    else
-                        "ConcurrentAlias requires a nominal value type defined by the implementing module";
+                    failure.reason = message;
                     self.participant_conformance_failure = failure;
                     return;
                 }
