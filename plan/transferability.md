@@ -254,3 +254,15 @@ root and acquisition origins but without a lexical or symbolic target.
 The former needs preservation of immutable static backing through a
 summary. The latter needs an owner-relative relationship whose validity
 follows custody. A missing target by itself cannot justify either case.
+
+With static anchor observations retained by summaries, the submission
+probe now reports only the missing target of the optional backing
+reference. In a disposable compiler build, bypassing that one check
+for observations with acquisition origins let the existing shared String
+worker run and return its length. This isolates the remaining inbound
+gate. Acquisition origins alone cannot establish physical containment
+or custody, so the compiler used for production keeps the check.
+
+The forwarding worker still fails at output preparation in the same
+experiment. Output custody and its latent cleanup need their own
+verified effects before admitting a String round trip.
