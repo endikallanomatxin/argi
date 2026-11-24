@@ -1,5 +1,5 @@
 CounterOps#(.T: Type): Contract = (
-    .increment: (.self: $$&T) -> (.previous: UInt32) where { no_access() }
+    .increment: (.self: $$&T) -> (.previous: UInt32) where { no_access() isolated() }
 )
 implement CounterOps#(AtomicUInt32) (
     .increment = (.self: $$&AtomicUInt32) -> (.previous: UInt32) {

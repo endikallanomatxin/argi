@@ -1,5 +1,5 @@
 Read#(.R: Type): Contract = (
-    .read: (.receiver: R) -> (.value: Int32) where reads(receiver)
+    .read: (.receiver: R) -> (.value: Int32) where { reads(receiver) isolated() }
 )
 Cell := (.value: Int32)
 implement ConcurrentAlias#(Cell) ()

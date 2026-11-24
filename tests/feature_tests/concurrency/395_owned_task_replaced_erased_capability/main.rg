@@ -1,5 +1,5 @@
 Capability#(.R: Type): Contract = (
-    .observe: (.receiver: R) -> (.value: UInt32) where no_access()
+    .observe: (.receiver: R) -> (.value: UInt32) where { no_access() isolated() }
 )
 implement Capability#($$&AtomicUInt32) (
     .observe = (.receiver: $$&AtomicUInt32) -> (.value: UInt32) { value = 1 }

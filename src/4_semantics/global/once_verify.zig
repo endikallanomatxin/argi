@@ -252,9 +252,7 @@ const State = struct {
                     // The interface bounds access. Execution ingress checks the
                     // authority for each retained region, including exclusive
                     // loans of ordinary capabilities.
-                    if (declared == null or !declared.?.bounded_access or
-                        (self.verifying_virtual_interface and !declared.?.isolated))
-                    {
+                    if (declared == null or !declared.?.isolated) {
                         try self.isolationError(node_id, "a virtual operation without a checked cross-execution guarantee");
                         // The rejected interface cannot authorize this call.
                         // Candidate bodies cannot supply the missing guarantee.

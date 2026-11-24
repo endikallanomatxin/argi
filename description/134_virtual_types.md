@@ -261,7 +261,8 @@ Virtual calls use the declared bound, even if a concrete implementation does les
 Access bounds grant neither generation invalidation nor ownership transfer; those
 effects still need their separate clauses.
 
-A method with a closed access bound may also declare `isolated()`. Every
+Virtual dispatch from an isolated callback requires `isolated()` and a
+closed access bound on the called method. Every
 virtual construction checks that its selected method can execute repeatedly
 in an isolated callback. The check covers direct callees, cleanup, mutable
 global access and foreign calls. Nested virtual operations must publish the

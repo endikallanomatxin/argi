@@ -553,8 +553,8 @@ pub const Context = struct {
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
                     var transferred = false;
                     defer if (!transferred) effect.deinit(self.allocator);
-                    if (effect.bounded_access or effect.isolated) {
-                        try self.contractError(statement, "access bounds and isolation must be declared outside on clauses");
+                    if (effect.bounded_access) {
+                        try self.contractError(statement, "access bounds must be declared outside on clauses");
                         unreachable;
                     }
                     if (effect.retained_inputs.len != 0) {
