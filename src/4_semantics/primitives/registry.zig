@@ -366,6 +366,7 @@ pub const AllocationTransfer = struct {
     }
     pub const data_field = 0;
     pub const deallocator_field = 4;
+    pub const storage_address_field = 5;
     pub const backing_reference_field = 11;
     pub const borrowed_fields = [_]struct { field: u32, input: u32 }{
         .{ .field = 3, .input = 4 }, // anchor

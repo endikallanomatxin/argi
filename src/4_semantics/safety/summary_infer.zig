@@ -8218,6 +8218,9 @@ pub const Infer = struct {
         const data = try self.allocator.create(facts.ValueEffect);
         data.* = .{ .fresh_dependencies = try self.oneFresh(source), .input_acquisition_origins = try self.oneInputPath(0, &.{}) };
         fields[shape.data_field].value = data;
+        // The private release address observes the same acquisition. Its
+        // provenance grants neither another receipt nor release authority.
+        if (fields.len > shape.storage_address_field) fields[shape.storage_address_field].value = data;
         if (fields.len > shape.backing_reference_field) {
             const payload = try self.allocator.create(facts.ValueEffect);
             payload.* = .{ .fields = try self.allocator.dupe(facts.OutputFieldEffect, &.{.{ .index = 0, .value = data }}) };

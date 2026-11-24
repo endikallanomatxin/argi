@@ -3355,7 +3355,7 @@ pub const SafetyChecker = struct {
                     const value = try self.allocator.create(facts.ValueFacts);
                     value.* = if (index == shape.backing_reference_field)
                         .{ .variants = try self.allocator.dupe(facts.VariantFacts, &.{.{ .index = 1, .value = try self.allocationBackingReference(root, origins) }}) }
-                    else if (index == shape.data_field)
+                    else if (index == shape.data_field or index == shape.storage_address_field)
                         .{ .dependencies = try self.oneDependency(root), .acquisition_origins = origins }
                     else
                         .{};
@@ -14192,6 +14192,13 @@ test "allocation acquisition origin survives consumption without restoring permi
         try std.testing.expect(!hasReferenceTarget(slot));
     }
     const summary_data = try checker.projectValueFacts(summarized, &.{.{ .field = primitive_transfer.AllocationTransfer.data_field }});
+    for ([_]facts.ValueFacts{ value, summarized }) |allocation| {
+        const release_address = try checker.projectValueFacts(allocation, &.{.{ .field = primitive_transfer.AllocationTransfer.storage_address_field }});
+        try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, release_address.acquisition_origins);
+        try std.testing.expectEqual(@as(usize, 0), release_address.storage_capabilities.len);
+        try std.testing.expectEqual(@as(usize, 0), release_address.owned_roots.len);
+        try std.testing.expect(!hasReferenceTarget(release_address));
+    }
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, data.acquisition_origins, summary_data.acquisition_origins);
     try std.testing.expectEqual(@as(usize, 0), summary_data.storage_capabilities.len);
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{origin}, data.acquisition_origins);
