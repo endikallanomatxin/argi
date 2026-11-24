@@ -22,6 +22,16 @@ pub fn bind(positions: []Source, captures: []const u32) error{InvalidVirtualCapt
     }
 }
 
+/// Classify a signature input without allocating a full position table.
+pub fn sourceForInput(input: u32, captures: []const u32) Source {
+    var preceding: u32 = 0;
+    for (captures, 0..) |position, index| {
+        if (position == input) return .{ .capture = @intCast(index) };
+        if (position < input) preceding += 1;
+    }
+    return .{ .argument = input - preceding };
+}
+
 test "virtual binding keeps capture order and residual argument order independent" {
     var positions: [5]Source = undefined;
     try bind(&positions, &.{ 3, 1 });
@@ -32,6 +42,8 @@ test "virtual binding keeps capture order and residual argument order independen
         .{ .capture = 0 },
         .{ .argument = 2 },
     }, positions);
+    for (positions, 0..) |position, index|
+        try std.testing.expectEqualDeep(position, sourceForInput(@intCast(index), &.{ 3, 1 }));
     try std.testing.expectError(error.InvalidVirtualCapture, bind(&positions, &.{ 1, 1 }));
     try std.testing.expectError(error.InvalidVirtualCapture, bind(&positions, &.{5}));
 }
