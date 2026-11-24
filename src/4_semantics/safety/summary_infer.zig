@@ -2268,8 +2268,9 @@ pub const Infer = struct {
             },
             .address_of, .move_value, .denied_implicit_copy => |value| self.capability_value(function, value, flow),
             .struct_field_access => |field| self.projectValueEffect(try self.capability_value(function, field.value, flow), .{ .field = field.field_index }),
-            .array_index => |index| self.projectValueEffect(
+            .array_index => |index| self.projectArrayEffect(
                 try self.capability_value(function, index.array_ptr, flow),
+                index.array_ptr,
                 if (self.staticIndex(index.index)) |selected| .{ .static_index = selected } else .dynamic_index,
             ),
             .choice_payload_access => |access| blk: {
@@ -6159,7 +6160,7 @@ pub const Infer = struct {
                     node_id,
                     index.array_ptr,
                     projection,
-                    try self.projectValueEffect(array, projection),
+                    try self.projectArrayEffect(array, index.array_ptr, projection),
                 );
             },
             .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
@@ -7721,6 +7722,33 @@ pub const Infer = struct {
         return result.toOwnedSlice();
     }
 
+    fn projectArrayEffect(self: *Infer, effect: facts.ValueEffect, array_pointer: graph_mod.GlobalNodeId, projection: facts.Projection) !facts.ValueEffect {
+        if (projection == .dynamic_index and effect.fields.len != 0) {
+            const ty = self.graph.node(array_pointer).ty;
+            const length = if (ty) |id| length: {
+                const semantic = self.graph.resolvedSemanticType(id) orelse break :length null;
+                const array = if (semantic == .pointer) semantic.pointer.child else id;
+                break :length types.arrayLength(self.graph, array);
+            } else null;
+            return self.joinArrayElementEffects(effect, length);
+        }
+        return self.projectValueEffect(effect, projection);
+    }
+
+    fn joinArrayElementEffects(self: *Infer, effect: facts.ValueEffect, length: ?u64) !facts.ValueEffect {
+        // Sparse summaries describe only represented elements. A runtime index
+        // can also select an element with no proof, unless coverage is complete.
+        var complete = length != null and length.? == effect.fields.len;
+        var merged = effect.fields[0].value.*;
+        for (effect.fields, 0..) |field, index| {
+            complete = complete and field.index == index;
+            if (index != 0) merged = try self.joinStorageAlternatives(null, merged, field.value.*);
+        }
+        if (!complete) merged = try self.joinStorageAlternatives(null, merged, .{});
+        merged.foreign_storage = merged.foreign_storage or effect.foreign_storage;
+        return merged;
+    }
+
     fn projectValueEffect(self: *Infer, effect: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
         switch (projection) {
             .field => |field_index| {
@@ -7733,16 +7761,7 @@ pub const Infer = struct {
                 for (effect.fields) |field| if (field.index == element_index) return field.value.*;
             },
             .dynamic_index => {
-                if (effect.fields.len != 0) {
-                    // A runtime index chooses one value, not the union of all
-                    // elements' permissions. Seed with a real alternative so
-                    // a fully known uniform array does not join with unknown.
-                    var merged = effect.fields[0].value.*;
-                    for (effect.fields[1..]) |field|
-                        merged = try self.joinStorageAlternatives(null, merged, field.value.*);
-                    merged.foreign_storage = merged.foreign_storage or effect.foreign_storage;
-                    return merged;
-                }
+                if (effect.fields.len != 0) return self.joinArrayElementEffects(effect, null);
             },
             .dereference => {},
         }
@@ -9415,6 +9434,22 @@ test "array summary projections select and merge element effects" {
     const uniform = facts.ValueEffect{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
     try std.testing.expect((try inference.projectValueEffect(uniform, .dynamic_index)).foreign_storage);
     try std.testing.expect((try inference.projectValueEffect(.{ .foreign_storage = true }, .{ .static_index = 5 })).foreign_storage);
+}
+
+test "dynamic array selection needs complete receiver evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    const shared: facts.ValueEffect = .{ .concurrent_receiver = true };
+    const array: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &shared }} };
+    try std.testing.expect((try infer.joinArrayElementEffects(array, 1)).concurrent_receiver);
+    try std.testing.expect(!(try infer.joinArrayElementEffects(array, 2)).concurrent_receiver);
+    try std.testing.expect(!(try infer.projectValueEffect(array, .dynamic_index)).concurrent_receiver);
+    try std.testing.expect((try infer.projectValueEffect(array, .{ .static_index = 0 })).concurrent_receiver);
 }
 
 test "large numeric literals keep no per-element summary records" {
