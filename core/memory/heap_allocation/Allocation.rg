@@ -111,12 +111,11 @@ implement Deinit#(Allocation) (
         -- Cleanup may touch backing metadata; an ended region cannot be released.
         live ::= self&.anchor&
         data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
-        request: Deallocation = (
-            ._data = data,
-            ._size = self&._release_size,
-            ._alignment = self&._storage_alignment
+        self&._deallocator.deallocate(
+            .data      = data
+            .size      = self&._release_size
+            .alignment = self&._storage_alignment
         )
-        self&._deallocator.deallocate(.request = ~request)
     }
 )
 

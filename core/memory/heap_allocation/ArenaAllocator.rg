@@ -198,6 +198,8 @@ implement Allocator#(ArenaAllocator) (
 implement Deallocator#($&ArenaAllocator) (
     .deallocate = (
         .self      : $&ArenaAllocator,
-        .request: Deallocation
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
     ) -> () {}
 )

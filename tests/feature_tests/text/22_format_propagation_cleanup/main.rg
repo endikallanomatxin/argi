@@ -56,10 +56,10 @@ implement Allocator#(FailFirstAllocator) (
 implement Deallocator#($&FailFirstAllocator) (
     .deallocate = (
         .self      : $&FailFirstAllocator,
-        .request: Deallocation
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
     ) -> () {
-        layout ::= deallocation_layout(&request)
-        data ::= layout.data
         self&.deallocations = self&.deallocations + 1
         free(.address = data.address, .ffi = self&.ffi)
     }

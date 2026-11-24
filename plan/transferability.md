@@ -78,7 +78,13 @@ simultaneous access through a verified interface. Use the corresponding
 evidence at each boundary and keep it out of runtime layouts and
 specialization keys.
 
-## Release request baseline
+## Release interface experiment
+
+The move-only release request experiment grouped the raw bounds without
+proving a relationship to the allocation or its provider. The current
+interface keeps release custody in Allocation. Its destructor supplies the
+original bounds to the retained deallocator. Provider guarantees need to
+describe the effect of that release independently of any runtime packet.
 
 The local/shared String cleanup fixture
 `tests/feature_tests/concurrency/378_shared_string_cleanup` measures the
@@ -99,6 +105,6 @@ execution. The optimized measurement added `--release`.
 | LLVM functions reported | 117 | 122 | 97 | 100 |
 
 The generic-body count includes bodies that did not reach code generation.
-These figures measure the new release interface and its cleanup. A separate
+These figures measure the retired release request and its cleanup. A separate
 measurement needs to exercise ownership transfer with the same compilation
 specialization and different value evidence.

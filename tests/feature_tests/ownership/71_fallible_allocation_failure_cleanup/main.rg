@@ -33,7 +33,9 @@ implement Allocator#(FailingAllocator) (
 implement Deallocator#($&FailingAllocator) (
     .deallocate = (
         .self      : $&FailingAllocator,
-        .request: Deallocation
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
     ) -> () {
         self&.deallocations = self&.deallocations + 1
     }

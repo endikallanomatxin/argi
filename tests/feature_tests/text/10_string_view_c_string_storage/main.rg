@@ -90,10 +90,10 @@ implement Allocator#(CountingAllocator) (
 implement Deallocator#($&CountingAllocator) (
     .deallocate = (
         .self      : $&CountingAllocator,
-        .request: Deallocation
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
     ) -> () {
-        layout ::= deallocation_layout(&request)
-        data ::= layout.data
         raw_addr :: UIntNative = data.address
         free(.address = raw_addr, .ffi = self&.ffi)
         self&.dealloc_count = self&.dealloc_count + 1

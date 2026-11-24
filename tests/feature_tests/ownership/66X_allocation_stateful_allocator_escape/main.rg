@@ -40,10 +40,10 @@ implement Allocator#(LocalAllocator) (
 implement Deallocator#($&LocalAllocator) (
     .deallocate = (
         .self      : $&LocalAllocator,
-        .request: Deallocation
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
     ) -> () {
-        layout ::= deallocation_layout(&request)
-        data ::= layout.data
         self&.deallocations = self&.deallocations + 1
         address :: UIntNative = data.address
         free(.address = address, .ffi = self&.ffi)

@@ -12,14 +12,8 @@ Allocator#(.Provider: Type): Contract = (
 
 Calls use `Allocator#(Provider).allocate(...)`, or `Allocator#().allocate(...)`
 to infer the provider from its input. `implement` supplies the operation;
-virtual handles retain selected evidence. `Deallocator#(Receiver)` provides
-scoped physical cleanup through a moved `Deallocation` request. The request
-carries the original address, size and alignment selected by the owning
-`Allocation`, including when the usable extent is a prefix of the acquired
-block. Providers inspect the request with `deallocation_layout(&request)`
-or forward it to another provider by move. Constructing a request from raw
-bounds outside bundled core requires the explicit foreign interface
-capability through `trusted_deallocation_request`.
+virtual handles retain selected evidence. `Deallocator#(Provider)` similarly
+provides scoped physical cleanup.
 
 The ordinary `allocate_bytes` helper accepts size and optional alignment.
 The unique typed `allocate#(T)` helper accepts an optional count, defaulting
