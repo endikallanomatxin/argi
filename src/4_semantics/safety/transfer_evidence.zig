@@ -9,7 +9,7 @@ pub fn proves(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalT
     return provesValue(graph, ty, value, .{
         .unconditional = standard_contracts.standardDefinition(graph, "Transferable"),
         .structural = standard_contracts.standardDefinition(graph, "StructurallyTransferable"),
-    }, 0);
+    }, null, 0);
 }
 
 const Markers = struct {
@@ -22,6 +22,7 @@ fn provesValue(
     ty: graph_mod.GlobalTypeId,
     value: facts.ValueFacts,
     markers: Markers,
+    enclosing_owner: ?facts.ValidityRootId,
     depth: usize,
 ) bool {
     if (depth >= 64) return false;
@@ -29,7 +30,7 @@ fn provesValue(
     // A capture's mode is a value guarantee. Execution admission separately
     // authenticates receiver and region targets and establishes their loans.
     if (semantic == .virtual) return value.concurrent_receiver;
-    if (semantic == .pointer) return switch (semantic.pointer.mutability) {
+    if (semantic == .pointer) return observesTransferredBacking(value, enclosing_owner) or switch (semantic.pointer.mutability) {
         .concurrent => true,
         .read_only => observesImmutableModuleScalar(graph, value),
         .read_write => false,
@@ -39,6 +40,7 @@ fn provesValue(
     else
         .none;
     if (guarantee == .unconditional) return true;
+    const owner = value.intrinsic_backing_owner orelse enclosing_owner;
     if ((guarantee != .structural and types.hasDestructor(graph, ty)) or
         @import("../global/c_abi.zig").isRawPointer(graph, ty) or
         @import("../global/c_abi.zig").isFunctionPointer(graph, ty)) return false;
@@ -47,18 +49,18 @@ fn provesValue(
     if (types.arrayElement(graph, ty)) |element| {
         const count = types.arrayLength(graph, ty) orelse return false;
         if (count == 0) return value.fields.len == 0;
-        if (value.fields.len == 0) return provesValue(graph, element, .{}, markers, depth + 1);
-        const missing_proves = provesValue(graph, element, .{}, markers, depth + 1);
+        if (value.fields.len == 0) return provesValue(graph, element, .{}, markers, owner, depth + 1);
+        const missing_proves = provesValue(graph, element, .{}, markers, owner, depth + 1);
         if (!missing_proves and value.fields.len != count) return false;
         for (value.fields, 0..) |entry, index| {
             if (entry.index >= count or (!missing_proves and entry.index != index)) return false;
-            if (!provesValue(graph, element, entry.value.*, markers, depth + 1)) return false;
+            if (!provesValue(graph, element, entry.value.*, markers, owner, depth + 1)) return false;
         }
         return true;
     }
     if (types.fields(graph, ty)) |fields| {
         for (graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            if (!provesValue(graph, field.ty, fieldValue(value, index), markers, depth + 1)) return false;
+            if (!provesValue(graph, field.ty, fieldValue(value, index), markers, owner, depth + 1)) return false;
         }
         return true;
     }
@@ -70,7 +72,7 @@ fn provesValue(
             const selected = for (value.variants) |entry| {
                 if (entry.index == index) break entry.value.*;
             } else facts.ValueFacts{};
-            if (!provesValue(graph, payload, selected, markers, depth + 1)) return false;
+            if (!provesValue(graph, payload, selected, markers, owner, depth + 1)) return false;
         }
         return true;
     }
@@ -228,4 +230,32 @@ test "owned backing transport requires matching custody and no external loan" {
     reference.dependencies = &.{.{ .root = owned }};
     reference.reference_target_incomplete = true;
     try std.testing.expect(!observesTransferredBacking(reference, owned));
+}
+
+test "structural transfer distinguishes an internal reference from a detached one" {
+    const std = @import("std");
+    const a = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(a, .{
+        .name = .{ .start = 0, .len = 0 },
+        .ty = @enumFromInt(1),
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    const backing: facts.ValidityRootId = @enumFromInt(0);
+    const reference: facts.ValueFacts = .{ .owned_backing = backing, .dependencies = &.{.{ .root = backing }} };
+    var container: facts.ValueFacts = .{
+        .owned_roots = &.{backing},
+        .intrinsic_backing_owner = backing,
+        .fields = &.{.{ .index = 0, .value = &reference }},
+    };
+    try std.testing.expect(proves(&graph, @enumFromInt(2), container));
+    try std.testing.expect(!proves(&graph, @enumFromInt(1), reference));
+    container.intrinsic_backing_owner = null;
+    try std.testing.expect(!proves(&graph, @enumFromInt(2), container));
 }
