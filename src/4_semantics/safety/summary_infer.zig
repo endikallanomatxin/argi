@@ -6415,6 +6415,7 @@ pub const Infer = struct {
         }
         result.fields = try fields.toOwnedSlice();
         result.explicit_dependency = previous.explicit_dependency;
+        result.owns_fresh_backing = previous.owns_fresh_backing and result.fresh_owned_roots.len == 1;
         return result;
     }
 
@@ -7606,6 +7607,7 @@ pub const Infer = struct {
         }
         result.opaque_storage_dependencies = try opaque_storages.toOwnedSlice();
 
+        var forwarded_owner: ?facts.FreshEffectSource = null;
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             if (override) |symbolic| {
@@ -7630,6 +7632,9 @@ pub const Infer = struct {
             else
                 try self.withoutOwnershipTransfer(argument);
             if (dependency.validity_only) argument = try self.validityOnlyEffect(argument);
+            if (dependency.transfers_ownership and !dependency.validity_only and effect.input_dependencies.len == 1 and
+                argument.owns_fresh_backing and argument.fresh_owned_roots.len == 1)
+                forwarded_owner = argument.fresh_owned_roots[0];
             const static_reference = if (effect.input_dependencies.len == 1 and effect.input_places.len == 0 and
                 effect.input_place_values.len == 0 and effect.fields.len == 0 and effect.variants.len == 0)
                 argument.static_reference
@@ -7717,6 +7722,11 @@ pub const Infer = struct {
         }
         result.owns_fresh_backing = effect.owns_fresh_backing and result.fresh_owned_roots.len == 1 and
             effect.fresh_owned_roots.len == 1 and result.fresh_owned_roots[0] == effect.fresh_owned_roots[0];
+        if (forwarded_owner) |source| {
+            if (!effect.reference_target_incomplete and effect.input_places.len == 0 and effect.input_place_values.len == 0 and
+                effect.variants.len == 0 and result.fresh_owned_roots.len == 1 and result.fresh_owned_roots[0] == source)
+                result.owns_fresh_backing = true;
+        }
         result.observes_fresh_backing = effect.observes_fresh_backing and result.fresh_dependencies.len == 1 and
             effect.fresh_dependencies.len == 1 and result.fresh_dependencies[0] == effect.fresh_dependencies[0];
         return result;
