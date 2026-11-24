@@ -350,7 +350,10 @@ pub const Resolver = struct {
                 "the concrete type has no selected conformance for this contract");
         if (!try self.associatedArgumentsMatch(located, &evidence_bindings, contract_use.arguments))
             return self.virtualConstructionFailure(source, "selected conformance has incompatible associated elements for the virtual interface");
-        if (joint) return self.virtualConstructionFailure(source, "joint virtual dispatch is not supported yet");
+        if (joint) {
+            if (!try self.validateJointVirtualInterface(contract_use, contract_ty, located, source)) return null;
+            return self.virtualConstructionFailure(source, "joint virtual dispatch is not supported yet");
+        }
 
         var methods: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer methods.deinit(self.allocator);
@@ -435,6 +438,46 @@ pub const Resolver = struct {
         }
         complete = true;
         return captures;
+    }
+
+    fn validateJointVirtualInterface(self: *Resolver, use: ContractUse, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !bool {
+        const module = &self.modules[located.module_index];
+        const storage = &module.semantic.parameterized_storage;
+        for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
+            const name = module.text(requirement.name);
+            const reason = try self.jointVirtualSignatureFailure(use, contract_ty, located, requirement, @intCast(index));
+            if (reason) |message| {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = message };
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn jointVirtualSignatureFailure(self: *Resolver, use: ContractUse, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, index: u32) !?[]const u8 {
+        const signature = requirement.signature orelse return "implementation-defined operation signatures require static selection and cannot be virtualized";
+        if (requirement.parameters.len != 0) return "generic contract operations require static specialization and cannot be virtualized";
+        if (requirement.safety_contract == null) return "virtual methods require a declared safety contract";
+        const instance = (try self.requirementInstanceForContractUse(use, contract_ty, located, requirement, index)) orelse
+            return "virtual associated parameters must be fully bound";
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const input_pattern = storage.ir.representation(signature.input);
+        if (input_pattern != .resolved or input_pattern.resolved != .structural)
+            return "joint virtual operations require an explicit input record";
+        const pattern_fields = input_pattern.resolved.structural.fields;
+        const inputs = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
+        const outputs = global_types.fields(self.graph, instance.output) orelse return error.InvalidContractRequirementOutput;
+        if (pattern_fields.len != inputs.len) return error.InvalidContractRequirementInput;
+        for (self.graph.fields.items[inputs.start..][0..inputs.len], storage.ir.fields.items[pattern_fields.start..][0..pattern_fields.len]) |field, pattern| {
+            if (self.captureParticipantIndex(located, pattern.ty) != null) continue;
+            if (try contract_safety.containsErasedParticipant(self, field.ty, contract_ty))
+                return "a hidden participant is only allowed as a direct captured input";
+        }
+        for (self.graph.fields.items[outputs.start..][0..outputs.len]) |field| {
+            if (try contract_safety.containsErasedParticipant(self, field.ty, contract_ty))
+                return "a hidden participant cannot appear in a virtual operation result";
+        }
+        return null;
     }
 
     fn virtualConstructionFailure(self: *Resolver, source: primitives.SourceRef, message: []const u8) ?global_sg.Node {
@@ -880,7 +923,6 @@ pub const Resolver = struct {
         located: LocatedContractDefinition,
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
-        if (located.definition.participants.len != 1) return false;
         if (contract_use.arguments.len != located.definition.parameters.len) return false;
         self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, contract_use.arguments, bindings) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -978,13 +1020,15 @@ pub const Resolver = struct {
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         if (!try self.bindContractUseArguments(contract_use, located, &bindings)) return null;
-        // The unary participant is hidden by this handle; its fixed signature
-        // uses the erased receiver identity.
-        if (located.definition.participants.len != 1) return null;
-        bindings.types[located.definition.participants.start] = if (self.capturesReferenceParticipant(located))
+        // Erasure placeholders only identify hidden uses in the signature;
+        // they never select an implementation or determine a capture layout.
+        const participants = located.definition.participants;
+        if (participants.len == 0) return null;
+        const erased = if (participants.len > 1 or self.capturesReferenceParticipant(located))
             try self.core.pointerType(self_type, .read_write)
         else
             self_type;
+        @memset(bindings.types[participants.start..][0..participants.len], erased);
         const signature = try self.instantiateRequiredSignature(located.module_index, requirement, &bindings) orelse return null;
         return .{ .declaration = contract_use.declaration, .method_index = method_index, .input = signature.input, .output = signature.output };
     }
