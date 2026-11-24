@@ -117,6 +117,23 @@ exclusive access for a local provider or trusted concurrent access for a
 shared provider. A receiver bound alone cannot account for either native
 release or a provider's separately stored metadata.
 
+### Transfer admission after isolation
+
+Running the String submission fixture
+`tests/feature_tests/concurrency/411X_owned_task_string_unbounded_cleanup`
+against a temporary core with the experimental deallocator and page release
+bounds reaches two independent rejections. The structural transfer proof
+cannot certify Allocation, and execution lending rejects its optional
+backing-reference payload. The production core continues to reject the
+earlier, unbounded cleanup call.
+
+The optional reference observes the bytes owned by Allocation. A proof for
+this field must relate it to the backing that moves with the owner. Treating
+every reference in a choice as independently lendable would miss this
+distinction. The anchor and erased deallocator can retain external storage,
+so their validity and access obligations still need proof at submission
+and transportation back through an owned result.
+
 ## Release interface experiment
 
 The move-only release request experiment grouped the raw bounds without
