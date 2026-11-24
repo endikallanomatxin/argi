@@ -3284,6 +3284,23 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
+        if (primitive == .require_task_output_transfer) {
+            const field = self.graph.fields.items[self.graph.function(callee).input.start];
+            const ty = self.graph.semanticType(field.ty).pointer.child;
+            const place = if (values.len == 1) exactObservedPlace(values[0]) else null;
+            const stored = if (place) |storage| self.valueAtPlace(state, storage) else null;
+            if (stored == null) {
+                try self.report(source, "cannot establish task result contents before ownership transfer", .{});
+                return .{};
+            }
+            const value = try self.loadSummaryPlaceValue(state, place.?, stored.?);
+            if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
+                try self.report(source, "task result lacks a static ownership-transfer guarantee", .{});
+            } else if (self.inputTypeNeedsLoan(ty, 0, true) or @import("transfer_evidence.zig").requiresResultMetadata(value, 0)) {
+                try self.report(source, "task result retains safety evidence that its native output slot cannot transport", .{});
+            }
+            return .{};
+        }
         if (primitive_transfer.forPrimitive(primitive).requires_storage_input) |index| {
             const before = self.diagnostics.list.items.len;
             if (index >= values.len) return error.InvalidStorageCapabilityPrimitive;

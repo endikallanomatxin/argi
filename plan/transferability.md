@@ -46,6 +46,16 @@ failure that would reactivate sender cleanup. The receipt retains execution
 loans until completion. Its lifetime and the actual result's transfer evidence
 are separate from ownership of the request input.
 
+## Returning an owned result
+
+The worker checks the actual result before publishing it. A type-level
+Transferable conformance can certify an owner whose cleanup and safety
+obligations travel entirely with the value. The native output slot currently
+carries the bytes and cleanup custody. Results with retained references or
+other static storage evidence require a summary that can reestablish those
+facts at the join, so publication rejects them today. The caller either
+takes the occupied result by move or joins and runs its typed cleanup.
+
 ## Erased deallocation capability
 
 Deallocator selects evidence using the full captured reference type. A local

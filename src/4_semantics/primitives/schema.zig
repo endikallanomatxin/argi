@@ -185,6 +185,7 @@ pub const SafetyPrimitive = enum {
     prepare_allocation_metadata,
     task_input_handoff,
     require_task_input_transfer,
+    require_task_output_transfer,
 };
 
 pub const FunctionFlags = packed struct(u32) {

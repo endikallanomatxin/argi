@@ -68,6 +68,18 @@ fn provesValue(
     return false;
 }
 
+/// An opaque native result slot currently transports bytes and cleanup custody.
+pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
+    if (depth >= 64 or value.explicit_dependency or value.dependencies.len != 0 or value.owned_roots.len != 0 or
+        value.foreign_storage or value.storage_capabilities.len != 0 or value.storage_capability_incomplete or value.acquisition_origins.len != 0 or
+        value.referenced_place != null or value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len != 0 or
+        value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0) return true;
+    for (value.fields) |field| if (requiresResultMetadata(field.value.*, depth + 1)) return true;
+    for (value.variants) |variant| if (requiresResultMetadata(variant.value.*, depth + 1)) return true;
+    for (value.guarded_values) |guard| if (requiresResultMetadata(guard.value.*, depth + 1)) return true;
+    return false;
+}
+
 fn fieldValue(value: facts.ValueFacts, index: usize) facts.ValueFacts {
     for (value.fields) |field| if (field.index == index) return field.value.*;
     return .{};

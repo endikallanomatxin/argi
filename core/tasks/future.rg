@@ -35,6 +35,7 @@ _owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> (.c
     -- Only the authenticated, accepted invocation can take this input.
     args ::= trusted_opaque_move_out#(.t: inputs_of#(F), .storage_type: UInt8)(.storage = $&anchor, .slot = slot)
     value ::= invoke#(F)(.args = ~args)
+    _require_task_output_transfer#(result_of#(F))(.value = &value)
     _initialize_task_output#(result_of#(F))(.invocation = invocation, .value = ~value)
     cleanup = zeroed#(.t: _TaskResultCleanup)()
 }
@@ -83,15 +84,12 @@ _retire_task_input := #(.T: Type) (.value: T) -> () {
 
 _require_task_input_transfer := #(.T: Type) (.value: &T) -> () {}
 
--- Submit a moved input with static transfer evidence and a plain result.
+_require_task_output_transfer := #(.T: Type) (.value: &T) -> () {}
+
+-- Submit a moved input and publish a result after checking both transfers.
 async_owned := #(.F: Function) (
     .args: inputs_of#(F), .executor: Virtual#(Executor), .ffi: $&ForeignFunctionInterface
 ) -> (.result: Errable#(Future#(result_of#(F)), (..task_start_failed, ..executor_mismatch, ..unsupported_task_value))) {
-    #if is_plain_data(.type = result_of#(F)) == false {
-        result = ..error(.reason = ..unsupported_task_value)
-        return
-    }
-
     prepared: inputs_of#(F) = ~args
     _require_task_input_transfer#(inputs_of#(F))(.value = &prepared)
     entry ::= _TaskEntry(.function = _owned_task_worker#(F))
