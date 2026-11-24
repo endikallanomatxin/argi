@@ -1926,10 +1926,19 @@ pub const Context = struct {
                 };
                 break :blk null;
             } else null;
-            const id = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(name), null, if (callee_value) |callee| .{ .callee_value = callee } else .none);
+            const member_base = if (self.tree.structFieldAccess(call.callee)) |member| blk: {
+                if (call.module_qualifier) |token| {
+                    if (self.parameterizedBinding(self.tree.tokenTextFromSource(self.source, token)) == null) break :blk null;
+                }
+                break :blk member.value;
+            } else null;
+            const id = if (member_base) |receiver_node| blk: {
+                const receiver = try self.lowerBodyNode(receiver_node);
+                break :blk try self.addPending(node, .generic_call, &.{ input, receiver }, try self.writer.addString(name), null, .none);
+            } else try self.addPending(node, .generic_call, &.{input}, try self.writer.addString(name), null, if (callee_value) |callee| .{ .callee_value = callee } else .none);
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
-            self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token, call.callee_token) else null;
+            self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (member_base != null) null else if (call.module_qualifier) |token| try @import("../qualified_path.zig").intern(&self.writer, self.tree, self.source, token, call.callee_token) else null;
             if (call.contract_type) |contract| {
                 const contract_type = try self.lowerType(contract, false);
                 self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.contract_type = contract_type;

@@ -3731,6 +3731,12 @@ pub const Resolver = struct {
                     const name = value.name orelse return error.GenericParameterizedCallWithoutName;
                     const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions);
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
+                    if (operands.items.len == 2) {
+                        if (args.len != 0) return error.NoMatchingGenericFunction;
+                        const contracts = self.resolver.nested_call_context orelse return error.DeferredGenericFunction;
+                        const context = try self.operatorContext(value.assumed_arguments);
+                        break :blk try contracts.makeVirtualMember(operands.items[1], self.resolver.modules[self.module_index].text(name), input, self.resolver.sourceFor(self.module_index, value.source), context) orelse error.InvalidContractOperation;
+                    }
                     if (value.detail == .callee_value) {
                         const callee = try self.instantiateNode(value.detail.callee_value);
                         if (global_types.typeValue(self.resolver.graph, callee)) |target| {

@@ -15,9 +15,14 @@ advance := (.wrapper: &Wrapper) -> () {
     Counter#().increment(.receiver = &counter, .amount = 1)
 }
 
+advance_generic := #(.T: Type) (.wrapper: &T) -> () {
+    wrapper&.counter.increment(1)
+}
+
 main := () -> () {
     cell ::= Cell(40)
     wrapper ::= Wrapper(Virtual#(Counter)($&cell))
     advance(&wrapper)
-    if cell.value != 42 { abort }
+    advance_generic(&wrapper)
+    if cell.value != 43 { abort }
 }
