@@ -1,7 +1,7 @@
 -- Heap storage needs no region lifetime beyond its own root. This initialized
 -- marker gives the uniform anchor field a stable lifetime without making the
 -- allocator object a shared validity root for unrelated allocations.
-allocation_static_anchor :: UInt8 = 0
+allocation_static_anchor: UInt8 = 0
 
 -- Logical extent retained by typed allocation requests. This describes slots,
 -- never their occupancy, initialization or cleanup obligations.

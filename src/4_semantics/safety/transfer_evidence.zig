@@ -29,7 +29,11 @@ fn provesValue(
     // A capture's mode is a value guarantee. Execution admission separately
     // authenticates receiver and region targets and establishes their loans.
     if (semantic == .virtual) return value.concurrent_receiver;
-    if (semantic == .pointer) return semantic.pointer.mutability == .concurrent;
+    if (semantic == .pointer) return switch (semantic.pointer.mutability) {
+        .concurrent => true,
+        .read_only => observesImmutableModuleScalar(graph, value),
+        .read_write => false,
+    };
     const guarantee = if (semantic == .nominal or semantic == .generic)
         nominalGuarantee(graph, ty, markers)
     else
@@ -71,6 +75,20 @@ fn provesValue(
         return true;
     }
     return false;
+}
+
+/// An exact read-only observation of immutable scalar backing can be
+/// retained across executions, including after erasure to &Any. The actual
+/// target supplies the guarantee; a read-only reference type alone cannot.
+fn observesImmutableModuleScalar(graph: *const graph_mod.GlobalSemanticGraph, value: facts.ValueFacts) bool {
+    if (value.reference_target_incomplete or value.symbolic_pointees.len != 0) return false;
+    const place = value.referenced_place orelse return false;
+    if (place.projections.len != 0 or !graph.isModuleBinding(place.root)) return false;
+    for (value.mutation_places) |candidate| if (!candidate.eql(place)) return false;
+    const binding = graph.binding(place.root);
+    if (binding.mutability != .constant) return false;
+    const backing = graph.resolvedSemanticType(binding.ty) orelse return false;
+    return backing == .builtin and backing.builtin != .Any and backing.builtin != .Type;
 }
 
 const NominalGuarantee = enum { none, structural, unconditional };
