@@ -3083,6 +3083,13 @@ pub const Resolver = struct {
     }
 
     fn capturePosition(self: *const Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, direct: bool) ?u32 {
+        if (located.definition.participants.len != 1) return null;
+        return self.participantCapturePosition(located, requirement, 0, direct);
+    }
+
+    /// Capture slots are numbered by participant declaration order. Each
+    /// method independently finds the input supplying that participant.
+    fn participantCapturePosition(self: *const Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, capture_index: u32, direct: bool) ?u32 {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         const signature = requirement.signature orelse return null;
         const input = storage.ir.representation(signature.input);
@@ -3097,7 +3104,7 @@ pub const Resolver = struct {
                 pattern.resolved.pointer.child
             else
                 continue;
-            if (!self.isUnaryReceiverParticipantType(located, participant)) continue;
+            if (self.captureParticipantIndex(located, participant) != capture_index) continue;
             if (found != null) return null;
             found = @intCast(index);
         }
@@ -3113,16 +3120,19 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedContractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
-        // Identify the receiver from the requirement's symbolic participant,
-        // never from coincident concrete argument types. Explicit unary
-        // contracts identify receivers through their declared participant.
-        const participant = if (located.definition.participants.len == 1)
-            @as(ir.ComptimeParameterId, @enumFromInt(located.definition.participants.start))
-        else
-            return false;
+    fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedContractDefinition, ty: ir.ParameterizedTypeId) bool {
+        return located.definition.participants.len == 1 and self.captureParticipantIndex(located, ty) == 0;
+    }
+
+    fn captureParticipantIndex(self: *const Resolver, located: LocatedContractDefinition, ty: ir.ParameterizedTypeId) ?u32 {
+        // Concrete argument types may coincide after substitution. Match
+        // the parameter identity in the original requirement instead.
         const value = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(ty)];
-        return value == .parameter and value.parameter == participant;
+        if (value != .parameter) return null;
+        const participants = located.definition.participants;
+        const parameter = @intFromEnum(value.parameter);
+        if (parameter < participants.start or parameter - participants.start >= participants.len) return null;
+        return parameter - participants.start;
     }
 
     fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef, selection: primitives.ContractOperationIdentity) !void {
