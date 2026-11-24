@@ -1154,7 +1154,10 @@ pub const SafetyChecker = struct {
     fn inputTypeNeedsLoan(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, depth: usize, include_virtual: bool) bool {
         if (depth > 64) return true;
         if (isPointer(self.graph, ty) or (include_virtual and self.graph.semanticType(ty) == .virtual)) return true;
-        if (types.arrayElement(self.graph, ty)) |element| return self.inputTypeNeedsLoan(element, depth + 1, include_virtual);
+        if (types.arrayElement(self.graph, ty)) |element| {
+            if (types.arrayLength(self.graph, ty) == 0) return false;
+            return self.inputTypeNeedsLoan(element, depth + 1, include_virtual);
+        }
         if (include_virtual) if (types.variants(self.graph, ty)) |variants| {
             for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| {
                 if (variant.payload_type) |payload| {
@@ -3113,8 +3116,19 @@ pub const SafetyChecker = struct {
         if (types.arrayElement(self.graph, ty)) |element| {
             if (!self.inputTypeNeedsLoan(element, 0, true)) return;
             const length = types.arrayLength(self.graph, ty).?;
-            for (0..length) |index|
-                try self.collectExecutionLoansIn(element, representedSnapshotProjection(value, .{ .static_index = index }) orelse .{}, state, loans, source, transfers_custody, owner);
+            // Array facts have unique indices. Check coverage before walking
+            // the represented elements, even when the declared extent is huge.
+            if (value.fields.len != length) {
+                try self.report(source, "execution input is missing loan evidence for an array element", .{});
+                return;
+            }
+            for (value.fields) |entry| {
+                if (entry.index >= length) {
+                    try self.report(source, "execution input is missing loan evidence for an array element", .{});
+                    return;
+                }
+                try self.collectExecutionLoansIn(element, entry.value.*, state, loans, source, transfers_custody, owner);
+            }
             return;
         }
         if (types.variants(self.graph, ty)) |layout| {
@@ -16036,6 +16050,31 @@ test "execution admission distinguishes transferred backing from an ordinary loa
     owner.intrinsic_backing_owner = null;
     _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
     try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+}
+
+test "execution rejects sparse loan evidence independent of array extent" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 1_000_000 } },
+        .{ .array = .{ .element = @enumFromInt(1), .length = 0 } },
+    });
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    _ = try checker.admitExecution(@enumFromInt(2), .{}, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    _ = try checker.admitExecution(@enumFromInt(3), .{}, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
 test "an uncovered target cannot establish an execution loan" {
