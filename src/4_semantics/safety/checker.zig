@@ -2920,6 +2920,13 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot send a pending execution through a task input", .{});
             return .{};
         }
+        // A pending execution may observe the backing through a separate
+        // reference, even when the submitted owner contains no reference leaf.
+        for (inputs.owned_roots) |root| {
+            if (!pendingExecutionBorrowsRoot(state, root)) continue;
+            try self.report(source, "cannot submit an owner whose backing is borrowed by a pending execution", .{});
+            return .{};
+        }
         var loans = std.array_list.Managed(facts.ExecutionLoan).init(self.allocator);
         defer loans.deinit();
         const diagnostics_before = self.diagnostics.list.items.len;
@@ -3107,6 +3114,14 @@ pub const SafetyChecker = struct {
         for (value.fields) |field| if (!collectUniqueExecutionReceipt(field.value.*, selected)) return false;
         for (value.variants) |variant| if (!collectUniqueExecutionReceipt(variant.value.*, selected)) return false;
         return true;
+    }
+
+    fn pendingExecutionBorrowsRoot(state: *const FunctionState, root: facts.ValidityRootId) bool {
+        for (state.executions.items) |execution| {
+            if (!execution.pending) continue;
+            for (execution.loans) |loan| if (containsRoot(loan.generations, root)) return true;
+        }
+        return false;
     }
 
     fn hasPendingExecution(value: facts.ValueFacts, state: *const FunctionState) bool {
@@ -7323,12 +7338,9 @@ pub const SafetyChecker = struct {
         roots: []const facts.ValidityRootId,
     ) !bool {
         for (roots) |root| {
-            for (state.executions.items) |execution| {
-                if (!execution.pending) continue;
-                for (execution.loans) |loan| if (containsRoot(loan.generations, root)) {
-                    try self.report(source, "cannot end storage borrowed by a pending execution", .{});
-                    return false;
-                };
+            if (pendingExecutionBorrowsRoot(state, root)) {
+                try self.report(source, "cannot end storage borrowed by a pending execution", .{});
+                return false;
             }
             var externally_hidden = false;
             for (state.opaque_storages.items) |opaque_storage| {
@@ -15478,6 +15490,36 @@ test "execution lending retains concrete and symbolic erased receiver targets" {
     try checker.collectExecutionLoans(@enumFromInt(1), incomplete, &state, &loans, source);
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
     try std.testing.expectEqual(prior_errors + 2, diags.list.items.len);
+}
+
+test "task input cannot take backing borrowed by a separate execution" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const root = try state.tracker.establish(.fresh);
+    const loans = try a.dupe(facts.ExecutionLoan, &.{.{
+        .storage = .{ .root = @enumFromInt(0) },
+        .generations = &.{root},
+        .mode = .read,
+    }});
+    const pending = try state.establishExecutionAt(loans, source);
+    const owner: facts.ValueFacts = .{ .owned_roots = &.{root} };
+    _ = try checker.lendExecution(@enumFromInt(0), owner, &state, source);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expect(state.executionPending(pending));
+    state.completeExecution(pending);
+    _ = try checker.lendExecution(@enumFromInt(0), owner, &state, source);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
 test "an uncovered target cannot establish an execution loan" {
