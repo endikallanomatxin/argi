@@ -3132,8 +3132,8 @@ pub const SafetyChecker = struct {
                 if (previous != identity) return false;
             } else selected.* = identity;
         }
-        for (value.fields) |field| if (!collectUniqueExecutionReceipt(field.value.*, selected)) return false;
-        for (value.variants) |variant| if (!collectUniqueExecutionReceipt(variant.value.*, selected)) return false;
+        var children = value.structuralChildren();
+        while (children.next()) |child| if (!collectUniqueExecutionReceipt(child.*, selected)) return false;
         return true;
     }
 
@@ -3147,8 +3147,8 @@ pub const SafetyChecker = struct {
 
     fn hasPendingExecution(value: facts.ValueFacts, state: *const FunctionState) bool {
         for (value.execution_receipts) |id| if (state.executionPending(id)) return true;
-        for (value.fields) |field| if (hasPendingExecution(field.value.*, state)) return true;
-        for (value.variants) |variant| if (hasPendingExecution(variant.value.*, state)) return true;
+        var children = value.structuralChildren();
+        while (children.next()) |child| if (hasPendingExecution(child.*, state)) return true;
         for (value.guarded_values) |guard| if (hasPendingExecution(guard.value.*, state)) return true;
         return false;
     }
@@ -10425,14 +10425,14 @@ fn containsRoot(roots: []const facts.ValidityRootId, root: facts.ValidityRootId)
 
 fn collectOwnedRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
     for (value.owned_roots) |root| try appendRootFact(roots, root);
-    for (value.fields) |field| try collectOwnedRoots(field.value.*, roots);
-    for (value.variants) |variant| try collectOwnedRoots(variant.value.*, roots);
+    var children = value.structuralChildren();
+    while (children.next()) |child| try collectOwnedRoots(child.*, roots);
 }
 
 fn valueDependsOnRoot(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
     for (value.dependencies) |dependency| if (dependency.root == root) return true;
-    for (value.fields) |field| if (valueDependsOnRoot(field.value.*, root)) return true;
-    for (value.variants) |variant| if (valueDependsOnRoot(variant.value.*, root)) return true;
+    var children = value.structuralChildren();
+    while (children.next()) |child| if (valueDependsOnRoot(child.*, root)) return true;
     return false;
 }
 
@@ -10458,8 +10458,8 @@ fn valueSharesOwnedDependency(value: facts.ValueFacts, storage: facts.ValueFacts
 
 fn valueContainsOwnedRoot(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
     if (containsRoot(value.owned_roots, root)) return true;
-    for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) return true;
-    for (value.variants) |variant| if (valueContainsOwnedRoot(variant.value.*, root)) return true;
+    var children = value.structuralChildren();
+    while (children.next()) |child| if (valueContainsOwnedRoot(child.*, root)) return true;
     return false;
 }
 
@@ -10513,8 +10513,8 @@ fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.Val
         } else false;
         if (!symbolic) return true;
     }
-    for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned, state)) return true;
-    for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned, state)) return true;
+    var children = value.structuralChildren();
+    while (children.next()) |child| if (hasExternalOpaqueDependency(child.*, owned, state)) return true;
     return false;
 }
 
@@ -10534,8 +10534,8 @@ fn loopRootPhiStorage(context: *const SafetyChecker.LoopJoinContext, root: facts
 
 fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
     for (value.dependencies) |dependency| try appendRootFact(roots, dependency.root);
-    for (value.fields) |field| try collectDependencyRoots(field.value.*, roots);
-    for (value.variants) |variant| try collectDependencyRoots(variant.value.*, roots);
+    var children = value.structuralChildren();
+    while (children.next()) |child| try collectDependencyRoots(child.*, roots);
 }
 
 fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {

@@ -114,8 +114,8 @@ pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
         value.referenced_place != null or value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len != 0 or
         value.execution_receipts.len != 0 or value.opaque_provenance.len != 0 or value.domains.len != 0 or
         value.generation_outcomes.len != 0 or value.concurrent_receiver) return true;
-    for (value.fields) |field| if (requiresResultMetadata(field.value.*, depth + 1)) return true;
-    for (value.variants) |variant| if (requiresResultMetadata(variant.value.*, depth + 1)) return true;
+    var children = value.structuralChildren();
+    while (children.next()) |child| if (requiresResultMetadata(child.*, depth + 1)) return true;
     for (value.guarded_values) |guard| if (requiresResultMetadata(guard.value.*, depth + 1)) return true;
     return false;
 }

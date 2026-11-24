@@ -201,6 +201,31 @@ pub const ValueFacts = struct {
     choice_observations: []const CallChoiceSelector = &.{},
     guarded_values: []const GuardedValueFacts = &.{},
 
+    /// Traverses represented structural children. Guarded refinements are
+    /// separate alternatives and may form recursive graphs.
+    pub fn structuralChildren(self: ValueFacts) StructuralChildren {
+        return .{ .fields = self.fields, .variants = self.variants };
+    }
+
+    pub const StructuralChildren = struct {
+        fields: []const FieldFacts,
+        variants: []const VariantFacts,
+
+        pub fn next(self: *StructuralChildren) ?*const ValueFacts {
+            if (self.fields.len != 0) {
+                const value = self.fields[0].value;
+                self.fields = self.fields[1..];
+                return value;
+            }
+            if (self.variants.len != 0) {
+                const value = self.variants[0].value;
+                self.variants = self.variants[1..];
+                return value;
+            }
+            return null;
+        }
+    };
+
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
             .explicit_dependency = self.explicit_dependency,
