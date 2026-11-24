@@ -1,6 +1,8 @@
 consume := (.text: String) -> (.length: UIntNative) {
-    owned ::= ~text
+    owned :: String = ~text
+    _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 2, .byte = 65))
     length = byte_length(.self = &owned)
+    if unwrap_or_abort(bytes_get(.view = &owned, .index = 2)) != 65 { abort }
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
