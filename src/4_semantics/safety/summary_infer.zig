@@ -8317,8 +8317,20 @@ pub const Infer = struct {
     fn joinReceiverRequirements(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) ![]const facts.InputPath {
         const first = receiverRequirements(&left) orelse return &.{};
         const second = receiverRequirements(&right) orelse return &.{};
-        const paths = try self.union_input_paths(first, second);
-        return if (paths.len <= 8) paths else &.{};
+        var paths: [8]facts.InputPath = undefined;
+        var count: usize = 0;
+        for ([_][]const facts.InputPath{ first, second }) |alternatives| {
+            for (alternatives) |path| {
+                for (paths[0..count]) |existing| {
+                    if (existing.eql(path)) break;
+                } else {
+                    if (count == paths.len) return &.{};
+                    paths[count] = path;
+                    count += 1;
+                }
+            }
+        }
+        return self.allocator.dupe(facts.InputPath, paths[0..count]);
     }
 
     fn union_input_paths(self: *Infer, left: []const facts.InputPath, right: []const facts.InputPath) ![]const facts.InputPath {
