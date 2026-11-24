@@ -56,4 +56,9 @@ main := (.system: System) -> () {
         if owner.value != 42 or drops != 1 { abort }
     }
     if drops != 2 { abort }
+    {
+        task ::= unwrap_or_abort(async_owned#(produce)(.args = (), .executor = executor, .ffi = system.ffi))
+        if drops != 2 { abort }
+    }
+    if drops != 3 { abort }
 }
