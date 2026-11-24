@@ -7715,6 +7715,8 @@ pub const Infer = struct {
             result.concurrent_receiver = required.concurrent_receiver;
             result.concurrent_receiver_inputs = required.concurrent_receiver_inputs;
         }
+        result.observes_fresh_backing = effect.observes_fresh_backing and result.fresh_dependencies.len == 1 and
+            effect.fresh_dependencies.len == 1 and result.fresh_dependencies[0] == effect.fresh_dependencies[0];
         return result;
     }
 
