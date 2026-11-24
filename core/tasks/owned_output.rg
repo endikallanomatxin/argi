@@ -38,6 +38,13 @@ implement#(.T: Type) Deinit#(_OwnedTaskOutput#(T)) (
     }
 )
 
+-- A closed receipt transfers its output slot to exactly one typed owner.
+_withdraw_task_output := #(.T: Type) (.task: $&TaskReceipt) -> (.output: _OwnedTaskOutput#(T)) {
+    if task&._handle != 0 { abort }
+    output = (._slot = task&._output_slot, ._entry = task&._entry, ._ffi = task&._ffi)
+    task&._output_slot = 0
+}
+
 _take_task_output := #(.T: Type) (.self: $&_OwnedTaskOutput#(T)) -> (.result: T) {
     address ::= _claim_task_output(.ffi = self&._ffi, .slot = self&._slot, .entry = self&._entry)
     if address == 0 { abort }

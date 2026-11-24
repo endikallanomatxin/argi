@@ -10,7 +10,7 @@ implement#(.T: Type) Deinit#(Future#(T)) (
             deinit(.self = $&self&._task)
         } #else {
             _close_task(.self = $&self&._task)
-            output: _OwnedTaskOutput#(T) = (._slot = self&._task._output_slot, ._entry = self&._task._entry, ._ffi = self&._task._ffi)
+            output ::= _withdraw_task_output#(T)(.task = $&self&._task)
         }
     }
 )
@@ -147,8 +147,7 @@ await := #(.T: Type) (.self: $&Future#(T)) -> (
         }
         _close_task(.self = $&self&._task)
         self&._task._result_taken = true
-        output: _OwnedTaskOutput#(T) = (._slot = self&._task._output_slot, ._entry = self&._task._entry, ._ffi = self&._task._ffi)
-        self&._task._output_slot = 0
+        output ::= _withdraw_task_output#(T)(.task = $&self&._task)
         value ::= _take_task_output#(T)(.self = $&output)
         result = ..ok ~value
     }
