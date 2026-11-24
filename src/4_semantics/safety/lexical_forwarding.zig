@@ -41,6 +41,17 @@ pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
             if (!isForwardingLink(graph, assignment.value, links.items, owning, calls)) return false;
             assigned = true;
         },
+        .if_statement => |branch| {
+            if (!owning) {
+                if (!independentExpression(graph, id, links.items, output, 0)) return false;
+                continue;
+            }
+            if (assigned or !independentExpression(graph, branch.condition, links.items, output, 0)) return false;
+            const alternative = branch.else_block orelse return false;
+            if (!branchMovesToOutput(graph, branch.then_block, output, links.items, calls) or
+                !branchMovesToOutput(graph, alternative, output, links.items, calls)) return false;
+            assigned = true;
+        },
         .auto_deinit_binding => {
             if (!owning and !independentExpression(graph, id, links.items, output, 0)) return false;
         },
@@ -48,6 +59,16 @@ pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
         else => if (owning or !independentExpression(graph, id, links.items, output, 0)) return false,
     };
     return assigned;
+}
+
+fn branchMovesToOutput(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalBlockId, output: graph_mod.GlobalBindingId, links: []const graph_mod.GlobalBindingId, calls: []const ForwardedCall) bool {
+    const block = graph.blocks.items[@intFromEnum(id)];
+    if (block.nodes.len != 1) return false;
+    const node = graph.node_refs.items[block.nodes.start];
+    if (block.ret_val != null and block.ret_val.? != node) return false;
+    const content = graph.node(node).content;
+    return content == .assignment and content.assignment.binding == output and
+        isForwardingLink(graph, content.assignment.value, links, true, calls);
 }
 
 // Other input accesses may mutate their referents, but cannot change the
@@ -208,4 +229,16 @@ test "reference forwarding permits independent moved owners without consuming it
     try std.testing.expect(!try proves(a, &graph, function, relation, true));
     try std.testing.expect(!try provesWithCalls(a, &graph, function, relation, true, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(3) }}));
     try std.testing.expect(try provesWithCalls(a, &graph, function, relation, true, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(5) }}));
+
+    graph.nodes.items[4].content.assignment.value = @enumFromInt(5);
+    try graph.blocks.append(a, graph.blocks.items[0]);
+    try graph.blocks.append(a, graph.blocks.items[0]);
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .if_statement = .{
+        .condition = @enumFromInt(0), .then_block = @enumFromInt(1), .else_block = @enumFromInt(2),
+    } } });
+    graph.node_refs.items[0] = @enumFromInt(7);
+    graph.blocks.items[0].nodes = .{ .start = 0, .len = 1 };
+    try std.testing.expect(try proves(a, &graph, function, relation, true));
+    graph.nodes.items[7].content.if_statement.condition = @enumFromInt(3);
+    try std.testing.expect(!try proves(a, &graph, function, relation, true));
 }
