@@ -1296,6 +1296,7 @@ pub const Infer = struct {
         const grades = std.enums.values(facts.ReferenceRelation.Grade);
         var call_sets = [_]?[]const forwarding.ForwardedCall{null} ** grades.len;
         var exact_moved_input: ?u32 = null;
+        var owning_calls: ?[]const forwarding.ForwardedCall = null;
         for (outputs, 0..) |*output, output_index| {
             if (outputs.len == 1 and !accesses.unknown and accesses.inputs.items.len == 0 and accesses.globals.items.len == 0 and
                 accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency| {
@@ -1304,10 +1305,11 @@ pub const Infer = struct {
                     path.storage_domain != null or path.input_index >= function.input.len or output_index >= output_fields.len) continue;
                 const input_type = self.graph.fields.items[function.input.start + path.input_index].ty;
                 if (!types.equal(self.graph, input_type, output_fields[output_index].ty)) continue;
-                if (try forwarding.proves(self.allocator, self.graph, function, .{
+                if (owning_calls == null) owning_calls = try self.forwardedCalls(function, .owning);
+                if (try forwarding.provesWithCalls(self.allocator, self.graph, function, .{
                     .input_index = path.input_index,
                     .output_index = @intCast(output_index),
-                }, true)) {
+                }, true, owning_calls.?)) {
                     exact_moved_input = path.input_index;
                     break;
                 }
@@ -1327,7 +1329,7 @@ pub const Infer = struct {
                 };
                 for (grades, &call_sets) |grade, *calls| {
                     if (grade == .identity and !types.equal(self.graph, self.graph.binding(binding).ty, output_fields[output_index].ty)) continue;
-                    if (calls.* == null) calls.* = try self.forwardedReferenceCalls(function, grade);
+                    if (calls.* == null) calls.* = try self.forwardedCalls(function, .{ .reference = grade });
                     if (try forwarding.provesWithCalls(self.allocator, self.graph, function, relation, false, calls.*.?)) {
                         output.reference_relation = .{ .source = .{ .input_index = @intCast(input_index) }, .grade = grade };
                         break;
@@ -1428,7 +1430,12 @@ pub const Infer = struct {
         return if (base == .dereference) base.dereference.pointer else access.array_ptr;
     }
 
-    fn forwardedReferenceCalls(self: *Infer, function: graph_mod.Function, grade: @FieldType(facts.ReferenceRelation, "grade")) ![]const @import("lexical_forwarding.zig").ForwardedCall {
+    const ForwardingMode = union(enum) {
+        reference: @FieldType(facts.ReferenceRelation, "grade"),
+        owning,
+    };
+
+    fn forwardedCalls(self: *Infer, function: graph_mod.Function, mode: ForwardingMode) ![]const @import("lexical_forwarding.zig").ForwardedCall {
         const block = self.graph.blocks.items[@intFromEnum(function.body orelse return &.{})];
         var calls: std.ArrayList(@import("lexical_forwarding.zig").ForwardedCall) = .empty;
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
@@ -1438,7 +1445,7 @@ pub const Infer = struct {
                 else => continue,
             };
             for (0..self.graph.nodes.items.len) |_| {
-                if (grade != .identity) if (self.checkedArrayElementSource(function, value)) |base| {
+                if (mode == .reference and mode.reference != .identity) if (self.checkedArrayElementSource(function, value)) |base| {
                     try calls.append(self.allocator, .{ .call = value, .argument = base });
                     value = base;
                     continue;
@@ -1447,7 +1454,7 @@ pub const Infer = struct {
                     .function_call => |call| blk: {
                         if (call.callee_value != null) break;
                         if (self.structArguments(call.input)) |arguments| {
-                            if (self.isZeroReferenceOffset(self.graph.function(call.callee), arguments)) {
+                            if (mode == .reference and self.isZeroReferenceOffset(self.graph.function(call.callee), arguments)) {
                                 try calls.append(self.allocator, .{ .call = value, .argument = arguments[0].value });
                                 value = arguments[0].value;
                                 continue;
@@ -1456,19 +1463,29 @@ pub const Infer = struct {
                         break :blk .{ self.engine.summaryFor(call.callee) orelse break, call.input };
                     },
                     .virtual_call => |id| blk: {
+                        if (mode == .owning) break;
                         const call = self.graph.virtual_calls.items[@intFromEnum(id)];
                         break :blk .{ try self.virtualSummary(call.safety_methods) orelse break, call.input };
                     },
                     else => break,
                 };
                 if (selected[0].outputs.len != 1) break;
-                const relation = selected[0].outputs[0].reference_relation orelse break;
-                if (!facts.ReferenceRelation.implies(relation.grade, grade)) break;
-                const source = relation.source;
-                if (source.storage_domain != null or source.projections.len != 0) break;
                 const arguments = self.structArguments(selected[1]) orelse break;
-                if (source.input_index >= arguments.len) break;
-                const argument = arguments[source.input_index].value;
+                const input_index = switch (mode) {
+                    .owning => blk: {
+                        if (arguments.len != 1) break;
+                        break :blk selected[0].exact_moved_input orelse break;
+                    },
+                    .reference => |grade| blk: {
+                        const relation = selected[0].outputs[0].reference_relation orelse break;
+                        if (!facts.ReferenceRelation.implies(relation.grade, grade)) break;
+                        const source = relation.source;
+                        if (source.storage_domain != null or source.projections.len != 0) break;
+                        break :blk source.input_index;
+                    },
+                };
+                if (input_index >= arguments.len) break;
+                const argument = arguments[input_index].value;
                 var seen = false;
                 for (calls.items) |call| if (call.call == value) {
                     seen = true;

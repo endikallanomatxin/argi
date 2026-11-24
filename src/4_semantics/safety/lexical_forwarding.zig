@@ -128,14 +128,14 @@ fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.Gl
 
 fn isForwardingLink(graph: *const graph_mod.GlobalSemanticGraph, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool, calls: []const ForwardedCall) bool {
     var current = id;
-    // Reference proofs compose only the certified links supplied by their
-    // caller. Ownership still requires every link to move its resource.
-    if (!owning) for (0..calls.len + 1) |_| {
+    // Compose only the certified links supplied by the caller. The terminal
+    // expression of an owning chain must still move its source.
+    for (0..calls.len + 1) |_| {
         const argument = for (calls) |call| {
             if (call.call == current) break call.argument;
         } else break;
         current = argument;
-    };
+    }
     var expression = graph.node(current).content;
     if (owning) {
         if (expression != .move_value) return false;
@@ -202,4 +202,10 @@ test "reference forwarding permits independent moved owners without consuming it
     graph.nodes.items[4].content.assignment.value = @enumFromInt(3);
     graph.bindings.items[3].initialization = @enumFromInt(5);
     try std.testing.expect(!try proves(a, &graph, function, relation, false));
+
+    graph.blocks.items[0].nodes = .{ .start = 1, .len = 1 };
+    graph.nodes.items[4].content.assignment.value = @enumFromInt(6);
+    try std.testing.expect(!try proves(a, &graph, function, relation, true));
+    try std.testing.expect(!try provesWithCalls(a, &graph, function, relation, true, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(3) }}));
+    try std.testing.expect(try provesWithCalls(a, &graph, function, relation, true, &.{.{ .call = @enumFromInt(6), .argument = @enumFromInt(5) }}));
 }
