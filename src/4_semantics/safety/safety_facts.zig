@@ -173,6 +173,7 @@ pub const FreshExecution = struct {
     source: FreshEffectSource,
     inputs: *const ValueEffect,
     input_type: u32,
+    transfers_custody: bool = false,
 };
 
 /// A universal relation to an evaluated input observation. This is not a

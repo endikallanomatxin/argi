@@ -6251,13 +6251,13 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         const callee_function = self.graph.function(callee);
         const arguments = self.structArguments(input) orelse return .{};
-        if (callee_function.safety_primitive == .execution_lend) {
+        if (callee_function.safety_primitive == .execution_lend or callee_function.safety_primitive == .execution_transfer) {
             if (arguments.len == 0) return .{};
             const input_type = self.graph.node(arguments[0].value).ty orelse return .{};
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.inferExpression(function_id, arguments[0].value);
             const executions = try self.allocator.alloc(facts.FreshExecution, 1);
-            executions[0] = .{ .source = self.freshSource(call_node, 0), .inputs = inputs, .input_type = @intFromEnum(input_type) };
+            executions[0] = .{ .source = self.freshSource(call_node, 0), .inputs = inputs, .input_type = @intFromEnum(input_type), .transfers_custody = callee_function.safety_primitive == .execution_transfer };
             return .{ .fresh_executions = executions, .fresh_cleanup_obligation = true };
         }
         if (callee_function.safety_primitive == .execution_complete) return .{};
@@ -7466,7 +7466,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.substituteOutputInContext(function_id, execution.inputs.*, arguments, override, context);
-            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .inputs = inputs };
+            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .inputs = inputs };
         }
         result.fresh_executions = executions;
         for (effect.input_execution_receipts) |path| {
@@ -8337,7 +8337,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.rebaseFreshSources(execution.inputs.*, call_node);
-            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .inputs = inputs };
+            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .inputs = inputs };
         }
         result.fresh_executions = executions;
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
@@ -8383,7 +8383,7 @@ pub const Infer = struct {
         try result.appendSlice(left);
         for (right) |entry| {
             var found = false;
-            for (result.items) |*existing| if (existing.source == entry.source and existing.input_type == entry.input_type) {
+            for (result.items) |*existing| if (existing.source == entry.source and existing.input_type == entry.input_type and existing.transfers_custody == entry.transfers_custody) {
                 const inputs = try self.allocator.create(facts.ValueEffect);
                 inputs.* = try self.mergeValueEffects(existing.inputs.*, entry.inputs.*);
                 existing.inputs = inputs;

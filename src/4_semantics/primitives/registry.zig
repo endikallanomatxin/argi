@@ -22,6 +22,7 @@ pub const specs = [_]Spec{
     .{ .primitive = .trusted_concurrent_view, .path = "core/concurrency/ConcurrentAlias.rg", .name = "trusted_concurrent_view", .signatures = &.{"#(.T: Type)(.shared: $$&T) -> (.view: &T)"} },
     .{ .primitive = .recover_ordinary, .path = "core/concurrency/ConcurrentAlias.rg", .name = "recover_ordinary", .signatures = &.{"#(.T: Type)(.owner: $&T) -> ()"} },
     .{ .primitive = .execution_lend, .path = "core/memory/execution_access.rg", .name = "_execution_lend", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
+    .{ .primitive = .execution_transfer, .path = "core/memory/execution_access.rg", .name = "_execution_transfer", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
     .{ .primitive = .task_input_handoff, .path = "core/tasks/future.rg", .name = "_retire_task_input", .signatures = &.{"#(.T: Type)(.value: T) -> ()"} },
     .{ .primitive = .require_task_input_transfer, .path = "core/tasks/future.rg", .name = "_require_task_input_transfer", .signatures = &.{"#(.T: Type)(.value: &T) -> ()"} },
     .{ .primitive = .require_task_output_transfer, .path = "core/tasks/future.rg", .name = "_require_task_output_transfer", .signatures = &.{"#(.T: Type)(.value: &T) -> ()"} },
@@ -234,7 +235,7 @@ pub const Transfer = struct {
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
         .require_storage_capability => .{ .value = .empty, .requires_storage_input = 0 },
-        .execution_lend => .{ .value = .execution_lend },
+        .execution_lend, .execution_transfer => .{ .value = .execution_lend },
         .execution_complete => .{ .value = .execution_complete },
         .execution_input => .{ .value = .execution_input },
         .none, .recover_ordinary, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata, .task_input_handoff, .require_task_input_transfer, .require_task_output_transfer => .{ .value = .empty },
@@ -294,6 +295,7 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .restrict_reference,
         .depend_on,
         .execution_lend,
+        .execution_transfer,
         .trusted_concurrent_view,
         .recover_ordinary,
         .execution_input,

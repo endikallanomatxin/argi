@@ -269,7 +269,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_owned_roots, b.fresh_owned_roots)) return false;
     if (a.input_execution_receipts.len != b.input_execution_receipts.len or a.fresh_executions.len != b.fresh_executions.len) return false;
     for (a.input_execution_receipts, b.input_execution_receipts) |left, right| if (!inputPathEql(left, right)) return false;
-    for (a.fresh_executions, b.fresh_executions) |left, right| if (left.source != right.source or left.input_type != right.input_type or !valueEffectEql(left.inputs.*, right.inputs.*)) return false;
+    for (a.fresh_executions, b.fresh_executions) |left, right| if (left.source != right.source or left.input_type != right.input_type or left.transfers_custody != right.transfers_custody or !valueEffectEql(left.inputs.*, right.inputs.*)) return false;
     if (a.input_storage_capabilities.len != b.input_storage_capabilities.len) return false;
     for (a.input_storage_capabilities, b.input_storage_capabilities) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_storage_capabilities, b.fresh_storage_capabilities)) return false;

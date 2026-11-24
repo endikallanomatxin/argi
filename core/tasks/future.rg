@@ -96,7 +96,7 @@ async_owned := #(.F: Function) (
     entry ::= _TaskEntry(.function = _owned_task_worker#(F))
     output ::= _prepare_task_output#(result_of#(F))(.entry = entry, .ffi = ffi)!
     request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = output._slot,
-        .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_lend(.inputs = prepared))
+        .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_transfer(.inputs = prepared))
     submitted ::= Executor#().submit(.self = $&executor, .request = ~request)
     accepted ::= _task_output_accepted(.slot = output._slot, .entry = entry, .ffi = ffi).accepted != 0
     if accepted { _retire_task_input#(inputs_of#(F))(.value = ~prepared) }

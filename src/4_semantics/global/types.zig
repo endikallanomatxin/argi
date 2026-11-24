@@ -971,7 +971,7 @@ test "definition values preserve captured environments through binding aliases" 
 /// Identify the receipt by the selected trusted primitive's actual output type.
 pub fn isExecutionReceiptType(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
     for (graph.functions.items) |function| {
-        if (function.safety_primitive == .execution_lend and function.output.len == 1) {
+        if ((function.safety_primitive == .execution_lend or function.safety_primitive == .execution_transfer) and function.output.len == 1) {
             if (equal(graph, ty, graph.fields.items[function.output.start].ty)) return true;
         } else if (function.safety_primitive == .execution_complete and function.input.len >= 1) {
             const input = graph.resolvedSemanticType(graph.fields.items[function.input.start].ty) orelse continue;

@@ -483,7 +483,7 @@ pub const SafetyChecker = struct {
         defer seen.deinit();
         var work: std.ArrayList(graph_mod.GlobalFunctionId) = .empty;
         defer work.deinit(self.allocator);
-        for (self.graph.functions.items, 0..) |function, raw| if (function.safety_primitive == .execution_lend) {
+        for (self.graph.functions.items, 0..) |function, raw| if (function.safety_primitive == .execution_lend or function.safety_primitive == .execution_transfer) {
             const id: graph_mod.GlobalFunctionId = @enumFromInt(raw);
             try seen.put(id, {});
             try work.append(self.allocator, id);
@@ -2953,6 +2953,10 @@ pub const SafetyChecker = struct {
     /// its OS thread and of the validity roots it borrows. Receipt moves retain
     /// these identities; only certified completion discharges them.
     fn lendExecution(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, inputs: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef) !facts.ValueFacts {
+        return self.admitExecution(ty, inputs, state, source, false);
+    }
+
+    fn admitExecution(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, inputs: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef, transfers_custody: bool) !facts.ValueFacts {
         if (hasPendingExecution(inputs, state)) {
             try self.report(source, "cannot send a pending execution through a task input", .{});
             return .{};
@@ -2970,7 +2974,7 @@ pub const SafetyChecker = struct {
         var loans = std.array_list.Managed(facts.ExecutionLoan).init(self.allocator);
         defer loans.deinit();
         const diagnostics_before = self.diagnostics.list.items.len;
-        try self.collectExecutionLoans(ty, inputs, state, &loans, source);
+        try self.collectExecutionLoansIn(ty, inputs, state, &loans, source, transfers_custody, null);
         if (loans.items.len == 0 or self.diagnostics.list.items.len != diagnostics_before) return .{};
         for (loans.items) |loan| try self.checkExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, loan.concurrent_reference, state);
         if (self.diagnostics.list.items.len != diagnostics_before) return .{};
@@ -3011,6 +3015,11 @@ pub const SafetyChecker = struct {
     }
 
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
+        return self.collectExecutionLoansIn(ty, value, state, loans, source, false, null);
+    }
+
+    fn collectExecutionLoansIn(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef, transfers_custody: bool, enclosing_owner: ?facts.ValidityRootId) anyerror!void {
+        const owner = if (transfers_custody) value.intrinsic_backing_owner orelse enclosing_owner else null;
         const semantic = self.graph.resolvedSemanticType(ty) orelse return error.InvalidExecutionInput;
         if (semantic == .virtual) {
             if (value.reference_target_incomplete) {
@@ -3061,6 +3070,10 @@ pub const SafetyChecker = struct {
             return;
         }
         if (semantic == .pointer) {
+            if (@import("transfer_evidence.zig").observesTransferredBacking(value, owner)) {
+                try self.requireLive(self.call_stack.getLast(), source, value, state);
+                return;
+            }
             if (semantic.pointer.mutability == .read_write and !self.plainExecutionStorage(semantic.pointer.child, 0)) {
                 try self.report(source, "execution cannot borrow an ordinary mutable reference to nonplain storage", .{});
                 return;
@@ -3097,7 +3110,7 @@ pub const SafetyChecker = struct {
             if (!self.inputTypeNeedsLoan(element, 0, true)) return;
             const length = types.arrayLength(self.graph, ty).?;
             for (0..length) |index|
-                try self.collectExecutionLoans(element, representedSnapshotProjection(value, .{ .static_index = index }) orelse .{}, state, loans, source);
+                try self.collectExecutionLoansIn(element, representedSnapshotProjection(value, .{ .static_index = index }) orelse .{}, state, loans, source, transfers_custody, owner);
             return;
         }
         if (types.variants(self.graph, ty)) |layout| {
@@ -3109,13 +3122,13 @@ pub const SafetyChecker = struct {
                     try self.report(source, "execution input is missing loan evidence for a possible choice payload", .{});
                     return;
                 };
-                try self.collectExecutionLoans(payload, child, state, loans, source);
+                try self.collectExecutionLoansIn(payload, child, state, loans, source, transfers_custody, owner);
             }
             return;
         }
         if (types.fields(self.graph, ty)) |fields| for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
             if (self.inputTypeNeedsLoan(field.ty, 0, true))
-                try self.collectExecutionLoans(field.ty, representedSnapshotProjection(value, .{ .field = @intCast(index) }) orelse .{}, state, loans, source);
+                try self.collectExecutionLoansIn(field.ty, representedSnapshotProjection(value, .{ .field = @intCast(index) }) orelse .{}, state, loans, source, transfers_custody, owner);
         };
     }
 
@@ -3370,7 +3383,7 @@ pub const SafetyChecker = struct {
             if (index < values.len) try self.consume_storage_capabilities(source, values[index], 1, 1, state);
         }
         return switch (primitive_transfer.forPrimitive(primitive).value) {
-            .execution_lend => if (values.len != 0) try self.lendExecution(self.graph.fields.items[self.graph.function(callee).input.start].ty, values[0], state, source) else .{},
+            .execution_lend => if (values.len != 0) try self.admitExecution(self.graph.fields.items[self.graph.function(callee).input.start].ty, values[0], state, source, primitive == .execution_transfer) else .{},
             .execution_complete => blk: {
                 if (values.len != 0) {
                     const receipt: facts.ValueFacts = if (values[0].referenced_place) |storage| self.valueAtPlace(state, storage) orelse .{} else try self.readSymbolicValue(state, values[0], null);
@@ -5822,7 +5835,7 @@ pub const SafetyChecker = struct {
             const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
             const maybe_id: ?facts.ExecutionId = existing orelse blk: {
                 const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries);
-                const receipt = try self.lendExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse capture_source);
+                const receipt = try self.admitExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse capture_source, fresh.transfers_custody);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
                 if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);
