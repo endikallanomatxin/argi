@@ -2982,7 +2982,10 @@ pub const SafetyChecker = struct {
         defer loans.deinit();
         const diagnostics_before = self.diagnostics.list.items.len;
         try self.collectExecutionLoansIn(ty, inputs, state, &loans, source, transfers_custody, null);
-        if (loans.items.len == 0 or self.diagnostics.list.items.len != diagnostics_before) return .{};
+        if (self.diagnostics.list.items.len != diagnostics_before) return .{};
+        // Ownership transfers still have an acceptance/completion identity
+        // when the input has no externally borrowed storage.
+        if (loans.items.len == 0 and !transfers_custody) return .{};
         for (loans.items) |loan| try self.checkExecutionAccess(source, loan.storage, loan.symbolic, loan.mode, loan.concurrent_reference, state);
         if (self.diagnostics.list.items.len != diagnostics_before) return .{};
         const id = try state.establishExecutionAt(try loans.toOwnedSlice(), source);
@@ -16038,8 +16041,14 @@ test "execution admission distinguishes transferred backing from an ordinary loa
         .fields = &.{.{ .index = 0, .value = &reference }},
     };
 
-    _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
+    const receipt = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
     try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 1), receipt.execution_receipts.len);
+    const execution = receipt.execution_receipts[0];
+    try std.testing.expect(state.executionPending(execution));
+    try std.testing.expectEqual(@as(usize, 0), state.executions.items[@intFromEnum(execution)].loans.len);
+    state.completeExecution(execution);
+    try std.testing.expect(!state.executionPending(execution));
     _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, false);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 
