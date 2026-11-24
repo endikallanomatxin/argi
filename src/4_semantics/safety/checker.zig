@@ -6255,9 +6255,6 @@ pub const SafetyChecker = struct {
         if (path.storage_domain != null or path.input_index >= arguments.len) return null;
         var selected = arguments[path.input_index];
         for (path.projections) |projection| {
-            if (projection == .variant) {
-                if (selected.known_choice_variant) |active| if (active != projection.variant) return null;
-            }
             selected = representedSnapshotProjection(selected, projection) orelse return null;
         }
         return selected;
@@ -6293,6 +6290,7 @@ pub const SafetyChecker = struct {
                 for (value.fields) |field| if (field.index == index) return field.value.*;
             },
             .variant => |index| {
+                if (value.known_choice_variant) |active| if (active != index) return null;
                 for (value.variants) |variant| if (variant.index == index) return variant.value.*;
             },
             .dereference, .dynamic_index => {},
@@ -16041,6 +16039,7 @@ test "virtual evidence follows only the selected receiver snapshot" {
     }};
     const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .variant = 1 }} };
     try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&arguments, path) == null);
+    try std.testing.expect(SafetyChecker.representedSnapshotProjection(arguments[0], path.projections[0]) == null);
     var unknown = arguments;
     unknown[0].known_choice_variant = null;
     try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&unknown, path).?.concurrent_receiver);
