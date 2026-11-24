@@ -88,6 +88,22 @@ simultaneous access through a verified interface. Use the corresponding
 evidence at each boundary and keep it out of runtime layouts and
 specialization keys.
 
+### Deallocator access bounds
+
+The existing receiver bounds cannot express the full deallocation interface.
+Applying `reads(self)` to Deallocator in the local/shared String cleanup
+fixture rejects the Memory provider because its page release has an unknown
+footprint. Applying `writes(self)` instead rejects the concurrent CAllocator:
+an ordinary write bound requires a writable reference, whereas the concurrent
+capture only grants access via its trusted interface.
+
+Keep the acquired block's release effect separate from access to provider
+state. The former is authorized by Allocation's custody and acquisition bounds.
+The latter must use the authority retained by the virtual handle, including
+exclusive access for a local provider or trusted concurrent access for a
+shared provider. A receiver bound alone cannot account for either native
+release or a provider's separately stored metadata.
+
 ## Release interface experiment
 
 The move-only release request experiment grouped the raw bounds without
