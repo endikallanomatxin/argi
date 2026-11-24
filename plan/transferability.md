@@ -77,3 +77,28 @@ Ownership transfer moves cleanup responsibility. Concurrent sharing grants
 simultaneous access through a verified interface. Use the corresponding
 evidence at each boundary and keep it out of runtime layouts and
 specialization keys.
+
+## Release request baseline
+
+The local/shared String cleanup fixture
+`tests/feature_tests/concurrency/378_shared_string_cleanup` measures the
+effect of the move-only release request in `7d27742fd`. The same Debug
+compiler built the same fixture with the previous and current core trees on
+Linux x86-64. Each configuration used five alternating builds with
+`--no-cache --frontend-jobs 1 --stats --emit-llvm` and a subsequent successful
+execution. The optimized measurement added `--release`.
+
+| Metric | Debug before | Debug after | Release before | Release after |
+| --- | ---: | ---: | ---: | ---: |
+| Median build wall time, seconds | 1.00 | 0.98 | 1.58 | 1.62 |
+| Median peak RSS, KiB | 140864 | 140704 | 146584 | 146656 |
+| Median GlobalSafety time, ms | 46.228 | 46.366 | 45.809 | 47.075 |
+| Executable text, bytes | 134219 | 135843 | 55193 | 55473 |
+| Executable file, bytes | 165120 | 165472 | 86392 | 86656 |
+| Generic bodies built | 89 | 91 | 89 | 91 |
+| LLVM functions reported | 117 | 122 | 97 | 100 |
+
+The generic-body count includes bodies that did not reach code generation.
+These figures measure the new release interface and its cleanup. A separate
+measurement needs to exercise ownership transfer with the same compilation
+specialization and different value evidence.
