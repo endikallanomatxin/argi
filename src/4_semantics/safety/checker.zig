@@ -3324,6 +3324,17 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
+        if (primitive == .task_input_handoff) {
+            // Native acceptance has taken custody. End the sender's
+            // observations without running its destructor or ending external
+            // roots retained by the transferred value.
+            if (values.len != 1) return error.InvalidExecutionInput;
+            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer roots.deinit();
+            try collectOwnedRoots(values[0], &roots);
+            _ = try self.endRoots(source, state, roots.items);
+            return .{};
+        }
         if (primitive == .require_task_output_transfer) {
             const field = self.graph.fields.items[self.graph.function(callee).input.start];
             const ty = self.graph.semanticType(field.ty).pointer.child;
@@ -15705,6 +15716,28 @@ test "worker cleanup can end a structural subobject but must preserve external r
     try checker.collectExecutionLoans(receiver, .{ .referenced_place = .{ .root = @enumFromInt(0) } }, &state, &loans, source);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqual(@as(usize, 0), loans.items.len);
+}
+
+test "accepted task input retires owned backing but preserves external roots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const external = try state.tracker.establish(.fresh);
+    const owner: facts.ValueFacts = .{
+        .owned_roots = &.{backing},
+        .dependencies = &.{.{ .root = external }},
+    };
+    const input: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &owner }} };
+    const alias: facts.ValueFacts = .{ .dependencies = &.{.{ .root = backing }} };
+    try std.testing.expect(state.tracker.dependenciesAreAlive(alias));
+    _ = try checker.evaluatePrimitive(@enumFromInt(0), @enumFromInt(0), .task_input_handoff, &.{}, &.{input}, &state, .{ .file_index = 0, .offset = 0 });
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(alias));
+    try std.testing.expect(state.tracker.isAlive(external));
 }
 
 test "task input cannot take backing borrowed by a separate execution" {
