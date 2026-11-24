@@ -321,11 +321,9 @@ const State = struct {
     fn localVirtualMethod(self: *const State, call: graph_mod.VirtualCall) ?LocalVirtualMethod {
         const address = self.graph.node(call.handle).content;
         if (address != .address_of) return null;
-        const descriptor = self.graph.node(address.address_of).content;
-        if (descriptor != .binding_use or self.graph.isModuleBinding(descriptor.binding_use)) return null;
-        const binding = self.graph.binding(descriptor.binding_use);
-        if (binding.mutability != .constant or binding.deferred_initialization) return null;
-        const initializer = self.graph.node(binding.initialization orelse return null).content;
+        var remaining: u32 = 64;
+        const descriptor = self.immutableValue(address.address_of, &remaining) orelse return null;
+        const initializer = self.graph.node(descriptor).content;
         if (initializer != .virtualize) return null;
         const virtualize = self.graph.virtualizes.items[@intFromEnum(initializer.virtualize)];
         if (call.method_index >= virtualize.methods.len) return null;
@@ -335,6 +333,28 @@ const State = struct {
             .function = self.graph.function_refs.items[virtualize.methods.start + call.method_index],
             .concurrent = reference.pointer.mutability == .concurrent,
         };
+    }
+
+    fn immutableValue(self: *const State, expression: graph_mod.GlobalNodeId, remaining: *u32) ?graph_mod.GlobalNodeId {
+        if (remaining.* == 0) return null;
+        remaining.* -= 1;
+        switch (self.graph.node(expression).content) {
+            .binding_use => |id| {
+                if (self.graph.isModuleBinding(id)) return null;
+                const initializer = @import("lexical_storage.zig").immutableInitializer(self.graph, id) orelse return null;
+                return self.immutableValue(initializer, remaining);
+            },
+            .struct_field_access => |field| {
+                const ty = self.graph.node(field.value).ty orelse return null;
+                if (@import("types.zig").isCUnion(self.graph, ty)) return null;
+                const aggregate = self.immutableValue(field.value, remaining) orelse return null;
+                const literal = self.graph.node(aggregate).content;
+                if (literal != .struct_value_literal or field.field_index >= literal.struct_value_literal.fields.len) return null;
+                const item = self.graph.value_fields.items[literal.struct_value_literal.fields.start + field.field_index];
+                return self.immutableValue(item.value, remaining);
+            },
+            else => return expression,
+        }
     }
 
     fn isIsolatedCallback(self: *const State, ty: ?graph_mod.GlobalTypeId) bool {

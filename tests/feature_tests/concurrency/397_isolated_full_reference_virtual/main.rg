@@ -9,9 +9,14 @@ implement Read#($$&Cell) (
         value = view&.value
     }
 )
+View := (.reader: Virtual#(Read))
+Envelope := (.view: View)
 read := (.cell: $$&Cell) -> (.value: Int32) {
     reader: Virtual#(Read) = Virtual#(Read)(cell)
-    value = reader.read().value
+    copy: Virtual#(Read) = reader
+    view: View = (.reader = copy)
+    envelope: Envelope = (.view = view)
+    value = envelope.view.reader.read().value
 }
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)

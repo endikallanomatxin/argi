@@ -48,7 +48,7 @@ const Path = struct {
     }
 };
 
-fn immutableInitializer(graph: *const g.GlobalSemanticGraph, id: g.GlobalBindingId) ?g.GlobalNodeId {
+pub fn immutableInitializer(graph: *const g.GlobalSemanticGraph, id: g.GlobalBindingId) ?g.GlobalNodeId {
     const binding = graph.binding(id);
     if (binding.mutability != .constant or binding.deferred_initialization) return null;
     const value = binding.initialization orelse return null;
