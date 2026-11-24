@@ -302,3 +302,13 @@ caller writes zero to data.address. The rejection also holds when a
 separate function writes the bits through a mutable reference to that field.
 The nominal owner and its private cleanup bounds remain present, but they
 do not authenticate a replacement public data address.
+
+With the same temporary release bound, a function that moves and returns
+one String preserves enough evidence to submit it. The worker updates a
+byte and returns its length. A function that chooses between two owned
+Strings rejects submission when one retains a local deallocator. It also
+rejects when both Strings have independently allocated backing from the
+same shared provider. The second rejection is a precision gap: agreeing
+transfer guarantees must survive a choice without equating the backing
+identities of the alternatives. Both experiments use an ordinary function
+boundary and the same nominal String type.
