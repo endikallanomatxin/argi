@@ -2964,10 +2964,7 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot send a pending execution through a task input", .{});
             return .{};
         }
-        if (valueDependsOnDeadRoot(try self.refineGeneralValue(inputs, state), state)) {
-            try self.report(source, "task input depends on a root that has ended", .{});
-            return .{};
-        }
+        if (!try self.requireLiveExecutionInput(inputs, state, source)) return .{};
         // A pending execution may observe the backing through a separate
         // reference, even when the submitted owner contains no reference leaf.
         var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
@@ -3077,10 +3074,9 @@ pub const SafetyChecker = struct {
             return;
         }
         if (semantic == .pointer) {
-            if (@import("transfer_evidence.zig").observesTransferredBacking(value, owner)) {
-                try self.requireLive(self.call_stack.getLast(), source, value, state);
-                return;
-            }
+            // Admission checked the full input, including whether the backing
+            // is live whenever its enclosing owner exists.
+            if (@import("transfer_evidence.zig").observesTransferredBacking(value, owner)) return;
             if (semantic.pointer.mutability == .read_write and !self.plainExecutionStorage(semantic.pointer.child, 0)) {
                 try self.report(source, "execution cannot borrow an ordinary mutable reference to nonplain storage", .{});
                 return;
@@ -4202,7 +4198,7 @@ pub const SafetyChecker = struct {
             // Summary paths select nested payloads, but ownership can live on
             // the containing choice. Keep that envelope when checking roots
             // that exist only on the selected success branch.
-            if (valueDependsOnDeadRootWithOwners(value, owners, state)) {
+            if (valueDependsOnDeadRootWithOwners(value, owners, state, .escape)) {
                 try self.report(source, "reference depends on a root that has ended", .{});
             }
         }
@@ -4281,9 +4277,7 @@ pub const SafetyChecker = struct {
             }).ty;
             const value = try self.entryVirtualAccessValue(target, arguments, state);
             if (@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
-                const before = self.diagnostics.list.items.len;
-                try self.requireLive(caller, source, value, state);
-                if (self.diagnostics.list.items.len != before) return false;
+                if (!try self.requireLiveExecutionInput(value, state, source)) return false;
             } else {
                 if (outer) |forwarding| if (!forwarding.unresolved_transfer and target.input_index < argument_nodes.len) {
                     if (self.active_summary_inference) |inference| {
@@ -9266,6 +9260,13 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn requireLiveExecutionInput(self: *SafetyChecker, initial: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef) !bool {
+        const value = try self.refineGeneralValue(initial, state);
+        if (!valueDependsOnDeadRootWithOwners(value, value, state, .conditional_only)) return true;
+        try self.report(source, "task input depends on a root that has ended", .{});
+        return false;
+    }
+
     fn requireLive(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !void {
         _ = function;
         if (!state.tracker.dependenciesAreAlive(try self.refineGeneralValue(value, state))) try self.report(source, "reference depends on a root that has ended", .{});
@@ -10671,13 +10672,14 @@ fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) boo
 }
 
 fn valueDependsOnDeadRoot(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {
-    return valueDependsOnDeadRootWithOwners(value, value, state);
+    return valueDependsOnDeadRootWithOwners(value, value, state, .escape);
 }
 
 fn valueDependsOnDeadRootWithOwners(
     value: facts.ValueFacts,
     owners: facts.ValueFacts,
     state: *const SafetyChecker.FunctionState,
+    use: enum { escape, conditional_only },
 ) bool {
     for (value.dependencies) |dependency| {
         const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
@@ -10688,14 +10690,14 @@ fn valueDependsOnDeadRootWithOwners(
         // Keeping the ownership envelope from the outer value is important:
         // nested fields may depend on a root whose owned_roots fact is stored
         // on an ancestor aggregate. Borrowed dependencies have no such proof.
-        if ((root.state == .conditional or root.state == .maybe_alive) and
+        if ((root.state == .conditional or (use == .escape and root.state == .maybe_alive)) and
             root.owned_resource and valueContainsOwnedRoot(owners, dependency.root)) continue;
         return true;
     }
     for (value.fields) |field|
-        if (valueDependsOnDeadRootWithOwners(field.value.*, owners, state)) return true;
+        if (valueDependsOnDeadRootWithOwners(field.value.*, owners, state, use)) return true;
     for (value.variants) |variant|
-        if (valueDependsOnDeadRootWithOwners(variant.value.*, owners, state)) return true;
+        if (valueDependsOnDeadRootWithOwners(variant.value.*, owners, state, use)) return true;
     return false;
 }
 
@@ -13483,7 +13485,7 @@ test "projected symbolic fields retain identity across branches without ending s
     try std.testing.expectEqual(first.symbolic_pointees[0], same.symbolic_pointees[0]);
     try std.testing.expect(first.symbolic_pointees[0] != sibling.symbolic_pointees[0]);
     try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &left));
-    try std.testing.expect(!valueDependsOnDeadRootWithOwners(sibling, .{}, &left));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(sibling, .{}, &left, .escape));
     try std.testing.expect(left.tracker.isAlive(generation));
     try std.testing.expect(right.tracker.isAlive(same.dependencies[same.dependencies.len - 1].root));
     for (left.symbolic_pointees.items) |*entry| if (entry.identity == first.symbolic_pointees[0]) {
@@ -13550,7 +13552,7 @@ test "projected symbolic payload types survive lazy branch materialization" {
     try checker.joinState(&joined, &left, &right);
     const again = (try checker.projectSymbolicStorage(parent, .{ .variant = 0 }, &joined)).?;
     try std.testing.expectEqual(payload.symbolic_pointees[0], again.symbolic_pointees[0]);
-    try std.testing.expect(!valueDependsOnDeadRootWithOwners(again, .{}, &joined));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(again, .{}, &joined, .escape));
 }
 
 test "projected symbolic array elements retain independent generations without expanding their length" {
@@ -13607,14 +13609,14 @@ test "projected symbolic array elements retain independent generations without e
     try std.testing.expect(try checker.endSymbolicGenerations(.{ .file_index = 0, .offset = 0 }, first, &left));
     try std.testing.expect(!checker.symbolicStorageComplete(&left, parent.symbolic_pointees[0]));
     try std.testing.expect(checker.symbolicStorageComplete(&right, parent.symbolic_pointees[0]));
-    try std.testing.expect(valueDependsOnDeadRootWithOwners(first, .{}, &left));
-    try std.testing.expect(!valueDependsOnDeadRootWithOwners(last, .{}, &left));
+    try std.testing.expect(valueDependsOnDeadRootWithOwners(first, .{}, &left, .escape));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(last, .{}, &left, .escape));
     // A wildcard generation does not prove that each candidate is live.
     // Keep overlap and generation evidence separate at summary boundaries.
-    try std.testing.expect(!valueDependsOnDeadRootWithOwners(unknown, .{}, &left));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(unknown, .{}, &left, .escape));
     const historical = (try checker.projectSymbolicStorage(parent, .{ .static_index = 0 }, &right)).?;
     try std.testing.expectEqual(first.symbolic_pointees[0], historical.symbolic_pointees[0]);
-    try std.testing.expect(!valueDependsOnDeadRootWithOwners(historical, .{}, &right));
+    try std.testing.expect(!valueDependsOnDeadRootWithOwners(historical, .{}, &right, .escape));
     try std.testing.expectEqual(@as(usize, 3), namespace.projected_storage.items.len);
 }
 
@@ -16046,10 +16048,19 @@ test "execution admission distinguishes transferred backing from an ordinary loa
     _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, false);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 
+    state.tracker.roots.items[@intFromEnum(backing)].owned_resource = true;
+    state.tracker.roots.items[@intFromEnum(backing)].state = .conditional;
+    _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    state.tracker.roots.items[@intFromEnum(backing)].state = .maybe_alive;
+    _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
+    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+    state.tracker.roots.items[@intFromEnum(backing)].state = .alive;
+
     // Possible cleanup roots cannot recover missing custody evidence.
     owner.intrinsic_backing_owner = null;
     _ = try checker.admitExecution(@enumFromInt(2), owner, &state, source, true);
-    try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 3), diags.list.items.len);
 }
 
 test "execution rejects sparse loan evidence independent of array extent" {
