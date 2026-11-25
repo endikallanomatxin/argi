@@ -62,6 +62,38 @@ Compare the same owner transformed by an ordinary call and by a worker.
 Measure full-suite results and compare frontend time, peak memory, output
 size and specialization counts with the same fixtures and build settings.
 
+## Exclusive lending of a work queue
+
+An exclusive loan of a nonplain String already works through an erased
+interface and certified completion in fixture `433_owned_task_string`.
+The same shape with a `RingBuffer#(UInt8)` filled with two items and a
+worker removing the first item fails at the interface boundary. The
+following contract covers the receiver's structural storage:
+
+```argi
+Work#(.R: Type): Contract = (
+    .take: (.queue: R) -> (.item: UInt8) where { writes(queue) isolated() }
+)
+implement Work#($&RingBuffer#(UInt8)) (
+    .take = (.queue: $&RingBuffer#(UInt8)) -> (.item: UInt8) {
+        item = unwrap_or_abort(pop(.self = queue))
+    }
+)
+```
+
+With a local queue and an ordinary mutable receiver, constructing
+`Virtual#(Work)($&queue)` reports that `take` exceeds its declared bounds.
+The ordinary queue operations compile in the same program. Removing an
+element accesses queue-controlled backing in addition to its structural
+fields. This probe separates the interface's ability to name that backing
+from the execution's ability to lend the queue exclusively.
+
+The next contrast is to publish the backing region from the queue's owner
+module and exercise the same loan without synchronization. A positive probe
+should read the second item after completion. A negative probe should
+reject access to the same backing before completion, including access
+through an independently obtained view.
+
 ## Acceptance criterion for storage summaries
 
 A summary describes a relation between entry and exit stores. For every
