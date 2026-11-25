@@ -10269,10 +10269,7 @@ pub const SafetyChecker = struct {
             for (alternatives[0..alternative_count]) |root| {
                 // Loans and opaque storage keep the original generation.
                 // Rebinding the owner would hide their retirement obligations.
-                const retained_opaquely = for (joined.opaque_storages.items) |storage| {
-                    if (containsRoot(storage.hidden_dependencies, root) or containsRoot(storage.owner_roots, root)) break true;
-                } else false;
-                if (retained_opaquely or pendingExecutionBorrowsRoot(joined, root)) {
+                if (rootHasExternalLoopObligation(joined, root)) {
                     safe = false;
                     break;
                 }
@@ -10325,7 +10322,7 @@ pub const SafetyChecker = struct {
             const canonical = existing.?;
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
-            if (rootRetainedAcrossLoop(joined, canonical)) continue;
+            if (rootRetainedAcrossLoop(joined, canonical) or rootHasExternalLoopObligation(joined, current)) continue;
             try joined.tracker.materialize(canonical);
             joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
             for (joined.places.items) |*place| place.value = try facts.replaceValueRoots(self.allocator, place.value, &.{current}, canonical);
@@ -10982,8 +10979,15 @@ fn retainsLoopObservation(value: facts.ValueFacts, root: facts.ValidityRootId) b
     return false;
 }
 
-fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
     if (SafetyChecker.pendingExecutionBorrowsRoot(state, root)) return true;
+    for (state.opaque_storages.items) |storage|
+        if (containsRoot(storage.hidden_dependencies, root) or containsRoot(storage.owner_roots, root)) return true;
+    return false;
+}
+
+fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+    if (rootHasExternalLoopObligation(state, root)) return true;
     for (state.symbolic_pointees.items) |pointee|
         if (pointee.backing == root or pointee.generation == root) return true;
     for (state.places.items) |stored|
@@ -10994,8 +10998,6 @@ fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts
         if (retainsLoopObservation(stored.value, root)) return true;
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
-    for (state.opaque_storages.items) |opaque_storage|
-        if (containsRoot(opaque_storage.hidden_dependencies, root) or containsRoot(opaque_storage.owner_roots, root)) return true;
     return false;
 }
 
@@ -14597,6 +14599,13 @@ test "loop symbolic observations canonicalize only without retained historical a
     checker.trimUnreferencedLoopRoots(&context, &next);
     try std.testing.expectEqual(canonical, next.symbolic_pointees.items[0].generation.?);
     try std.testing.expect(statesEqual(&stable_state, &next));
+    try checker.joinState(&next, &left, &repeated);
+    const borrowed = next.symbolic_pointees.items[0].generation.?;
+    _ = try next.establishExecution(&.{.{ .generations = &.{borrowed}, .mode = .read }});
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(borrowed, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(next.tracker.isAlive(borrowed));
+
     // A historical copy deliberately retains the old canonical root.
     const historical = observed;
     try repeated.setPlace(.{ .root = @enumFromInt(1) }, .initialized, historical);
