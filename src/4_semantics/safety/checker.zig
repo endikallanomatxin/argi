@@ -5725,18 +5725,19 @@ pub const SafetyChecker = struct {
                 try self.report(source, "opaque storage selection requires a complete reference target set", .{});
                 return null;
             }
-            if (value.symbolic_pointees.len == 1) return .{ .symbolic = value.symbolic_pointees[0] };
+            if (exactSymbolicTarget(value)) |identity| return .{ .symbolic = identity };
         }
         if (path.input_index >= arguments.len) return null;
         var value = arguments[path.input_index];
         if (value.reference_target_incomplete and value.symbolic_pointees.len != 0) return error.MissingVirtualStorageDomain;
-        if (value.symbolic_pointees.len == 1) {
+        if (exactSymbolicTarget(value) != null) {
             for (path.projections) |projection| value = try self.projectSymbolicStorage(value, projection, state) orelse return error.MissingVirtualStorageDomain;
-            return .{ .symbolic = value.symbolic_pointees[0] };
+            if (exactSymbolicTarget(value)) |identity| return .{ .symbolic = identity };
+            return null;
         }
         if (path.projections.len != 0 and path.projections[path.projections.len - 1] == .dereference) {
             value = try self.projectValueFacts(value, path.projections[0 .. path.projections.len - 1]);
-            if (value.symbolic_pointees.len == 1) return .{ .symbolic = value.symbolic_pointees[0] };
+            if (exactSymbolicTarget(value)) |identity| return .{ .symbolic = identity };
         }
         return null;
     }
@@ -11158,6 +11159,28 @@ fn variantIndex(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
 test "global safety checker keys program state by compact ids" {
     try std.testing.expect(@sizeOf(graph_mod.GlobalBindingId) == 4);
     try std.testing.expect(@sizeOf(graph_mod.GlobalNodeId) == 4);
+}
+
+test "opaque summary selection requires a unique symbolic target" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    const exact: facts.ValueFacts = .{ .symbolic_pointees = &.{identity} };
+    var ambiguous = exact;
+    ambiguous.mutation_places = &.{.{ .root = @enumFromInt(0) }};
+    const path: facts.InputPath = .{ .input_index = 0 };
+    try std.testing.expectEqual(identity, (try checker.resolveSummaryOpaqueStoragePath(path, &.{}, &.{exact}, &state)).?.symbolic);
+    try std.testing.expectEqual(null, try checker.resolveSummaryOpaqueStoragePath(path, &.{}, &.{ambiguous}, &state));
+
+    const record: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &ambiguous }} };
+    const field: facts.InputPath = .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } };
+    try std.testing.expectEqual(null, try checker.resolveSummaryOpaqueStoragePath(field, &.{}, &.{record}, &state));
 }
 
 test "opaque summary runtime recovers hidden external dependencies" {
