@@ -2039,6 +2039,9 @@ pub const Infer = struct {
         if (evaluated.get(node)) |entry| return entry.value;
         const content = self.graph.node(node).content;
         switch (content) {
+            // Literal scalars have neither effects nor snapshots that can
+            // diverge from the store. Keep large numeric literals sparse.
+            .int_literal, .float_literal, .bool_literal => return .{},
             .value_sequence, .replacement => |block| {
                 var result: facts.ValueEffect = .{};
                 try self.inferBlockWithResult(function, block, outputs, &result);
@@ -10321,11 +10324,20 @@ test "large numeric literals keep no per-element summary records" {
     try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .int_literal = 0 } });
     try graph.node_refs.resize(allocator, 65536);
     @memset(graph.node_refs.items, @enumFromInt(0));
+    try graph.nodes.append(allocator, .{
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = null,
+        .content = .{ .list_literal = .{ .elements = .{ .start = 0, .len = 65536 } } },
+    });
     var engine = summaries.Engine.init(allocator);
     defer engine.deinit();
     var inference = Infer.init(allocator, &graph, &engine);
     defer inference.deinit();
-    const value = try inference.inferElements(@enumFromInt(0), .{ .start = 0, .len = 65536 });
+    var evaluated = Infer.EvaluatedValues.init(allocator);
+    defer evaluated.deinit();
+    inference.evaluated_values = &evaluated;
+    const value = try inference.evaluateExpression(@enumFromInt(0), @enumFromInt(1), null);
+    try std.testing.expectEqual(@as(usize, 1), evaluated.count());
     try std.testing.expect(facts.isEmptyValue(value));
     try std.testing.expect(facts.isEmptyValue(try inference.mergeValueEffects(value, value)));
 }
