@@ -783,10 +783,16 @@ pub const Resolver = struct {
                     updated.content.pointer_assignment.cleanup_target = target;
                     try self.graph.setNode(self.allocator, node_id, updated);
                 }
+                const primitive = self.graph.function(owner_function).safety_primitive;
+                // Opaque stores require the caller to provide an empty slot.
+                // Native lowering writes directly and must not acquire a
+                // phantom dependency on the element destructor.
+                const replaces_owner = replacements.contains(node_id) and
+                    @import("../primitives/registry.zig").forPrimitive(primitive).value != .opaque_move;
                 const value = if (lexical != null)
-                    try self.projectedReplacement(replacements.contains(node_id), target, assignment.value, visible, owner_function, module_index)
+                    try self.projectedReplacement(replaces_owner, target, assignment.value, visible, owner_function, module_index)
                 else
-                    try self.indirectReplacement(replacements.contains(node_id), target, assignment.value, visible, owner_function, module_index);
+                    try self.indirectReplacement(replaces_owner, target, assignment.value, visible, owner_function, module_index);
                 {
                     var updated = self.graph.node(node_id);
                     updated.content.pointer_assignment.value = value;

@@ -748,7 +748,9 @@ const FunctionLower = struct {
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
-                if (self.parent.cleanup_types[@intFromEnum(child)] and !self.parent.annotations.initializes(id) and !try self.trackedDestination(id, x.pointer, x.cleanup_target))
+                const empty_opaque_slot = @import("../../4_semantics/primitives/registry.zig").forPrimitive(self.safety_primitive).value == .opaque_move;
+                if (self.parent.cleanup_types[@intFromEnum(child)] and !empty_opaque_slot and
+                    !self.parent.annotations.initializes(id) and !try self.trackedDestination(id, x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
                 try self.captureReplacement(id, target, child);

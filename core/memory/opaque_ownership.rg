@@ -6,7 +6,7 @@
 -- of prepared storage after partial consumption. Untracked raw storage promises
 -- a complete value. A whole move or drop cannot be followed by another drop.
 trusted_opaque_move := #(.t: Type) (.destination: $&t, .source: t) -> () {
-    destination&= source
+    destination&= ~source
 }
 
 -- Storage-aware form. `storage` is the stable structural domain shared by the
@@ -19,7 +19,7 @@ trusted_opaque_move := #(.t: Type) (.destination: $&t, .source: t) -> () {
 trusted_opaque_move_in := #(.t: Type, .storage_type: Type) (
     .storage: $&storage_type, .destination: $&t, .source: t
 ) -> () {
-    destination&= source
+    destination&= ~source
 }
 
 -- Extracts one live opaque-owned representation into precise ownership. The

@@ -99,6 +99,8 @@ pub fn verify(
     if (state.had_error) return error.Reported;
 }
 
+const cleanup_activation = @import("../safety/cleanup_activation.zig");
+
 const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -107,6 +109,7 @@ const State = struct {
     active_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     current_function: ?graph_mod.GlobalFunctionId = null,
     visited_nodes: ?*std.AutoHashMapUnmanaged(graph_mod.GlobalNodeId, void) = null,
+    cleanup: ?*const cleanup_activation.Activation = null,
     had_error: bool = false,
     callback_source: ?graph_mod.GlobalNodeId = null,
     isolation_source: ?graph_mod.GlobalNodeId = null,
@@ -157,6 +160,15 @@ const State = struct {
         // Completed call inputs evaluate defaults in their caller. Declaration
         // defaults are metadata, not additional executions in the callee.
         const body = function.body orelse return;
+        // Share the safety summaries proof of which implicit cleanup runs.
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        var activation: ?cleanup_activation.Activation =
+            if (self.callback_source != null) try cleanup_activation.collect(arena.allocator(), self.graph, function_id) else null;
+        defer if (activation) |*active| active.deinit();
+        const previous_cleanup = self.cleanup;
+        self.cleanup = if (activation) |*active| active else null;
+        defer self.cleanup = previous_cleanup;
         try self.walkBlock(body);
     }
 
@@ -226,6 +238,7 @@ const State = struct {
                 try self.walkNode(assignment.value);
             },
             .auto_deinit_binding => |auto_id| {
+                if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
                 const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
                 if (auto.targetNode()) |target| try self.walkNode(target);
                 if (auto.input) |input| try self.walkNode(input);
@@ -368,7 +381,9 @@ const State = struct {
     }
 
     fn walkCleanupFields(self: *State, origin: graph_mod.GlobalNodeId, range: @import("../primitives/schema.zig").Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
-        for (self.graph.auto_deinit_fields.items[range.start..][0..range.len]) |field| {
+        for (self.graph.auto_deinit_fields.items[range.start..][0..range.len], 0..) |field, index| {
+            const id: graph_mod.GlobalAutoDeinitFieldId = @enumFromInt(range.start + @as(u32, @intCast(index)));
+            if (self.cleanup) |active| if (!active.fields.contains(id)) continue;
             if (field.repeat_count == 0) continue;
             if (field.input) |input| try self.walkNode(input);
             if (field.deinit_fn) |callee| try self.walkCall(origin, callee);
