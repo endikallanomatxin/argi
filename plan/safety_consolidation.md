@@ -119,6 +119,24 @@ machinery to stabilize owned roots of a slot. A general join should share
 the proof of ownership and observation, with the loop separately bounding
 how many generations survive fixed-point iteration.
 
+### Lending a reference selected at a join
+
+A helper selecting between two ordinary mutable references to distinct
+scalars can return a reference whose alternatives are both valid. A probe
+passes that result to a worker that writes through it and reads the chosen
+scalar after awaiting completion. The current checker rejects submission
+because the merged reference has no authenticated target. The retained
+`mutation_places` can weaken facts about possible destinations, but give
+no evidence of complete coverage of the accessed extent.
+
+The useful guarantee here is complete coverage by authenticated regions.
+An execution loan would suspend incompatible authority over every covered
+region until its receipt completes. An unknown or widened alternative
+must break the coverage guarantee. Compare this against existing offset and
+reinterpretation negatives before letting a mutation candidate contribute to
+the proof. This uses the same distinction as a join of owned backing:
+collective membership may survive even when an exact identity is lost.
+
 ## Branch snapshot cost
 
 In a synthetic function, each branch assigns a scalar accumulator and adds
