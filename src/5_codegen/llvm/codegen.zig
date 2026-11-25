@@ -486,6 +486,7 @@ pub const CodeGenerator = struct {
         switch (node.content) {
             .function_call => |call| {
                 const function = self.graph.function(call.callee);
+                if (@import("../../4_semantics/primitives/registry.zig").taskOutputIdentity(function.safety_primitive)) return false;
                 const symbol = self.functions.get(call.callee) orelse return false;
                 if (!symbol.hasIndirectOutput() or function.output.len == 0 or call.callee_value != null) return false;
                 const previous_source = self.default_location_source;
@@ -2707,6 +2708,17 @@ pub const CodeGenerator = struct {
         const input = (try self.visitNode(call.input)) orelse return CodegenError.ValueNotFound;
 
         if (symbol.abi == .argi) {
+            if (@import("../../4_semantics/primitives/registry.zig").taskOutputIdentity(callee.safety_primitive)) {
+                if (call.callee_value != null or callee.input.len != 2 or callee.output.len != 1) return CodegenError.InvalidType;
+                const ty = self.graph.fields.items[callee.output.start].ty;
+                if (!types.equal(self.graph, self.graph.fields.items[callee.input.start].ty, ty)) return CodegenError.InvalidType;
+                return .{
+                    .value_ref = c.LLVMBuildExtractValue(self.builder, input.value_ref, 0, "task.output.value"),
+                    .type_ref = try self.toLLVMType(ty),
+                    .ty = ty,
+                    .reference_view = if (input.reference_view) |evidence| try self.fieldEvidence(callee.input, 0, evidence) else null,
+                };
+            }
             const returned = try self.callArgiWithEvidence(symbol, input.value_ref, input.reference_view, "call");
             const result = returned.value;
             try self.markConsumedInputEvidence(call, self.annotations.call(node_id), callee, input.reference_view);

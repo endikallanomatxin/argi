@@ -1146,7 +1146,10 @@ const FunctionLower = struct {
         for (args, self.parent.graph.value_fields.items[fields.start..][0..fields.len], 0..) |*arg, field, index| arg.* = try self.coerce(node.source, try self.expression(field.value), self.parent.graph.fields.items[f.input.start + index].ty);
         const outputs = try self.parent.allocator.alloc(b.Slot, f.output.len);
         for (outputs, self.parent.graph.fields.items[f.output.start..][0..f.output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
-        if (f.safety_primitive == .reference_offset or f.safety_primitive == .mutable_reference_offset) {
+        if (@import("../../4_semantics/primitives/registry.zig").taskOutputIdentity(f.safety_primitive)) {
+            if (args.len != 2 or outputs.len != 1) return error.InvalidBytecode;
+            try self.copyTo(node.source, outputs[0], args[0]);
+        } else if (f.safety_primitive == .reference_offset or f.safety_primitive == .mutable_reference_offset) {
             if (args.len != 2 or outputs.len != 1) return self.parent.reject(node.source, "reference offset signature");
             _ = try self.emit(node.source, .{ .offset_reference = .{ .dst = outputs[0], .src = args[0], .elements = args[1] } });
         } else if (f.safety_primitive == .read_reference) {

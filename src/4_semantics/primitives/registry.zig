@@ -234,6 +234,12 @@ pub const Transfer = struct {
     pub const Opaque = enum { none, clear_empty, store_hidden, mark_empty };
 };
 
+/// The second argument selects static task evidence. The runtime value
+/// and its existing reference representation come from the first argument.
+pub fn taskOutputIdentity(primitive: primitives.SafetyPrimitive) bool {
+    return primitive == .bind_task_output or primitive == .recover_task_output_evidence;
+}
+
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
         .require_storage_capability => .{ .value = .empty, .requires_storage_input = 0 },
