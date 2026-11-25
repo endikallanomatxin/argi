@@ -12519,8 +12519,8 @@ test "sparse output writes preserve untouched backing and replace overwritten ev
         .fields_are_updates = true,
     }, &.{input}, &state);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{backing}, output.owned_roots);
-    try std.testing.expect(SafetyChecker.facts.representedProjection(output, .{ .field = 0 }).?.concurrent_receiver);
-    try std.testing.expect(facts.isEmptyValue(SafetyChecker.facts.representedProjection(output, .{ .field = 1 }).?));
+    try std.testing.expect(facts.representedProjection(output, .{ .field = 0 }).?.concurrent_receiver);
+    try std.testing.expect(facts.isEmptyValue(facts.representedProjection(output, .{ .field = 1 }).?));
 }
 
 test "an exact owned output preserves the full input snapshot" {
@@ -14009,7 +14009,7 @@ test "worker ingress seeds reference arrays inside choice payloads" {
     var generation: ?facts.ValidityRootId = null;
     const value = try checker.seedExecutionValue(choice, &state, &backing, &generation);
     try std.testing.expect(value.known_choice_variant == null);
-    const payload = SafetyChecker.facts.representedProjection(value, .{ .variant = 1 }).?;
+    const payload = facts.representedProjection(value, .{ .variant = 1 }).?;
     try std.testing.expectEqual(@as(usize, 2), payload.fields.len);
     const first = payload.fields[0].value.symbolic_pointees[0];
     const second = payload.fields[1].value.symbolic_pointees[0];
@@ -16646,7 +16646,7 @@ test "virtual evidence follows only the selected receiver snapshot" {
     }};
     const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .variant = 1 }} };
     try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&arguments, path) == null);
-    try std.testing.expect(SafetyChecker.facts.representedProjection(arguments[0], path.projections[0]) == null);
+    try std.testing.expect(facts.representedProjection(arguments[0], path.projections[0]) == null);
     var unknown = arguments;
     unknown[0].known_choice_variant = null;
     try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&unknown, path).?.concurrent_receiver);
