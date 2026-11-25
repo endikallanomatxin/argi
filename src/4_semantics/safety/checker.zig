@@ -3609,6 +3609,7 @@ pub const SafetyChecker = struct {
             var visited = std.array_list.Managed(facts.Place).init(self.allocator);
             defer visited.deinit();
             while (value.referenced_place) |place| {
+                if (exact_for_completion and (value.fields.len != 0 or value.variants.len != 0)) break;
                 if (value.virtual_no_access.len != 0 or value.domains.len != 0) break;
                 if (exact_for_completion and exactObservedPlace(value) == null) return .{};
                 var seen = false;
@@ -3638,6 +3639,7 @@ pub const SafetyChecker = struct {
                         } else return .{};
                     },
                     .variant => |index| {
+                        if (value.known_choice_variant) |active| if (active != index) return .{};
                         for (value.variants) |variant| {
                             if (variant.index == index) break;
                         } else return .{};
@@ -3775,7 +3777,10 @@ pub const SafetyChecker = struct {
                 } else value = fallback;
             }
         }
-        if (exact_for_completion and (value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len > 1)) return .{};
+        // A selected record can carry incomplete reference facts in a
+        // sibling field. They do not make the record itself a may-target.
+        if (exact_for_completion and value.fields.len == 0 and value.variants.len == 0 and
+            (value.reference_target_incomplete or value.mutation_places.len != 0 or value.symbolic_pointees.len > 1)) return .{};
         return value;
     }
 
@@ -16008,6 +16013,25 @@ test "an error outcome certifies the exact request captured at entry" {
     try checker.activate_conditional_resources(&state, ambiguous.variants[0].value.*);
     try std.testing.expect(state.executionPending(first));
     try std.testing.expect(state.executionPending(second));
+
+    const unrelated: facts.Place = .{ .root = @enumFromInt(1) };
+    try state.setPlace(unrelated, .initialized, .{ .execution_receipts = &.{second} });
+    const field: facts.ValueFacts = .{ .execution_receipts = &.{first} };
+    const request: facts.ValueFacts = .{
+        .referenced_place = unrelated,
+        .reference_target_incomplete = true,
+        .fields = &.{.{ .index = 0, .value = &field }},
+    };
+    const captured = try checker.captureOutcomeCompletions(summary, &.{request}, &state);
+    defer allocator.free(captured);
+    try std.testing.expectEqual(@as(usize, 1), captured.len);
+    try std.testing.expectEqual(first, captured[0].execution);
+
+    const inactive = try checker.loadSummaryInputValue(.{ .input_index = 0, .projections = &.{.{ .variant = 1 }} }, &.{.{
+        .known_choice_variant = 0,
+        .variants = &.{.{ .index = 1, .value = &field }},
+    }}, &state, true);
+    try std.testing.expect(inactive.execution_receipts.len == 0);
 
     const slot: facts.Place = .{ .root = @enumFromInt(0) };
     try state.setPlace(slot, .initialized, .{ .execution_receipts = &.{first} });
