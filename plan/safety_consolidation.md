@@ -101,6 +101,24 @@ A positive probe should read the second item after completion without
 synchronization. A negative probe should reject access to the same backing
 before completion, including access through an independently obtained view.
 
+## Backing alternatives after growth
+
+On the compiler at `0d4855875`, take a view of a String after calling
+`ensure_capacity_growing` on one branch, or after a loop that may grow it.
+Both new views are rejected when used. The diagnostic reports an ended
+root. An old view taken before an unconditional growth is also rejected,
+as required. These probes call the growth operation explicitly, so
+formatting into reserved capacity cannot hide the join limitation.
+
+The store join needs a proof about the current owned backing on every
+incoming path. It may then issue a current observation tied to that
+storage. It cannot treat all historical backing roots as live. Old views
+must keep their original dependencies, and active loans must continue
+to conflict with access to their backing. The loop join already has
+machinery to stabilize owned roots of a slot. A general join should share
+the proof of ownership and observation, with the loop separately bounding
+how many generations survive fixed-point iteration.
+
 ## Acceptance criterion for storage summaries
 
 A summary describes a relation between entry and exit stores. For every
