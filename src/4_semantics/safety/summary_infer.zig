@@ -8400,6 +8400,9 @@ pub const Infer = struct {
     }
 
     fn projectValueEffect(self: *Infer, effect: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
+        if (projection == .variant) {
+            if (effect.known_choice_variant) |known| if (known != projection.variant) return .{};
+        }
         var result = try self.projectValueEffectStorage(effect, projection);
         if (effect.task_output) |selection| {
             if (projection != .dereference and projection != .dynamic_index) {
@@ -8413,20 +8416,12 @@ pub const Infer = struct {
     }
 
     fn projectValueEffectStorage(self: *Infer, effect: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
+        if (facts.representedProjection(effect, projection)) |child| return child;
         switch (projection) {
-            .field => |field_index| {
-                for (effect.fields) |field| if (field.index == field_index) return field.value.*;
-            },
-            .variant => |variant_index| {
-                for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
-            },
-            .static_index => |element_index| {
-                for (effect.fields) |field| if (field.index == element_index) return field.value.*;
-            },
             .dynamic_index => {
                 if (effect.fields.len != 0) return self.joinArrayElementEffects(effect, null);
             },
-            .dereference => {},
+            .field, .static_index, .variant, .dereference => {},
         }
         var result = effect;
         result.task_output = null;
@@ -11477,6 +11472,24 @@ pub fn executionTransferWorker(graph: *const graph_mod.GlobalSemanticGraph, call
         break;
     }
     return null;
+}
+
+test "an excluded variant cannot select a staged execution result" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = Infer.init(allocator, &graph, &engine);
+    defer infer.deinit();
+
+    const selection: facts.TaskOutputSelection = .{ .receipt = .{ .input_index = 0 } };
+    const effect: facts.ValueEffect = .{ .known_choice_variant = 0, .task_output = &selection };
+    try std.testing.expect(facts.isEmptyValue(try infer.projectValueEffect(effect, .{ .variant = 1 })));
+    const possible = try infer.projectValueEffect(effect, .{ .variant = 0 });
+    try std.testing.expect(possible.task_output != null);
 }
 
 test "a numeric backing write guarantee must hold for every write in the summary" {
