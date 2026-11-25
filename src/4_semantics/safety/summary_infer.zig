@@ -6647,6 +6647,15 @@ pub const Infer = struct {
         var result = previous;
         result.task_output = null;
         result.staged_output_input = null;
+        if (previous.fields_are_updates or projectedUpdateBase(previous) != null) {
+            // The base describes the original owner. Replacement dependencies
+            // belong to their respective fields, even when a child is itself
+            // a projection of that same input.
+            result.fields = try fields.toOwnedSlice();
+            result.fields_are_updates = true;
+            result.virtual_receiver_input = null;
+            return result;
+        }
         result.fields = &.{};
         for (fields.items) |field| {
             result = try self.mergeValueEffects(result, field.value.*);
@@ -6654,10 +6663,6 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = try fields.toOwnedSlice();
-        result.fields_are_updates = previous.fields_are_updates or (previous.fields.len == 0 and
-            previous.input_dependencies.len == 1 and previous.input_dependencies[0].transfers_ownership and
-            !previous.input_dependencies[0].validity_only and
-            previous.virtual_receiver_input != null and previous.virtual_receiver_input.?.eql(previous.input_dependencies[0].path));
         result.explicit_dependency = previous.explicit_dependency;
         result.owns_fresh_backing = previous.owns_fresh_backing and result.fresh_owned_roots.len == 1;
         return result;
@@ -7889,7 +7894,15 @@ pub const Infer = struct {
                 argument.static_reference
             else
                 null;
+            const base = if (effect.fields_are_updates and effect.input_dependencies.len == 1 and result.fields.len == 0)
+                projectedUpdateBase(argument)
+            else
+                null;
             result = try self.mergeValueEffects(result, argument);
+            if (base) |path| {
+                result.fields_are_updates = argument.fields_are_updates;
+                if (!argument.fields_are_updates) result.virtual_receiver_input = path;
+            }
             if (static_reference != null and effect.static_reference == null)
                 result.static_reference = static_reference;
         }
@@ -9403,6 +9416,9 @@ test "nested replacement preserves projected input evidence for siblings" {
     before.virtual_receiver_input = .{ .input_index = 0 };
     const updated = try infer.storeEffectProjection(before, &.{ .{ .field = 1 }, .{ .field = 2 } }, .{});
     try std.testing.expect(updated.fields_are_updates);
+    const untouched = try infer.projectValueEffect(updated, .{ .field = 0 });
+    try std.testing.expectEqual(@as(usize, 1), untouched.input_dependencies.len);
+    try std.testing.expect(untouched.input_dependencies[0].path.eql(.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }));
     const nested = try infer.projectValueEffect(updated, .{ .field = 1 });
     try std.testing.expect(nested.fields_are_updates);
     const sibling = try infer.projectValueEffect(nested, .{ .field = 3 });
@@ -9413,6 +9429,21 @@ test "nested replacement preserves projected input evidence for siblings" {
     }));
     const replaced = try infer.projectValueEffect(nested, .{ .field = 2 });
     try std.testing.expect(facts.isEmptyValue(replaced));
+
+    // An enclosing caller can add its own replacement without flattening
+    // either change or losing the original source of untouched fields.
+    var caller = try infer.withOwnershipTransfer(try infer.inputValueEffect(4, &.{}));
+    caller.virtual_receiver_input = .{ .input_index = 4 };
+    caller = try infer.storeEffectProjection(caller, &.{.{ .field = 3 }}, .{ .concurrent_receiver = true });
+    const arguments: []const graph_mod.ValueField = &.{.{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) }};
+    var entries = [_]Infer.ArgumentFacts{.{ .effect = caller }};
+    var context: Infer.SubstitutionContext = .{ .infer = &infer, .function = @enumFromInt(0), .arguments = arguments, .entries = &entries };
+    const composed = try infer.substituteOutputInContext(@enumFromInt(0), updated, arguments, null, &context);
+    try std.testing.expect(composed.fields_are_updates);
+    try std.testing.expect((try infer.projectValueEffect(composed, .{ .field = 3 })).concurrent_receiver);
+    const inherited = try infer.projectValueEffect(composed, .{ .field = 0 });
+    try std.testing.expectEqual(@as(usize, 1), inherited.input_dependencies.len);
+    try std.testing.expect(inherited.input_dependencies[0].path.eql(.{ .input_index = 4, .projections = &.{.{ .field = 0 }} }));
 }
 
 test "conditional projected replacements join with the original field" {
