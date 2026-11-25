@@ -3758,7 +3758,11 @@ pub const SafetyChecker = struct {
                     }
                 }
             } else {
-                const fallback = try self.projectValueFacts(value, &.{projection});
+                const fallback = if (projection == .dynamic_index and value.fields.len != 0) blk: {
+                    const ty = if (storage) |place| self.domainStorageType(place) else null;
+                    const length = if (ty) |array| types.arrayLength(self.graph, array) else null;
+                    break :blk try self.joinArrayElementFacts(value, length);
+                } else try self.projectValueFacts(value, &.{projection});
                 if (storage) |place| {
                     if (projection == .dynamic_index) {
                         const array = value;
