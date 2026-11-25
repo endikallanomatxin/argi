@@ -6645,10 +6645,12 @@ pub const SafetyChecker = struct {
     }
 
     fn joinArrayElementFacts(self: *SafetyChecker, array: facts.ValueFacts, length: ?u64) !facts.ValueFacts {
-        var complete = length == null or length.? == array.fields.len;
+        // Represented elements cover a dynamic projection only when their
+        // indices account for the entire known extent.
+        var complete = length != null and length.? == array.fields.len;
         var merged = array.fields[0].value.*;
         for (array.fields, 0..) |field, index| {
-            if (length != null) complete = complete and field.index == index;
+            complete = complete and field.index == index;
             if (index != 0) merged = try self.joinObservedSymbolicValues(merged, field.value.*, null, null, &.{});
         }
         if (!complete) merged = try self.joinObservedSymbolicValues(merged, .{
@@ -16612,6 +16614,26 @@ test "execution rejects sparse loan evidence independent of array extent" {
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     _ = try checker.admitExecution(@enumFromInt(3), .{}, &state, source, true);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "dynamic projection requires a known extent for complete element evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    const element: facts.ValueFacts = .{ .referenced_place = .{ .root = @enumFromInt(0) } };
+    const array: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &element }} };
+
+    const projected = try checker.projectValueFacts(array, &.{.dynamic_index});
+    try std.testing.expect(projected.reference_target_incomplete);
+    try std.testing.expect(projected.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 1), projected.mutation_places.len);
+
+    const covered = try checker.joinArrayElementFacts(array, 1);
+    try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
+    try std.testing.expect(!covered.reference_target_incomplete);
 }
 
 test "an uncovered target cannot establish an execution loan" {
