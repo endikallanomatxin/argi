@@ -3326,7 +3326,7 @@ pub const SafetyChecker = struct {
 
     fn requireExecutionPointerAccess(self: *SafetyChecker, source: primitives.SourceRef, pointer: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
         const lexical_frame = executionPointerFrame(pointer, state);
-        if (pointer.reference_target_incomplete or (pointer.referenced_place == null and pointer.symbolic_pointees.len == 0)) {
+        if (!pointer.hasCompleteReferenceCoverage()) {
             for (state.shared_regions.items) |region| {
                 if (lexical_frame) |frame| if (state.frameExcludesStorage(frame, region)) continue;
                 try self.report(source, "cannot prove an ordinary reference independent of concurrently shared storage", .{});
@@ -3349,7 +3349,10 @@ pub const SafetyChecker = struct {
             // Excluding the unresolved part does not exempt a retained target.
         }
         if (pointer.referenced_place) |place| try self.requireExecutionAccess(source, place, null, mode, state);
-        for (pointer.mutation_places) |place| try self.requireExecutionAccess(source, place, null, mode, state);
+        for (pointer.mutation_places) |place| {
+            if (pointer.referenced_place) |exact| if (exact.eql(place)) continue;
+            try self.requireExecutionAccess(source, place, null, mode, state);
+        }
         for (pointer.symbolic_pointees) |identity| try self.requireExecutionAccess(source, null, identity, mode, state);
     }
 

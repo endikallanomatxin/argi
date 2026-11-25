@@ -13,4 +13,8 @@ main := (.system: System) -> () {
     unrelated = 1
     _ = unwrap_or_abort(await($&task))
     if a != 42 or unrelated != 1 { abort }
+    independent ::= unwrap_or_abort(async#(write)(.args = (.target = $&unrelated)))
+    if selected& != 42 { abort }
+    _ = unwrap_or_abort(await($&independent))
+    if unrelated != 42 { abort }
 }

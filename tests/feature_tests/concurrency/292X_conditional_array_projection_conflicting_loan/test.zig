@@ -4,5 +4,5 @@ pub const isolation: support.Isolation = .fixture;
 
 test "292X_conditional_array_projection_conflicting_loan" {
     const path = "tests/feature_tests/concurrency/292X_conditional_array_projection_conflicting_loan";
-    try support.expectFrontendFailure(path, "reference access has unknown memory effects while a pending execution");
+    try support.expectFrontendFailure(path, "concurrent access conflicts with a pending execution");
 }
