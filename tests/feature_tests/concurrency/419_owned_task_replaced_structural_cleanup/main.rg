@@ -25,9 +25,17 @@ replace_verifier := (.owner: $&Owner, .verifier: Virtual#(Verify)) -> (.result: 
     owner&.verifier = verifier
     result = ..ok Void()
 }
-prepare := (.owner: Owner, .verifier: Virtual#(Verify)) -> (.result: Owner) {
+discard_replacement := (.replacement: Errable#(Void, (..replacement_failed)), .expected: Int32) -> () {
+    _ = unwrap_or_abort(replacement)
+    if expected != 42 { abort }
+}
+prepare := (.owner: Owner, .verifier: Virtual#(Verify), .change: Bool) -> (.result: Owner) {
     held ::= ~owner
-    _ = unwrap_or_abort(replace_verifier(.owner = $&held, .verifier = verifier))
+    if change {
+        discard_replacement(.replacement = replace_verifier(.owner = $&held, .verifier = verifier), .expected = held.value)
+    } else {
+        discard_replacement(.replacement = replace_verifier(.owner = $&held, .verifier = verifier), .expected = 42)
+    }
     result = ~held
 }
 consume := (.owner: Owner) -> (.value: Int32) {
@@ -42,7 +50,7 @@ main := (.system: System) -> () {
     shared ::= $$&expected
     other_local ::= $&other
     owner ::= Owner(.verifier = Virtual#(Verify)(other_local), .value = 42)
-    prepared ::= prepare(.owner = ~owner, .verifier = Virtual#(Verify)(shared))
+    prepared ::= prepare(.owner = ~owner, .verifier = Virtual#(Verify)(shared), .change = true)
     task ::= unwrap_or_abort(async_owned#(consume)(.args = (.owner = ~prepared), .executor = executor, .ffi = system.ffi))
     if unwrap_or_abort(await($&task)) != 42 { abort }
     recover_ordinary(.owner = $&expected)

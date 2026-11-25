@@ -70,6 +70,7 @@ pub const Infer = struct {
     scratch_allocator: ?std.mem.Allocator = null,
     graph: *const graph_mod.GlobalSemanticGraph,
     engine: *summaries.Engine,
+    evaluated_values: ?*EvaluatedValues = null,
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
     // May-targets retain earlier aliases even after sequential reassignment.
@@ -1906,27 +1907,49 @@ pub const Infer = struct {
     // Branches share immutable effect payloads, but retain independent output
     // vectors. Joining alternatives must not discard an earlier branch's loans.
     const OutputAlternatives = struct {
+        const Bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect);
         allocator: std.mem.Allocator,
+        entry_bindings: Bindings,
+        joined_bindings: ?Bindings = null,
         original: ?[]facts.ValueEffect = null,
         joined: ?[]facts.ValueEffect = null,
         has_joined: bool = false,
 
-        fn init(allocator: std.mem.Allocator, outputs: ?[]facts.ValueEffect) !OutputAlternatives {
-            const values = outputs orelse return .{ .allocator = allocator };
+        fn init(infer: *Infer, outputs: ?[]facts.ValueEffect) !OutputAlternatives {
+            const allocator = infer.allocator;
+            var entry = try infer.bindings.cloneWithAllocator(allocator);
+            errdefer entry.deinit();
+            const values = outputs orelse return .{ .allocator = allocator, .entry_bindings = entry };
             const original = try allocator.dupe(facts.ValueEffect, values);
             errdefer allocator.free(original);
             const joined = try allocator.alloc(facts.ValueEffect, values.len);
             @memset(joined, .{});
-            return .{ .allocator = allocator, .original = original, .joined = joined };
+            return .{ .allocator = allocator, .entry_bindings = entry, .original = original, .joined = joined };
         }
-        fn deinit(self: OutputAlternatives) void {
+        fn deinit(self: *OutputAlternatives) void {
+            self.entry_bindings.deinit();
+            if (self.joined_bindings) |*bindings| bindings.deinit();
             if (self.joined) |values| self.allocator.free(values);
             if (self.original) |values| self.allocator.free(values);
         }
-        fn reset(self: OutputAlternatives, outputs: ?[]facts.ValueEffect) void {
+        fn reset(self: *OutputAlternatives, infer: *Infer, outputs: ?[]facts.ValueEffect) !void {
+            const entry = try self.entry_bindings.cloneWithAllocator(infer.bindings.allocator);
+            infer.bindings.deinit();
+            infer.bindings = entry;
             if (outputs) |values| @memcpy(values, self.original.?);
         }
         fn retain(self: *OutputAlternatives, infer: *Infer, function: graph_mod.GlobalFunctionId, outputs: ?[]facts.ValueEffect) !void {
+            if (self.joined_bindings) |*joined| {
+                var entries = infer.bindings.iterator();
+                while (entries.next()) |entry| {
+                    const binding = entry.key_ptr.*;
+                    const slot = try joined.getOrPut(binding);
+                    slot.value_ptr.* = if (slot.found_existing)
+                        try infer.joinStorageAlternatives(infer.graph.binding(binding).ty, slot.value_ptr.*, entry.value_ptr.*)
+                    else
+                        entry.value_ptr.*;
+                }
+            } else self.joined_bindings = try infer.bindings.cloneWithAllocator(self.allocator);
             const values = outputs orelse return;
             if (!self.has_joined) {
                 @memcpy(self.joined.?, values);
@@ -1942,7 +1965,12 @@ pub const Infer = struct {
                 joined.* = try infer.joinStorageAlternatives(ty, joined.*, value);
             }
         }
-        fn finish(self: OutputAlternatives, outputs: ?[]facts.ValueEffect) void {
+        fn finish(self: *OutputAlternatives, infer: *Infer, outputs: ?[]facts.ValueEffect) !void {
+            if (self.joined_bindings) |bindings| {
+                const joined = try bindings.cloneWithAllocator(infer.bindings.allocator);
+                infer.bindings.deinit();
+                infer.bindings = joined;
+            }
             if (outputs) |values| @memcpy(values, if (self.has_joined) self.joined.? else self.original.?);
         }
     };
@@ -1979,7 +2007,7 @@ pub const Infer = struct {
                 if (exact_targets.len != 1 or targets.len != 1 or post.initialization != .definite or post.initializedness != .initialized) {
                     // A possible replacement retains the entry alternative.
                     // Capture it before publishing any replacement from this call.
-                    var previous = try self.inferExpression(function_id, target);
+                    var previous = try self.inferCurrentExpression(function_id, target);
                     for (post.target.projections) |projection|
                         previous = try self.projectValueEffect(previous, projection);
                     updated = try self.joinStorageAlternatives(selected.ty, previous, value);
@@ -1998,25 +2026,108 @@ pub const Infer = struct {
         return self.isNumericContents(known) or self.typeContainsPointer(known) or types.hasDestructor(self.graph, known);
     }
 
-    fn applyDiscardedCallReplacements(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, earlier: []const graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
-        var current = node;
-        for (0..64) |_| {
-            const content = self.graph.node(current).content;
-            if (content != .function_call or content.function_call.callee_value != null) return;
-            const call = content.function_call;
-            const summary = self.engine.summaryFor(call.callee) orelse return;
-            if (summary.input_post_states.len != 0) {
-                try self.applyLocalCallReplacements(function, call.callee, call.input, outputs);
-                return;
-            }
-            // A discarded unary call with no replacement effects can wrap an
-            // evaluated argument call. Do not replay separate block statements
-            // or reorder arguments whose snapshots may alias one another.
-            const arguments = self.structArguments(call.input) orelse return;
-            if (arguments.len != 1 or summary.unknown_access or summary.global_accesses.len != 0 or summary.outcome_post_states.len != 0) return;
-            current = arguments[0].value;
-            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, earlier, current) != null) return;
+    const EvaluatedValue = struct {
+        value: facts.ValueEffect,
+        input_paths: ?[]const facts.InputPath = null,
+        addresses: ?[]const graph_mod.GlobalNodeId = null,
+        mutation_targets: ?[]const graph_mod.GlobalNodeId = null,
+    };
+    const EvaluatedValues = std.AutoHashMap(graph_mod.GlobalNodeId, EvaluatedValue);
+
+    fn evaluateExpression(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!facts.ValueEffect {
+        const evaluated = self.evaluated_values.?;
+        if (evaluated.get(node)) |entry| return entry.value;
+        const content = self.graph.node(node).content;
+        switch (content) {
+            .value_sequence, .replacement => |block| {
+                var result: facts.ValueEffect = .{};
+                try self.inferBlockWithResult(function, block, outputs, &result);
+                try self.rememberEvaluatedValue(evaluated, function, node, result);
+                return result;
+            },
+            .function_call => |call| {
+                if (call.callee_value) |value| _ = try self.evaluateExpression(function, value, outputs);
+                _ = try self.evaluateExpression(function, call.input, outputs);
+            },
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                _ = try self.evaluateExpression(function, call.handle, outputs);
+                _ = try self.evaluateExpression(function, call.input, outputs);
+            },
+            .struct_value_literal => |literal| for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field| {
+                _ = try self.evaluateExpression(function, field.value, outputs);
+            },
+            inline .list_literal, .array_literal => |literal| for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value| {
+                _ = try self.evaluateExpression(function, value, outputs);
+            },
+            .move_value, .denied_implicit_copy, .address_of => |value| {
+                _ = try self.evaluateExpression(function, value, outputs);
+            },
+            .dereference => |read| _ = try self.evaluateExpression(function, read.pointer, outputs),
+            .struct_field_access => |field| _ = try self.evaluateExpression(function, field.value, outputs),
+            .choice_payload_access => |payload| _ = try self.evaluateExpression(function, payload.value, outputs),
+            .choice_literal => |literal| if (literal.payload) |payload| {
+                _ = try self.evaluateExpression(function, payload, outputs);
+            },
+            .explicit_cast => |cast| _ = try self.evaluateExpression(function, cast.value, outputs),
+            .array_index => |index| {
+                _ = try self.evaluateExpression(function, index.array_ptr, outputs);
+                _ = try self.evaluateExpression(function, index.index, outputs);
+            },
+            .virtualize => |id| _ = try self.evaluateExpression(function, self.graph.virtualizes.items[@intFromEnum(id)].value, outputs),
+            .error_propagation => |id| _ = try self.evaluateExpression(function, self.graph.error_propagations.items[@intFromEnum(id)].errable_value, outputs),
+            .binary_operation => |op| {
+                _ = try self.evaluateExpression(function, op.left, outputs);
+                _ = try self.evaluateExpression(function, op.right, outputs);
+            },
+            .comparison => |op| {
+                _ = try self.evaluateExpression(function, op.left, outputs);
+                _ = try self.evaluateExpression(function, op.right, outputs);
+            },
+            .logical_operation => |op| {
+                _ = try self.evaluateExpression(function, op.left, outputs);
+                try self.evaluateOptionalExpression(function, op.right, outputs);
+            },
+            .nullable_unwrap_or => |id| {
+                const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(id)];
+                _ = try self.evaluateExpression(function, unwrap.nullable_value, outputs);
+                try self.evaluateOptionalExpression(function, unwrap.fallback_value, outputs);
+            },
+            else => {},
         }
+        const value = try self.inferExpression(function, node);
+        try self.rememberEvaluatedValue(evaluated, function, node, value);
+        if (content == .function_call and content.function_call.callee_value == null) {
+            const call = content.function_call;
+            if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
+                if (self.structArguments(call.input)) |arguments| if (arguments.len == 2) {
+                    const relocated = (try self.localPointeeEffect(function, arguments[0].value)) orelse
+                        try self.inferOpaqueRead(function, node, arguments[0].value, null, try self.inferExpression(function, arguments[0].value));
+                    for (try self.localAddressTargets(arguments[1].value)) |target|
+                        try self.storeSelectedValueEffect(function, target, &.{}, try self.withOwnershipTransfer(relocated), outputs, .locals_and_outputs);
+                };
+            } else try self.applyLocalCallReplacements(function, call.callee, call.input, outputs);
+        }
+        return value;
+    }
+
+    fn rememberEvaluatedValue(self: *Infer, evaluated: *EvaluatedValues, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, value: facts.ValueEffect) !void {
+        var entry: EvaluatedValue = .{ .value = value };
+        if (self.graph.node(node).ty) |ty| if (self.graph.semanticType(ty) == .pointer) {
+            entry.addresses = try self.localAddressTargets(node);
+            entry.mutation_targets = try self.localMutationCandidates(node, 0);
+            entry.input_paths = try self.inferInputPaths(function, node);
+        };
+        try evaluated.put(node, entry);
+    }
+
+    fn evaluateOptionalExpression(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) !void {
+        var alternatives = try OutputAlternatives.init(self, outputs);
+        defer alternatives.deinit();
+        try alternatives.retain(self, function, outputs);
+        _ = try self.evaluateExpression(function, node, outputs);
+        try alternatives.retain(self, function, outputs);
+        try alternatives.finish(self, outputs);
     }
 
     fn inferBlock(
@@ -2025,15 +2136,30 @@ pub const Infer = struct {
         block_id: graph_mod.GlobalBlockId,
         outputs: ?[]facts.ValueEffect,
     ) anyerror!void {
+        return self.inferBlockWithResult(function_id, block_id, outputs, null);
+    }
+
+    fn inferBlockWithResult(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        block_id: graph_mod.GlobalBlockId,
+        outputs: ?[]facts.ValueEffect,
+        result: ?*facts.ValueEffect,
+    ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
-        for (nodes, 0..) |node_id, statement_index| {
+        var evaluated = EvaluatedValues.init(self.allocator);
+        defer evaluated.deinit();
+        const enclosing_evaluation = self.evaluated_values;
+        self.evaluated_values = &evaluated;
+        defer self.evaluated_values = enclosing_evaluation;
+        for (nodes) |node_id| {
             try self.cancellation.check();
             const node = self.graph.node(node_id);
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const initialization = self.graph.binding(binding).initialization orelse continue;
-                    const effect = try self.inferExpression(function_id, initialization);
+                    const effect = try self.evaluateExpression(function_id, initialization, outputs);
                     const candidates = try self.localMutationCandidates(initialization, 0);
                     try self.local_mutation_candidates.put(binding, candidates);
                     try self.local_address_bindings.put(binding, try self.localAddressTargets(initialization));
@@ -2042,7 +2168,7 @@ pub const Infer = struct {
                     try self.retainAccessTargets(binding, try self.accessTargets(function_id, initialization));
                 },
                 .assignment => |assignment| {
-                    const effect = try self.inferExpression(function_id, assignment.value);
+                    const effect = try self.evaluateExpression(function_id, assignment.value, outputs);
                     var mutation_values = std.array_list.Managed(LocalMutationProjection).init(self.allocator);
                     defer mutation_values.deinit();
                     try self.collectProjectedMutationValues(assignment.binding, &.{}, assignment.value, &.{}, self.graph.binding(assignment.binding).ty, &mutation_values, 0);
@@ -2070,26 +2196,16 @@ pub const Infer = struct {
                         try self.retainAccessTargets(assignment.binding, try self.accessTargets(function_id, assignment.value));
                     }
                 },
-                .function_call => |call| {
-                    try self.applyDiscardedCallReplacements(function_id, node_id, nodes[0..statement_index], outputs);
-                    if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
-                        const arguments = self.structArguments(call.input) orelse continue;
-                        if (arguments.len != 2) continue;
-                        const value = (try self.localPointeeEffect(function_id, arguments[0].value)) orelse
-                            try self.inferOpaqueRead(function_id, node_id, arguments[0].value, null, try self.inferExpression(function_id, arguments[0].value));
-                        for (try self.localAddressTargets(arguments[1].value)) |target|
-                            try self.storeSelectedValueEffect(function_id, target, &.{}, try self.withOwnershipTransfer(value), outputs, .locals_and_outputs);
-                    }
-                },
                 .struct_field_store => |store| {
                     // Resolve the destination before RHS inference can retarget
                     // a local alias. One selected value feeds every possible
                     // destination; never replay its opaque effects per target.
+                    _ = try self.evaluateExpression(function_id, store.struct_ptr, outputs);
                     const targets = try self.localAddressTargets(store.struct_ptr);
                     const ty = self.graph.node(store.value).ty;
                     const tracked = self.tracksLocalContents(ty);
+                    const value = try self.evaluateExpression(function_id, store.value, outputs);
                     if (!tracked and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
-                    const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target| {
                         const path = &[_]facts.Projection{.{ .field = store.field_index }};
                         if (tracked) try self.retainProjectedMutationValue(target, path, store.value);
@@ -2102,12 +2218,14 @@ pub const Infer = struct {
                     }
                 },
                 .array_store => |store| {
+                    _ = try self.evaluateExpression(function_id, store.array_ptr, outputs);
                     const targets = try self.arrayStorageTargets(store.array_ptr);
+                    _ = try self.evaluateExpression(function_id, store.index, outputs);
                     const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                     const ty = self.graph.node(store.value).ty;
                     const tracked = projection == .static_index and self.tracksLocalContents(ty);
+                    const value = try self.evaluateExpression(function_id, store.value, outputs);
                     if (!tracked and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
-                    const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target| {
                         const updated = if (tracked and targets.len != 1)
                             try self.joinStorageAlternatives(ty, try self.projectValueEffect(try self.inferExpression(function_id, target), projection), value)
@@ -2117,11 +2235,12 @@ pub const Infer = struct {
                     }
                 },
                 .pointer_assignment => |store| {
+                    _ = try self.evaluateExpression(function_id, store.pointer, outputs);
                     const targets = try self.localAddressTargets(store.pointer);
                     const ty = self.graph.node(store.value).ty;
                     const tracked = self.tracksLocalContents(ty);
+                    const value = try self.evaluateExpression(function_id, store.value, outputs);
                     if (!tracked and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
-                    const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target| {
                         if (tracked) try self.retainProjectedMutationValue(target, &.{}, store.value);
                         const updated = if (tracked and targets.len != 1)
@@ -2132,32 +2251,33 @@ pub const Infer = struct {
                     }
                 },
                 .if_statement => |statement| {
-                    var alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    _ = try self.evaluateExpression(function_id, statement.condition, outputs);
+                    var alternatives = try OutputAlternatives.init(self, outputs);
                     defer alternatives.deinit();
                     try self.inferBlock(function_id, statement.then_block, outputs);
                     if (!self.immediatelyAborts(statement.then_block)) try alternatives.retain(self, function_id, outputs);
-                    alternatives.reset(outputs);
+                    try alternatives.reset(self, outputs);
                     if (statement.else_block) |child| {
                         try self.inferBlock(function_id, child, outputs);
                         if (!self.immediatelyAborts(child)) try alternatives.retain(self, function_id, outputs);
                     } else try alternatives.retain(self, function_id, outputs);
-                    alternatives.finish(outputs);
+                    try alternatives.finish(self, outputs);
                 },
                 inline .while_statement, .for_statement => |statement| {
-                    var alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    var alternatives = try OutputAlternatives.init(self, outputs);
                     defer alternatives.deinit();
                     try alternatives.retain(self, function_id, outputs);
                     try self.inferBlock(function_id, statement.body, outputs);
                     try alternatives.retain(self, function_id, outputs);
-                    alternatives.finish(outputs);
+                    try alternatives.finish(self, outputs);
                 },
                 .switch_statement => |switch_id| {
                     const statement = self.graph.switches.items[@intFromEnum(switch_id)];
-                    const choice = try self.inferExpression(function_id, statement.expression);
-                    var alternatives = try OutputAlternatives.init(self.allocator, outputs);
+                    const choice = try self.evaluateExpression(function_id, statement.expression, outputs);
+                    var alternatives = try OutputAlternatives.init(self, outputs);
                     defer alternatives.deinit();
                     for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
-                        alternatives.reset(outputs);
+                        try alternatives.reset(self, outputs);
                         if (case.payload_binding) |binding| {
                             const ty = self.graph.node(statement.expression).ty orelse continue;
                             const wanted = self.variantIndex(ty, case.variant) orelse continue;
@@ -2168,18 +2288,22 @@ pub const Infer = struct {
                         if (!self.immediatelyAborts(case.body)) try alternatives.retain(self, function_id, outputs);
                     }
                     if (statement.default_block) |child| {
-                        alternatives.reset(outputs);
+                        try alternatives.reset(self, outputs);
                         try self.inferBlock(function_id, child, outputs);
                         if (!self.immediatelyAborts(child)) try alternatives.retain(self, function_id, outputs);
-                    } else if (statement.cases.len == 0) {
+                    } else if (!statement.exhaustive) {
+                        try alternatives.reset(self, outputs);
                         try alternatives.retain(self, function_id, outputs);
                     }
-                    alternatives.finish(outputs);
+                    try alternatives.finish(self, outputs);
                 },
-                .code_block, .value_sequence, .replacement => |child| try self.inferBlock(function_id, child, outputs),
-                else => {},
+                .code_block => |child| try self.inferBlock(function_id, child, outputs),
+                else => _ = try self.evaluateExpression(function_id, node_id, outputs),
             }
         }
+        if (result) |effect| if (block.ret_val) |value| {
+            effect.* = try self.evaluateExpression(function_id, value, outputs);
+        };
     }
 
     const CapabilitySource = union(enum) { input: facts.InputPath, fresh: facts.FreshEffectSource };
@@ -5998,6 +6122,7 @@ pub const Infer = struct {
     // Resolve its value at the use site instead of freezing an initializer's
     // dependencies. Assignment retains possible targets across control flow.
     fn localAddressTargets(self: *Infer, node_id: graph_mod.GlobalNodeId) ![]const graph_mod.GlobalNodeId {
+        if (self.evaluated_values) |evaluated| if (evaluated.get(node_id)) |entry| if (entry.addresses) |addresses| return addresses;
         return switch (self.graph.node(node_id).content) {
             .address_of => |value| blk: {
                 const targets = try self.allocator.alloc(graph_mod.GlobalNodeId, 1);
@@ -6029,6 +6154,7 @@ pub const Infer = struct {
     /// May-targets are used only to weaken local values after mutation. They
     /// never prove a complete destination set, forwarding identity or liveness.
     fn localMutationCandidates(self: *Infer, node: graph_mod.GlobalNodeId, depth: usize) anyerror![]const graph_mod.GlobalNodeId {
+        if (self.evaluated_values) |evaluated| if (evaluated.get(node)) |entry| if (entry.mutation_targets) |targets| return targets;
         if (depth > 64) return &.{};
         if (self.graph.node(node).content == .binding_use) {
             const binding = self.graph.node(node).content.binding_use;
@@ -6183,9 +6309,11 @@ pub const Infer = struct {
         const targets = try self.localAddressTargets(node_id);
         if (targets.len == 0) return null;
         const ty = self.graph.node(targets[0]).ty;
-        var result = try self.inferExpression(function_id, targets[0]);
+        // These are captured addresses. Their contents are read at call
+        // entry, after all arguments have been evaluated.
+        var result = try self.inferCurrentExpression(function_id, targets[0]);
         for (targets[1..]) |target|
-            result = try self.joinStorageAlternatives(ty, result, try self.inferExpression(function_id, target));
+            result = try self.joinStorageAlternatives(ty, result, try self.inferCurrentExpression(function_id, target));
         return result;
     }
 
@@ -6438,15 +6566,20 @@ pub const Infer = struct {
         function_id: graph_mod.GlobalFunctionId,
         node_id: graph_mod.GlobalNodeId,
     ) anyerror!facts.ValueEffect {
+        if (self.evaluated_values) |evaluated| if (evaluated.get(node_id)) |entry| return entry.value;
+        return self.inferCurrentExpression(function_id, node_id);
+    }
+
+    fn inferCurrentExpression(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) anyerror!facts.ValueEffect {
         const node = self.graph.node(node_id);
         return switch (node.content) {
             .value_sequence, .replacement => |block| blk: {
                 // A sequence may introduce lexical owners before its result.
                 // Infer their values before projecting that result, preserving
                 // borrowed and owned provenance through temporary bindings.
-                try self.inferBlock(function_id, block, null);
-                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
-                break :blk try self.inferExpression(function_id, value);
+                var result: facts.ValueEffect = .{};
+                try self.inferBlockWithResult(function_id, block, null, &result);
+                break :blk result;
             },
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index| blk: {
                 var effect = try self.inputValueEffect(index, &.{});
@@ -7650,6 +7783,7 @@ pub const Infer = struct {
     }
 
     fn inferInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
+        if (self.evaluated_values) |evaluated| if (evaluated.get(node_id)) |entry| if (entry.input_paths) |paths| return paths;
         return switch (self.graph.node(node_id).content) {
             .value_sequence, .replacement => |block| blk: {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
