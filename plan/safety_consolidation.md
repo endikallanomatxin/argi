@@ -119,6 +119,12 @@ machinery to stabilize owned roots of a slot. A general join should share
 the proof of ownership and observation, with the loop separately bounding
 how many generations survive fixed-point iteration.
 
+A control at `0d644383b` removes the historical view entirely. A fresh
+view still fails after conditional growth, while unconditional growth and
+omitting growth both compile and run. The join therefore loses the proof
+that the current backing is live even when no old view is retained. The
+unconditional-growth stale-view control remains independently necessary.
+
 ### Lending a reference selected at a join
 
 A helper selecting between two ordinary mutable references to distinct
