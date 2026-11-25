@@ -8050,6 +8050,11 @@ pub const Infer = struct {
                     result.observes_fresh_backing = true;
             }
         }
+        if (effect.staged_output) |staged| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.substituteOutputInContext(function_id, staged.*, arguments, override, context);
+            result.staged_output = value;
+        }
         return result;
     }
 
@@ -11149,4 +11154,11 @@ test "staged task cleanup evidence requires agreement across alternatives" {
     try std.testing.expect((try infer.joinStorageAlternatives(null, first, second)).staged_output == &recipe);
     try std.testing.expect((try infer.joinStorageAlternatives(null, first, different)).staged_output == null);
     try std.testing.expect((try infer.joinStorageAlternatives(null, first, .{})).staged_output == null);
+
+    const arguments: []const graph_mod.ValueField = &.{.{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) }};
+    var entries = [_]Infer.ArgumentFacts{.{ .effect = .{ .virtual_receiver_input = .{ .input_index = 3 } } }};
+    var context: Infer.SubstitutionContext = .{ .infer = &infer, .function = @enumFromInt(0), .arguments = arguments, .entries = &entries };
+    const forwarded = try infer.substituteOutputInContext(@enumFromInt(0), first, arguments, null, &context);
+    try std.testing.expectEqual(@as(u32, 3), forwarded.staged_output.?.virtual_receiver_input.?.input_index);
+    try std.testing.expect(forwarded.virtual_receiver_input == null);
 }
