@@ -7,7 +7,11 @@ const facts = @import("facts.zig");
 /// A proof about the value's current contents. Callers separately check loans,
 /// live dependencies and the transfer of destruction authority.
 pub fn proves(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts) bool {
-    return provesValue(graph, ty, value, .{
+    return failure(graph, ty, value) == null;
+}
+
+pub fn failure(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts) ?Failure {
+    return valueFailure(graph, ty, value, .{
         .unconditional = standard_contracts.standardDefinition(graph, "Transferable"),
         .structural = standard_contracts.standardDefinition(graph, "StructurallyTransferable"),
     }, null, 0);
@@ -18,69 +22,91 @@ const Markers = struct {
     structural: ?graph_mod.GlobalFamilyDefinitionId,
 };
 
-fn provesValue(
+pub const Failure = enum {
+    unsupported,
+    erased_receiver,
+    ordinary_reference,
+    unproved_backing,
+    cleanup,
+    incomplete_aggregate,
+
+    pub fn message(self: Failure) []const u8 {
+        return switch (self) {
+            .unsupported => "the value has no supported transfer proof",
+            .erased_receiver => "an erased capability lacks a concurrent receiver guarantee",
+            .ordinary_reference => "an ordinary reference does not point to transferable backing",
+            .unproved_backing => "an address is not proved to refer to backing owned by the value",
+            .cleanup => "a destructor has no verified cross-execution guarantee",
+            .incomplete_aggregate => "some possible elements lack transfer evidence",
+        };
+    }
+};
+
+fn valueFailure(
     graph: *const graph_mod.GlobalSemanticGraph,
     ty: graph_mod.GlobalTypeId,
     value: facts.ValueFacts,
     markers: Markers,
     enclosing_owner: ?facts.ValidityRootId,
     depth: usize,
-) bool {
-    if (depth >= 64) return false;
-    const semantic = graph.resolvedSemanticType(ty) orelse return false;
-    // A capture's mode is a value guarantee. Execution admission separately
-    // authenticates receiver and region targets and establishes their loans.
-    if (semantic == .virtual) return value.concurrent_receiver;
-    if (semantic == .pointer) return observesTransferredBacking(value, enclosing_owner) or switch (semantic.pointer.mutability) {
-        .concurrent => true,
-        .read_only => observesImmutableModuleScalar(graph, value),
-        .read_write => false,
-    };
+) ?Failure {
+    if (depth >= 64) return .unsupported;
+    const semantic = graph.resolvedSemanticType(ty) orelse return .unsupported;
+    // Capture mode is a value guarantee. Admission separately checks
+    // authority over the receiver's possible targets and published regions.
+    if (semantic == .virtual) return if (value.concurrent_receiver) null else .erased_receiver;
+    if (semantic == .pointer) {
+        const proven = observesTransferredBacking(value, enclosing_owner) or switch (semantic.pointer.mutability) {
+            .concurrent => true,
+            .read_only => observesImmutableModuleScalar(graph, value),
+            .read_write => false,
+        };
+        return if (proven) null else .ordinary_reference;
+    }
     const guarantee = if (semantic == .nominal or semantic == .generic)
         nominalGuarantee(graph, ty, markers)
     else
         .none;
-    if (guarantee == .unconditional) return true;
+    if (guarantee == .unconditional) return null;
     const owner = backingOwner(value, enclosing_owner);
-    // Use only the facts of the current address slot. A whole-container
-    // dependency can survive a write that replaces the address.
+    // A whole-container dependency can survive address replacement.
     if (@import("../global/c_abi.zig").isRawPointer(graph, ty))
-        return observesTransferredBacking(fieldValue(value, 0), owner);
-    if ((guarantee != .structural and types.hasDestructor(graph, ty)) or
-        @import("../global/c_abi.zig").isFunctionPointer(graph, ty)) return false;
+        return if (observesTransferredBacking(fieldValue(value, 0), owner)) null else .unproved_backing;
+    if (guarantee != .structural and types.hasDestructor(graph, ty)) return .cleanup;
+    if (@import("../global/c_abi.zig").isFunctionPointer(graph, ty)) return .unsupported;
     if (semantic == .builtin)
-        return semantic.builtin != .Any and semantic.builtin != .Type;
+        return if (semantic.builtin != .Any and semantic.builtin != .Type) null else .unsupported;
     if (types.arrayElement(graph, ty)) |element| {
-        const count = types.arrayLength(graph, ty) orelse return false;
-        if (count == 0) return value.fields.len == 0;
-        if (value.fields.len == 0) return provesValue(graph, element, .{}, markers, owner, depth + 1);
-        const missing_proves = provesValue(graph, element, .{}, markers, owner, depth + 1);
-        if (!missing_proves and value.fields.len != count) return false;
+        const count = types.arrayLength(graph, ty) orelse return .unsupported;
+        if (count == 0) return if (value.fields.len == 0) null else .incomplete_aggregate;
+        if (value.fields.len == 0) return valueFailure(graph, element, .{}, markers, owner, depth + 1);
+        const missing_proves = valueFailure(graph, element, .{}, markers, owner, depth + 1) == null;
+        if (!missing_proves and value.fields.len != count) return .incomplete_aggregate;
         for (value.fields, 0..) |entry, index| {
-            if (entry.index >= count or (!missing_proves and entry.index != index)) return false;
-            if (!provesValue(graph, element, entry.value.*, markers, owner, depth + 1)) return false;
+            if (entry.index >= count or (!missing_proves and entry.index != index)) return .incomplete_aggregate;
+            if (valueFailure(graph, element, entry.value.*, markers, owner, depth + 1)) |reason| return reason;
         }
-        return true;
+        return null;
     }
     if (types.fields(graph, ty)) |fields| {
         for (graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
-            if (!provesValue(graph, field.ty, fieldValue(value, index), markers, owner, depth + 1)) return false;
+            if (valueFailure(graph, field.ty, fieldValue(value, index), markers, owner, depth + 1)) |reason| return reason;
         }
-        return true;
+        return null;
     }
     if (types.variants(graph, ty)) |variants| {
-        if (value.known_choice_variant) |index| if (index >= variants.len) return false;
+        if (value.known_choice_variant) |index| if (index >= variants.len) return .incomplete_aggregate;
         for (graph.variants.items[variants.start..][0..variants.len], 0..) |variant, index| {
             if (value.known_choice_variant) |known| if (known != index) continue;
             const payload = variant.payload_type orelse continue;
             const selected = for (value.variants) |entry| {
                 if (entry.index == index) break entry.value.*;
             } else facts.ValueFacts{};
-            if (!provesValue(graph, payload, selected, markers, owner, depth + 1)) return false;
+            if (valueFailure(graph, payload, selected, markers, owner, depth + 1)) |reason| return reason;
         }
-        return true;
+        return null;
     }
-    return false;
+    return .unsupported;
 }
 
 /// An exact read-only observation of immutable scalar backing can be

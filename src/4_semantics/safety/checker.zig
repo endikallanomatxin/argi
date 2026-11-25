@@ -3427,8 +3427,8 @@ pub const SafetyChecker = struct {
                     if (summary_infer.executionResult(self.graph, worker, summary) != .unavailable) return .{};
                 };
             }
-            if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
-                try self.report(source, "task result lacks a static ownership-transfer guarantee", .{});
+            if (@import("transfer_evidence.zig").failure(self.graph, ty, value)) |reason| {
+                try self.report(source, "task result lacks a static ownership-transfer guarantee: {s}", .{reason.message()});
             } else if (self.inputTypeNeedsLoan(ty, 0, true) or @import("transfer_evidence.zig").requiresResultMetadata(value, 0)) {
                 try self.report(source, "task result retains safety evidence that its native output slot cannot transport", .{});
             }
@@ -4341,9 +4341,7 @@ pub const SafetyChecker = struct {
                 return false;
             }).ty;
             const value = try self.entryVirtualAccessValue(target, arguments, state);
-            if (@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
-                if (!try self.requireLiveExecutionInput(value, state, source)) return false;
-            } else {
+            if (@import("transfer_evidence.zig").failure(self.graph, ty, value)) |reason| {
                 if (outer) |forwarding| if (!forwarding.unresolved_transfer and target.input_index < argument_nodes.len) {
                     if (self.active_summary_inference) |inference| {
                         const argument = self.graph.value_fields.items[@intFromEnum(argument_nodes[target.input_index])].value;
@@ -4351,16 +4349,17 @@ pub const SafetyChecker = struct {
                             for (forwarding.required_transfers) |required| {
                                 if (sameInputPath(path, required)) break;
                             } else {
-                                try self.report(source, "task input lacks a static ownership-transfer guarantee", .{});
+                                try self.report(source, "task input lacks a static ownership-transfer guarantee: {s}", .{reason.message()});
                                 return false;
                             }
                             continue;
                         }
                     }
                 };
-                try self.report(source, "task input lacks a static ownership-transfer guarantee", .{});
+                try self.report(source, "task input lacks a static ownership-transfer guarantee: {s}", .{reason.message()});
                 return false;
             }
+            if (!try self.requireLiveExecutionInput(value, state, source)) return false;
         }
         return true;
     }
@@ -7670,8 +7669,8 @@ pub const SafetyChecker = struct {
             value.* = representedSnapshotProjection(inputs, .{ .field = @intCast(ordinal) }) orelse .{};
         const value = try self.instantiateSummaryOutputs(&.{output}, null, arguments, state, &.{});
         const ty = self.graph.fields.items[layout.start + index].ty;
-        if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
-            try self.report(source, "task result lacks a static ownership-transfer guarantee", .{});
+        if (@import("transfer_evidence.zig").failure(self.graph, ty, value)) |reason| {
+            try self.report(source, "task result lacks a static ownership-transfer guarantee: {s}", .{reason.message()});
             return;
         }
         var identity: ?facts.ExecutionId = null;
