@@ -1234,7 +1234,6 @@ pub const SafetyChecker = struct {
                 .assignment => |assignment| {
                     const binding = self.graph.binding(assignment.binding);
                     const storage = facts.Place{ .root = assignment.binding };
-                    try self.requireExecutionAccess(node.source, storage, null, .write, state);
                     const previous_state = state.initializednessAtPlace(storage);
                     if (previous_state == .moved)
                         try self.reportMovedReassignment(node.source, storage, state);
@@ -1244,9 +1243,9 @@ pub const SafetyChecker = struct {
                         try self.refreshStorageGenerationChecked(node.source, state, storage);
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
-                    if (try self.rejectSharedOverlap(node.source, storage, state)) continue;
-                    // Evaluating the replacement may publish a new loan.
-                    try self.checkExecutionAccess(node.source, storage, null, .write, false, state);
+                    // The RHS can establish or complete a loan before this
+                    // store. Check the authority of the actual write here.
+                    try self.requireExecutionAccess(node.source, storage, null, .write, state);
                     // Replacement cleanup may end the old value while evaluating
                     // the RHS sequence. Its new value starts a fresh generation.
                     if (previous_state != .deinitialized and state.initializednessAtPlace(storage) == .deinitialized)
