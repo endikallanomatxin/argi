@@ -1296,7 +1296,7 @@ pub const Infer = struct {
         var owning_calls: ?[]const forwarding.ForwardedCall = null;
         var preserving_statements: ?[]const graph_mod.GlobalNodeId = null;
         for (outputs, 0..) |*output, output_index| {
-            if (outputs.len == 1 and allowsOwningForwardingAccess(accesses) and
+            if (outputs.len == 1 and preservesOwnerAccess(accesses.unknown, accesses.inputs.items, accesses.globals.items) and
                 accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency|
             {
                 const path = dependency.path;
@@ -1442,13 +1442,19 @@ pub const Infer = struct {
         };
     }
 
-    fn allowsOwningForwardingAccess(accesses: AccessEffects) bool {
-        if (accesses.unknown) return false;
-        for (accesses.inputs.items) |access| {
+    fn preservesOwnerAccess(unknown: bool, inputs: []const facts.InputAccess, globals: []const facts.GlobalAccess) bool {
+        if (unknown) return false;
+        for (inputs) |access| {
             if (access.virtual_method != null or (access.mode == .write and !access.numeric_backing_write)) return false;
         }
-        for (accesses.globals.items) |access| if (access.mode == .write) return false;
+        for (globals) |access| if (access.mode == .write) return false;
         return true;
+    }
+
+    fn checkedNumericBacking(self: *Infer, pointer: graph_mod.GlobalNodeId, relation: facts.ReferenceRelation) bool {
+        if (relation.grade != .checked_backing) return false;
+        const ty = self.graph.semanticType(self.graph.node(pointer).ty orelse return false);
+        return ty == .pointer and self.isNumericContents(ty.pointer.child) and !types.hasDestructor(self.graph, ty.pointer.child);
     }
 
     fn owningPreservingStatements(self: *Infer, function: graph_mod.GlobalFunctionId) ![]const graph_mod.GlobalNodeId {
@@ -1462,12 +1468,9 @@ pub const Infer = struct {
                     false,
                 .pointer_assignment => |assignment| blk: {
                     if (!self.ownerPreservingExpression(assignment.pointer, 0) or !self.ownerPreservingExpression(assignment.value, 0)) break :blk false;
-                    const ty = self.graph.node(assignment.value).ty orelse break :blk false;
-                    // This write cannot install reference-bearing contents.
-                    if (!self.isNumericContents(ty) or types.hasDestructor(self.graph, ty)) break :blk false;
                     const pointer = try self.inferExpression(function, assignment.pointer);
                     const relation = pointer.reference_relation orelse break :blk false;
-                    break :blk relation.grade == .checked_backing and self.embeddedInputReference(function, relation.source);
+                    break :blk self.checkedNumericBacking(assignment.pointer, relation) and self.embeddedInputReference(function, relation.source);
                 },
                 else => self.ownerPreservingExpression(id, 0),
             };
@@ -1493,13 +1496,11 @@ pub const Infer = struct {
             .function_call => |call| blk: {
                 if (call.callee_value != null) break :blk false;
                 const summary = self.engine.summaryFor(call.callee) orelse break :blk false;
-                if (summary.unknown_access or summary.input_post_states.len != 0 or summary.outcome_post_states.len != 0 or
+                if (!preservesOwnerAccess(summary.unknown_access, summary.input_accesses, summary.global_accesses) or summary.input_post_states.len != 0 or summary.outcome_post_states.len != 0 or
                     summary.invalidated_domains.len != 0 or summary.opaque_storage_effects.len != 0 or
                     summary.retired_input_owners.len != 0 or summary.storage_capability_uses.len != 0 or
                     summary.guarded_effects.len != 0 or summary.opaque_storage_empties.len != 0 or
                     summary.completed_executions.len != 0 or summary.unresolved_transfer) break :blk false;
-                for (summary.input_accesses) |access| if (access.virtual_method != null or (access.mode == .write and !access.numeric_backing_write)) break :blk false;
-                for (summary.global_accesses) |access| if (access.mode != .read) break :blk false;
                 break :blk self.ownerPreservingExpression(call.input, depth + 1);
             },
             else => false,
@@ -5513,10 +5514,7 @@ pub const Infer = struct {
         if (paths.len == 0 and targets.len == 0) {
             const effect = try self.inferExpression(function, pointer);
             if (effect.reference_relation) |relation| if (!facts.ReferenceRelation.implies(relation.grade, .contained) and self.embeddedInputReference(function, relation.source)) {
-                const ty = if (self.graph.node(pointer).ty) |id| self.graph.semanticType(id) else null;
-                const numeric_write = mode == .write and relation.grade == .checked_backing and
-                    projections.len == 0 and ty != null and ty.? == .pointer and self.isNumericContents(ty.?.pointer.child) and
-                    !types.hasDestructor(self.graph, ty.?.pointer.child);
+                const numeric_write = mode == .write and projections.len == 0 and self.checkedNumericBacking(pointer, relation);
                 try self.access_sink.?.addBackingInput(relation.source, mode, true, numeric_write);
                 return;
             };
