@@ -190,8 +190,14 @@ pub const FreshExecution = struct {
     inputs: *const ValueEffect,
     input_type: u32,
     transfers_custody: bool = false,
-    exact_moved_output_input: ?u32 = null,
-    updated_output: ?*const ValueEffect = null,
+    result: ExecutionResult = .unavailable,
+};
+
+/// A verified relation between the result and the submitted snapshot.
+pub const ExecutionResult = union(enum) {
+    unavailable,
+    forwarded_input: u32,
+    updated_input: *const ValueEffect,
 };
 
 /// A universal relation to an evaluated input observation. This is not a

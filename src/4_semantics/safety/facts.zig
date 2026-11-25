@@ -70,6 +70,7 @@ pub const OutputDomainEffect = base.OutputDomainEffect;
 pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
 pub const FreshExecution = base.FreshExecution;
+pub const ExecutionResult = base.ExecutionResult;
 pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
 pub const StorageObservationConflict = base.StorageObservationConflict;

@@ -6750,8 +6750,7 @@ pub const Infer = struct {
                 .inputs = inputs,
                 .input_type = @intFromEnum(input_type),
                 .transfers_custody = transfers,
-                .exact_moved_output_input = if (summary) |checked| checked.exact_moved_input else null,
-                .updated_output = if (summary) |checked| updatedExecutionOutput(self.graph, worker.?, checked) else null,
+                .result = if (summary) |checked| executionResult(self.graph, worker.?, checked) else .unavailable,
             };
             return .{ .fresh_executions = executions, .fresh_cleanup_obligation = true };
         }
@@ -6768,22 +6767,24 @@ pub const Infer = struct {
             // the current descriptor facts at the selected projection.
             // The submitted value itself can contain local replacements.
             const staged = try self.allocator.create(facts.ValueEffect);
-            if (execution.exact_moved_output_input) |selected| {
-                staged.* = try self.projectStagedOutput(execution.inputs.*, .{ .field = selected });
-            } else if (execution.updated_output) |output| {
-                const layout = types.fields(self.graph, @enumFromInt(execution.input_type)) orelse return result;
-                const entries = try self.allocator.alloc(ArgumentFacts, layout.len);
-                defer self.allocator.free(entries);
-                @memset(entries, .{});
-                var context: SubstitutionContext = .{
-                    .infer = self,
-                    .function = function_id,
-                    .arguments = &.{},
-                    .entries = entries,
-                    .snapshot = execution.inputs.*,
-                };
-                staged.* = try self.substituteOutputInContext(output.*, null, &context);
-            } else return result;
+            staged.* = switch (execution.result) {
+                .unavailable => return result,
+                .forwarded_input => |selected| try self.projectStagedOutput(execution.inputs.*, .{ .field = selected }),
+                .updated_input => |output| blk: {
+                    const layout = types.fields(self.graph, @enumFromInt(execution.input_type)) orelse return result;
+                    const entries = try self.allocator.alloc(ArgumentFacts, layout.len);
+                    defer self.allocator.free(entries);
+                    @memset(entries, .{});
+                    var context: SubstitutionContext = .{
+                        .infer = self,
+                        .function = function_id,
+                        .arguments = &.{},
+                        .entries = entries,
+                        .snapshot = execution.inputs.*,
+                    };
+                    break :blk try self.substituteOutputInContext(output.*, null, &context);
+                },
+            };
             result.staged_output = staged;
             return result;
         }
@@ -8016,7 +8017,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.substituteOutputInContext(execution.inputs.*, override, context);
-            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .updated_output = execution.updated_output, .inputs = inputs };
+            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .result = execution.result, .inputs = inputs };
         }
         result.fresh_executions = executions;
         for (effect.input_execution_receipts) |path| {
@@ -9023,7 +9024,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.rebaseFreshSources(execution.inputs.*, call_node);
-            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .updated_output = execution.updated_output, .inputs = inputs };
+            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .result = execution.result, .inputs = inputs };
         }
         result.fresh_executions = executions;
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
@@ -9075,10 +9076,7 @@ pub const Infer = struct {
                 // particular a missing child in one snapshot cannot inherit
                 // the other snapshot's transfer or cleanup guarantee.
                 inputs.* = try self.joinStorageAlternatives(@enumFromInt(entry.input_type), existing.inputs.*, entry.inputs.*);
-                if (existing.exact_moved_output_input != entry.exact_moved_output_input)
-                    existing.exact_moved_output_input = null;
-                if (!summaries.optionalValueEffectEql(existing.updated_output, entry.updated_output))
-                    existing.updated_output = null;
+                if (!summaries.executionResultEql(existing.result, entry.result)) existing.result = .unavailable;
                 existing.inputs = inputs;
                 found = true;
                 break;
@@ -11409,7 +11407,13 @@ test "observed stores share summary payloads and survive publication without loc
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_executions.len);
 }
 
-pub fn updatedExecutionOutput(graph: *const graph_mod.GlobalSemanticGraph, worker: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) ?*const facts.ValueEffect {
+pub fn executionResult(graph: *const graph_mod.GlobalSemanticGraph, worker: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) facts.ExecutionResult {
+    if (summary.exact_moved_input) |index| return .{ .forwarded_input = index };
+    if (updatedExecutionOutput(graph, worker, summary)) |output| return .{ .updated_input = output };
+    return .unavailable;
+}
+
+fn updatedExecutionOutput(graph: *const graph_mod.GlobalSemanticGraph, worker: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) ?*const facts.ValueEffect {
     if (summary.outputs.len != 1 or summary.unknown_access or summary.unresolved_transfer) return null;
     if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or
         summary.invalidated_domains.len != 0 or summary.storage_capability_uses.len != 0) return null;

@@ -3424,7 +3424,7 @@ pub const SafetyChecker = struct {
             // through the caller's specialized execution effect.
             if (summary_infer.executionTransferWorker(self.graph, callee)) |worker| {
                 if (self.active_summaries) |engine| if (engine.summaryFor(worker)) |summary| {
-                    if (summary.exact_moved_input != null or summary_infer.updatedExecutionOutput(self.graph, worker, summary) != null) return .{};
+                    if (summary_infer.executionResult(self.graph, worker, summary) != .unavailable) return .{};
                 };
             }
             if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
@@ -5981,10 +5981,11 @@ pub const SafetyChecker = struct {
                 const receipt = try self.admitExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse capture_source, fresh.transfers_custody);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
-                if (fresh.exact_moved_output_input != null)
-                    _ = try self.retainForwardedExecutionOutput(fresh.exact_moved_output_input, @enumFromInt(fresh.input_type), inputs, receipt, state)
-                else if (fresh.updated_output) |output|
-                    try self.retainUpdatedExecutionOutput(output.*, @enumFromInt(fresh.input_type), inputs, receipt, state, self.active_summary_call_source orelse capture_source);
+                switch (fresh.result) {
+                    .unavailable => {},
+                    .forwarded_input => |index| _ = try self.retainForwardedExecutionOutput(index, @enumFromInt(fresh.input_type), inputs, receipt, state),
+                    .updated_input => |output| try self.retainUpdatedExecutionOutput(output.*, @enumFromInt(fresh.input_type), inputs, receipt, state, self.active_summary_call_source orelse capture_source),
+                }
                 if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);
                 break :blk new_id;
             };
@@ -16318,7 +16319,7 @@ test "task output evidence selects the input certified by its worker summary" {
         .input_type = 1,
         .inputs = &forwarded_input,
         .transfers_custody = true,
-        .exact_moved_output_input = 1,
+        .result = .{ .forwarded_input = 1 },
     }} };
     const second = try checker.instantiateOutput(effect, &.{inputs}, &state);
     try std.testing.expectEqual(@as(usize, 1), second.execution_receipts.len);
