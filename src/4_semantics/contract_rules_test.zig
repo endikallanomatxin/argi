@@ -882,7 +882,7 @@ test "contract diagnostic 32X_tuple_virtual" {
         \\    cell ::= Cell()
         \\    handle ::= Virtual#(.contract: Pair)(&cell)
         \\}
-    , null, "explicit participants require joint virtual evidence", false);
+    , null, "joint Virtual context is missing a field named for a contract participant", false);
 }
 
 test "contract diagnostic 333X_virtual_implementation_signature" {

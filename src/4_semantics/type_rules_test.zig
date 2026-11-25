@@ -1206,7 +1206,7 @@ test "type rules: polymorphism/45X_virtual_self_by_value" {
         \\}
     ,
         null,
-        "the hidden participant is only allowed as a direct borrowed receiver",
+        "the concrete type has no selected conformance for this contract",
         false,
     );
 }

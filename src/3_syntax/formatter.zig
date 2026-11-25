@@ -753,6 +753,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
     var first: usize = @intFromEnum(tree.mainToken(node));
     if (tree.tag(node) == .assume_statement and first != 0) return first - 1;
     if (tree.functionCall(node)) |call| {
+        first = @min(first, firstToken(tree, call.callee));
         if (call.contract_type) |contract_type| first = @min(first, firstToken(tree, contract_type));
         if (call.module_qualifier) |qualifier| first = @min(first, @intFromEnum(qualifier));
         return first;
@@ -765,6 +766,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
         .projection => |projection| first = @min(first, firstToken(tree, projection.base)),
         else => {},
     };
+    if (tree.tag(node) == .specialization) return @min(first, firstToken(tree, tree.data(node).node_and_node.first));
     if (tree.functionDeclaration(node) != null) return first;
     const child: ?syn.NodeIndex = switch (tree.tag(node)) {
         .expression_statement, .error_propagation, .error_report_return, .error_report_return_block, .nullable_test, .dereference => tree.unaryOperand(node),
