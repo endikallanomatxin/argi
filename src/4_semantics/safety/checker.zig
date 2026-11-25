@@ -6675,6 +6675,7 @@ pub const SafetyChecker = struct {
             current.known_choice_variant = null;
             current.owned_backing = null;
             current.intrinsic_backing_owner = null;
+            if (hasReferenceTarget(current)) current.reference_target_incomplete = true;
             current.reference_coverage_complete = false;
             current.concurrent_receiver = false;
             current.virtual_no_access = &.{};
@@ -16862,6 +16863,9 @@ test "dynamic projection requires a known extent for complete element evidence" 
     try std.testing.expect(projected.reference_target_incomplete);
     try std.testing.expect(projected.referenced_place == null);
     try std.testing.expectEqual(@as(usize, 1), projected.mutation_places.len);
+
+    const unrepresented = try checker.projectValueFacts(element, &.{.{ .field = 0 }});
+    try std.testing.expect(!unrepresented.hasCompleteReferenceCoverage());
 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
