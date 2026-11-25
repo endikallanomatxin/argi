@@ -3181,6 +3181,15 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn collectPossibleExecutionReceipts(value: facts.ValueFacts, receipts: *std.array_list.Managed(facts.ExecutionId)) !void {
+        for (value.execution_receipts) |id| {
+            if (std.mem.indexOfScalar(facts.ExecutionId, receipts.items, id) == null)
+                try receipts.append(id);
+        }
+        var children = value.structuralChildren();
+        while (children.next()) |child| try collectPossibleExecutionReceipts(child.*, receipts);
+    }
+
     fn collectUniqueExecutionReceipt(value: facts.ValueFacts, selected: *?facts.ExecutionId) bool {
         if (value.execution_receipt_incomplete) return false;
         // A completion certifies one execution. An envelope can repeat the
@@ -6615,7 +6624,7 @@ pub const SafetyChecker = struct {
                     }
                     if (facts.representedProjection(current, projection)) |selected| {
                         current = selected;
-                    } else return uncoveredProjection(current);
+                    } else return self.uncoveredProjection(current);
                 },
                 .dynamic_index => {
                     if (current.fields.len != 0) {
@@ -6628,15 +6637,15 @@ pub const SafetyChecker = struct {
                             break :length types.arrayLength(self.graph, ty);
                         } else null;
                         current = try self.joinArrayElementFacts(current, length);
-                    } else return uncoveredProjection(current);
+                    } else return self.uncoveredProjection(current);
                 },
-                .dereference => return uncoveredProjection(current),
+                .dereference => return self.uncoveredProjection(current),
             }
         }
         return current;
     }
 
-    fn uncoveredProjection(parent: facts.ValueFacts) facts.ValueFacts {
+    fn uncoveredProjection(self: *SafetyChecker, parent: facts.ValueFacts) !facts.ValueFacts {
         // Preserve the conservative envelope. No later projection can
         // select a sibling in lieu of the missing intermediate child.
         var result = parent;
@@ -6655,7 +6664,11 @@ pub const SafetyChecker = struct {
         result.virtual_no_access = &.{};
         result.completed_executions = &.{};
         result.task_output_execution = null;
-        result.execution_receipt_incomplete = parent.execution_receipt_incomplete or parent.execution_receipts.len != 0;
+        var receipts = std.array_list.Managed(facts.ExecutionId).init(self.allocator);
+        defer receipts.deinit();
+        try collectPossibleExecutionReceipts(parent, &receipts);
+        result.execution_receipts = try receipts.toOwnedSlice();
+        result.execution_receipt_incomplete = parent.execution_receipt_incomplete or result.execution_receipts.len != 0;
         return result;
     }
 
@@ -16862,7 +16875,8 @@ test "dynamic projection requires a known extent for complete element evidence" 
     defer state.deinit();
     const receipt = try state.establishExecution(&.{});
     const envelope: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
-    const missing_receipt = try checker.projectValueFacts(envelope, &.{.{ .field = 0 }});
+    const nested_receipt: facts.ValueFacts = .{ .fields = &.{.{ .index = 1, .value = &envelope }} };
+    const missing_receipt = try checker.projectValueFacts(nested_receipt, &.{.{ .field = 0 }});
     try std.testing.expect(SafetyChecker.hasPendingExecution(missing_receipt, &state));
     checker.completeExecutionReceipts(missing_receipt, &state);
     try std.testing.expect(state.executionPending(receipt));
