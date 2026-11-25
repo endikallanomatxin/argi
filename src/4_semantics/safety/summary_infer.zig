@@ -8788,7 +8788,10 @@ pub const Infer = struct {
             var found = false;
             for (result.items) |*existing| if (existing.source == entry.source and existing.input_type == entry.input_type and existing.transfers_custody == entry.transfers_custody) {
                 const inputs = try self.allocator.create(facts.ValueEffect);
-                inputs.* = try self.mergeValueEffects(existing.inputs.*, entry.inputs.*);
+                // These are possible snapshots of one submission. In
+                // particular a missing child in one snapshot cannot inherit
+                // the other snapshot's transfer or cleanup guarantee.
+                inputs.* = try self.joinStorageAlternatives(@enumFromInt(entry.input_type), existing.inputs.*, entry.inputs.*);
                 if (existing.exact_moved_output_input != entry.exact_moved_output_input)
                     existing.exact_moved_output_input = null;
                 existing.inputs = inputs;
@@ -11161,4 +11164,29 @@ test "staged task cleanup evidence requires agreement across alternatives" {
     const forwarded = try infer.substituteOutputInContext(@enumFromInt(0), first, arguments, null, &context);
     try std.testing.expectEqual(@as(u32, 3), forwarded.staged_output.?.virtual_receiver_input.?.input_index);
     try std.testing.expect(forwarded.virtual_receiver_input == null);
+}
+
+test "task submission alternatives cannot supply missing field guarantees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+    });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0) });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const known: facts.ValueEffect = .{ .virtual_no_access = &.{0} };
+    const input: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &known }} };
+    const left: facts.FreshExecution = .{ .source = 0, .input_type = 1, .inputs = &input };
+    const right: facts.FreshExecution = .{ .source = 0, .input_type = 1, .inputs = &facts.empty_value_effect };
+    const same = try infer.mergeFreshExecutions(&.{left}, &.{left});
+    try std.testing.expectEqual(@as(usize, 1), same[0].inputs.fields[0].value.virtual_no_access.len);
+    const joined = try infer.mergeFreshExecutions(&.{left}, &.{right});
+    try std.testing.expectEqual(@as(usize, 0), joined[0].inputs.fields[0].value.virtual_no_access.len);
 }
