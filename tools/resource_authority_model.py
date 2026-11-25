@@ -1436,6 +1436,38 @@ def owner_experiments():
             candidate.handoff(0, 0, 1).check()
 
 
+def joined_owner_experiments():
+    # Concrete alternatives retain the link between an owner and its view.
+    # Compare a proof evaluated before the join with a proof based only on
+    # the union of owner and view targets.
+    states = tuple(State().establish_owner(0, (byte,)) for byte in (0, 1))
+    admitted = 0
+    for left_view, right_view in product((0, 1), repeat=2):
+        observations = (left_view, right_view)
+        owned_targets = {byte for state in states for byte in state.owners[0].payload}
+        assert set(observations).issubset(owned_targets)
+        owned_on_each_path = all(
+            byte in state.owners[0].payload
+            for state, byte in zip(states, observations)
+        )
+        if not owned_on_each_path:
+            assert any(byte not in state.owners[0].payload
+                       for state, byte in zip(states, observations))
+            continue
+        admitted += 1
+        for state, byte in zip(states, observations):
+            state.access(0, (byte,), READ)
+            published = state.handoff(0, 0, 1)
+            published.access(1, (byte,), WRITE)
+            denied(lambda: published.access(0, (byte,), READ))
+            denied(lambda: state.lend(0, 2, (byte,), READ).handoff(0, 0, 1))
+            returned = published.handoff(0, 1, 0)
+            destroyed = returned.cleanup_owner(0, 0)
+            destroyed.check()
+            denied(lambda: destroyed.cleanup_owner(0, 0))
+    assert admitted == 1
+
+
 def explore_interactions(depth=4):
     """Combine transitions under explicit allocation/identity bounds.
 
@@ -1501,6 +1533,7 @@ if __name__ == "__main__":
     observations_checked = storage_observation_experiments()
     adversarial_traces()
     owner_experiments()
+    joined_owner_experiments()
     substitution_experiments()
     protected_experiments()
     protected_loans_checked = protected_lending_experiments()
@@ -1522,6 +1555,7 @@ if __name__ == "__main__":
     print("Opaque transfer evidence: insertion and branch joins meet guarantees and retain access obligations")
     print("Opaque result recipes: input substitution, slot/capture separation and snapshot contrasts passed")
     print("Ownership/latent cleanup adversarial cases passed")
+    print("Joined ownership: checked backing per alternative, pending loans and cleanup custody")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")
     print(f"Acquisition-derived lending: {protected_loans_checked} region/mode combinations and nested/reader contrasts passed")
