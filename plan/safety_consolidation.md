@@ -614,3 +614,26 @@ Generic instantiation calls and reuse counts also agree between revisions:
 the LLVM function count measures emitted functions. The sample covers
 two transfer paths and does not estimate scaling with branch count or
 outstanding loans.
+
+### Cost of overlapping loan lifetimes
+
+A generated program declares one separate `Int32` binding per task,
+borrows each binding mutably into the same worker, and awaits each
+receipt. The pending case starts all tasks before awaiting the first.
+The serial control awaits each task immediately after submission. Both
+use the same declarations and calls, with no benchmark execution.
+Three alternating builds on Linux used the Debug compiler at
+`531d20a63`, one frontend worker and a disabled frontend cache.
+
+| Tasks | GlobalSafety pending / serial, ms | Wall time pending / serial, s | Peak RSS pending / serial, MiB |
+| ---: | ---: | ---: | ---: |
+| 8 | 71.8 / 71.4 | 1.37 / 1.38 | 139.2 / 139.3 |
+| 32 | 174.0 / 172.8 | 2.53 / 2.56 | 143.5 / 143.6 |
+| 128 | 1162.2 / 1169.9 | 7.79 / 7.69 | 167.7 / 167.6 |
+
+Both patterns grow substantially with the number of tasks. At the
+measured sizes the cost from having all loans pending does not stand
+out in whole-phase timings. Both patterns retain execution identities,
+so the comparison does not isolate scans of completed executions from
+other safety work. Measure the individual authority queries before
+using this benchmark to justify a region index.
