@@ -6531,16 +6531,11 @@ pub const Infer = struct {
             if (receipt.fresh_executions.len != 1) return result;
             const execution = receipt.fresh_executions[0];
             const selected = execution.exact_moved_output_input orelse return result;
-            const output = try self.projectValueEffect(execution.inputs.*, .{ .field = selected });
-            if (output.input_dependencies.len != 1) return result;
-            const dependency = output.input_dependencies[0];
-            if (!dependency.transfers_ownership or dependency.validity_only or dependency.path.storage_domain != null) return result;
-            // A dependency alone can survive a partial replacement. Require
-            // the selected capability to still denote the same entry value.
-            const entry = output.virtual_receiver_input orelse return result;
-            if (!entry.eql(dependency.path)) return result;
+            // The worker certifies the whole move. Cleanup only consumes
+            // the current descriptor facts at the selected projection.
+            // The submitted value itself can contain local replacements.
             const staged = try self.allocator.create(facts.ValueEffect);
-            staged.* = output;
+            staged.* = try self.projectValueEffect(execution.inputs.*, .{ .field = selected });
             result.staged_output = staged;
             return result;
         }
