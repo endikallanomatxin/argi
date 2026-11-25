@@ -187,6 +187,8 @@ pub const SafetyPrimitive = enum {
     require_task_input_transfer,
     require_task_output_transfer,
     execution_transfer,
+    recover_task_output_evidence,
+    bind_task_output,
 };
 
 pub const FunctionFlags = packed struct(u32) {

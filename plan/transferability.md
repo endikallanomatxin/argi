@@ -362,12 +362,23 @@ justify the public operation's effects. An unconditional isolated Deallocator
 interface therefore rejects valid sequential providers. Admission must
 instead use guarantees of the captured capability at the execution boundary.
 
-The local round-trip prototype can restore a fresh owner root inside a
-direct match on the successful await result. The set_ascii call still
-fails while the allocator is shared. The same call also fails on a fresh
-String immediately after allocation, with no task boundary. The missing
-access evidence is therefore already present in the ordinary String byte
-path: the allocation-slot operation bounds the address against the
-allocation, but a raw index supplies no concrete slot identity. Compare
-authenticated backing against active shared regions and loans separately
-from resolving an exact element place.
+An exact ownership-forwarding summary can describe a worker result in
+terms of its submitted input. Submission retains an immutable snapshot for
+that receipt and retires the sender’s backing generations when it hands
+off custody. A successful await renews each owned generation separately.
+References internal to the returned owner follow those generations, while
+external aliases keep their original, ended generations.
+
+Cleanup uses the same retained capability evidence. A cleanup effect can
+select a descriptor from the staged result to prove that its operation has
+an empty footprint. The selection does not read any task bytes, establish
+a reference, or claim ownership. A stored await outcome can carry newly
+issued generations conditionally, under the same completion proof as
+the result tag. Compilation does not require a different String or
+Allocation type for concurrent and local providers.
+
+This path currently supports workers with an exact moved-result summary.
+A worker that transforms its owned result needs a symbolic output relation
+that describes the actual post-value. Worker-side virtual cleanup still
+requires a published isolation guarantee. The return path preserves value
+evidence without relaxing that separate interface obligation.

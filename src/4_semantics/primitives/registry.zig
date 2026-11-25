@@ -22,10 +22,12 @@ pub const specs = [_]Spec{
     .{ .primitive = .trusted_concurrent_view, .path = "core/concurrency/ConcurrentAlias.rg", .name = "trusted_concurrent_view", .signatures = &.{"#(.T: Type)(.shared: $$&T) -> (.view: &T)"} },
     .{ .primitive = .recover_ordinary, .path = "core/concurrency/ConcurrentAlias.rg", .name = "recover_ordinary", .signatures = &.{"#(.T: Type)(.owner: $&T) -> ()"} },
     .{ .primitive = .execution_lend, .path = "core/memory/execution_access.rg", .name = "_execution_lend", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
-    .{ .primitive = .execution_transfer, .path = "core/memory/execution_access.rg", .name = "_execution_transfer", .signatures = &.{"#(.t: Type)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
+    .{ .primitive = .execution_transfer, .path = "core/memory/execution_access.rg", .name = "_execution_transfer", .signatures = &.{"#(.t: Type, .F: Function)(.inputs: t) -> (.receipt: _ExecutionReceipt)"} },
     .{ .primitive = .task_input_handoff, .path = "core/tasks/future.rg", .name = "_retire_task_input", .signatures = &.{"#(.T: Type)(.value: T) -> ()"} },
     .{ .primitive = .require_task_input_transfer, .path = "core/tasks/future.rg", .name = "_require_task_input_transfer", .signatures = &.{"#(.T: Type)(.value: &T) -> ()"} },
-    .{ .primitive = .require_task_output_transfer, .path = "core/tasks/future.rg", .name = "_require_task_output_transfer", .signatures = &.{"#(.T: Type)(.value: &T) -> ()"} },
+    .{ .primitive = .bind_task_output, .path = "core/tasks/owned_output.rg", .name = "_bind_task_output", .signatures = &.{"(.slot: UIntNative, .receipt: &_ExecutionReceipt) -> (.result: UIntNative)"} },
+    .{ .primitive = .recover_task_output_evidence, .path = "core/tasks/owned_output.rg", .name = "_recover_task_output_evidence", .signatures = &.{"#(.T: Type, .Receipt: Type)(.value: T, .receipt: &Receipt) -> (.result: T)"} },
+    .{ .primitive = .require_task_output_transfer, .path = "core/tasks/future.rg", .name = "_require_task_output_transfer", .signatures = &.{"#(.T: Type, .F: Function)(.value: &T) -> ()"} },
     .{ .primitive = .execution_complete, .path = "core/memory/execution_access.rg", .name = "_execution_complete", .signatures = &.{"(.receipt: $&_ExecutionReceipt, .join: ?_ExecutionJoin = ..none) -> ()"} },
     .{ .primitive = .execution_input, .path = "core/memory/execution_access.rg", .name = "_execution_input", .signatures = &.{"#(.t: Type)(.invocation: _ExecutionInvocation, .anchor: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .prepare_allocation_metadata, .path = "core/memory/heap_allocation/allocation_metadata.rg", .name = "_prepare_allocation_metadata", .signatures = &.{"#(.t: Type)(.allocation: &Allocation) -> (.state: UIntNative)"} },
@@ -238,7 +240,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
         .execution_lend, .execution_transfer => .{ .value = .execution_lend },
         .execution_complete => .{ .value = .execution_complete },
         .execution_input => .{ .value = .execution_input },
-        .none, .recover_ordinary, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata, .task_input_handoff, .require_task_input_transfer, .require_task_output_transfer => .{ .value = .empty },
+        .none, .recover_ordinary, .float_math, .allocation_metadata_layout, .prepare_allocation_metadata, .task_input_handoff, .require_task_input_transfer, .require_task_output_transfer, .recover_task_output_evidence, .bind_task_output => .{ .value = .empty },
         // Physical release identity selects an execution boundary. Language
         // consumption remains in checked allocation-owner cleanup, not raw ABI.
         .raw_released_storage => .{ .value = .empty },
@@ -302,6 +304,8 @@ pub fn memoryAccesses(primitive: primitives.SafetyPrimitive) ?[]const MemoryAcce
         .task_input_handoff,
         .require_task_input_transfer,
         .require_task_output_transfer,
+        .recover_task_output_evidence,
+        .bind_task_output,
         .trusted_opaque_mark_empty,
         => &.{},
         // Both native page acquisition adapters select fresh OS storage.

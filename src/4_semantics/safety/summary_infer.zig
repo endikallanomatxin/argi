@@ -159,7 +159,7 @@ pub const Infer = struct {
 
         fn addVirtualAccess(self: *AccessEffects, access: facts.InputAccess) !void {
             for (self.inputs.items) |existing| {
-                if (existing.virtual_method == access.virtual_method and summaries.inputPathEql(existing.target, access.target)) return;
+                if (existing.sameVirtualSelection(access)) return;
             }
             try self.inputs.append(access);
         }
@@ -1299,7 +1299,8 @@ pub const Infer = struct {
         var owning_calls: ?[]const forwarding.ForwardedCall = null;
         for (outputs, 0..) |*output, output_index| {
             if (outputs.len == 1 and !accesses.unknown and accesses.inputs.items.len == 0 and accesses.globals.items.len == 0 and
-                accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency| {
+                accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency|
+            {
                 const path = dependency.path;
                 if (!dependency.transfers_ownership or dependency.validity_only or path.projections.len != 0 or
                     path.storage_domain != null or path.input_index >= function.input.len or output_index >= output_fields.len) continue;
@@ -5583,6 +5584,27 @@ pub const Infer = struct {
         }
         for (summary.input_accesses) |access| {
             if (access.virtual_method) |method| {
+                if (access.execution_output_path != null) {
+                    if (override == null and access.target.input_index < arguments.len) {
+                        const argument = arguments[access.target.input_index].value;
+                        if (try self.transferArgumentPath(function, access.target, argument)) |origin| {
+                            var translated = access;
+                            translated.target = origin;
+                            try sink.addVirtualAccess(translated);
+                            continue;
+                        }
+                        if (try self.stagedOutputSource(function, argument, access.target.projections)) |source| {
+                            const projections = try std.mem.concat(self.allocator, facts.Projection, &.{ source.projections, access.execution_output_path.? });
+                            var translated = access;
+                            translated.target = .{ .input_index = source.input_index, .projections = projections };
+                            translated.execution_output_path = null;
+                            try sink.addVirtualAccess(translated);
+                            continue;
+                        }
+                    }
+                    sink.unknown = true;
+                    continue;
+                }
                 // Cleanup supplies the value actually held at this point.
                 // Its projected descriptor proof describes that snapshot even
                 // when earlier operations changed other access targets.
@@ -5591,6 +5613,13 @@ pub const Infer = struct {
                         access.target.projections[0] == .dereference and access.target.storage_domain == null)
                     {
                         var descriptor = captured.effect;
+                        if (descriptor.task_output_receipt) |origin| {
+                            var translated = access;
+                            translated.target = origin;
+                            translated.execution_output_path = try std.mem.concat(self.allocator, facts.Projection, &.{ descriptor.task_output_projection, access.target.projections[1..] });
+                            try sink.addVirtualAccess(translated);
+                            continue;
+                        }
                         for (access.target.projections[1..]) |projection|
                             descriptor = try self.projectValueEffect(descriptor, projection);
                         if (!descriptor.reference_target_incomplete and
@@ -5930,6 +5959,15 @@ pub const Infer = struct {
         }
     }
 
+    fn stagedOutputSource(self: *Infer, function: graph_mod.GlobalFunctionId, argument: graph_mod.GlobalNodeId, projections: []const facts.Projection) !?facts.InputPath {
+        if (projections.len == 0 or projections[0] != .dereference) return null;
+        const content = self.graph.node(argument).content;
+        if (content != .address_of) return null;
+        var slot = try self.inferExpression(function, content.address_of);
+        for (projections[1..]) |projection| slot = try self.projectValueEffect(slot, projection);
+        return slot.staged_output_input;
+    }
+
     fn localPointeeEffect(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) !?facts.ValueEffect {
         const targets = try self.localAddressTargets(node_id);
         if (targets.len == 0) return null;
@@ -6106,6 +6144,7 @@ pub const Infer = struct {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
+
         if (cleanup.input) |input| {
             if (cleanup.storage == .indirect) {
                 // The captured cleanup flag guards the receiver's old value.
@@ -6334,8 +6373,44 @@ pub const Infer = struct {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.inferExpression(function_id, arguments[0].value);
             const executions = try self.allocator.alloc(facts.FreshExecution, 1);
-            executions[0] = .{ .source = self.freshSource(call_node, 0), .inputs = inputs, .input_type = @intFromEnum(input_type), .transfers_custody = callee_function.safety_primitive == .execution_transfer };
+            const transfers = callee_function.safety_primitive == .execution_transfer;
+            const worker = if (transfers) executionTransferWorker(self.graph, callee) else null;
+            const summary = if (worker) |id| self.engine.summaryFor(id) else null;
+            executions[0] = .{
+                .source = self.freshSource(call_node, 0),
+                .inputs = inputs,
+                .input_type = @intFromEnum(input_type),
+                .transfers_custody = transfers,
+                .exact_moved_output_input = if (summary) |checked| checked.exact_moved_input else null,
+            };
             return .{ .fresh_executions = executions, .fresh_cleanup_obligation = true };
+        }
+        if (callee_function.safety_primitive == .bind_task_output) {
+            if (arguments.len != 2) return .{};
+            var result = try self.inferExpression(function_id, arguments[0].value);
+            const node = self.graph.node(arguments[1].value).content;
+            if (node != .address_of) return result;
+            const receipt = try self.inferExpression(function_id, node.address_of);
+            if (receipt.fresh_executions.len != 1) return result;
+            const execution = receipt.fresh_executions[0];
+            const selected = execution.exact_moved_output_input orelse return result;
+            const output = try self.projectValueEffect(execution.inputs.*, .{ .field = selected });
+            if (output.input_dependencies.len != 1) return result;
+            const dependency = output.input_dependencies[0];
+            if (!dependency.transfers_ownership or dependency.validity_only or dependency.path.storage_domain != null) return result;
+            // A dependency alone can survive a partial replacement. Require
+            // the selected capability to still denote the same entry value.
+            const entry = output.virtual_receiver_input orelse return result;
+            if (!entry.eql(dependency.path)) return result;
+            result.staged_output_input = entry;
+            return result;
+        }
+        if (callee_function.safety_primitive == .recover_task_output_evidence) {
+            if (arguments.len != 2) return .{};
+            var value = try self.inferExpression(function_id, arguments[0].value);
+            value.task_output_receipt = try self.transferArgumentPath(function_id, .{ .input_index = 1, .projections = &.{.dereference} }, arguments[1].value);
+
+            return value;
         }
         if (callee_function.safety_primitive == .execution_complete) return .{};
         if (callee_function.safety_primitive == .execution_input) {
@@ -6484,6 +6559,9 @@ pub const Infer = struct {
         // Projected writes do not discard whole-value ownership or facts
         // supplied by a previously selected aggregate-producing operation.
         var result = previous;
+        result.task_output_receipt = null;
+        result.task_output_projection = &.{};
+        result.staged_output_input = null;
         result.fields = &.{};
         for (fields.items) |field| {
             result = try self.mergeValueEffects(result, field.value.*);
@@ -7480,6 +7558,12 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
+            .task_output_receipt = blk: {
+                const path = effect.task_output_receipt orelse break :blk null;
+                if (override != null or path.input_index >= arguments.len) break :blk null;
+                break :blk try self.transferArgumentPath(function_id, path, arguments[path.input_index].value);
+            },
+            .task_output_projection = effect.task_output_projection,
             .static_reference = effect.static_reference,
             .observes_fresh_backing = effect.observes_fresh_backing,
             .concurrent_receiver = effect.concurrent_receiver,
@@ -7542,7 +7626,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.substituteOutputInContext(function_id, execution.inputs.*, arguments, override, context);
-            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .inputs = inputs };
+            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .inputs = inputs };
         }
         result.fresh_executions = executions;
         for (effect.input_execution_receipts) |path| {
@@ -7835,6 +7919,7 @@ pub const Infer = struct {
     }
 
     fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
+        if (effect.task_output_receipt != null or effect.staged_output_input != null) return true;
         if (effect.virtual_receiver_input != null or effect.concurrent_receiver_inputs.len != 0) return true;
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.reference_relation != null) return true;
@@ -7898,6 +7983,17 @@ pub const Infer = struct {
     }
 
     fn projectValueEffect(self: *Infer, effect: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
+        var result = try self.projectValueEffectStorage(effect, projection);
+        if (effect.task_output_receipt) |receipt| {
+            if (projection != .dereference and projection != .dynamic_index) {
+                result.task_output_receipt = receipt;
+                result.task_output_projection = try self.appendProjection(effect.task_output_projection, projection);
+            }
+        }
+        return result;
+    }
+
+    fn projectValueEffectStorage(self: *Infer, effect: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
         switch (projection) {
             .field => |field_index| {
                 for (effect.fields) |field| if (field.index == field_index) return field.value.*;
@@ -7914,6 +8010,9 @@ pub const Infer = struct {
             .dereference => {},
         }
         var result = effect;
+        result.task_output_receipt = null;
+        result.task_output_projection = &.{};
+        result.staged_output_input = null;
         result.static_reference = null;
         result.observes_fresh_backing = false;
         if (result.input_backing_observation) |*path| {
@@ -8215,7 +8314,14 @@ pub const Infer = struct {
             if (!found) try variants.append(right_variant);
         }
 
+        const same_claim = if (left.task_output_receipt) |receipt|
+            right.task_output_receipt != null and receipt.eql(right.task_output_receipt.?) and
+                (facts.InputPath{ .input_index = 0, .projections = left.task_output_projection }).eql(.{ .input_index = 0, .projections = right.task_output_projection })
+        else
+            false;
         return .{
+            .task_output_receipt = if (same_claim) left.task_output_receipt else null,
+            .task_output_projection = if (same_claim) left.task_output_projection else &.{},
             .static_reference = if (left.static_reference == right.static_reference) left.static_reference else null,
             .input_backing_observation = if (left.input_backing_observation) |path| blk: {
                 const other = right.input_backing_observation orelse break :blk null;
@@ -8456,7 +8562,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.rebaseFreshSources(execution.inputs.*, call_node);
-            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .inputs = inputs };
+            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .inputs = inputs };
         }
         result.fresh_executions = executions;
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
@@ -8505,6 +8611,8 @@ pub const Infer = struct {
             for (result.items) |*existing| if (existing.source == entry.source and existing.input_type == entry.input_type and existing.transfers_custody == entry.transfers_custody) {
                 const inputs = try self.allocator.create(facts.ValueEffect);
                 inputs.* = try self.mergeValueEffects(existing.inputs.*, entry.inputs.*);
+                if (existing.exact_moved_output_input != entry.exact_moved_output_input)
+                    existing.exact_moved_output_input = null;
                 existing.inputs = inputs;
                 found = true;
                 break;
@@ -10640,4 +10748,43 @@ test "observed stores share summary payloads and survive publication without loc
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_owned_roots.len);
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_storage_capabilities.len);
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_executions.len);
+}
+
+pub fn executionTransferWorker(graph: *const graph_mod.GlobalSemanticGraph, callee: graph_mod.GlobalFunctionId) ?graph_mod.GlobalFunctionId {
+    for (graph.generic_function_instances.items) |instance| {
+        if (instance.function != callee) continue;
+        for (graph.generic_arguments.items[instance.arguments.start..][0..instance.arguments.len]) |argument| {
+            if (argument.value != .definition or !std.mem.eql(u8, graph.text(argument.name), "F")) continue;
+            const definition = argument.value.definition;
+            const family = graph.familyDefinition(definition.origin);
+            if (family.template_index != null or definition.captures.len != 0) return null;
+            return graph.declaration(graph.familyDeclaration(definition.origin)).function_id;
+        }
+        break;
+    }
+    return null;
+}
+
+test "task output summaries preserve extraction only for an unchanged value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = Infer.init(allocator, &graph, &engine);
+    defer infer.deinit();
+    const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.dereference} };
+    const value: facts.ValueEffect = .{ .task_output_receipt = path };
+    const with_dependency: facts.ValueEffect = .{ .task_output_receipt = path, .explicit_dependency = true };
+    const common = try infer.mergeValueEffects(value, value);
+    try std.testing.expect(common.task_output_receipt.?.eql(path));
+    try std.testing.expect((try infer.mergeValueEffects(value, with_dependency)).task_output_receipt.?.eql(path));
+    try std.testing.expect((try infer.storeEffectProjection(value, &.{.{ .field = 0 }}, .{})).task_output_receipt == null);
+    const other: facts.ValueEffect = .{ .task_output_receipt = .{ .input_index = 1 } };
+    try std.testing.expect((try infer.mergeValueEffects(value, other)).task_output_receipt == null);
+    const projected = try infer.projectValueEffect(value, .{ .field = 0 });
+    try std.testing.expect(projected.task_output_receipt.?.eql(path));
+    try std.testing.expect(projected.task_output_projection[0].eql(.{ .field = 0 }));
+    try std.testing.expect((try infer.projectValueEffect(value, .dereference)).task_output_receipt == null);
 }

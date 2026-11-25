@@ -2081,6 +2081,8 @@ pub const SafetyChecker = struct {
             effects.input_post_states = selected.input_post_states;
             effects.invalidated_domains = selected.invalidated_domains;
             effects.opaque_storage_empties = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.opaque_storage_empties, selected.opaque_storage_empties });
+            if (selected.reachable)
+                effects.completed_executions = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.completed_executions, selected.completed_executions });
             effects.outcome_post_states = &.{};
             break;
         };
@@ -3310,10 +3312,23 @@ pub const SafetyChecker = struct {
         return self.graph.semanticType(ty) == .virtual;
     }
 
+    fn executionPointerFrame(pointer: facts.ValueFacts, state: *const FunctionState) ?u32 {
+        if (pointer.acquisition_origins.len != 0 and
+            @import("transfer_evidence.zig").observesTransferredBacking(pointer, pointer.owned_backing) and
+            state.tracker.dependenciesAreAlive(pointer))
+        {
+            // Authenticated acquired backing cannot overlap direct lexical
+            // storage. Indirect and external storage remain possible aliases.
+            return 0;
+        }
+        return pointer.lexical_frame;
+    }
+
     fn requireExecutionPointerAccess(self: *SafetyChecker, source: primitives.SourceRef, pointer: facts.ValueFacts, mode: facts.AccessMode, state: *const FunctionState) !void {
+        const lexical_frame = executionPointerFrame(pointer, state);
         if (pointer.reference_target_incomplete or (pointer.referenced_place == null and pointer.symbolic_pointees.len == 0)) {
             for (state.shared_regions.items) |region| {
-                if (pointer.lexical_frame) |frame| if (state.frameExcludesStorage(frame, region)) continue;
+                if (lexical_frame) |frame| if (state.frameExcludesStorage(frame, region)) continue;
                 try self.report(source, "cannot prove an ordinary reference independent of concurrently shared storage", .{});
                 return;
             }
@@ -3324,7 +3339,7 @@ pub const SafetyChecker = struct {
                 if (!execution.pending) continue;
                 for (execution.loans) |loan| {
                     if (loan.allowsOverlap(mode, false)) continue;
-                    if (pointer.lexical_frame) |frame| if (loan.storage) |storage| {
+                    if (lexical_frame) |frame| if (loan.storage) |storage| {
                         if (!self.graph.isModuleBinding(storage.root) and state.frameExcludesStorage(frame, storage)) continue;
                     };
                     try self.report(source, "reference access has unknown memory effects while a pending execution retains borrowed storage; declare and verify an access bound", .{});
@@ -3368,6 +3383,21 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         source: primitives.SourceRef,
     ) !facts.ValueFacts {
+        if (primitive == .bind_task_output) {
+            if (values.len != 2) return error.InvalidExecutionInput;
+            const receipt = try self.loadSummaryInputValue(.{ .input_index = 1 }, values, state, true);
+            var result = values[0];
+            var identity: ?facts.ExecutionId = null;
+            if (collectUniqueExecutionReceipt(receipt, &identity)) {
+                result.task_output_execution = identity;
+            }
+            return result;
+        }
+        if (primitive == .recover_task_output_evidence) {
+            if (values.len != 2) return error.InvalidExecutionInput;
+            const receipt = try self.loadSummaryInputValue(.{ .input_index = 1 }, values, state, true);
+            return (try self.takeCertifiedExecutionOutput(receipt, state)) orelse values[0];
+        }
         if (primitive == .task_input_handoff) {
             // Native acceptance has taken custody. End the sender's
             // observations without running its destructor or ending external
@@ -3389,6 +3419,14 @@ pub const SafetyChecker = struct {
                 return .{};
             }
             const value = try self.loadSummaryPlaceValue(state, place.?, stored.?);
+            // An exact owned return inherits the corresponding submission
+            // obligation. The worker checks the actual transfer at ingress
+            // through the caller's specialized execution effect.
+            if (summary_infer.executionTransferWorker(self.graph, callee)) |worker| {
+                if (self.active_summaries) |engine| if (engine.summaryFor(worker)) |summary| {
+                    if (summary.exact_moved_input != null) return .{};
+                };
+            }
             if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
                 try self.report(source, "task result lacks a static ownership-transfer guarantee", .{});
             } else if (self.inputTypeNeedsLoan(ty, 0, true) or @import("transfer_evidence.zig").requiresResultMetadata(value, 0)) {
@@ -3407,7 +3445,18 @@ pub const SafetyChecker = struct {
             if (index < values.len) try self.consume_storage_capabilities(source, values[index], 1, 1, state);
         }
         return switch (primitive_transfer.forPrimitive(primitive).value) {
-            .execution_lend => if (values.len != 0) try self.admitExecution(self.graph.fields.items[self.graph.function(callee).input.start].ty, values[0], state, source, primitive == .execution_transfer) else .{},
+            .execution_lend => blk: {
+                if (values.len == 0) break :blk .{};
+                const ty = self.graph.fields.items[self.graph.function(callee).input.start].ty;
+                const transfers = primitive == .execution_transfer;
+                const receipt = try self.admitExecution(ty, values[0], state, source, transfers);
+                if (transfers and receipt.execution_receipts.len != 0) {
+                    if (summary_infer.executionTransferWorker(self.graph, callee)) |worker| if (self.active_summaries) |engine| {
+                        if (engine.summaryFor(worker)) |summary| _ = try self.retainForwardedExecutionOutput(summary.exact_moved_input, ty, values[0], receipt, state);
+                    };
+                }
+                break :blk receipt;
+            },
             .execution_complete => blk: {
                 if (values.len != 0) {
                     const receipt: facts.ValueFacts = if (values[0].referenced_place) |storage| self.valueAtPlace(state, storage) orelse .{} else try self.readSymbolicValue(state, values[0], null);
@@ -3522,7 +3571,7 @@ pub const SafetyChecker = struct {
                 try self.collectAllocationDependencies(values[0], &.{}, state, &dependencies, true);
                 for (values[2].dependencies) |dependency| try appendDependencyFact(&dependencies, dependency);
                 const observation = try self.referenceObservationInput(summary_infer.allocation_slot_relation.source, values, state);
-                break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = observation.lexical_frame, .acquisition_origins = observation.acquisition_origins };
+                break :blk .{ .dependencies = try dependencies.toOwnedSlice(), .lexical_frame = executionPointerFrame(observation, state), .acquisition_origins = observation.acquisition_origins };
             },
             .restrict_reference, .depend_on => |transfer| try self.dependencyPrimitive(values, transfer),
             .relocate => try self.relocatePrimitive(source, values, state),
@@ -4342,6 +4391,7 @@ pub const SafetyChecker = struct {
     fn preserveResultOutcomeProofs(self: *SafetyChecker, value: *facts.ValueFacts, result: facts.ValueFacts) anyerror!void {
         value.generation_outcomes = result.generation_outcomes;
         value.completed_executions = result.completed_executions;
+        value.task_output_claim = result.task_output_claim;
         const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
         value.fields = fields;
         for (fields) |*field| for (result.fields) |original| if (field.index == original.index) {
@@ -4390,7 +4440,7 @@ pub const SafetyChecker = struct {
         for (summary.outcome_post_states, 0..) |outcome, index| {
             if (!outcome.reachable) continue;
             while (pending.len != 0 and pending[0].outcome == index) {
-                const proof = pending[0].execution;
+                const proof: OutcomeExecutionProof = .{ .execution = pending[0].execution, .state = state };
                 pending = pending[1..];
                 if (summary.outputs.len == 1) {
                     try self.attachChoiceOutcome(&result, outcome.parent_variants, outcome.variant_index, proof);
@@ -4860,6 +4910,22 @@ pub const SafetyChecker = struct {
         return self.attachChoiceOutcome(value, parents, leaf, proof);
     }
 
+    const OutcomeExecutionProof = struct {
+        execution: facts.ExecutionId,
+        state: *FunctionState,
+    };
+
+    fn materializeTaskOutcome(self: *SafetyChecker, value: *facts.ValueFacts, proof: OutcomeExecutionProof) !void {
+        if (value.task_output_claim != proof.execution) return;
+        const execution = proof.state.executionState(proof.execution) orelse return;
+        if (execution.output != .retained) return;
+        const first_root = proof.state.tracker.roots.items.len;
+        const owned = try self.renewTransferredRoots(execution.output.retained.*, proof.state);
+        _ = proof.state.reserveExecutionOutput(proof.execution) orelse unreachable;
+        for (proof.state.tracker.roots.items[first_root..]) |*root| root.state = .conditional;
+        value.* = owned;
+    }
+
     fn attachChoiceOutcome(self: *SafetyChecker, value: *facts.ValueFacts, parents: []const u32, leaf: u32, proof: anytype) anyerror!void {
         const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
         value.variants = variants;
@@ -4870,9 +4936,11 @@ pub const SafetyChecker = struct {
             payload.* = variant.value.*;
             variant.value = payload;
             if (parents.len == 0) {
-                if (@TypeOf(proof) == facts.ExecutionId) {
-                    if (std.mem.indexOfScalar(facts.ExecutionId, payload.completed_executions, proof) == null)
-                        payload.completed_executions = try std.mem.concat(self.allocator, facts.ExecutionId, &.{ payload.completed_executions, &.{proof} });
+                if (@TypeOf(proof) == facts.ExecutionId or @TypeOf(proof) == OutcomeExecutionProof) {
+                    const execution = if (@TypeOf(proof) == OutcomeExecutionProof) proof.execution else proof;
+                    if (@TypeOf(proof) == OutcomeExecutionProof) try self.materializeTaskOutcome(payload, proof);
+                    if (std.mem.indexOfScalar(facts.ExecutionId, payload.completed_executions, execution) == null)
+                        payload.completed_executions = try std.mem.concat(self.allocator, facts.ExecutionId, &.{ payload.completed_executions, &.{execution} });
                 } else payload.generation_outcomes = try std.mem.concat(self.allocator, facts.GenerationOutcome, &.{ payload.generation_outcomes, &.{proof} });
             } else try self.attachChoiceOutcome(payload, parents[1..], leaf, proof);
             break;
@@ -5025,14 +5093,7 @@ pub const SafetyChecker = struct {
             (reference.referenced_place == null and reference.mutation_places.len == 0))
         {
             var derived = reference.derivedReference();
-            if (reference.acquisition_origins.len != 0 and
-                @import("transfer_evidence.zig").observesTransferredBacking(reference, reference.owned_backing) and
-                state.tracker.dependenciesAreAlive(reference))
-            {
-                // Acquired backing cannot overlap an ordinary lexical slot.
-                // The frame check still rejects external or indirect targets.
-                derived.lexical_frame = 0;
-            }
+            derived.lexical_frame = executionPointerFrame(reference, state);
             return self.requireExecutionPointerAccess(source, derived, mode, state);
         }
         if (reference.referenced_place) |element| {
@@ -5073,7 +5134,10 @@ pub const SafetyChecker = struct {
         }
         for (summary.input_accesses) |access| {
             if (access.virtual_method) |method_index| {
-                const value = try self.entryVirtualAccessValue(access.target, arguments, state);
+                const value = if (access.execution_output_path) |projections|
+                    try self.executionOutputAccessValue(access.target, projections, arguments, state)
+                else
+                    try self.entryVirtualAccessValue(access.target, arguments, state);
                 if (virtualHasEmptyAccess(value, method_index)) continue;
                 if (!try self.requireUnknownExecutionAccess(source, "virtual operation", .write, state)) return false;
                 continue;
@@ -5883,6 +5947,17 @@ pub const SafetyChecker = struct {
         fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
         entries: []const EntryPlaceValue,
     ) !facts.ValueFacts {
+        var deferred_claim: ?facts.ExecutionId = null;
+        if (effect.task_output_projection.len == 0) if (effect.task_output_receipt) |path| {
+            const receipt = try self.loadSummaryInputValue(path, arguments, state, true);
+            if (try self.takeCertifiedExecutionOutput(receipt, state)) |output| return output;
+            var identity = receipt.task_output_execution;
+            if (collectUniqueExecutionReceipt(receipt, &identity)) if (identity) |id| {
+                if (state.executionState(id)) |execution| {
+                    if (execution.pending and execution.output == .retained) deferred_claim = id;
+                }
+            };
+        };
         const capture_source: primitives.SourceRef = if (self.call_stack.items.len != 0) self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source else .{ .file_index = 0, .offset = 0 };
         var result: facts.ValueFacts = .{ .explicit_dependency = effect.explicit_dependency, .storage_capability_incomplete = effect.storage_capability_incomplete };
         for (effect.input_storage_authorizations) |path| {
@@ -5905,6 +5980,8 @@ pub const SafetyChecker = struct {
                 const receipt = try self.admitExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse capture_source, fresh.transfers_custody);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
+                if (fresh.exact_moved_output_input != null)
+                    _ = try self.retainForwardedExecutionOutput(fresh.exact_moved_output_input, @enumFromInt(fresh.input_type), inputs, receipt, state);
                 if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);
                 break :blk new_id;
             };
@@ -6285,7 +6362,7 @@ pub const SafetyChecker = struct {
                 for (input.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
                 result.acquisition_origins = try origins.toOwnedSlice();
             }
-            result.lexical_frame = input.lexical_frame;
+            result.lexical_frame = if (relation.grade == .backing) input.lexical_frame else executionPointerFrame(input, state);
         }
         result.concurrent_receiver = effect.concurrent_receiver;
         result.virtual_no_access = effect.virtual_no_access;
@@ -6300,6 +6377,7 @@ pub const SafetyChecker = struct {
                 if (!selected.concurrent_receiver) break false;
             } else true;
         }
+        result.task_output_claim = deferred_claim;
         return result;
     }
 
@@ -6565,6 +6643,7 @@ pub const SafetyChecker = struct {
             current.concurrent_receiver = false;
             current.virtual_no_access = &.{};
             current.completed_executions = &.{};
+            current.task_output_execution = null;
         }
         return current;
     }
@@ -6742,6 +6821,7 @@ pub const SafetyChecker = struct {
             .foreign_storage = left.foreign_storage or right.foreign_storage,
             .storage_capability_incomplete = left.storage_capability_incomplete or right.storage_capability_incomplete,
             .storage_capabilities = try capabilities.toOwnedSlice(),
+            .task_output_execution = if (left.task_output_execution == right.task_output_execution) left.task_output_execution else null,
             .execution_receipts = try executions.toOwnedSlice(),
             .referenced_place = if (!left.reference_target_incomplete and !right.reference_target_incomplete and left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
@@ -7559,6 +7639,77 @@ pub const SafetyChecker = struct {
         root: facts.ValidityRootId,
     ) !bool {
         return self.endRoots(source, state, &.{root});
+    }
+
+    fn retainForwardedExecutionOutput(
+        self: *SafetyChecker,
+        moved_input: ?u32,
+        input_type: graph_mod.GlobalTypeId,
+        inputs: facts.ValueFacts,
+        receipt: facts.ValueFacts,
+        state: *FunctionState,
+    ) !bool {
+        const index = moved_input orelse return false;
+        const layout = types.fields(self.graph, input_type) orelse return false;
+        if (index >= layout.len) return false;
+        const ty = self.graph.fields.items[layout.start + index].ty;
+        const value = representedSnapshotProjection(inputs, .{ .field = index }) orelse return false;
+        if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) return false;
+        var identity: ?facts.ExecutionId = null;
+        if (!collectUniqueExecutionReceipt(receipt, &identity)) return false;
+        const id = identity orelse return false;
+        const stored = try self.allocator.create(facts.ValueFacts);
+        stored.* = value;
+        return state.retainExecutionOutput(id, stored);
+    }
+
+    fn executionOutputAccessValue(self: *SafetyChecker, path: facts.InputPath, projections: []const facts.Projection, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        const receipt = try self.loadSummaryInputValue(path, arguments, state, true);
+        var identity = receipt.task_output_execution;
+        if (!collectUniqueExecutionReceipt(receipt, &identity)) return .{};
+        const execution = state.executionState(identity orelse return .{}) orelse return .{};
+        var value = (execution.output.accessEvidence() orelse return .{}).*;
+        for (projections) |projection| {
+            switch (projection) {
+                .field, .static_index, .variant => value = representedSnapshotProjection(value, projection) orelse return .{},
+                .dereference, .dynamic_index => return .{},
+            }
+        }
+        return value;
+    }
+
+    fn takeCertifiedExecutionOutput(self: *SafetyChecker, receipt: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
+        var identity = receipt.task_output_execution;
+        if (!collectUniqueExecutionReceipt(receipt, &identity)) return null;
+        const id = identity orelse return null;
+        const execution = state.executionState(id) orelse return null;
+        if (execution.pending or execution.output != .retained) return null;
+        const value = try self.renewTransferredRoots(execution.output.retained.*, state);
+        _ = state.consumeExecutionOutput(id) orelse unreachable;
+        return value;
+    }
+
+    /// Reissue custody to the extracted value. The caller must authenticate
+    /// the occupied slot and its completion before providing this snapshot.
+    fn renewTransferredRoots(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer roots.deinit();
+        try collectOwnedRoots(value, &roots);
+        for (roots.items) |root| {
+            const index = @intFromEnum(root);
+            if (index >= state.tracker.roots.items.len) return error.InvalidTransferredBacking;
+            const previous = state.tracker.roots.items[index];
+            if (!previous.present or !previous.owned_resource or previous.state != .dead) return error.InvalidTransferredBacking;
+        }
+        var replacements = std.AutoHashMap(facts.ValidityRootId, facts.ValidityRootId).init(self.allocator);
+        defer replacements.deinit();
+        try replacements.ensureTotalCapacity(@intCast(roots.items.len));
+        for (roots.items) |root| {
+            const replacement = try state.tracker.establish(.fresh);
+            state.tracker.roots.items[@intFromEnum(replacement)].owned_resource = true;
+            replacements.putAssumeCapacityNoClobber(root, replacement);
+        }
+        return facts.remapValueRoots(self.allocator, value, &replacements);
     }
 
     fn endRoots(
@@ -10883,6 +11034,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.intrinsic_backing_owner != right.intrinsic_backing_owner) return false;
+    if (left.task_output_execution != right.task_output_execution or left.task_output_claim != right.task_output_claim) return false;
     if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
@@ -12037,7 +12189,7 @@ test "allocation primitive agrees with instantiated symbolic transfer" {
     _ = try summary_state.tracker.establish(.fresh);
     _ = try summary_state.tracker.establish(.fresh);
     const arguments = [_]facts.ValueFacts{
-        .{},                                                                                                                                                      .{},                                               .{},
+        .{},                                                                                                                                          .{},                                               .{},
         .{ .explicit_dependency = true, .dependencies = &.{.{ .root = deallocator_root }}, .concurrent_receiver = true, .virtual_no_access = &.{1} }, .{ .dependencies = &.{.{ .root = anchor_root }} },
     };
     var engine = summary_engine.Engine.init(allocator);
@@ -16055,6 +16207,165 @@ test "an error outcome certifies the exact request captured at entry" {
     try std.testing.expect(state.executionPending(second));
 }
 
+test "task output evidence selects the input certified by its worker summary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .UInt8 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } },
+    });
+    const field: graph_mod.Field = .{
+        .name = .{ .start = 0, .len = 0 },
+        .ty = @enumFromInt(0),
+        .source = .{ .file_index = 0, .offset = 0 },
+    };
+    try graph.fields.appendSlice(allocator, &.{ field, field });
+    var diags = try diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const execution = try state.establishExecution(&.{});
+    const receipt: facts.ValueFacts = .{ .execution_receipts = &.{execution} };
+    const selected: facts.ValueFacts = .{ .known_choice_variant = 1 };
+    const inputs: facts.ValueFacts = .{ .fields = &.{.{ .index = 1, .value = &selected }} };
+    const unknown: facts.SafetySummary = .{ .outputs = &.{.{}} };
+    try std.testing.expect(!try checker.retainForwardedExecutionOutput(unknown.exact_moved_input, @enumFromInt(1), inputs, receipt, &state));
+    var summary = unknown;
+    summary.exact_moved_input = 0;
+    try std.testing.expect(!try checker.retainForwardedExecutionOutput(summary.exact_moved_input, @enumFromInt(1), inputs, receipt, &state));
+    summary.exact_moved_input = 1;
+    try std.testing.expect(try checker.retainForwardedExecutionOutput(summary.exact_moved_input, @enumFromInt(1), inputs, receipt, &state));
+    state.completeExecution(execution);
+    const output = (try checker.takeCertifiedExecutionOutput(receipt, &state)).?;
+    try std.testing.expect(valueFactsEqual(selected, output));
+
+    const forwarded_input: facts.ValueEffect = .{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
+    };
+    const effect: facts.ValueEffect = .{ .fresh_executions = &.{.{
+        .source = 1,
+        .input_type = 1,
+        .inputs = &forwarded_input,
+        .transfers_custody = true,
+        .exact_moved_output_input = 1,
+    }} };
+    const second = try checker.instantiateOutput(effect, &.{inputs}, &state);
+    try std.testing.expectEqual(@as(usize, 1), second.execution_receipts.len);
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(receipt, &state)) == null);
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(second, &state)) == null);
+    state.completeExecution(second.execution_receipts[0]);
+    const second_output = (try checker.takeCertifiedExecutionOutput(second, &state)).?;
+    try std.testing.expect(valueFactsEqual(selected, second_output));
+}
+
+test "deferred task cleanup can inspect access evidence without taking custody" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const execution = try state.establishExecution(&.{});
+    const unrelated = try state.establishExecution(&.{});
+    const descriptor: facts.ValueFacts = .{ .virtual_no_access = &.{2} };
+    const output: facts.ValueFacts = .{ .fields = &.{.{ .index = 1, .value = &descriptor }} };
+    try std.testing.expect(state.retainExecutionOutput(execution, &output));
+    const path: facts.InputPath = .{ .input_index = 0 };
+    const projections: []const facts.Projection = &.{.{ .field = 1 }};
+    const slot: facts.ValueFacts = .{ .task_output_execution = execution };
+    const observed = try checker.executionOutputAccessValue(path, projections, &.{slot}, &state);
+    try std.testing.expect(SafetyChecker.virtualHasEmptyAccess(observed, 2));
+    try std.testing.expect(!SafetyChecker.virtualHasEmptyAccess(observed, 0));
+    try std.testing.expect(state.executionPending(execution));
+    const missing = try checker.executionOutputAccessValue(path, projections, &.{.{ .task_output_execution = unrelated }}, &state);
+    try std.testing.expect(!SafetyChecker.virtualHasEmptyAccess(missing, 2));
+    const conflict: facts.ValueFacts = .{ .task_output_execution = execution, .execution_receipts = &.{unrelated} };
+    const ambiguous = try checker.executionOutputAccessValue(path, projections, &.{conflict}, &state);
+    try std.testing.expect(!SafetyChecker.virtualHasEmptyAccess(ambiguous, 2));
+    state.completeExecution(execution);
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(slot, &state)) != null);
+    const consumed = try checker.executionOutputAccessValue(path, projections, &.{slot}, &state);
+    try std.testing.expect(SafetyChecker.virtualHasEmptyAccess(consumed, 2));
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(slot, &state)) == null);
+}
+
+test "stored task outcomes materialize ownership only on their certified completion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const execution = try state.establishExecution(&.{});
+    const unrelated = try state.establishExecution(&.{});
+    const backing = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(backing)].owned_resource = true;
+    state.tracker.end(backing);
+    const owned: facts.ValueFacts = .{ .owned_roots = &.{backing}, .intrinsic_backing_owner = backing };
+    try std.testing.expect(state.retainExecutionOutput(execution, &owned));
+    const receipt: facts.ValueFacts = .{ .task_output_execution = execution };
+    const output = try checker.instantiateOutput(.{ .task_output_receipt = .{ .input_index = 0 } }, &.{receipt}, &state);
+    try std.testing.expect(output.task_output_claim == execution);
+    try std.testing.expectEqual(@as(usize, 0), output.owned_roots.len);
+    var choice: facts.ValueFacts = .{ .variants = &.{.{ .index = 0, .value = &output }} };
+    try checker.attachChoiceOutcome(&choice, &.{}, 0, SafetyChecker.OutcomeExecutionProof{ .execution = unrelated, .state = &state });
+    try std.testing.expectEqual(@as(usize, 0), choice.variants[0].value.owned_roots.len);
+    try checker.attachChoiceOutcome(&choice, &.{}, 0, SafetyChecker.OutcomeExecutionProof{ .execution = execution, .state = &state });
+    const result = choice.variants[0].value.*;
+    const renewed = result.owned_roots[0];
+    try std.testing.expect(renewed != backing and state.executionPending(execution));
+    try std.testing.expect(!state.tracker.isAlive(renewed));
+    try checker.activate_conditional_resources(&state, result);
+    try std.testing.expect(state.tracker.isAlive(renewed) and !state.tracker.isAlive(backing));
+    try std.testing.expect(!state.executionPending(execution));
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(receipt, &state)) == null);
+}
+
+test "renewed task backing does not revive a sender alias" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(backing)].owned_resource = true;
+    const external = try state.tracker.establish(.fresh);
+    const alias: facts.ValueFacts = .{ .owned_backing = backing, .dependencies = &.{.{ .root = backing }} };
+    const owner: facts.ValueFacts = .{
+        .owned_roots = &.{backing},
+        .intrinsic_backing_owner = backing,
+        .dependencies = &.{.{ .root = external }},
+        .fields = &.{.{ .index = 0, .value = &alias }},
+    };
+    try std.testing.expectError(error.InvalidTransferredBacking, checker.renewTransferredRoots(owner, &state));
+    state.tracker.end(backing);
+    const execution = try state.establishExecution(&.{});
+    const receipt: facts.ValueFacts = .{ .execution_receipts = &.{execution} };
+    try std.testing.expect(state.retainExecutionOutput(execution, &owner));
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(receipt, &state)) == null);
+    const reservation: facts.ValueFacts = .{ .task_output_execution = execution };
+    checker.completeExecutionReceipts(reservation, &state);
+    try std.testing.expect(state.executionPending(execution));
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(reservation, &state)) == null);
+    checker.completeExecutionReceipts(receipt, &state);
+    const returned = (try checker.takeCertifiedExecutionOutput(reservation, &state)).?;
+    try std.testing.expect((try checker.takeCertifiedExecutionOutput(receipt, &state)) == null);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(alias));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(returned.fields[0].value.*));
+    try std.testing.expectEqual(external, returned.dependencies[0].root);
+    try std.testing.expectEqual(returned.owned_roots[0], returned.intrinsic_backing_owner.?);
+    try std.testing.expectEqual(returned.owned_roots[0], returned.fields[0].value.owned_backing.?);
+}
+
 test "accepted task input retires owned backing but preserves external roots" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -16296,6 +16607,7 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     const parent: facts.ValueFacts = .{
         .known_choice_variant = 1,
         .virtual_no_access = &.{1},
+        .task_output_execution = @enumFromInt(1),
         .completed_executions = &.{@enumFromInt(1)},
         .concurrent_receiver = true,
         .fields = &.{.{ .index = 0, .value = &child }},
@@ -16308,6 +16620,7 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     try std.testing.expectEqualSlices(facts.ExecutionId, &.{@enumFromInt(0)}, exact.completed_executions);
     try std.testing.expectEqual(@as(usize, 1), exact.virtual_no_access.len);
     try std.testing.expect(!missing.concurrent_receiver);
+    try std.testing.expect(missing.task_output_execution == null);
     try std.testing.expectEqual(@as(usize, 0), missing.completed_executions.len);
     try std.testing.expectEqual(@as(usize, 0), missing.virtual_no_access.len);
     const nested = try checker.projectValueFacts(parent, &.{ .{ .field = 1 }, .{ .field = 0 } });

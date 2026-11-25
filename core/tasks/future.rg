@@ -11,6 +11,7 @@ implement#(.T: Type) Deinit#(Future#(T)) (
         } #else {
             _close_task(.self = $&self&._task)
             output ::= _withdraw_task_output#(T)(.task = $&self&._task)
+            _discard_task_output#(.T: T, .Receipt: _ExecutionReceipt)(.self = $&output, .receipt = &self&._task._access)
         }
     }
 )
@@ -35,7 +36,7 @@ _owned_task_worker := #(.F: Function) (.invocation: _ExecutionInvocation) -> ():
     -- it preserves the worker ingress facts and consumes the slot once.
     args ::= ~slot&
     value ::= invoke#(F)(.args = ~args)
-    _require_task_output_transfer#(result_of#(F))(.value = &value)
+    _require_task_output_transfer#(.T: result_of#(F), .F = F)(.value = &value)
     _initialize_task_output#(result_of#(F))(.invocation = invocation, .value = ~value)
 }
 
@@ -83,7 +84,7 @@ _retire_task_input := #(.T: Type) (.value: T) -> () {
 
 _require_task_input_transfer := #(.T: Type) (.value: &T) -> () {}
 
-_require_task_output_transfer := #(.T: Type) (.value: &T) -> () {}
+_require_task_output_transfer := #(.T: Type, .F: Function) (.value: &T) -> () {}
 
 -- Submit a moved input and publish a result after checking both transfers.
 async_owned := #(.F: Function) (
@@ -93,8 +94,10 @@ async_owned := #(.F: Function) (
     _require_task_input_transfer#(inputs_of#(F))(.value = &prepared)
     entry ::= _TaskEntry(.function = _owned_task_worker#(F))
     reservation ::= _reserve_task_output(.entry = entry, .ffi = ffi)!
+    access ::= _execution_transfer#(.t: inputs_of#(F), .F = F)(.inputs = prepared)
+    bound_slot ::= _bind_task_output(.slot = reservation._slot, .receipt = &access)
     request ::= _prepare_task_request#(F)(.entry = entry, .output_slot = reservation._slot,
-        .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = _execution_transfer(.inputs = prepared))
+        .input = erase_reference#(inputs_of#(F))(.base = &prepared), .access = ~access)
     submitted ::= Executor#().submit(.self = $&executor, .request = ~request)
     accepted ::= _task_output_accepted(.slot = reservation._slot, .entry = entry, .ffi = ffi) != 0
     if accepted { _retire_task_input#(inputs_of#(F))(.value = ~prepared) }
@@ -102,6 +105,7 @@ async_owned := #(.F: Function) (
         ..error _ {
             if accepted {
                 output ::= _adopt_task_output#(result_of#(F))(.reservation = $&reservation, .entry = entry)
+                _discard_task_output#(.T: result_of#(F), .Receipt: UIntNative)(.self = $&output, .receipt = &bound_slot)
             }
             result = ..error(.reason = ..task_start_failed)
         }
@@ -110,6 +114,7 @@ async_owned := #(.F: Function) (
             if task._entry != entry or task._output_slot != reservation._slot {
                 deinit(.self = $&task)
                 output ::= _adopt_task_output#(result_of#(F))(.reservation = $&reservation, .entry = entry)
+                _discard_task_output#(.T: result_of#(F), .Receipt: UIntNative)(.self = $&output, .receipt = &bound_slot)
                 result = ..error(.reason = ..executor_mismatch)
                 return
             }
@@ -155,7 +160,8 @@ await := #(.T: Type) (.self: $&Future#(T)) -> (
         self&._task._result_taken = true
         output ::= _withdraw_task_output#(T)(.task = $&self&._task)
         value ::= _take_task_output#(T)(.self = $&output)
-        result = ..ok ~value
+        recovered ::= _recover_task_output_evidence#(.T: T, .Receipt: _ExecutionReceipt)(.value = ~value, .receipt = &self&._task._access)
+        result = ..ok ~recovered
     }
 }
 

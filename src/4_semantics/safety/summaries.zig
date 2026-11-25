@@ -160,7 +160,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.exact_moved_input != b.exact_moved_input) return false;
     if (a.unknown_access != b.unknown_access or a.input_accesses.len != b.input_accesses.len or a.global_accesses.len != b.global_accesses.len) return false;
     for (a.input_accesses, b.input_accesses) |left, right|
-        if (left.mode != right.mode or left.backing != right.backing or left.virtual_method != right.virtual_method or !inputPathEql(left.target, right.target)) return false;
+        if (left.mode != right.mode or left.backing != right.backing or !left.sameVirtualSelection(right)) return false;
     for (a.global_accesses, b.global_accesses) |left, right|
         if (left.binding != right.binding or left.mode != right.mode) return false;
     if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
@@ -210,10 +210,21 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     return true;
 }
 
+fn placeProjectionEql(left: []const facts.Projection, right: []const facts.Projection) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| if (!a.eql(b)) return false;
+    return true;
+}
+
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.input_backing_observation) |path| {
         if (b.input_backing_observation == null or !inputPathEql(path, b.input_backing_observation.?)) return false;
     } else if (b.input_backing_observation != null) return false;
+    if ((a.staged_output_input == null) != (b.staged_output_input == null)) return false;
+    if (a.staged_output_input) |path| if (!path.eql(b.staged_output_input.?)) return false;
+    if (!placeProjectionEql(a.task_output_projection, b.task_output_projection)) return false;
+    if ((a.task_output_receipt == null) != (b.task_output_receipt == null)) return false;
+    if (a.task_output_receipt) |left| if (!left.eql(b.task_output_receipt.?)) return false;
     if (a.static_reference != b.static_reference or a.observes_fresh_backing != b.observes_fresh_backing or a.owns_fresh_backing != b.owns_fresh_backing) return false;
     if (a.reference_relation) |path| {
         if (b.reference_relation == null or !path.eql(b.reference_relation.?)) return false;
@@ -284,7 +295,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_owned_roots, b.fresh_owned_roots)) return false;
     if (a.input_execution_receipts.len != b.input_execution_receipts.len or a.fresh_executions.len != b.fresh_executions.len) return false;
     for (a.input_execution_receipts, b.input_execution_receipts) |left, right| if (!inputPathEql(left, right)) return false;
-    for (a.fresh_executions, b.fresh_executions) |left, right| if (left.source != right.source or left.input_type != right.input_type or left.transfers_custody != right.transfers_custody or !valueEffectEql(left.inputs.*, right.inputs.*)) return false;
+    for (a.fresh_executions, b.fresh_executions) |left, right| if (left.source != right.source or left.input_type != right.input_type or left.transfers_custody != right.transfers_custody or left.exact_moved_output_input != right.exact_moved_output_input or !valueEffectEql(left.inputs.*, right.inputs.*)) return false;
     if (a.input_storage_capabilities.len != b.input_storage_capabilities.len) return false;
     for (a.input_storage_capabilities, b.input_storage_capabilities) |left, right| if (!inputPathEql(left, right)) return false;
     if (!std.mem.eql(facts.FreshEffectSource, a.fresh_storage_capabilities, b.fresh_storage_capabilities)) return false;

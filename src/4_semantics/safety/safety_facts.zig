@@ -128,6 +128,19 @@ pub const InputAccess = struct {
     /// An unbounded dispatch whose descriptor still has its entry value.
     /// This requires proof of the selected operation's access effects.
     virtual_method: ?u32 = null,
+    /// If supplied, select the descriptor from the retained execution
+    /// result identified by target instead of from the input itself.
+    /// This route can prove empty effects without taking result custody.
+    execution_output_path: ?[]const place.Projection = null,
+
+    pub fn sameVirtualSelection(self: InputAccess, other: InputAccess) bool {
+        if (self.virtual_method != other.virtual_method or !self.target.eql(other.target)) return false;
+        const left = self.execution_output_path orelse return other.execution_output_path == null;
+        const right = other.execution_output_path orelse return false;
+        if (left.len != right.len) return false;
+        for (left, right) |a, b| if (!a.eql(b)) return false;
+        return true;
+    }
 };
 pub const GlobalAccess = struct {
     /// Indexed module binding identity in the retained graph. Summary caches
@@ -174,6 +187,7 @@ pub const FreshExecution = struct {
     inputs: *const ValueEffect,
     input_type: u32,
     transfers_custody: bool = false,
+    exact_moved_output_input: ?u32 = null,
 };
 
 /// A universal relation to an evaluated input observation. This is not a
@@ -245,6 +259,13 @@ test "erased access guarantees meet by operation index" {
 }
 
 pub const ValueEffect = struct {
+    task_output_receipt: ?InputPath = null,
+    /// A projected recipe can prove effects of structural cleanup. Only
+    /// extraction of the whole result can reissue its ownership.
+    task_output_projection: []const place.Projection = &.{},
+    /// Exact entry value certified as this staged execution output. This
+    /// selects access evidence only and conveys no ownership or lifetime.
+    staged_output_input: ?InputPath = null,
     /// An authenticated observation of the sole fresh dependency.
     observes_fresh_backing: bool = false,
     /// Copies address bits from an exact input snapshot.

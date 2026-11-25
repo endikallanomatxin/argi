@@ -43,6 +43,21 @@ pub const ExecutionState = struct {
     loans: []const ExecutionLoan,
     origin: ?primitives.SourceRef = null,
     pending: bool = true,
+    output: Output = .unavailable,
+
+    pub const Output = union(enum) {
+        unavailable,
+        retained: *const ValueFacts,
+        consumed: ?*const ValueFacts,
+
+        pub fn accessEvidence(self: Output) ?*const ValueFacts {
+            return switch (self) {
+                .unavailable => null,
+                .retained => |value| value,
+                .consumed => |value| value,
+            };
+        }
+    };
 };
 pub const InputAccess = base.InputAccess;
 pub const GlobalAccess = base.GlobalAccess;
@@ -191,6 +206,9 @@ pub const ValueFacts = struct {
     /// places or owned roots. Copies retain them without granting validity.
     symbolic_pointees: []const SymbolicPointeeId = &.{},
     execution_receipts: []const ExecutionId = &.{},
+    task_output_execution: ?ExecutionId = null,
+    /// An output recipe awaiting its matching completion proof.
+    task_output_claim: ?ExecutionId = null,
     opaque_provenance: []const OpaqueProvenance = &.{},
     /// The erased receiver retains concurrent reference authority.
     concurrent_receiver: bool = false,
@@ -583,34 +601,54 @@ pub fn replaceValueRoots(
     sources: []const ValidityRootId,
     replacement: ValidityRootId,
 ) !ValueFacts {
-    return (try replaceValueRootsIfChanged(allocator, value, sources, replacement)) orelse value;
+    return (try replaceValueRootsIfChanged(allocator, value, .{ .sources = sources, .destinations = .{ .shared = replacement } })) orelse value;
 }
+
+/// Rebase structural ownership facts simultaneously so a replacement is
+/// never treated as another source. External roots keep their identities.
+pub fn remapValueRoots(allocator: std.mem.Allocator, value: ValueFacts, mapping: *const std.AutoHashMap(ValidityRootId, ValidityRootId)) !ValueFacts {
+    return (try replaceValueRootsIfChanged(allocator, value, .{ .sources = &.{}, .destinations = .{ .map = mapping } })) orelse value;
+}
+
+const RootReplacement = struct {
+    sources: []const ValidityRootId,
+    destinations: union(enum) {
+        shared: ValidityRootId,
+        map: *const std.AutoHashMap(ValidityRootId, ValidityRootId),
+    },
+
+    fn apply(self: RootReplacement, root: ValidityRootId) ValidityRootId {
+        return switch (self.destinations) {
+            .shared => |replacement| if (std.mem.indexOfScalar(ValidityRootId, self.sources, root) != null) replacement else root,
+            .map => |mapping| mapping.get(root) orelse root,
+        };
+    }
+};
 
 fn replaceValueRootsIfChanged(
     allocator: std.mem.Allocator,
     value: ValueFacts,
-    sources: []const ValidityRootId,
-    replacement: ValidityRootId,
+    replacement: RootReplacement,
 ) !?ValueFacts {
     var result = value;
     var changed = false;
     if (value.owned_backing) |root| {
-        if (root != replacement and std.mem.indexOfScalar(ValidityRootId, sources, root) != null) {
-            result.owned_backing = replacement;
+        if (root != replacement.apply(root)) {
+            result.owned_backing = replacement.apply(root);
             changed = true;
         }
     }
     if (value.intrinsic_backing_owner) |root| {
-        if (root != replacement and std.mem.indexOfScalar(ValidityRootId, sources, root) != null) {
-            result.intrinsic_backing_owner = replacement;
+        if (root != replacement.apply(root)) {
+            result.intrinsic_backing_owner = replacement.apply(root);
             changed = true;
         }
     }
     for (value.dependencies) |dependency| {
-        if (dependency.root == replacement or std.mem.indexOfScalar(ValidityRootId, sources, dependency.root) == null) continue;
+        if (dependency.root == replacement.apply(dependency.root)) continue;
         var dependencies: std.ArrayList(ValidityDependency) = .empty;
         for (value.dependencies) |entry| {
-            const root = if (std.mem.indexOfScalar(ValidityRootId, sources, entry.root) != null) replacement else entry.root;
+            const root = replacement.apply(entry.root);
             for (dependencies.items) |existing| {
                 if (existing.root == root) break;
             } else try dependencies.append(allocator, .{ .root = root });
@@ -620,10 +658,10 @@ fn replaceValueRootsIfChanged(
         break;
     }
     for (value.owned_roots) |owned| {
-        if (owned == replacement or std.mem.indexOfScalar(ValidityRootId, sources, owned) == null) continue;
+        if (owned == replacement.apply(owned)) continue;
         var roots: std.ArrayList(ValidityRootId) = .empty;
         for (value.owned_roots) |entry| {
-            const root = if (std.mem.indexOfScalar(ValidityRootId, sources, entry) != null) replacement else entry;
+            const root = replacement.apply(entry);
             if (std.mem.indexOfScalar(ValidityRootId, roots.items, root) == null) try roots.append(allocator, root);
         }
         result.owned_roots = try roots.toOwnedSlice(allocator);
@@ -634,7 +672,7 @@ fn replaceValueRootsIfChanged(
         const entries = @field(value, member);
         var updated: ?[]std.meta.Elem(@TypeOf(entries)) = null;
         for (entries, 0..) |entry, index| {
-            const child = try replaceValueRootsIfChanged(allocator, entry.value.*, sources, replacement) orelse continue;
+            const child = try replaceValueRootsIfChanged(allocator, entry.value.*, replacement) orelse continue;
             if (updated == null) updated = try allocator.dupe(std.meta.Elem(@TypeOf(entries)), entries);
             const stored = try allocator.create(ValueFacts);
             stored.* = child;
@@ -669,6 +707,35 @@ test "rebasing ownership preserves unrelated fact fragments" {
     try std.testing.expectEqual(old, internal.dependencies[0].root);
     const unchanged = try replaceValueRoots(arena.allocator(), result, &.{old}, renewed);
     try std.testing.expectEqual(result.fields.ptr, unchanged.fields.ptr);
+}
+
+test "remapping preserves separate owned backing identities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const first: ValidityRootId = @enumFromInt(0);
+    const second: ValidityRootId = @enumFromInt(1);
+    const external: ValidityRootId = @enumFromInt(2);
+    const renewed_first: ValidityRootId = @enumFromInt(3);
+    const renewed_second: ValidityRootId = @enumFromInt(4);
+    var mapping = std.AutoHashMap(ValidityRootId, ValidityRootId).init(allocator);
+    defer mapping.deinit();
+    try mapping.put(first, renewed_first);
+    try mapping.put(second, renewed_second);
+    const first_observation: ValueFacts = .{ .owned_backing = first, .dependencies = &.{.{ .root = first }} };
+    const second_observation: ValueFacts = .{ .owned_backing = second, .dependencies = &.{.{ .root = second }} };
+    const owner: ValueFacts = .{
+        .owned_roots = &.{ first, second },
+        .dependencies = &.{.{ .root = external }},
+        .fields = &.{ .{ .index = 0, .value = &first_observation }, .{ .index = 1, .value = &second_observation } },
+    };
+    const remapped = try remapValueRoots(allocator, owner, &mapping);
+    try std.testing.expectEqualSlices(ValidityRootId, &.{ renewed_first, renewed_second }, remapped.owned_roots);
+    try std.testing.expectEqual(external, remapped.dependencies[0].root);
+    try std.testing.expectEqual(renewed_first, remapped.fields[0].value.owned_backing.?);
+    try std.testing.expectEqual(renewed_second, remapped.fields[1].value.owned_backing.?);
+    try std.testing.expectEqual(first, first_observation.owned_backing.?);
+    try std.testing.expectEqual(second, second_observation.owned_backing.?);
 }
 
 test "Safety root materialization does not publish partial gaps on allocation failure" {

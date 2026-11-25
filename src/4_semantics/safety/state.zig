@@ -223,6 +223,15 @@ pub const State = struct {
                 .eq => {
                     var shared = left[i];
                     shared.pending = shared.pending or right[j].pending;
+                    const other = right[j].output;
+                    if (shared.output != .unavailable or other != .unavailable) {
+                        const evidence = shared.output.accessEvidence();
+                        const common = if (evidence == other.accessEvidence()) evidence else null;
+                        shared.output = if (shared.output == .retained and other == .retained and common != null)
+                            .{ .retained = common.? }
+                        else
+                            .{ .consumed = common };
+                    }
                     try self.executions.append(shared);
                     i += 1;
                     j += 1;
@@ -233,8 +242,31 @@ pub const State = struct {
         try self.executions.appendSlice(right[j..]);
     }
 
-    /// Completed receipts keep their identities but do not constrain loop convergence.
+    /// Completed tasks with retained outputs still carry live custody.
+    pub fn sameExecutionOutputs(self: *const State, other: *const State) bool {
+        for (self.executions.items) |execution| {
+            if (execution.output == .unavailable) continue;
+            const opposite = other.executionState(execution.id) orelse {
+                if (execution.output == .retained) return false;
+                continue;
+            };
+            if (execution.output.accessEvidence() != opposite.output.accessEvidence()) return false;
+            if ((execution.output == .retained) != (opposite.output == .retained)) return false;
+        }
+        for (other.executions.items) |execution| {
+            if (execution.output == .unavailable) continue;
+            const opposite = self.executionState(execution.id) orelse {
+                if (execution.output == .retained) return false;
+                continue;
+            };
+            if (opposite.output == .unavailable and execution.output.accessEvidence() != null) return false;
+        }
+        return true;
+    }
+
+    /// Compare pending loans and any change in a common receipt’s output evidence.
     pub fn samePendingExecutions(self: *const State, other: *const State) bool {
+        if (!self.sameExecutionOutputs(other)) return false;
         var remaining = other.executions.items;
         for (self.executions.items) |execution| {
             if (!execution.pending) continue;
@@ -266,6 +298,30 @@ pub const State = struct {
     pub fn completeExecution(self: *State, id: facts.ExecutionId) void {
         const index = self.executionIndex(id) orelse return;
         self.executions.items[index].pending = false;
+    }
+
+    pub fn retainExecutionOutput(self: *State, id: facts.ExecutionId, value: *const facts.ValueFacts) bool {
+        const index = self.executionIndex(id) orelse return false;
+        const execution = &self.executions.items[index];
+        if (!execution.pending or execution.output != .unavailable) return false;
+        execution.output = .{ .retained = value };
+        return true;
+    }
+
+    pub fn consumeExecutionOutput(self: *State, id: facts.ExecutionId) ?*const facts.ValueFacts {
+        if (self.executionPending(id)) return null;
+        return self.reserveExecutionOutput(id);
+    }
+
+    /// Reserve a single transfer whose completion is certified only on its
+    /// successful result. Failure can conservatively lose custody precision.
+    pub fn reserveExecutionOutput(self: *State, id: facts.ExecutionId) ?*const facts.ValueFacts {
+        const index = self.executionIndex(id) orelse return null;
+        const execution = &self.executions.items[index];
+        if (execution.output != .retained) return null;
+        const value = execution.output.retained;
+        execution.output = .{ .consumed = value };
+        return value;
     }
 
     /// Reserve an acquisition origin without creating establishment permission.
@@ -1753,4 +1809,23 @@ test "Safety incomplete symbolic targets cannot renew or initialize a candidate"
     try std.testing.expect(try state.renewSymbolicAccess(partial) == null);
     try std.testing.expect(!state.tracker.isAlive(generation));
     try std.testing.expect(try state.renewSymbolicAccess(pointer) != null);
+}
+
+test "joining an already claimed execution output does not restore custody" {
+    const allocator = std.testing.allocator;
+    var left = State.init(allocator);
+    defer left.deinit();
+    const id = try left.establishExecution(&.{});
+    try std.testing.expect(left.retainExecutionOutput(id, &facts.empty_value_facts));
+    left.completeExecution(id);
+    var right = try left.clone(allocator);
+    defer right.deinit();
+    try std.testing.expect(right.consumeExecutionOutput(id) != null);
+    try std.testing.expect(!left.samePendingExecutions(&right));
+    for ([_]bool{ false, true }) |reverse| {
+        var joined = State.init(allocator);
+        defer joined.deinit();
+        try joined.joinExecutions(if (reverse) right.executions.items else left.executions.items, if (reverse) left.executions.items else right.executions.items);
+        try std.testing.expect(joined.consumeExecutionOutput(id) == null);
+    }
 }

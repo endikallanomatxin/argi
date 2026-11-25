@@ -14,7 +14,7 @@ implement Deinit#(_ExecutionReceipt) (
     }
 )
 
-_execution_transfer := #(.t: Type) (.inputs: t) -> (.receipt: _ExecutionReceipt) {
+_execution_transfer := #(.t: Type, .F: Function) (.inputs: t) -> (.receipt: _ExecutionReceipt) {
     receipt = (._marker = 1)
 }
 

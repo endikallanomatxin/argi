@@ -3,7 +3,8 @@
 _TaskOutputReservation := (._slot: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
 -- After request completion and native release, the typed owner can claim
--- an occupied slot exactly once.
+-- an occupied slot exactly once. Each path must take or discard the result
+-- before releasing the slot.
 _OwnedTaskOutput := #(.T: Type) (._slot: UIntNative, ._entry: _TaskEntry, ._ffi: $&ForeignFunctionInterface)
 
 _new_task_output(.entry: _TaskEntry) -> (.slot: UIntNative): CFunction(.symbol = "_argi_task_output_create") where { no_access() }
@@ -40,18 +41,22 @@ _adopt_task_output := #(.T: Type) (.reservation: $&_TaskOutputReservation, .entr
 implement#(.T: Type) Deinit#(_OwnedTaskOutput#(T)) (
     .deinit = (.self: $&_OwnedTaskOutput#(T)) -> () {
         if self&._slot == 0 { return }
-        assume ffi := self&._ffi
-        #if is_plain_data(.type = T) {
-            _ = _claim_task_output(.slot = self&._slot, .entry = self&._entry)
-        } #else {
-            address ::= _claim_task_output(.slot = self&._slot, .entry = self&._entry)
-            if address != 0 {
-                discarded ::= _extract_task_output#(T)(.self = self, .address = address)
-            }
-        }
-        if _destroy_task_output(.slot = self&._slot) != 0 { abort }
+        if _destroy_task_output(.slot = self&._slot, .ffi = self&._ffi) != 0 { abort }
     }
 )
+
+-- Discard an unreturned result by transferring cleanup to a typed owner
+-- before the native slot is released.
+_discard_task_output := #(.T: Type, .Receipt: Type) (.self: $&_OwnedTaskOutput#(T), .receipt: &Receipt) -> () {
+    if self&._slot == 0 { return }
+    address ::= _claim_task_output(.slot = self&._slot, .entry = self&._entry, .ffi = self&._ffi)
+    #if is_plain_data(.type = T) { return }
+    if address == 0 { return }
+    discarded ::= _recover_task_output_evidence#(.T: T, .Receipt: Receipt)(
+        .value = _extract_task_output#(T)(.self = self, .address = address),
+        .receipt = receipt
+    )
+}
 
 -- A closed receipt transfers its output slot to exactly one typed owner.
 _withdraw_task_output := #(.T: Type) (.task: $&TaskReceipt) -> (.output: _OwnedTaskOutput#(T)) {
@@ -72,4 +77,16 @@ _extract_task_output := #(.T: Type) (.self: $&_OwnedTaskOutput#(T), .address: UI
     anchor ::= erase_reference#(_OwnedTaskOutput#(T))(.base = self)
     slot ::= trusted_establish_inherited_reference#(T)(.raw = raw_pointer#(T)(.address = address), .root = anchor)
     result = trusted_opaque_move_out#(.t: T, .storage_type: _OwnedTaskOutput#(T))(.storage = self, .slot = slot)
+}
+
+-- Called only after a successful one-shot extraction from the same receipt.
+_recover_task_output_evidence := #(.T: Type, .Receipt: Type) (.value: T, .receipt: &Receipt) -> (.result: T) {
+    result = ~value
+}
+
+
+-- The native output slot remains identifiable if submission reports an error
+-- and no TaskReceipt is returned.
+_bind_task_output := (.slot: UIntNative, .receipt: &_ExecutionReceipt) -> (.result: UIntNative) {
+    result = slot
 }
