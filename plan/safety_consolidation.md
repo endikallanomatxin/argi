@@ -546,3 +546,22 @@ the two controls, an access requirement must record which completions
 dominate that access on every path. The corresponding receipt identities
 must come from evaluated arguments. A completion on one alternative, or
 after an access, cannot discharge its requirement.
+
+### Opaque obligations at loop joins
+
+The loop audit established that a pending loan cannot follow an ownership
+generation substitution through the value alone. Opaque storage presents
+the same problem when it retains the original generation independently.
+The conservative guard at `5054f085f` also rejects three serial fixtures
+that compile at its parent `912e9511b`: word count, CSV decoding and URI
+parsing. In all three the rejected access depends on a growable buffer
+after a loop. A control on later code restricting the owner-root check to
+domains with nonempty hidden dependencies still rejects word count.
+
+The repair must preserve a retirement obligation for each reachable
+alternative. Retention in a domain owned by the same current value may
+follow the value only when each incoming state establishes that
+relationship. An external or historical domain must retain its original
+generation. The fixture contrast prevents treating the opaque store as
+always external or assuming that merged owner roots prove that it is
+internal.
