@@ -10267,9 +10267,12 @@ pub const SafetyChecker = struct {
 
             var safe = true;
             for (alternatives[0..alternative_count]) |root| {
-                // Execution receipts keep the original generation. Rebinding
-                // the owner would let retirement miss that outstanding loan.
-                if (pendingExecutionBorrowsRoot(joined, root)) {
+                // Loans and opaque storage keep the original generation.
+                // Rebinding the owner would hide their retirement obligations.
+                const retained_opaquely = for (joined.opaque_storages.items) |storage| {
+                    if (containsRoot(storage.hidden_dependencies, root) or containsRoot(storage.owner_roots, root)) break true;
+                } else false;
+                if (retained_opaquely or pendingExecutionBorrowsRoot(joined, root)) {
                     safe = false;
                     break;
                 }
@@ -11822,6 +11825,13 @@ test "loop root widening is stable and preserves historical aliases" {
     try checker.widenLoopOwnedRoots(&context, &borrowed, &entry, &iteration);
     try std.testing.expectEqual(@as(usize, 0), context.roots.items.len);
     try std.testing.expect(containsRoot(borrowed.getPlace(owner).?.value.owned_roots, replacement));
+
+    var retained = try joined.clone(allocator);
+    defer retained.deinit();
+    try retained.mergeOpaqueStorage(.{ .place = alias }, &.{replacement}, &.{});
+    try checker.widenLoopOwnedRoots(&context, &retained, &entry, &iteration);
+    try std.testing.expectEqual(@as(usize, 0), context.roots.items.len);
+    try std.testing.expect(containsRoot(retained.getPlace(owner).?.value.owned_roots, replacement));
 
     try checker.widenLoopOwnedRoots(&context, &joined, &entry, &iteration);
     try std.testing.expectEqual(@as(usize, 1), context.roots.items.len);
