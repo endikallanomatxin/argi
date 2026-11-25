@@ -565,3 +565,14 @@ relationship. An external or historical domain must retain its original
 generation. The fixture contrast prevents treating the opaque store as
 always external or assuming that merged owner roots prove that it is
 internal.
+
+Tracing word count at `5054f085f` identifies a domain under the buffer
+binding whose hidden dependency set is empty and whose owner identities
+contain both incoming backing roots. Those identities alone trigger the
+first rejection of widening. At the current revision, allowing empty
+memberships to pass the widening guard and remapping the memberships
+under the owner still leaves the ended-root diagnostic. The change that
+first exposes the regression and the conditions needed to repair it on
+the current checker are therefore distinct. Preserve the controls for
+historical aliases and pending receipts when investigating the remaining
+canonical-root reuse check.
