@@ -10,6 +10,12 @@ edit := (.text: String, .byte: UInt8) -> (.result: String) {
     result = ~owned
 }
 
+reset := (.text: String) -> (.result: String) {
+    owned :: String = ~text
+    clear(.self = $&owned)
+    result = ~owned
+}
+
 Measure#(.R: Type): Contract = (
     .measure: (.receiver: R) -> (.length: UIntNative) where { reads(receiver) isolated() }
 )
@@ -56,6 +62,11 @@ main := (.system: System) -> () {
                 twice_returned ::= unwrap_or_abort(await($&again))
                 fresh_view ::= view(.self = &twice_returned)
                 if unwrap_or_abort(bytes_get(.view = &fresh_view, .index = 2)) != 66 { abort }
+                resetting ::= unwrap_or_abort(async_owned#(reset)(.args = (.text = ~twice_returned), .executor = executor, .ffi = system.ffi))
+                cleared ::= unwrap_or_abort(await($&resetting))
+                if byte_length(.self = &cleared) != 0 { abort }
+                _ = unwrap_or_abort(append_ascii_assume_capacity(.self = $&cleared, .byte = 68))
+                if unwrap_or_abort(bytes_get(.view = &cleared, .index = 0)) != 68 { abort }
             }
             ..error _ { abort }
         }
