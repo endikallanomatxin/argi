@@ -5674,11 +5674,11 @@ pub const SafetyChecker = struct {
             const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
             break :blk if (self.graph.node(argument).ty) |ty| !isPointer(self.graph, ty) else false;
         } else false;
-        var target = (if (by_value) null else arguments[index].referenced_place) orelse blk: {
-            // An evaluated symbolic reference names unknown referent storage.
-            // Its source syntax cannot recover a concrete Place and may have
-            // already consumed inputs. Apply its symbolic post-state instead.
-            if (!by_value and arguments[index].symbolic_pointees.len != 0) return null;
+        const evaluated = arguments[index];
+        var target = (if (by_value) null else uniqueConcreteTarget(evaluated)) orelse blk: {
+            // Evaluated alternatives cannot be reduced to one destination
+            // by replaying the expression that selected them.
+            if (!by_value and (evaluated.reference_target_incomplete or hasReferenceTarget(evaluated))) return null;
             if (index < argument_ids.len) {
                 const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
                 const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
@@ -9440,10 +9440,15 @@ pub const SafetyChecker = struct {
         return self.checkedDomainStorage(try self.domainFacts(value, index, state), state);
     }
 
-    fn exactObservedPlace(value: facts.ValueFacts) ?facts.Place {
+    fn uniqueConcreteTarget(value: facts.ValueFacts) ?facts.Place {
         if (value.reference_target_incomplete or value.symbolic_pointees.len != 0) return null;
         const place = value.referenced_place orelse return null;
         for (value.mutation_places) |candidate| if (!candidate.eql(place)) return null;
+        return place;
+    }
+
+    fn exactObservedPlace(value: facts.ValueFacts) ?facts.Place {
+        const place = uniqueConcreteTarget(value) orelse return null;
         for (place.projections) |projection| {
             if (projection == .dynamic_index) return null;
         }
@@ -17125,4 +17130,9 @@ test "summary dereference requires an exact stored target" {
     try std.testing.expect((try checker.resolveSummaryInputPath(path, &.{}, arguments, &state)).?.eql(target));
     try state.setPlace(slot, .initialized, .{ .referenced_place = target, .mutation_places = &.{slot} });
     try std.testing.expect((try checker.resolveSummaryInputPath(path, &.{}, arguments, &state)) == null);
+    const ambiguous_base: []const facts.ValueFacts = &.{.{
+        .referenced_place = slot,
+        .mutation_places = &.{target},
+    }};
+    try std.testing.expectEqual(null, try checker.resolveSummaryInputPath(.{ .input_index = 0 }, &.{}, ambiguous_base, &state));
 }
