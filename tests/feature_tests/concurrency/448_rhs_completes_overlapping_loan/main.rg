@@ -10,4 +10,8 @@ main := (.system: System) -> () {
     task ::= unwrap_or_abort(async#(write)(.args = (.target = $&value)))
     value = finish($&task)
     if value != 7 { abort }
+    alias ::= $&value
+    second ::= unwrap_or_abort(async#(write)(.args = (.target = $&value)))
+    alias& = finish($&second)
+    if value != 7 { abort }
 }

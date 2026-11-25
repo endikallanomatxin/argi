@@ -1310,7 +1310,6 @@ pub const SafetyChecker = struct {
                 .pointer_assignment => |assignment| {
                     const operand = try self.evaluateWritePointer(function, assignment.pointer, state);
                     var pointer = operand.value;
-                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     const was_deinitialized = if (pointer.referenced_place) |target|
                         state.initializednessAtPlace(target) == .deinitialized
                     else
