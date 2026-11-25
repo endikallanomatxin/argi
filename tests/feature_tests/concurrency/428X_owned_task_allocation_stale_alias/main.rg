@@ -10,9 +10,8 @@ main := (.system: System) -> () {
     )
     task ::= unwrap_or_abort(async_owned#(return_owner)(.args = (.value = ~allocation), .executor = executor, .ffi = system.ffi))
     match await($&task) {
-        ..ok ~returned {}
+        ..ok ~returned { pointer& = 7 }
         ..error _ { abort }
     }
     recover_ordinary(.owner = $&allocator)
-    pointer& = 7
 }

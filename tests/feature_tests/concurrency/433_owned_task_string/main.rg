@@ -21,6 +21,9 @@ main := (.system: System) -> () {
                 owned :: String = ~returned
                 _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 2, .byte = 66))
                 if unwrap_or_abort(bytes_get(.view = &owned, .index = 2)) != 66 { abort }
+                again ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = ~owned), .executor = executor, .ffi = system.ffi))
+                twice_returned ::= unwrap_or_abort(await($&again))
+                if unwrap_or_abort(bytes_get(.view = &twice_returned, .index = 2)) != 66 { abort }
             }
             ..error _ { abort }
         }
