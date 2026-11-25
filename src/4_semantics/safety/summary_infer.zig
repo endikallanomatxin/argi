@@ -2432,6 +2432,26 @@ pub const Infer = struct {
                 const index = self.variantIndex(ty, access.variant) orelse break :blk .{};
                 break :blk try self.projectValueEffect(try self.capability_value(function, access.value, flow), .{ .variant = index });
             },
+            .choice_literal => |literal| try self.choiceValueEffect(
+                self.variantIndex(literal.choice_type, literal.variant) orelse return .{},
+                if (literal.payload) |payload| try self.capability_value(function, payload, flow) else .{},
+            ),
+            .function_call => |call| blk: {
+                var result = try self.inferExpression(function, node);
+                if (call.callee_value != null) break :blk result;
+                const callee = self.graph.function(call.callee);
+                if (callee.safety_primitive == .none) break :blk result;
+                const relation = self.primitiveReferenceRelation(callee) orelse break :blk result;
+                const arguments = self.structArguments(call.input) orelse break :blk result;
+                if (relation.source.input_index >= arguments.len) break :blk result;
+                const argument = arguments[relation.source.input_index].value;
+                // Capability queries may describe contents for a local
+                // pointer alias. That is not the pointer passed to the view.
+                if ((try self.capability_address_targets(argument, flow)).len != 0) break :blk result;
+                const input = try self.capability_value(function, argument, flow);
+                if (input.reference_relation) |source| result.reference_relation = source.then(relation.grade);
+                break :blk result;
+            },
             .explicit_cast => |cast| self.capability_value(function, cast.value, flow),
             else => self.inferExpression(function, node),
         };
