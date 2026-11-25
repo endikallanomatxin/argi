@@ -10325,20 +10325,7 @@ pub const SafetyChecker = struct {
             const canonical = existing.?;
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
-            var retained = false;
-            for (joined.places.items) |place| if (retainsLoopObservation(place.value, canonical)) {
-                retained = true;
-                break;
-            };
-            for (joined.reference_writes.items) |stored| if (retainsLoopObservation(stored.value, canonical)) {
-                retained = true;
-                break;
-            };
-            for (joined.symbolic_values.items) |stored| if (retainsLoopObservation(stored.value, canonical)) {
-                retained = true;
-                break;
-            };
-            if (retained or rootIsStructurallyReferenced(joined, canonical)) continue;
+            if (rootRetainedAcrossLoop(joined, canonical)) continue;
             try joined.tracker.materialize(canonical);
             joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
             for (joined.places.items) |*place| place.value = try facts.replaceValueRoots(self.allocator, place.value, &.{current}, canonical);
@@ -10361,7 +10348,7 @@ pub const SafetyChecker = struct {
                 referenced = true;
                 break;
             };
-            if (!referenced) referenced = rootIsStructurallyReferenced(state, root);
+            if (!referenced) referenced = rootRetainedAcrossLoop(state, root);
             if (referenced) return;
             var lexical_index: usize = 0;
             while (lexical_index < state.lexical_storage_generations.items.len) {
@@ -10408,7 +10395,7 @@ pub const SafetyChecker = struct {
                 // A canonical identity can be recycled only after earlier
                 // observations and external obligations stop referring to it.
                 if (!state.tracker.isAlive(entry.root) and
-                    (rootIsStructurallyReferenced(state, entry.root) or pendingExecutionBorrowsRoot(state, entry.root)))
+                    rootRetainedAcrossLoop(state, entry.root))
                     return null;
                 state.tracker.roots.items[index].state = .alive;
                 state.tracker.roots.items[index].owned_resource = true;
@@ -10995,15 +10982,16 @@ fn retainsLoopObservation(value: facts.ValueFacts, root: facts.ValidityRootId) b
     return false;
 }
 
-fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+    if (SafetyChecker.pendingExecutionBorrowsRoot(state, root)) return true;
     for (state.symbolic_pointees.items) |pointee|
         if (pointee.backing == root or pointee.generation == root) return true;
     for (state.places.items) |stored|
-        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+        if (retainsLoopObservation(stored.value, root)) return true;
     for (state.symbolic_values.items) |stored|
-        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+        if (retainsLoopObservation(stored.value, root)) return true;
     for (state.reference_writes.items) |stored|
-        if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
+        if (retainsLoopObservation(stored.value, root)) return true;
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
@@ -11871,6 +11859,26 @@ test "loop root widening is stable and preserves historical aliases" {
     try checker.widenLoopOwnedRoots(&context, &historical, &entry, &second_iteration);
     try std.testing.expect(!historical.tracker.dependenciesAreAlive(historical.getPlace(alias).?.value));
     try std.testing.expect(containsRoot(historical.getPlace(owner).?.value.owned_roots, second_replacement));
+}
+
+test "loop root trimming retains generations named by pending receipts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var context = SafetyChecker.LoopJoinContext.init(allocator);
+    defer context.deinit();
+    const root = try state.tracker.establish(.fresh);
+    const receipt = try state.establishExecution(&.{.{ .generations = &.{root}, .mode = .write }});
+
+    checker.trimUnreferencedLoopRoots(&context, &state);
+    try std.testing.expect(state.tracker.isAlive(root));
+    state.completeExecution(receipt);
+    checker.trimUnreferencedLoopRoots(&context, &state);
+    try std.testing.expectEqual(@as(usize, 0), state.tracker.roots.items.len);
 }
 
 test "loop root widening does not hide crossed stale dependencies" {
