@@ -3976,9 +3976,15 @@ pub const Infer = struct {
     fn postStateValueType(self: *Infer, target: facts.InputPath) ?graph_mod.GlobalTypeId {
         if (target.storage_domain != null) return null;
         const ty = self.inputPathType(self.post_state_function orelse return null, target) orelse return null;
-        // Aggregate summaries can describe only selected subobjects; their
-        // projected content recipes need a separately proven layout.
-        return if (self.graph.semanticType(ty) == .builtin) ty else null;
+        // For a record of scalars, the selected structural path determines
+        // how to project a preserved entry value into its replacement.
+        // Opaque or reference-bearing aggregates retain their weaker join.
+        if (self.graph.semanticType(ty) == .builtin) return ty;
+        const fields = types.fields(self.graph, ty) orelse return null;
+        for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
+            if (!self.isNumericContents(field.ty)) return null;
+        }
+        return ty;
     }
 
     fn joinInputPostStates(
@@ -9594,6 +9600,44 @@ test "input post-state joins retain caller-visible transitions" {
     defer joined.deinit();
     try inference.joinInputPostStates(&joined, &changed, &unchanged);
     try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, joined.items[0].initializedness);
+}
+
+test "scalar record post-state joins keep generation and contents separate" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name: primitives.StringRange = .{ .start = 0, .len = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
+    });
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = name, .source = source, .ty = @enumFromInt(0) },
+        .{ .name = name, .source = source, .ty = @enumFromInt(2) },
+    });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 1 }, .output = .{ .start = 0, .len = 0 } });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    infer.post_state_function = @enumFromInt(0);
+    var written = std.array_list.Managed(facts.PlacePostState).init(a);
+    const unchanged = std.array_list.Managed(facts.PlacePostState).init(a);
+    var joined = std.array_list.Managed(facts.PlacePostState).init(a);
+    const target: facts.InputPath = .{ .input_index = 0 };
+    const replacement: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &facts.empty_value_effect }} };
+    try infer.recordInputPostState(&written, &.{target}, .initialized, replacement, false, true, false, false, .definite);
+    try infer.joinInputPostStates(&joined, &written, &unchanged);
+    const post = joined.items[0];
+    try std.testing.expect(post.refreshes_storage_generation);
+    try std.testing.expect(!post.value.reference_target_incomplete);
+    const field = try infer.projectValueEffect(post.value, .{ .field = 0 });
+    try std.testing.expectEqual(@as(usize, 1), field.input_place_values.len);
+    try std.testing.expect(field.input_place_values[0].eql(.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }));
 }
 
 test "initialization effects distinguish definite writes from preserved entry values" {
