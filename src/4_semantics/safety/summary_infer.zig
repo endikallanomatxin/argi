@@ -1846,7 +1846,7 @@ pub const Infer = struct {
                     }
                     for ([_]EntryOutputFlow{ left, right }) |branch| if (branch.reachable) {
                         for (branch.initialized) |initialized| if (!initialized) return false;
-                        try self.recordEntryOutputGuard(branch, summary, guards);
+                        try self.recordEntryOutputGuard(function_id, branch, summary, guards);
                     };
                     flow.reachable = false;
                 },
