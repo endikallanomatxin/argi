@@ -1739,7 +1739,7 @@ pub const Infer = struct {
         var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
         defer guards.deinit(self.allocator);
         if (!try self.inferEntryOutputBlock(function_id, function.body.?, &flow, summary, &guards)) return &.{};
-        if (flow.reachable) try self.recordEntryOutputGuard(flow, summary, &guards);
+        if (flow.reachable) try self.recordEntryOutputGuard(function_id, flow, summary, &guards);
         // Avoid publishing a duplicate unconditional record for simple bodies.
         var conditional = false;
         for (guards.items) |guard| conditional = conditional or guard.conditions.terms.len != 0;
@@ -1748,7 +1748,7 @@ pub const Infer = struct {
         return guards.toOwnedSlice(self.allocator);
     }
 
-    fn recordEntryOutputGuard(self: *Infer, flow: EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) !void {
+    fn recordEntryOutputGuard(self: *Infer, function: graph_mod.GlobalFunctionId, flow: EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) !void {
         if (flow.conditions.impossible) return;
         for (flow.initialized) |initialized| if (!initialized) return;
         const conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try contracts.knownOutputConditions(self.allocator, flow.outputs));
@@ -1757,7 +1757,11 @@ pub const Infer = struct {
         for (guards.items) |guarded| if (guarded.conditions.eql(conditions)) {
             const effects = @constCast(guarded.effects);
             const outputs = try self.allocator.dupe(facts.ValueEffect, effects.outputs);
-            for (outputs, flow.outputs) |*output, other| output.* = try self.mergeValueEffects(output.*, other);
+            const fields = self.graph.function(function).output;
+            for (outputs, flow.outputs, 0..) |*output, other, index| {
+                const ty = if (index < fields.len) self.graph.fields.items[fields.start + index].ty else null;
+                output.* = try self.joinStorageAlternatives(ty, output.*, other);
+            }
             effects.outputs = outputs;
             return;
         };
@@ -1871,7 +1875,7 @@ pub const Infer = struct {
                             var terminal = true;
                             for (branch.initialized) |initialized| terminal = terminal and initialized;
                             if (!terminal) return false;
-                            try self.recordEntryOutputGuard(branch, summary, guards);
+                            try self.recordEntryOutputGuard(function_id, branch, summary, guards);
                         }
                     }
                     // Only final cleanup or bare returns may follow this
@@ -1881,7 +1885,7 @@ pub const Infer = struct {
                 .code_block => |child| if (!try self.inferEntryOutputBlock(function_id, child, flow, summary, guards)) return false,
                 .return_statement => |ret| {
                     if (ret.expression != null or ret.cleanup.len != 0) return false;
-                    try self.recordEntryOutputGuard(flow.*, summary, guards);
+                    try self.recordEntryOutputGuard(function_id, flow.*, summary, guards);
                     flow.reachable = false;
                 },
                 .abort_statement => {
@@ -6542,7 +6546,8 @@ pub const Infer = struct {
             },
             .nullable_unwrap_or => |unwrap_id| blk: {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
-                break :blk try self.mergeValueEffects(
+                break :blk try self.joinStorageAlternatives(
+                    node.ty,
                     try self.inferExpression(function_id, unwrap.nullable_value),
                     try self.inferExpression(function_id, unwrap.fallback_value),
                 );
@@ -8370,7 +8375,9 @@ pub const Infer = struct {
     /// cannot prove presence if another returning alternative has no evidence.
     fn joinStorageAlternatives(self: *Infer, value_type: ?graph_mod.GlobalTypeId, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
         if (summaries.valueEffectEql(left, right)) return left;
-        var result = try self.mergeValueEffects(left, right);
+        // Collect projection keys without composing their contents. Each
+        // child needs exactly one recursive join with both alternatives.
+        var result = try self.combineValueEffects(left, right, .collect_children);
         // Staged access evidence describes an occupied result slot. A join
         // can retain it only when both alternatives describe the same facts.
         if (left.staged_output) |output| if (right.staged_output) |other| {
@@ -8470,6 +8477,12 @@ pub const Infer = struct {
     }
 
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
+        return self.combineValueEffects(left, right, .compose_children);
+    }
+
+    const ChildCombination = enum { compose_children, collect_children };
+
+    fn combineValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect, children: ChildCombination) anyerror!facts.ValueEffect {
         // Effect union is idempotent. Keep immutable facts shared on stable
         // branches and fixed-point reevaluations instead of rebuilding them.
         if (summaries.valueEffectEql(left, right)) return left;
@@ -8529,14 +8542,15 @@ pub const Infer = struct {
 
         var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator);
         for (left.fields) |left_field| {
-            var merged = left_field.value.*;
-            for (right.fields) |right_field| if (right_field.index == left_field.index) {
-                merged = try self.mergeValueEffects(merged, right_field.value.*);
+            var value = left_field.value;
+            if (children == .compose_children) for (right.fields) |right_field| {
+                if (right_field.index != left_field.index) continue;
+                const stored = try self.allocator.create(facts.ValueEffect);
+                stored.* = try self.mergeValueEffects(value.*, right_field.value.*);
+                value = stored;
                 break;
             };
-            const stored = try self.allocator.create(facts.ValueEffect);
-            stored.* = merged;
-            try fields.append(.{ .index = left_field.index, .value = stored });
+            try fields.append(.{ .index = left_field.index, .value = value });
         }
         for (right.fields) |right_field| {
             var found = false;
@@ -8549,14 +8563,15 @@ pub const Infer = struct {
 
         var variants = std.array_list.Managed(facts.OutputVariantEffect).init(self.allocator);
         for (left.variants) |left_variant| {
-            var merged = left_variant.value.*;
-            for (right.variants) |right_variant| if (right_variant.index == left_variant.index) {
-                merged = try self.mergeValueEffects(merged, right_variant.value.*);
+            var value = left_variant.value;
+            if (children == .compose_children) for (right.variants) |right_variant| {
+                if (right_variant.index != left_variant.index) continue;
+                const stored = try self.allocator.create(facts.ValueEffect);
+                stored.* = try self.mergeValueEffects(value.*, right_variant.value.*);
+                value = stored;
                 break;
             };
-            const stored = try self.allocator.create(facts.ValueEffect);
-            stored.* = merged;
-            try variants.append(.{ .index = left_variant.index, .value = stored });
+            try variants.append(.{ .index = left_variant.index, .value = value });
         }
         for (right.variants) |right_variant| {
             var found = false;
@@ -10140,6 +10155,27 @@ test "dynamic array selection needs complete receiver evidence" {
     try std.testing.expect(!(try infer.joinArrayElementEffects(array, 2)).concurrent_receiver);
     try std.testing.expect(!(try infer.projectValueEffect(array, .dynamic_index)).concurrent_receiver);
     try std.testing.expect((try infer.projectValueEffect(array, .{ .static_index = 0 })).concurrent_receiver);
+}
+
+test "a field observed in one alternative is not evidence about the other" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+
+    const shared: facts.ValueEffect = .{ .concurrent_receiver = true };
+    const record: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &shared }} };
+    const combined = try infer.mergeValueEffects(record, .{});
+    try std.testing.expect((try infer.projectValueEffect(combined, .{ .field = 0 })).concurrent_receiver);
+    for ([_][2]facts.ValueEffect{ .{ record, .{} }, .{ .{}, record } }) |alternatives| {
+        const joined = try infer.joinStorageAlternatives(null, alternatives[0], alternatives[1]);
+        try std.testing.expect(!(try infer.projectValueEffect(joined, .{ .field = 0 })).concurrent_receiver);
+    }
 }
 
 test "large numeric literals keep no per-element summary records" {
