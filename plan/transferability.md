@@ -361,3 +361,13 @@ CAllocator release import has a stronger caller precondition and cannot
 justify the public operation's effects. An unconditional isolated Deallocator
 interface therefore rejects valid sequential providers. Admission must
 instead use guarantees of the captured capability at the execution boundary.
+
+The local round-trip prototype can restore a fresh owner root inside a
+direct match on the successful await result. The set_ascii call still
+fails while the allocator is shared. The same call also fails on a fresh
+String immediately after allocation, with no task boundary. The missing
+access evidence is therefore already present in the ordinary String byte
+path: the allocation-slot operation bounds the address against the
+allocation, but a raw index supplies no concrete slot identity. Compare
+authenticated backing against active shared regions and loans separately
+from resolving an exact element place.
