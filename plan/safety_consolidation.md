@@ -594,3 +594,23 @@ and eight worker fixtures began failing. The eight are collection
 fixtures 150 and 166, I/O fixtures 39 through 41, system fixtures 86 and
 88, and text fixture 76. This comparison identifies the changed failure
 set without attributing every failure to a single change.
+
+### Owned transfer compiler cost after the reference projection changes
+
+Five alternating cold builds per revision on Linux compare `1891bfddd`
+with `531d20a63`. Both compilers are Debug Zig builds. Both use one frontend
+worker, disable the frontend cache and emit LLVM IR. Wall time, peak RSS
+and the GlobalSafety phase are medians. Executable code size is the ELF
+`.text` section.
+
+| Fixture | Wall time, s | Peak RSS, MiB | GlobalSafety, ms | LLVM functions | Code bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 431 Allocation | 1.81 → 1.83 | 141.02 → 141.38 | 90.586 → 91.947 | 166 → 166 | 165263 → 165263 |
+| 433 String | 3.07 → 3.04 | 149.72 → 149.32 | 205.572 → 204.075 | 256 → 256 | 286751 → 286751 |
+
+Generic instantiation calls and reuse counts also agree between revisions:
+1435 calls and 253 existing instances for Allocation, and 2942 calls and
+568 existing instances for String. These are activity counters, while
+the LLVM function count measures emitted functions. The sample covers
+two transfer paths and does not estimate scaling with branch count or
+outstanding loans.
