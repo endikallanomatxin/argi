@@ -6064,8 +6064,10 @@ pub const Infer = struct {
     fn localPointeeEffect(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) !?facts.ValueEffect {
         const targets = try self.localAddressTargets(node_id);
         if (targets.len == 0) return null;
-        var result: facts.ValueEffect = .{};
-        for (targets) |target| result = try self.mergeValueEffects(result, try self.inferExpression(function_id, target));
+        const ty = self.graph.node(targets[0]).ty;
+        var result = try self.inferExpression(function_id, targets[0]);
+        for (targets[1..]) |target|
+            result = try self.joinStorageAlternatives(ty, result, try self.inferExpression(function_id, target));
         return result;
     }
 
@@ -10689,6 +10691,16 @@ test "alias target alternatives cannot borrow another target's universal referen
         try std.testing.expect(single.reference_relation.?.eql(reference.reference_relation.?));
         try flow.addresses.put(@enumFromInt(2), &.{ @enumFromInt(0), @enumFromInt(1) });
     }
+
+    try infer.bindings.put(@enumFromInt(0), known);
+    try infer.bindings.put(@enumFromInt(1), .{});
+    try infer.local_address_bindings.put(@enumFromInt(2), &.{@enumFromInt(0)});
+    const single = (try infer.localPointeeEffect(@enumFromInt(0), @enumFromInt(2))).?;
+    const retained = try infer.projectValueEffect(single, .{ .field = 0 });
+    try std.testing.expect(retained.reference_relation.?.eql(reference.reference_relation.?));
+    try infer.local_address_bindings.put(@enumFromInt(2), &.{ @enumFromInt(0), @enumFromInt(1) });
+    const alternatives = (try infer.localPointeeEffect(@enumFromInt(0), @enumFromInt(2))).?;
+    try std.testing.expect((try infer.projectValueEffect(alternatives, .{ .field = 0 })).reference_relation == null);
 }
 
 test "reference alternative join retains only the common weaker guarantee" {
