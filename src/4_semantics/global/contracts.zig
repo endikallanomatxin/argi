@@ -365,7 +365,9 @@ pub const Resolver = struct {
             // never re-enter global overload lookup when a type is erased.
             const implementation = try self.resolveOperationBinding(self.graph.contract_conformances.items[evidence.tuple], method_index);
             try methods.append(self.allocator, implementation);
-            const position = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located)) orelse return error.InvalidContractRequirementInput;
+            const instance = (try self.requirementInstanceForContractUse(contract_use, contract_ty, located, requirement, @intCast(method_index))) orelse return null;
+            const fields = global_types.fields(self.graph, instance.input) orelse return null;
+            const position = self.resolvedCapturePosition(located, requirement, contract_ty, fields) orelse return null;
             try receiver_indices.append(self.allocator, position);
         }
         const method_start: u32 = @intCast(self.graph.function_refs.items.len);
@@ -728,7 +730,7 @@ pub const Resolver = struct {
             if (!std.mem.eql(u8, name, self.modules[located.module_index].text(requirement.name))) continue;
             const instance = (try self.requirementInstanceForContractUse(use, ty.virtual, located, requirement, @intCast(index))) orelse return null;
             const fields = global_types.fields(self.graph, instance.input) orelse return null;
-            const position = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located)) orelse return null;
+            const position = self.resolvedCapturePosition(located, requirement, ty.virtual, fields) orelse return null;
             {
                 const parameter = self.graph.fields.items[fields.start + position];
                 const parameter_type = self.graph.semanticType(parameter.ty);
@@ -866,7 +868,7 @@ pub const Resolver = struct {
                 const output_ty = instance.output;
                 const input_fields = global_types.fields(self.graph, input_ty) orelse continue;
                 const output_fields = global_types.fields(self.graph, output_ty) orelse continue;
-                const index = self.capturePosition(located, requirement, self.capturesReferenceParticipant(located)) orelse continue;
+                const index = self.resolvedCapturePosition(located, requirement, contract_ty, input_fields) orelse continue;
                 const permission = self.graph.semanticType(self.graph.fields.items[input_fields.start + index].ty).pointer.mutability;
                 // Dispatch reads the descriptor slot. The captured reference
                 // supplies the operation's authority over the actual resource.
@@ -3188,6 +3190,22 @@ pub const Resolver = struct {
         const input = instance.input;
         const fields = global_types.fields(self.graph, input) orelse return error.InvalidContractRequirementInput;
         try self.graph.completeVirtualSignature(self.allocator, registry_id, contract, fields.len, instance.output);
+    }
+
+    // Named input records are opaque to the parameterized pattern scan.
+    // The validated abstract signature still identifies the unique receiver.
+    fn resolvedCapturePosition(self: *const Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, contract_ty: global_sg.GlobalTypeId, inputs: global_sg.FieldRange) ?u32 {
+        const direct = self.capturesReferenceParticipant(located);
+        if (self.capturePosition(located, requirement, direct)) |index| return index;
+        if (direct or located.definition.participants.len != 1) return null;
+        var found: ?u32 = null;
+        for (self.graph.fields.items[inputs.start..][0..inputs.len], 0..) |field, index| {
+            const ty = self.graph.semanticType(field.ty);
+            if (ty != .pointer or !global_types.equal(self.graph, ty.pointer.child, contract_ty)) continue;
+            if (found != null) return null;
+            found = @intCast(index);
+        }
+        return found;
     }
 
     fn capturePosition(self: *const Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, direct: bool) ?u32 {
