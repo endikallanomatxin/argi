@@ -7693,13 +7693,6 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
-            .task_output = blk: {
-                const selection = effect.task_output orelse break :blk null;
-                const path = selection.receipt;
-                if (override != null or path.input_index >= arguments.len) break :blk null;
-                const receipt = (try self.transferArgumentPath(function_id, path, arguments[path.input_index].value)) orelse break :blk null;
-                break :blk try self.taskOutputSelection(.{ .receipt = receipt, .projection = selection.projection });
-            },
             .static_reference = effect.static_reference,
             .observes_fresh_backing = effect.observes_fresh_backing,
             .concurrent_receiver = effect.concurrent_receiver,
@@ -8048,6 +8041,15 @@ pub const Infer = struct {
                 if (selected.observes_fresh_backing and selected.fresh_dependencies.len == 1 and
                     result.fresh_dependencies.len == 1 and selected.fresh_dependencies[0] == result.fresh_dependencies[0])
                     result.observes_fresh_backing = true;
+            }
+        }
+        // Extraction identifies the result as a whole. Auxiliary metadata
+        // merged during substitution cannot invalidate the checked selector.
+        if (effect.task_output) |selection| {
+            const path = selection.receipt;
+            if (override == null and path.input_index < arguments.len) {
+                if (try self.transferArgumentPath(function_id, path, arguments[path.input_index].value)) |receipt|
+                    result.task_output = try self.taskOutputSelection(.{ .receipt = receipt, .projection = selection.projection });
             }
         }
         if (effect.staged_output) |staged| {
@@ -11137,6 +11139,17 @@ test "task output summaries preserve extraction only for an unchanged value" {
     try std.testing.expect(projected.task_output.?.receipt.eql(path));
     try std.testing.expect(projected.task_output.?.projection[0].eql(.{ .field = 0 }));
     try std.testing.expect((try infer.projectValueEffect(value, .dereference)).task_output == null);
+
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name: primitives.StringRange = .{ .start = 0, .len = 0 };
+    try graph.types.append(allocator, .{ .builtin = .UInt8 });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .constant });
+    try graph.binding_refs.append(allocator, @enumFromInt(0));
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .input_bindings = .{ .start = 0, .len = 1 } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    const substituted = try infer.substituteOutput(@enumFromInt(0), with_dependency, &.{.{ .name = name, .value = @enumFromInt(0) }});
+    try std.testing.expect(substituted.task_output != null);
+    try std.testing.expect(substituted.task_output.?.receipt.eql(path));
 }
 
 test "staged task cleanup evidence requires agreement across alternatives" {
