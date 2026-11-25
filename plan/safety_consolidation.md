@@ -576,3 +576,21 @@ first exposes the regression and the conditions needed to repair it on
 the current checker are therefore distinct. Preserve the controls for
 historical aliases and pending receipts when investigating the remaining
 canonical-root reuse check.
+
+After bypassing the empty-domain guard in a diagnostic build, the
+canonical-root guard triggers. The only place retaining that root in
+word count is the buffer value itself. The entry has one owned root and
+does not observe the canonical root. The backedge has two possible
+owned roots and still observes the canonical root, whose state is
+`maybe_alive`. Ownership membership cannot distinguish a live observation
+from a stale one at that point. The proof has to survive the join that
+produced the backedge value.
+
+On Linux the `a1911ffb6` program run recorded 223 passed, 10 skipped and
+four failed serial fixtures. In a separate invocation of the same
+runner, the 16 groups recorded 2,520 passed, one skipped and 36 failed.
+Relative to `1891bfddd`, authenticated dynamic acquisition recovered
+and eight worker fixtures began failing. The eight are collection
+fixtures 150 and 166, I/O fixtures 39 through 41, system fixtures 86 and
+88, and text fixture 76. This comparison identifies the changed failure
+set without attributing every failure to a single change.
