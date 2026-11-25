@@ -1,0 +1,33 @@
+DiscardingExecutor := (.ffi: $&ForeignFunctionInterface, .start: Bool)
+implement Executor#(DiscardingExecutor) (
+    .state = region(self)
+    .submit = (.self: $&DiscardingExecutor, .request: TaskRequest) -> (
+        .result: Errable#(TaskReceipt, (..task_start_failed))
+    ) {
+        pending ::= ~request
+        if self&.start {
+            submitted ::= execute_inline(.request = ~pending, .ffi = self&.ffi)
+            match submitted {
+                ..ok ~receipt {}
+                ..error _ { abort }
+            }
+        }
+        result = ..error(.reason = ..task_start_failed)
+    }
+)
+
+return_owner := (.value: String) -> (.result: String) { result = ~value }
+main := (.system: System) -> () {
+    provider ::= DiscardingExecutor(.ffi = system.ffi, .start = true)
+    executor ::= Virtual#(Executor)($&provider)
+    allocator ::= CAllocator(.ffi = system.ffi)
+    shared ::= $$&allocator
+    text ::= unwrap_or_abort(string_with_shared_c_storage(.allocator = shared, .length = 3))
+    match async_owned#(return_owner)(.args = (.value = ~text), .executor = executor, .ffi = system.ffi) {
+        ..ok ~unexpected { abort }
+        ..error failure {
+            if is(.value = failure.reason, .variant = ..task_start_failed) == false { abort }
+        }
+    }
+    recover_ordinary(.owner = $&allocator)
+}
