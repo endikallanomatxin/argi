@@ -9132,6 +9132,16 @@ pub const SafetyChecker = struct {
         const storage = if (captured) |access| access.storage else try self.resolvePlace(child, state);
         if (try self.rejectSharedOverlap(source, storage, state)) return .{};
         if (storage == null) if (captured) |access| if (access.pointer) |pointer| {
+            if (pointer.hasCompleteReferenceCoverage()) {
+                for (pointer.mutation_places) |target| {
+                    if (try self.rejectSharedOverlap(source, target, state)) return .{};
+                    if (!allow_moved_destination and state.initializednessAtPlace(target) == .moved) {
+                        try self.reportMovedPlace(source, target, state);
+                        return .{};
+                    }
+                }
+                return pointer;
+            }
             if (pointer.symbolic_pointees.len != 0) return pointer;
         };
         if (!allow_moved_destination) if (storage) |target| if (state.initializednessAtPlace(target) == .moved)
