@@ -1949,6 +1949,44 @@ pub const Infer = struct {
         return self.graph.node(self.graph.node_refs.items[block.nodes.start]).content == .abort_statement;
     }
 
+    fn applyLocalCallReplacements(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: graph_mod.GlobalFunctionId, input: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
+        const summary = self.engine.summaryFor(callee) orelse return;
+        if (summary.input_post_states.len == 0) return;
+        const arguments = self.structArguments(input) orelse return;
+        // Replacement facts describe possible new local values;
+        // preserved cleanup facts do not describe replacements.
+        const Replacement = struct { target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: facts.ValueEffect };
+        var replacements: std.ArrayList(Replacement) = .empty;
+        defer replacements.deinit(self.allocator);
+        const signature = self.graph.function(callee);
+        for (summary.input_post_states) |*post| {
+            if (post.initialization == .preserved or (post.initializedness != .initialized and post.initializedness != .maybe_initialized) or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
+            const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
+            if (!self.tracksLocalContents(selected.ty)) continue;
+            const parameter = self.graph.fields.items[signature.input.start + post.target.input_index].ty;
+            if (self.graph.semanticType(parameter) != .pointer) continue;
+            const argument = arguments[post.target.input_index].value;
+            const targets = try self.localMutationCandidates(argument, 0);
+            if (targets.len == 0) continue;
+            const exact_targets = try self.localAddressTargets(argument);
+            const value = try self.substituteOutput(function_id, post.value, arguments);
+            for (targets) |target| {
+                var updated = value;
+                if (exact_targets.len != 1 or targets.len != 1 or post.initialization != .definite or post.initializedness != .initialized) {
+                    // A possible replacement retains the entry alternative.
+                    // Capture it before publishing any replacement from this call.
+                    var previous = try self.inferExpression(function_id, target);
+                    for (post.target.projections) |projection|
+                        previous = try self.projectValueEffect(previous, projection);
+                    updated = try self.joinStorageAlternatives(selected.ty, previous, value);
+                }
+                try replacements.append(self.allocator, .{ .target = target, .path = post.target.projections, .value = updated });
+            }
+        }
+        for (replacements.items) |replacement|
+            try self.storeSelectedValueEffect(function_id, replacement.target, replacement.path, replacement.value, outputs, .locals_and_outputs);
+    }
+
     fn tracksLocalContents(self: *Infer, ty: ?graph_mod.GlobalTypeId) bool {
         const known = ty orelse return false;
         // Address and receipt bits can carry storage evidence despite their
@@ -2007,41 +2045,7 @@ pub const Infer = struct {
                     }
                 },
                 .function_call => |call| {
-                    if (self.engine.summaryFor(call.callee)) |summary| if (self.structArguments(call.input)) |arguments| {
-                        // Replacement facts describe possible new local values;
-                        // preserved cleanup facts do not describe replacements.
-                        const Replacement = struct { post: *const facts.PlacePostState, value: facts.ValueEffect, ty: graph_mod.GlobalTypeId };
-                        var replacements: std.ArrayList(Replacement) = .empty;
-                        defer replacements.deinit(self.allocator);
-                        const signature = self.graph.function(call.callee);
-                        for (summary.input_post_states) |*post| {
-                            if (post.initialization == .preserved or (post.initializedness != .initialized and post.initializedness != .maybe_initialized) or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
-                            const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
-                            if (!self.tracksLocalContents(selected.ty)) continue;
-                            const parameter = self.graph.fields.items[signature.input.start + post.target.input_index].ty;
-                            if (self.graph.semanticType(parameter) != .pointer) continue;
-                            try replacements.append(self.allocator, .{ .post = post, .value = try self.substituteOutput(function_id, post.value, arguments), .ty = selected.ty });
-                        }
-                        for (replacements.items) |replacement| {
-                            const post = replacement.post;
-                            const value = replacement.value;
-                            const exact_targets = try self.localAddressTargets(arguments[post.target.input_index].value);
-                            const targets = try self.localMutationCandidates(arguments[post.target.input_index].value, 0);
-                            for (targets) |target| {
-                                var updated = value;
-                                if (exact_targets.len != 1 or targets.len != 1 or post.initialization != .definite or post.initializedness != .initialized) {
-                                    // Only one alternative is changed at runtime.
-                                    // Retain both the old and replacement value,
-                                    // never the old reference's exact identity.
-                                    var previous = try self.inferExpression(function_id, target);
-                                    for (post.target.projections) |projection|
-                                        previous = try self.projectValueEffect(previous, projection);
-                                    updated = try self.joinStorageAlternatives(replacement.ty, previous, value);
-                                }
-                                try self.storeSelectedValueEffect(function_id, target, post.target.projections, updated, outputs, .locals_and_outputs);
-                            }
-                        }
-                    };
+                    try self.applyLocalCallReplacements(function_id, call.callee, call.input, outputs);
                     if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
                         const arguments = self.structArguments(call.input) orelse continue;
                         if (arguments.len != 2) continue;
