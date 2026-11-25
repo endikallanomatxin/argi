@@ -10267,6 +10267,12 @@ pub const SafetyChecker = struct {
 
             var safe = true;
             for (alternatives[0..alternative_count]) |root| {
+                // Execution receipts keep the original generation. Rebinding
+                // the owner would let retirement miss that outstanding loan.
+                if (pendingExecutionBorrowsRoot(joined, root)) {
+                    safe = false;
+                    break;
+                }
                 const index = @intFromEnum(root);
                 const left_stale_remnant = stale_alternative == root and index < left.tracker.roots.items.len and !left.tracker.isAlive(root);
                 const right_stale_remnant = stale_alternative == root and index < right.tracker.roots.items.len and !right.tracker.isAlive(root);
@@ -11810,6 +11816,13 @@ test "loop root widening is stable and preserves historical aliases" {
     var joined = try entry.clone(allocator);
     defer joined.deinit();
     try checker.joinState(&joined, &entry, &iteration);
+    var borrowed = try joined.clone(allocator);
+    defer borrowed.deinit();
+    _ = try borrowed.establishExecution(&.{.{ .generations = &.{replacement}, .mode = .write }});
+    try checker.widenLoopOwnedRoots(&context, &borrowed, &entry, &iteration);
+    try std.testing.expectEqual(@as(usize, 0), context.roots.items.len);
+    try std.testing.expect(containsRoot(borrowed.getPlace(owner).?.value.owned_roots, replacement));
+
     try checker.widenLoopOwnedRoots(&context, &joined, &entry, &iteration);
     try std.testing.expectEqual(@as(usize, 1), context.roots.items.len);
     const phi = context.roots.items[0].root;
