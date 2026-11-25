@@ -148,7 +148,7 @@ successfully. Three cold ReleaseSafe runs with one frontend worker gave:
 | 256 | 695 | 126,110,349 | 120.1 ms | 136 MiB |
 
 Each added function accounts for two more summary evaluations and about
-402 KiB of cumulative requests. The request count measures all allocations
+403 kB of cumulative requests. The request count measures all allocations
 during inference, including scratch storage. The result bounds the cost
 observed for a forwarding chain, where each function exposes one relation.
 It leaves cycles, branching wrappers and opaque collections unmeasured.
