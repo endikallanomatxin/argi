@@ -6605,7 +6605,6 @@ pub const SafetyChecker = struct {
 
     fn projectValueFactsAt(self: *SafetyChecker, value: facts.ValueFacts, projections: []const facts.Projection, target: ?facts.Place) !facts.ValueFacts {
         var current = value;
-        var exact_projection = true;
         for (projections, 0..) |projection, step| {
             switch (projection) {
                 .field, .variant, .static_index => {
@@ -6614,10 +6613,7 @@ pub const SafetyChecker = struct {
                     }
                     if (facts.representedProjection(current, projection)) |selected| {
                         current = selected;
-                    } else {
-                        exact_projection = false;
-                        current.lexical_frame = null;
-                    }
+                    } else return uncoveredProjection(current);
                 },
                 .dynamic_index => {
                     if (current.fields.len != 0) {
@@ -6630,31 +6626,31 @@ pub const SafetyChecker = struct {
                             break :length types.arrayLength(self.graph, ty);
                         } else null;
                         current = try self.joinArrayElementFacts(current, length);
-                    } else {
-                        exact_projection = false;
-                        current.lexical_frame = null;
-                    }
+                    } else return uncoveredProjection(current);
                 },
-                .dereference => {
-                    exact_projection = false;
-                    current.lexical_frame = null;
-                },
+                .dereference => return uncoveredProjection(current),
             }
         }
-        // Flat dependencies can conservatively describe an uncovered path.
-        // Discriminants and capability guarantees require selecting their slot.
-        if (!exact_projection) {
-            current.known_choice_variant = null;
-            current.owned_backing = null;
-            current.intrinsic_backing_owner = null;
-            if (hasReferenceTarget(current)) current.reference_target_incomplete = true;
-            current.reference_coverage_complete = false;
-            current.concurrent_receiver = false;
-            current.virtual_no_access = &.{};
-            current.completed_executions = &.{};
-            current.task_output_execution = null;
-        }
         return current;
+    }
+
+    fn uncoveredProjection(parent: facts.ValueFacts) facts.ValueFacts {
+        // Preserve the conservative envelope. No later projection can
+        // select a sibling in lieu of the missing intermediate child.
+        var result = parent;
+        result.fields = &.{};
+        result.variants = &.{};
+        result.lexical_frame = null;
+        result.known_choice_variant = null;
+        result.owned_backing = null;
+        result.intrinsic_backing_owner = null;
+        if (hasReferenceTarget(parent)) result.reference_target_incomplete = true;
+        result.reference_coverage_complete = false;
+        result.concurrent_receiver = false;
+        result.virtual_no_access = &.{};
+        result.completed_executions = &.{};
+        result.task_output_execution = null;
+        return result;
     }
 
     fn joinArrayElementFacts(self: *SafetyChecker, array: facts.ValueFacts, length: ?u64) !facts.ValueFacts {
@@ -16844,6 +16840,10 @@ test "dynamic projection requires a known extent for complete element evidence" 
         .variants = &.{.{ .index = 0, .value = &element }},
     };
     try std.testing.expect(facts.isEmptyValue(try checker.projectValueFacts(choice, &.{.{ .variant = 0 }})));
+
+    const missing_path = try checker.projectValueFacts(array, &.{ .{ .field = 1 }, .{ .field = 0 } });
+    try std.testing.expect(missing_path.referenced_place == null);
+    try std.testing.expectEqual(@as(usize, 0), missing_path.fields.len);
 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
