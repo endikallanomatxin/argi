@@ -13,6 +13,22 @@ mutate := (.value: Allocation) -> (.result: Allocation) {
     result = ~owned
 }
 
+RejectingExecutor := (.ffi: $&ForeignFunctionInterface)
+implement Executor#(RejectingExecutor) (
+    .state = region(self)
+    .submit = (.self: $&RejectingExecutor, .request: TaskRequest) -> (
+        .result: Errable#(TaskReceipt, (..task_start_failed))
+    ) {
+        pending ::= ~request
+        submitted ::= execute_inline(.request = ~pending, .ffi = self&.ffi)
+        match submitted {
+            ..ok ~receipt {}
+            ..error _ { abort }
+        }
+        result = ..error(.reason = ..task_start_failed)
+    }
+)
+
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
     executor ::= Virtual#(Executor)($&provider)
@@ -36,7 +52,19 @@ main := (.system: System) -> () {
             ..error _ { abort }
         }
     }
-    recover_ordinary(.owner = $&allocator)
     if shared_load(.self = counter) != 1 { abort }
+    {
+        rejecting ::= RejectingExecutor(.ffi = system.ffi)
+        failure_executor ::= Virtual#(Executor)($&rejecting)
+        outbound ::= unwrap_or_abort(storage.allocate(.provider = shared, .ffi = system.ffi))
+        match async_owned#(mutate)(.args = (.value = ~outbound), .executor = failure_executor, .ffi = system.ffi) {
+            ..ok ~unexpected { abort }
+            ..error failure {
+                if is(.value = failure.reason, .variant = ..task_start_failed) == false { abort }
+            }
+        }
+    }
+    recover_ordinary(.owner = $&allocator)
+    if shared_load(.self = counter) != 2 { abort }
     recover_ordinary(.owner = $&releases)
 }
