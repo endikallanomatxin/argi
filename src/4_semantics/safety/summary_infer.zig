@@ -5679,13 +5679,20 @@ pub const Infer = struct {
                             try sink.addVirtualAccess(translated);
                             continue;
                         }
-                        if (try self.stagedOutputSource(function, argument, access.target.projections)) |source| {
-                            const projections = try std.mem.concat(self.allocator, facts.Projection, &.{ source.projections, access.execution_output_path.? });
-                            var translated = access;
-                            translated.target = .{ .input_index = source.input_index, .projections = projections };
-                            translated.execution_output_path = null;
-                            try sink.addVirtualAccess(translated);
-                            continue;
+                        if (try self.stagedOutputEffect(function, argument, access.target.projections)) |output| {
+                            var descriptor = output.*;
+                            for (access.execution_output_path.?) |projection|
+                                descriptor = try self.projectValueEffect(descriptor, projection);
+                            if (!descriptor.reference_target_incomplete) {
+                                if (std.mem.indexOfScalar(u32, descriptor.virtual_no_access, method) != null) continue;
+                                if (descriptor.virtual_receiver_input) |source| {
+                                    var translated = access;
+                                    translated.target = source;
+                                    translated.execution_output_path = null;
+                                    try sink.addVirtualAccess(translated);
+                                    continue;
+                                }
+                            }
                         }
                     }
                     sink.unknown = true;
@@ -6045,13 +6052,13 @@ pub const Infer = struct {
         }
     }
 
-    fn stagedOutputSource(self: *Infer, function: graph_mod.GlobalFunctionId, argument: graph_mod.GlobalNodeId, projections: []const facts.Projection) !?facts.InputPath {
+    fn stagedOutputEffect(self: *Infer, function: graph_mod.GlobalFunctionId, argument: graph_mod.GlobalNodeId, projections: []const facts.Projection) !?*const facts.ValueEffect {
         if (projections.len == 0 or projections[0] != .dereference) return null;
         const content = self.graph.node(argument).content;
         if (content != .address_of) return null;
         var slot = try self.inferExpression(function, content.address_of);
         for (projections[1..]) |projection| slot = try self.projectValueEffect(slot, projection);
-        return slot.staged_output_input;
+        return slot.staged_output;
     }
 
     fn localPointeeEffect(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) !?facts.ValueEffect {
@@ -6488,7 +6495,9 @@ pub const Infer = struct {
             // the selected capability to still denote the same entry value.
             const entry = output.virtual_receiver_input orelse return result;
             if (!entry.eql(dependency.path)) return result;
-            result.staged_output_input = entry;
+            const staged = try self.allocator.create(facts.ValueEffect);
+            staged.* = output;
+            result.staged_output = staged;
             return result;
         }
         if (callee_function.safety_primitive == .recover_task_output_evidence) {
@@ -6653,7 +6662,7 @@ pub const Infer = struct {
         // supplied by a previously selected aggregate-producing operation.
         var result = previous;
         result.task_output = null;
-        result.staged_output_input = null;
+        result.staged_output = null;
         if (previous.fields_are_updates or projectedUpdateBase(previous) != null) {
             // The base describes the original owner. Replacement dependencies
             // belong to their respective fields, even when a child is itself
@@ -8034,7 +8043,7 @@ pub const Infer = struct {
     }
 
     fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
-        if (effect.task_output != null or effect.staged_output_input != null) return true;
+        if (effect.task_output != null or effect.staged_output != null) return true;
         if (effect.virtual_receiver_input != null or effect.concurrent_receiver_inputs.len != 0) return true;
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.reference_relation != null) return true;
@@ -8134,7 +8143,7 @@ pub const Infer = struct {
         }
         var result = effect;
         result.task_output = null;
-        result.staged_output_input = null;
+        result.staged_output = null;
         result.static_reference = null;
         result.observes_fresh_backing = false;
         if (result.input_backing_observation) |*path| {

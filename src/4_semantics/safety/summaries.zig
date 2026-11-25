@@ -214,8 +214,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.input_backing_observation) |path| {
         if (b.input_backing_observation == null or !inputPathEql(path, b.input_backing_observation.?)) return false;
     } else if (b.input_backing_observation != null) return false;
-    if ((a.staged_output_input == null) != (b.staged_output_input == null)) return false;
-    if (a.staged_output_input) |path| if (!path.eql(b.staged_output_input.?)) return false;
+    if ((a.staged_output == null) != (b.staged_output == null)) return false;
+    if (a.staged_output) |output| if (!valueEffectEql(output.*, b.staged_output.?.*)) return false;
     if ((a.task_output == null) != (b.task_output == null)) return false;
     if (a.task_output != null and facts.TaskOutputSelection.common(a.task_output, b.task_output) == null) return false;
     if (a.static_reference != b.static_reference or a.observes_fresh_backing != b.observes_fresh_backing or a.owns_fresh_backing != b.owns_fresh_backing) return false;

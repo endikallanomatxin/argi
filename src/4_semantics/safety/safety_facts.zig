@@ -279,9 +279,9 @@ pub const TaskOutputSelection = struct {
 
 pub const ValueEffect = struct {
     task_output: ?*const TaskOutputSelection = null,
-    /// Exact entry value certified as this staged execution output. This
+    /// Facts describing the staged execution output. This
     /// selects access evidence only and conveys no ownership or lifetime.
-    staged_output_input: ?InputPath = null,
+    staged_output: ?*const ValueEffect = null,
     /// An authenticated observation of the sole fresh dependency.
     observes_fresh_backing: bool = false,
     /// Copies address bits from an exact input snapshot.
