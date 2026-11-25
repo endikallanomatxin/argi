@@ -3651,7 +3651,7 @@ pub const SafetyChecker = struct {
         return self.loadSummaryInputValue(path, arguments, state, false);
     }
 
-    fn loadSummaryInputValue(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState, exact_for_completion: bool) !facts.ValueFacts {
+    fn loadSummaryInputValue(self: *SafetyChecker, path: facts.InputPath, arguments: []const facts.ValueFacts, state: *FunctionState, exact_for_completion: bool) anyerror!facts.ValueFacts {
         if (path.input_index >= arguments.len) return .{};
         var value = arguments[path.input_index];
         var storage: ?facts.Place = null;
@@ -3816,16 +3816,28 @@ pub const SafetyChecker = struct {
                     }
                 } else if (symbolic) |pointer| {
                     const projected = try self.projectSymbolicStorage(pointer, projection, state);
-                    symbolic = projected;
+                    symbolic = null;
                     if (projected) |reference| {
-                        const identity = reference.symbolic_pointees[0];
-                        const stored = try self.symbolicValueAt(state, identity);
-                        value = if (stored) |known|
-                            try self.reconstructSymbolicValue(state, identity, known.value)
-                        else blk: {
-                            const observed = try self.readSymbolicValue(state, reference, null);
-                            break :blk if (facts.isEmptyValue(observed)) fallback else observed;
-                        };
+                        if (exactSymbolicTarget(reference)) |identity| {
+                            symbolic = reference;
+                            const stored = try self.symbolicValueAt(state, identity);
+                            value = if (stored) |known|
+                                try self.reconstructSymbolicValue(state, identity, known.value)
+                            else blk: {
+                                const observed = try self.readSymbolicValue(state, reference, null);
+                                break :blk if (facts.isEmptyValue(observed)) fallback else observed;
+                            };
+                        } else {
+                            // Use the same join as any load through an
+                            // ambiguous reference. No candidate is the
+                            // definite storage for subsequent projections.
+                            value = try self.loadSummaryInputValue(
+                                .{ .input_index = 0, .projections = &.{.dereference} },
+                                &.{reference},
+                                state,
+                                false,
+                            );
+                        }
                     } else value = fallback;
                 } else value = fallback;
             }
