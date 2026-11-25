@@ -14,10 +14,14 @@ set_first_byte := (.allocation: &Allocation, .byte: UInt8) -> () {
     pointer& = byte
 }
 
-mutate := (.value: Allocation) -> (.result: Allocation) {
+mutate := (.value: Allocation, .replace: Bool) -> (.result: Allocation) {
     owned :: Allocation = ~value
     set_first_byte(.allocation = &owned, .byte = 8)
-    result = forward(.tag = replace_address(.slot = $&owned.data.address), .allocation = ~owned)
+    if replace {
+        result = forward(.tag = replace_address(.slot = $&owned.data.address), .allocation = ~owned)
+    } else {
+        result = ~owned
+    }
 }
 
 main := (.system: System) -> () {
@@ -27,7 +31,7 @@ main := (.system: System) -> () {
     shared ::= $$&allocator
     {
         outbound ::= unwrap_or_abort(allocate_shared_c_storage(.self = shared, .size = 1, .alignment = 1, .zeroed = true))
-        returning ::= unwrap_or_abort(async_owned#(mutate)(.args = (.value = ~outbound), .executor = executor, .ffi = system.ffi))
+        returning ::= unwrap_or_abort(async_owned#(mutate)(.args = (.value = ~outbound, .replace = true), .executor = executor, .ffi = system.ffi))
         match await($&returning) {
             ..ok ~returned {}
             ..error _ { abort }
