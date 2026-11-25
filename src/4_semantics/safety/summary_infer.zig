@@ -2287,15 +2287,8 @@ pub const Infer = struct {
     }
 
     fn store_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, index: u32, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
-        var aggregate = try self.capability_value(function, target, flow);
-        var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator);
-        for (aggregate.fields) |field| if (field.index != index) {
-            try fields.append(field);
-        };
-        const replacement = try self.allocator.create(facts.ValueEffect);
-        replacement.* = value;
-        try fields.append(.{ .index = index, .value = replacement });
-        aggregate.fields = try fields.toOwnedSlice();
+        const previous = try self.capability_value(function, target, flow);
+        const aggregate = try self.storeEffectProjection(previous, &.{.{ .field = index }}, value);
         try self.store_capability_target(function, target, aggregate, flow);
     }
 
