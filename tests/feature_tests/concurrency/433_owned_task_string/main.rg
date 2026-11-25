@@ -1,5 +1,19 @@
 forward := (.text: String) -> (.result: String) { result = ~text }
 
+Measure#(.R: Type): Contract = (
+    .measure: (.receiver: R) -> (.length: UIntNative) where { reads(receiver) isolated() }
+)
+
+implement Measure#($&String) (
+    .measure = (.receiver: $&String) -> (.length: UIntNative) {
+        length = byte_length(.self = receiver)
+    }
+)
+
+measure_lent := (.text: Virtual#(Measure)) -> (.length: UIntNative) {
+    length = text.measure().length
+}
+
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
     executor ::= Virtual#(Executor)($&provider)
@@ -7,6 +21,11 @@ main := (.system: System) -> () {
     {
         local ::= unwrap_or_abort(string_with_length(.allocator = Virtual#(Allocator)($&allocator), .length = 3))
         if byte_length(.self = &local) != 3 { abort }
+        borrowed ::= Virtual#(Measure)($&local)
+        measurement ::= unwrap_or_abort(async#(measure_lent)(.args = (.text = borrowed), .executor = executor))
+        if unwrap_or_abort(await($&measurement)) != 3 { abort }
+        _ = unwrap_or_abort(set_ascii(.self = $&local, .index = 0, .byte = 65))
+        if unwrap_or_abort(bytes_get(.view = &local, .index = 0)) != 65 { abort }
     }
     shared ::= $$&allocator
     text ::= unwrap_or_abort(string_with_shared_c_storage(.allocator = shared, .length = 3))
