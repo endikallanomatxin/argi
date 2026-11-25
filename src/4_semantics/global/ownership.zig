@@ -221,6 +221,10 @@ pub const Resolver = struct {
             const effective_node = self.deferValue(node_id) orelse node_id;
             const node = self.graph.nodes.items[@intFromEnum(effective_node)];
             switch (node.content) {
+                // Linking reserves unresolved statement slots with untyped
+                // Bool placeholders. A pending match can still introduce
+                // owning payload bindings and entire lexical scopes.
+                .bool_literal => if (node.ty == null) return false,
                 .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,

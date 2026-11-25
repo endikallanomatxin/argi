@@ -16,7 +16,9 @@ mutate := (.value: Allocation) -> (.result: Allocation) {
 main := (.system: System) -> () {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
     executor ::= Virtual#(Executor)($&provider)
-    allocator ::= storage.Provider(.ffi = system.ffi)
+    releases ::= unwrap_or_abort(AtomicUInt32(.ffi = system.ffi, .initial = 0))
+    counter ::= $$&releases
+    allocator ::= storage.Provider(.ffi = system.ffi, .releases = counter)
     shared ::= $$&allocator
     {
         outbound ::= unwrap_or_abort(storage.allocate(.provider = shared, .ffi = system.ffi))
@@ -30,10 +32,11 @@ main := (.system: System) -> () {
                 if pointer& != 8 { abort }
                 pointer& = 9
                 if pointer& != 9 { abort }
-                deinit(.self = $&held)
             }
             ..error _ { abort }
         }
     }
     recover_ordinary(.owner = $&allocator)
+    if shared_load(.self = counter) != 1 { abort }
+    recover_ordinary(.owner = $&releases)
 }

@@ -1,4 +1,4 @@
-Provider := (.ffi: $&ForeignFunctionInterface)
+Provider := (.ffi: $&ForeignFunctionInterface, .releases: $$&AtomicUInt32)
 
 implement ConcurrentAlias#(Provider) ()
 
@@ -13,6 +13,7 @@ implement Deallocator#($$&Provider) (
     ) -> () {
         capability ::= trusted_concurrent_view(.shared = self)
         release(.address = data.address, .ffi = capability&.ffi)
+        _ = shared_fetch_add(.self = capability&.releases, .value = 1)
     }
 )
 
