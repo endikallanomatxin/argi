@@ -527,3 +527,22 @@ workers on the shared run, so the workers were invoked separately with
 the same installed bundle and runner. They passed 2,521 cases, skipped one
 and failed 28 with zero leaks. The failed fixture identities match the
 earlier `0d485` run, which passed 2,512 worker cases.
+
+### Commit-time authority across an ordinary call
+
+Fixture 448 checks that direct, indirect, field and array assignments can
+complete a pending loan while evaluating the right-hand side. Fixture
+447X checks the reverse transition, where evaluation creates an overlapping
+loan before the store. Fixture 449X checks a separate dimension: the same
+evaluation can retire the captured destination without leaving any pending
+execution.
+
+A compile-only control at `a1911ffb6` extracts the safe indirect assignment
+into a helper taking the destination and the future. The caller rejects
+the helper with the same overlap diagnostic as a control that stores
+before completing the future. The access summary is checked against entry
+authority, while completion is published only at return. To distinguish
+the two controls, an access requirement must record which completions
+dominate that access on every path. The corresponding receipt identities
+must come from evaluated arguments. A completion on one alternative, or
+after an access, cannot discharge its requirement.
