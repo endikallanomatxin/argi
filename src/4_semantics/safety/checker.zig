@@ -2628,7 +2628,16 @@ pub const SafetyChecker = struct {
         }
         // Only a whole unknown pointer carries a consumption identity. The
         // surrounding copied record and borrowed dependency envelopes do not.
-        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return null;
+        if (!isPointer(self.graph, ty) or uniqueConcreteTarget(argument) != null) return null;
+        if (argument.referenced_place) |candidate| {
+            // A retained candidate can contribute to a weak write without
+            // identifying the storage affected by that write.
+            var targets = std.array_list.Managed(facts.Place).init(self.allocator);
+            try targets.appendSlice(argument.mutation_places);
+            try appendPlaceFact(&targets, candidate);
+            argument.mutation_places = try targets.toOwnedSlice();
+            argument.referenced_place = null;
+        }
         return argument;
     }
 
@@ -5438,8 +5447,8 @@ pub const SafetyChecker = struct {
                     (post_state.initialization == .definite or (post_state.initialization == .possible and symbolic_was_initialized)))
                 {
                     if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
-                        if (access.symbolic_pointees.len == 1) {
-                            if (post_state.ends_previous_roots) state.setSymbolicInitializedness(access.symbolic_pointees[0], .deinitialized);
+                        if (exactSymbolicTarget(access)) |identity| {
+                            if (post_state.ends_previous_roots) state.setSymbolicInitializedness(identity, .deinitialized);
                             if (try state.renewSymbolicAccess(access)) |renewed| {
                                 state.setSymbolicInitializedness(renewed.symbolic_pointees[0], .initialized);
                                 if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |slot|
