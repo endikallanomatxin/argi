@@ -4,6 +4,12 @@ forward := (.text: String) -> (.result: String) {
     result = forward_value#(String)(.value = ~text, .tag = 1)
 }
 
+edit := (.text: String) -> (.result: String) {
+    owned :: String = ~text
+    _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 2, .byte = 67))
+    result = ~owned
+}
+
 Measure#(.R: Type): Contract = (
     .measure: (.receiver: R) -> (.length: UIntNative) where { reads(receiver) isolated() }
 )
@@ -38,11 +44,12 @@ main := (.system: System) -> () {
     if byte_length(.self = &text) == 3 { selected = ~text } else { selected = ~text }
     forwarded ::= forward(.text = ~selected)
     {
-        task ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = ~forwarded), .executor = executor, .ffi = system.ffi))
+        task ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = edit(.text = ~forwarded)), .executor = executor, .ffi = system.ffi))
         outcome ::= await($&task)
         match outcome {
             ..ok ~returned {
                 owned :: String = ~returned
+                if unwrap_or_abort(bytes_get(.view = &owned, .index = 2)) != 67 { abort }
                 _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 2, .byte = 66))
                 if unwrap_or_abort(bytes_get(.view = &owned, .index = 2)) != 66 { abort }
                 again ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = ~owned), .executor = executor, .ffi = system.ffi))
