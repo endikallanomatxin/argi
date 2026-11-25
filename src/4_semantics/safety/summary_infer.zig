@@ -7355,27 +7355,8 @@ pub const Infer = struct {
     }
 
     fn inputPathType(self: *Infer, function_id: graph_mod.GlobalFunctionId, path: facts.InputPath) ?graph_mod.GlobalTypeId {
-        const function = self.graph.function(function_id);
-        if (path.input_index >= function.input.len) return null;
-        var ty = self.graph.fields.items[function.input.start + path.input_index].ty;
-        if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
-        for (path.projections) |projection| {
-            ty = switch (projection) {
-                .field => |index| blk: {
-                    const fields = types.fields(self.graph, ty) orelse return null;
-                    if (index >= fields.len) return null;
-                    break :blk (self.graph.fields.items[fields.start + index]).ty;
-                },
-                .variant => |index| blk: {
-                    const variants = types.variants(self.graph, ty) orelse return null;
-                    if (index >= variants.len) return null;
-                    break :blk self.graph.variants.items[variants.start + index].payload_type orelse return null;
-                },
-                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return null,
-                .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
-            };
-        }
-        return ty;
+        const selected = @import("access_bounds.zig").selectedType(self.graph, self.graph.function(function_id), path) catch return null;
+        return selected.ty;
     }
 
     fn inferPointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) ![]const facts.InputPath {
