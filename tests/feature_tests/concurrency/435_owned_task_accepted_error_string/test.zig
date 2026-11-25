@@ -9,7 +9,7 @@ test "435_owned_task_accepted_error_string" {
         try support.clean(path);
         try support.expectArgiBuildSuccess(&.{
             "build",    path,
-            "--cc-arg", path ++ "/count_release.c",
+            "--cc-arg", "tests/feature_tests/_support/count_heap_releases.c",
             "--cc-arg", "-Wl,--wrap=_argi_c_aligned_release",
         });
     } else {
