@@ -2546,23 +2546,27 @@ pub const Infer = struct {
             flow.bindings = self.bindings;
             self.bindings = saved;
         }
+        return self.capability_value_inner(function, node, flow);
+    }
+
+    fn capability_value_inner(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) anyerror!facts.ValueEffect {
         // Scalar opaque reads intentionally drop lifetime envelopes. Capability
         // origins are a separate domain and survive loading an address value.
         const targets = try self.capability_address_targets(node, flow);
         if (targets.len != 0 and self.graph.node(node).content == .binding_use) {
-            var current = try self.capability_value(function, targets[0], flow);
+            var current = try self.capability_value_inner(function, targets[0], flow);
             const target_type = self.graph.node(targets[0]).ty;
             for (targets[1..]) |target|
-                current = try self.joinStorageAlternatives(target_type, current, try self.capability_value(function, target, flow));
+                current = try self.joinStorageAlternatives(target_type, current, try self.capability_value_inner(function, target, flow));
             return current;
         }
         return switch (self.graph.node(node).content) {
             .value_sequence, .replacement => |block| blk: {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
-                break :blk try self.capability_value(function, value, flow);
+                break :blk try self.capability_value_inner(function, value, flow);
             },
             .binding_use => |binding| blk: {
-                if (flow.bindings.get(binding)) |value| break :blk value;
+                if (self.bindings.get(binding)) |value| break :blk value;
                 const value = try self.inferExpression(function, node);
                 if (self.inputIndex(function, binding)) |input| if (self.graph.binding(binding).mutability == .constant)
                     break :blk try self.inputReferenceObservations(value, self.graph.binding(binding).ty, .{ .input_index = input }, 0);
@@ -2571,13 +2575,13 @@ pub const Infer = struct {
             .dereference => |read| blk: {
                 const local = try self.capability_address_targets(read.pointer, flow);
                 if (local.len != 0) {
-                    var current = try self.capability_value(function, local[0], flow);
+                    var current = try self.capability_value_inner(function, local[0], flow);
                     const target_type = self.graph.node(local[0]).ty;
                     for (local[1..]) |target|
-                        current = try self.joinStorageAlternatives(target_type, current, try self.capability_value(function, target, flow));
+                        current = try self.joinStorageAlternatives(target_type, current, try self.capability_value_inner(function, target, flow));
                     break :blk current;
                 }
-                const value = try self.capability_value(function, read.pointer, flow);
+                const value = try self.capability_value_inner(function, read.pointer, flow);
                 if (value.reference_relation) |relation| if (relation.grade == .identity and relation.source.projections.len == 0) {
                     const projected = try self.projectValueEffect(value, .dereference);
                     var path = relation.source;
@@ -2587,21 +2591,21 @@ pub const Infer = struct {
                 if (value.fields.len != 0 or value.variants.len != 0) break :blk value;
                 break :blk try self.projectValueEffect(value, .dereference);
             },
-            .address_of, .move_value, .denied_implicit_copy => |value| self.capability_value(function, value, flow),
-            .struct_field_access => |field| self.projectValueEffect(try self.capability_value(function, field.value, flow), .{ .field = field.field_index }),
+            .address_of, .move_value, .denied_implicit_copy => |value| self.capability_value_inner(function, value, flow),
+            .struct_field_access => |field| self.projectValueEffect(try self.capability_value_inner(function, field.value, flow), .{ .field = field.field_index }),
             .array_index => |index| self.projectArrayEffect(
-                try self.capability_value(function, index.array_ptr, flow),
+                try self.capability_value_inner(function, index.array_ptr, flow),
                 index.array_ptr,
                 if (self.staticIndex(index.index)) |selected| .{ .static_index = selected } else .dynamic_index,
             ),
             .choice_payload_access => |access| blk: {
                 const ty = self.graph.node(access.value).ty orelse break :blk .{};
                 const index = self.variantIndex(ty, access.variant) orelse break :blk .{};
-                break :blk try self.projectValueEffect(try self.capability_value(function, access.value, flow), .{ .variant = index });
+                break :blk try self.projectValueEffect(try self.capability_value_inner(function, access.value, flow), .{ .variant = index });
             },
             .choice_literal => |literal| try self.choiceValueEffect(
                 self.variantIndex(literal.choice_type, literal.variant) orelse return .{},
-                if (literal.payload) |payload| try self.capability_value(function, payload, flow) else .{},
+                if (literal.payload) |payload| try self.capability_value_inner(function, payload, flow) else .{},
             ),
             .function_call => |call| blk: {
                 var result = try self.inferExpression(function, node);
@@ -2615,11 +2619,11 @@ pub const Infer = struct {
                 // Capability queries may describe contents for a local
                 // pointer alias. That is not the pointer passed to the view.
                 if ((try self.capability_address_targets(argument, flow)).len != 0) break :blk result;
-                const input = try self.capability_value(function, argument, flow);
+                const input = try self.capability_value_inner(function, argument, flow);
                 if (input.reference_relation) |source| result.reference_relation = source.then(relation.grade);
                 break :blk result;
             },
-            .explicit_cast => |cast| self.capability_value(function, cast.value, flow),
+            .explicit_cast => |cast| self.capability_value_inner(function, cast.value, flow),
             else => self.inferExpression(function, node),
         };
     }
