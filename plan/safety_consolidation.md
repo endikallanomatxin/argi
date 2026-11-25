@@ -136,6 +136,23 @@ Sharing immutable payloads between snapshots gives these medians:
 A branch still walks the live binding map at the join. The remaining growth
 in time warrants a benchmark that isolates revisiting unchanged bindings.
 
+For ordinary summary composition, a separate probe passes one owned String
+through a chain of functions with the same forwarding signature, then
+submits it to a worker and reads the returned byte. All three binaries ran
+successfully. Three cold ReleaseSafe runs with one frontend worker gave:
+
+| Forwarders | Summary evaluations | Summary bytes requested | Safety median | Peak RSS median |
+| ---: | ---: | ---: | ---: | ---: |
+| 16 | 215 | 29,628,061 | 29.3 ms | 121 MiB |
+| 64 | 311 | 48,968,085 | 46.9 ms | 125 MiB |
+| 256 | 695 | 126,110,349 | 120.1 ms | 136 MiB |
+
+Each added function accounts for two more summary evaluations and about
+402 KiB of cumulative requests. The request count measures all allocations
+during inference, including scratch storage. The result bounds the cost
+observed for a forwarding chain, where each function exposes one relation.
+It leaves cycles, branching wrappers and opaque collections unmeasured.
+
 ## Extracting a transferable owner from opaque storage
 
 An extraction probe uses `DynamicArray#(String)`, inserts an owned String
