@@ -311,12 +311,14 @@ class CapturedValue:
     # Regions are associated-member observations, not the containing slot.
     tag: int
     regions: tuple[StorageObservation, ...]
+    transferable: bool = False
 
     def join(self, other):
         if self.tag != other.tag or len(self.regions) != len(other.regions):
             raise Denied("incompatible stored value interfaces")
         return CapturedValue(self.tag, tuple(a.erase_with(b)
-                                            for a, b in zip(self.regions, other.regions)))
+                                            for a, b in zip(self.regions, other.regions)),
+                             self.transferable and other.transferable)
 
     def call(self, state, execution, member, mode, *, guard=None):
         if not 0 <= member < len(self.regions):
@@ -411,6 +413,30 @@ def opaque_recipe_experiments():
     replaced_arguments = ((right, OpaqueContents.empty().insert(captured_right)), arguments[1])
     first.load(replaced_arguments, writer).call(writer, 0, 0, READ)
     denied(lambda: copied.call(writer, 0, 0, READ))
+
+
+def opaque_transfer_experiments():
+    left = StorageObservation(((0,),), 0)
+    right = StorageObservation(((1,),), 0)
+    pending = State().lend(0, 1, (1,), WRITE)
+
+    for first_proof, second_proof in product((False, True), repeat=2):
+        first = CapturedValue(0, (left,), first_proof)
+        second = CapturedValue(0, (right,), second_proof)
+        a = OpaqueContents.empty().insert(first)
+        b = OpaqueContents.empty().insert(second)
+        inserted = a.insert(second)
+        assert inserted == a.join(b)
+        assert inserted == b.join(a)
+        selected = inserted.select_unknown(0)
+        assert selected.transferable == (first_proof and second_proof)
+        # The shared guarantee neither removes alternate targets nor grants
+        # access through an outstanding loan of either target.
+        denied(lambda: selected.call(pending, 0, 0, WRITE))
+        selected.call(pending.complete(0), 0, 0, WRITE)
+        denied(lambda: inserted.join(OpaqueContents()).select_unknown(0))
+
+    denied(lambda: OpaqueContents.empty().select_unknown(0))
 
 
 def opaque_capture_experiments():
@@ -1467,6 +1493,7 @@ def explore_interactions(depth=4):
 
 if __name__ == "__main__":
     opaque_recipe_experiments()
+    opaque_transfer_experiments()
     opaque_captures_checked = opaque_capture_experiments()
     physical_loans_checked = physical_loan_experiments()
     physical_checked = physical_heap_experiments()
@@ -1492,6 +1519,7 @@ if __name__ == "__main__":
     print(f"Physical backing: {physical_checked} overlap checks and release/reuse adversarial cases passed")
     print(f"Physical loans: {physical_loans_checked} authority/lifetime combinations checked")
     print(f"Opaque captures: {opaque_captures_checked} typed member-region joins checked")
+    print("Opaque transfer evidence: insertion and branch joins meet guarantees and retain access obligations")
     print("Opaque result recipes: input substitution, slot/capture separation and snapshot contrasts passed")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Receipt/region substitution adversarial cases passed")
