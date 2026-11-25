@@ -1990,6 +1990,9 @@ pub const Infer = struct {
         const Replacement = struct { target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: facts.ValueEffect };
         var replacements: std.ArrayList(Replacement) = .empty;
         defer replacements.deinit(self.allocator);
+        var buffer: [4]ArgumentFacts = undefined;
+        var context = try SubstitutionContext.init(self, function_id, arguments, &buffer);
+        defer context.deinit(&buffer);
         const signature = self.graph.function(callee);
         for (summary.input_post_states) |*post| {
             if (post.initialization == .preserved or (post.initializedness != .initialized and post.initializedness != .maybe_initialized) or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
@@ -2001,7 +2004,7 @@ pub const Infer = struct {
             const targets = try self.localMutationCandidates(argument, 0);
             if (targets.len == 0) continue;
             const exact_targets = try self.localAddressTargets(argument);
-            const value = try self.substituteOutput(function_id, post.value, arguments);
+            const value = try self.substituteOutputInContext(post.value, null, &context);
             for (targets) |target| {
                 var updated = value;
                 if (exact_targets.len != 1 or targets.len != 1 or post.initialization != .definite or post.initializedness != .initialized) {
@@ -6810,11 +6813,14 @@ pub const Infer = struct {
     fn substitute_summary_outputs(self: *Infer, function: graph_mod.GlobalFunctionId, outputs: []const facts.ValueEffect, arguments: []const graph_mod.ValueField, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {
         if (outputs.len == 0) return .{};
         if (outputs.len == 1) return self.rebaseFreshSources(try self.substituteOutput(function, outputs[0], arguments), call_node);
+        var buffer: [4]ArgumentFacts = undefined;
+        var context = try SubstitutionContext.init(self, function, arguments, &buffer);
+        defer context.deinit(&buffer);
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, outputs.len);
         var aggregate: facts.ValueEffect = .{};
         for (outputs, 0..) |output, index| {
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.substituteOutput(function, output, arguments);
+            value.* = try self.substituteOutputInContext(output, null, &context);
             fields[index] = .{ .index = @intCast(index), .value = value };
             aggregate = try self.mergeValueEffects(aggregate, value.*);
         }
@@ -7849,6 +7855,16 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         entries: []ArgumentFacts,
 
+        fn init(infer: *Infer, function: graph_mod.GlobalFunctionId, arguments: []const graph_mod.ValueField, buffer: []ArgumentFacts) !SubstitutionContext {
+            const entries = if (arguments.len <= buffer.len) buffer[0..arguments.len] else try infer.allocator.alloc(ArgumentFacts, arguments.len);
+            @memset(entries, .{});
+            return .{ .infer = infer, .function = function, .arguments = arguments, .entries = entries };
+        }
+
+        fn deinit(self: SubstitutionContext, buffer: []ArgumentFacts) void {
+            if (self.entries.len > buffer.len) self.infer.allocator.free(self.entries);
+        }
+
         fn effect(self: *SubstitutionContext, index: u32) !facts.ValueEffect {
             const entry = &self.entries[index];
             if (entry.effect == null)
@@ -7881,26 +7897,21 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !facts.ValueEffect {
         if (!requiresOutputSubstitution(effect)) return effect;
-        var buffer: [4]ArgumentFacts = @splat(.{});
-        const entries = if (arguments.len <= buffer.len)
-            buffer[0..arguments.len]
-        else
-            try self.allocator.alloc(ArgumentFacts, arguments.len);
-        defer if (arguments.len > buffer.len) self.allocator.free(entries);
-        if (arguments.len > buffer.len) @memset(entries, .{});
-        var context: SubstitutionContext = .{ .infer = self, .function = function_id, .arguments = arguments, .entries = entries };
-        return self.substituteOutputInContext(function_id, effect, arguments, override, &context);
+        var buffer: [4]ArgumentFacts = undefined;
+        var context = try SubstitutionContext.init(self, function_id, arguments, &buffer);
+        defer context.deinit(&buffer);
+        return self.substituteOutputInContext(effect, override, &context);
     }
 
     fn substituteOutputInContext(
         self: *Infer,
-        function_id: graph_mod.GlobalFunctionId,
         effect: facts.ValueEffect,
-        arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
         context: *SubstitutionContext,
     ) !facts.ValueEffect {
         if (!requiresOutputSubstitution(effect)) return effect;
+        const function_id = context.function;
+        const arguments = context.arguments;
         var result: facts.ValueEffect = .{
             .static_reference = effect.static_reference,
             .observes_fresh_backing = effect.observes_fresh_backing,
@@ -7940,11 +7951,11 @@ pub const Infer = struct {
         const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, effect.domain_values.len);
         for (effect.domain_values, domain_values) |domain, *mapped| {
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.substituteOutputInContext(function_id, domain.value.*, arguments, override, context);
+            value.* = try self.substituteOutputInContext(domain.value.*, override, context);
             mapped.* = .{ .domain_index = domain.domain_index, .value = value };
             if (domain.required_reads) |reads| {
                 const substituted = try self.allocator.create(facts.ValueEffect);
-                substituted.* = try self.substituteOutputInContext(function_id, reads.*, arguments, override, context);
+                substituted.* = try self.substituteOutputInContext(reads.*, override, context);
                 mapped.required_reads = substituted;
             }
             // Folding a known domain also transports its locating reads. These
@@ -7963,7 +7974,7 @@ pub const Infer = struct {
         const executions = try self.allocator.alloc(facts.FreshExecution, effect.fresh_executions.len);
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
-            inputs.* = try self.substituteOutputInContext(function_id, execution.inputs.*, arguments, override, context);
+            inputs.* = try self.substituteOutputInContext(execution.inputs.*, override, context);
             mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .inputs = inputs };
         }
         result.fresh_executions = executions;
@@ -8152,14 +8163,14 @@ pub const Infer = struct {
 
         if (effect.fields_are_updates) {
             for (effect.fields) |field| {
-                const value = try self.substituteOutputInContext(function_id, field.value.*, arguments, override, context);
+                const value = try self.substituteOutputInContext(field.value.*, override, context);
                 result = try self.storeEffectProjection(result, &.{.{ .field = field.index }}, value);
             }
         } else if (effect.fields.len != 0) {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutputInContext(function_id, field.value.*, arguments, override, context);
+                value.* = try self.substituteOutputInContext(field.value.*, override, context);
                 fields[index] = .{ .index = field.index, .value = value };
             }
             result.fields = fields;
@@ -8168,7 +8179,7 @@ pub const Infer = struct {
             const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutputInContext(function_id, variant.value.*, arguments, override, context);
+                value.* = try self.substituteOutputInContext(variant.value.*, override, context);
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
@@ -8263,7 +8274,7 @@ pub const Infer = struct {
         }
         if (effect.staged_output) |staged| {
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.substituteOutputInContext(function_id, staged.*, arguments, override, context);
+            value.* = try self.substituteOutputInContext(staged.*, override, context);
             result.staged_output = value;
         }
         return result;
@@ -9729,7 +9740,7 @@ test "nested replacement preserves projected input evidence for siblings" {
     const arguments: []const graph_mod.ValueField = &.{.{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) }};
     var entries = [_]Infer.ArgumentFacts{.{ .effect = caller, .paths = &.{}, .pointee_ready = true }};
     var context: Infer.SubstitutionContext = .{ .infer = &infer, .function = @enumFromInt(0), .arguments = arguments, .entries = &entries };
-    const composed = try infer.substituteOutputInContext(@enumFromInt(0), updated, arguments, null, &context);
+    const composed = try infer.substituteOutputInContext(updated, null, &context);
     try std.testing.expect(composed.fields_are_updates);
     try std.testing.expect((try infer.projectValueEffect(composed, .{ .field = 3 })).concurrent_receiver);
     const inherited = try infer.projectValueEffect(composed, .{ .field = 0 });
@@ -11430,7 +11441,7 @@ test "staged task cleanup evidence requires agreement across alternatives" {
     const arguments: []const graph_mod.ValueField = &.{.{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) }};
     var entries = [_]Infer.ArgumentFacts{.{ .effect = .{ .virtual_receiver_input = .{ .input_index = 3 } } }};
     var context: Infer.SubstitutionContext = .{ .infer = &infer, .function = @enumFromInt(0), .arguments = arguments, .entries = &entries };
-    const forwarded = try infer.substituteOutputInContext(@enumFromInt(0), first, arguments, null, &context);
+    const forwarded = try infer.substituteOutputInContext(first, null, &context);
     try std.testing.expectEqual(@as(u32, 3), forwarded.staged_output.?.virtual_receiver_input.?.input_index);
     try std.testing.expect(forwarded.virtual_receiver_input == null);
 
