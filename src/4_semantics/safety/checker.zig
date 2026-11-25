@@ -3314,7 +3314,7 @@ pub const SafetyChecker = struct {
 
     fn executionPointerFrame(pointer: facts.ValueFacts, state: *const FunctionState) ?u32 {
         if (pointer.acquisition_origins.len != 0 and
-            @import("transfer_evidence.zig").observesTransferredBacking(pointer, pointer.owned_backing) and
+            @import("transfer_evidence.zig").observesOwnedBacking(pointer, pointer.owned_backing) and
             state.tracker.dependenciesAreAlive(pointer))
         {
             // Authenticated acquired backing cannot overlap direct lexical

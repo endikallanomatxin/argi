@@ -129,6 +129,14 @@ pub fn backingOwner(value: facts.ValueFacts, enclosing_owner: ?facts.ValidityRoo
 /// retained dependency must travel with that custody.
 pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.ValidityRootId) bool {
     const root = owner orelse return false;
+    if (!observesOwnedBacking(reference, root)) return false;
+    for (reference.dependencies) |dependency| if (dependency.root != root) return false;
+    return true;
+}
+
+/// Additional lifetime anchors do not change a proven physical observation.
+pub fn observesOwnedBacking(reference: facts.ValueFacts, owner: ?facts.ValidityRootId) bool {
+    const root = owner orelse return false;
     if (reference.owned_backing != root or reference.reference_target_incomplete or
         reference.referenced_place != null or reference.mutation_places.len != 0 or
         reference.symbolic_pointees.len != 0 or reference.opaque_provenance.len != 0 or
@@ -136,9 +144,18 @@ pub fn observesTransferredBacking(reference: facts.ValueFacts, owner: ?facts.Val
         reference.fields.len != 0 or reference.variants.len != 0 or
         reference.guarded_values.len != 0 or reference.generation_outcomes.len != 0 or reference.completed_executions.len != 0)
         return false;
-    if (reference.dependencies.len == 0) return false;
-    for (reference.dependencies) |dependency| if (dependency.root != root) return false;
-    return true;
+    for (reference.dependencies) |dependency| if (dependency.root == root) return true;
+    return false;
+}
+
+test "backing observation does not transfer independent lifetime anchors" {
+    const root: facts.ValidityRootId = @enumFromInt(1);
+    const reference: facts.ValueFacts = .{
+        .owned_backing = root,
+        .dependencies = &.{ .{ .root = root }, .{ .root = @enumFromInt(2) } },
+    };
+    try std.testing.expect(observesOwnedBacking(reference, root));
+    try std.testing.expect(!observesTransferredBacking(reference, root));
 }
 
 /// An opaque native result slot currently transports bytes and cleanup custody.
