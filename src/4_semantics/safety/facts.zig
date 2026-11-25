@@ -202,8 +202,12 @@ pub const ValueFacts = struct {
     /// Keep known may-targets, but do not treat their singleton as exhaustive.
     reference_target_incomplete: bool = false,
     /// Known possible destinations retained only for conservative mutation.
-    /// This list is not complete and never grants exact access or ownership.
+    /// This list alone never grants exact access or ownership.
     mutation_places: []const Place = &.{},
+    /// Every alternative is covered by an authenticated place or symbolic
+    /// target. Only a join or substitution of covered references sets this.
+    reference_coverage_complete: bool = false,
+
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
     symbolic_pointees: []const SymbolicPointeeId = &.{},
@@ -223,6 +227,12 @@ pub const ValueFacts = struct {
     choice_selectors: []const CallChoiceSelector = &.{},
     choice_observations: []const CallChoiceSelector = &.{},
     guarded_values: []const GuardedValueFacts = &.{},
+
+    pub fn hasCompleteReferenceCoverage(self: ValueFacts) bool {
+        if (self.reference_target_incomplete) return false;
+        if (self.reference_coverage_complete and self.mutation_places.len != 0) return true;
+        return self.referenced_place != null or self.symbolic_pointees.len != 0;
+    }
 
     /// Traverses represented structural children. Guarded refinements are
     /// separate alternatives and may form recursive graphs.
@@ -263,6 +273,7 @@ pub const ValueFacts = struct {
             .referenced_place = self.referenced_place,
             .reference_target_incomplete = self.reference_target_incomplete,
             .mutation_places = self.mutation_places,
+            .reference_coverage_complete = self.reference_coverage_complete,
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
             .opaque_provenance = self.opaque_provenance,
@@ -285,6 +296,7 @@ pub const ValueFacts = struct {
         result.referenced_place = null;
         result.reference_target_incomplete = true;
         result.mutation_places = &.{};
+        result.reference_coverage_complete = false;
         result.symbolic_pointees = &.{};
         result.concurrent_receiver = false;
         result.virtual_no_access = &.{};

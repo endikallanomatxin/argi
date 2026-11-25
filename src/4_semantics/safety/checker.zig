@@ -3103,7 +3103,7 @@ pub const SafetyChecker = struct {
             const roots = try generations.toOwnedSlice();
             const concurrent = semantic.pointer.mutability == .concurrent;
             const mode: facts.AccessMode = if (semantic.pointer.mutability == .read_only) .read else .write;
-            if (value.referenced_place == null and value.symbolic_pointees.len == 0) {
+            if (!value.hasCompleteReferenceCoverage()) {
                 var name = std.array_list.Managed(u8).init(self.allocator);
                 defer name.deinit();
                 try @import("../global/type_names.zig").appendTypeName(&name, self.graph, ty);
@@ -6105,6 +6105,7 @@ pub const SafetyChecker = struct {
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
         var unknown_reference_source = false;
+        var reference_sources_covered = true;
         var place_alternatives = std.array_list.Managed(facts.Place).init(self.allocator);
         defer place_alternatives.deinit();
         if (effect.static_reference) |binding| {
@@ -6119,7 +6120,10 @@ pub const SafetyChecker = struct {
             if (target) |storage| {
                 try appendPlaceFact(&place_alternatives, storage);
                 try appendDependencyFact(&dependencies, .{ .root = try self.observeStorageGeneration(state, storage) });
-            } else unknown_reference_source = true;
+            } else {
+                unknown_reference_source = true;
+                reference_sources_covered = false;
+            }
         }
         for (effect.input_captured_storages) |capture| {
             const path = capture.path;
@@ -6210,6 +6214,7 @@ pub const SafetyChecker = struct {
                     forwarded_backing = input.owned_backing;
                     if (dependency.transfers_ownership) forwarded_owner = input.intrinsic_backing_owner;
                 }
+                reference_sources_covered = reference_sources_covered and input.hasCompleteReferenceCoverage();
                 unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
                 includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             }
@@ -6235,6 +6240,7 @@ pub const SafetyChecker = struct {
             const input = for (entries) |entry| {
                 if (sameInputPath(entry.path, path)) break entry.value;
             } else try self.loadSummaryInputPlaceContents(path, arguments, state);
+            reference_sources_covered = reference_sources_covered and input.hasCompleteReferenceCoverage();
             unknown_reference_source = unknown_reference_source or input.reference_target_incomplete or !hasReferenceTarget(input);
             includeReferenceAlternative(&referenced_place, &has_referent, if (input.reference_target_incomplete) null else input.referenced_place);
             result = try self.mergeValueFacts(result, input);
@@ -6335,6 +6341,8 @@ pub const SafetyChecker = struct {
             result.reference_target_incomplete = true;
             result.referenced_place = null;
         }
+        result.reference_coverage_complete = has_referent and reference_sources_covered and
+            !result.reference_target_incomplete and result.mutation_places.len != 0;
         // A validity-only anchor contributes a lifetime without changing the
         // address observed by the authenticated fresh-backing recipe.
         if (effect.observes_fresh_backing and effect.fresh_dependencies.len == 1 and
@@ -6637,6 +6645,7 @@ pub const SafetyChecker = struct {
             current.known_choice_variant = null;
             current.owned_backing = null;
             current.intrinsic_backing_owner = null;
+            current.reference_coverage_complete = false;
             current.concurrent_receiver = false;
             current.virtual_no_access = &.{};
             current.completed_executions = &.{};
@@ -8580,6 +8589,7 @@ pub const SafetyChecker = struct {
             for (pointer.mutation_places) |place| try appendPlaceFact(&targets, try self.project(place, projection));
             var result = pointer.referenceCopy();
             result.mutation_places = try targets.toOwnedSlice();
+            result.reference_coverage_complete = false;
             result.symbolic_pointees = &.{};
             // Project each symbolic alternative as well; a concrete may-target
             // must not make the symbolic side disappear or become exclusive.
@@ -9755,6 +9765,8 @@ pub const SafetyChecker = struct {
     fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: ?*const FunctionState, right_state: ?*const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
         if (generations.len == 0 and valueFactsEqual(left, right)) return left;
         var merged = try self.mergeValueFacts(left, right);
+        merged.reference_coverage_complete = merged.mutation_places.len != 0 and
+            left.hasCompleteReferenceCoverage() and right.hasCompleteReferenceCoverage();
         if (hasReferenceTarget(left) != hasReferenceTarget(right)) {
             merged.reference_target_incomplete = true;
             merged.referenced_place = null;
@@ -10869,6 +10881,7 @@ fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Manage
 fn sameReferenceObservation(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
+    if (left.reference_coverage_complete != right.reference_coverage_complete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
     for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
     if (left.lexical_frame != right.lexical_frame) return false;
@@ -11059,6 +11072,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.task_output_execution != right.task_output_execution or left.task_output_claim != right.task_output_claim) return false;
     if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
+    if (left.reference_coverage_complete != right.reference_coverage_complete) return false;
     if (left.mutation_places.len != right.mutation_places.len) return false;
     for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
     if (left.lexical_frame != right.lexical_frame) return false;
@@ -13113,7 +13127,7 @@ test "array concrete projections select and merge element facts" {
         .{ .index = 0, .value = &authorized },
         .{ .index = 1, .value = &authorized },
     } };
-    try std.testing.expect(!(try checker.projectValueFacts(all_authorized, &.{.dynamic_index})).storage_capability_incomplete);
+    try std.testing.expect(!(try checker.joinArrayElementFacts(all_authorized, 2)).storage_capability_incomplete);
     const success = facts.ValueFacts{
         .known_choice_variant = 0,
         .variants = &.{.{ .index = 0, .value = &authorized }},
@@ -13129,7 +13143,7 @@ test "array concrete projections select and merge element facts" {
         .{ .index = 0, .value = &success },
         .{ .index = 1, .value = &error_case },
     } };
-    const outcome = try checker.projectValueFacts(outcomes, &.{.dynamic_index});
+    const outcome = try checker.joinArrayElementFacts(outcomes, 2);
     try std.testing.expect(!outcome.variants[0].value.storage_capability_incomplete);
 }
 

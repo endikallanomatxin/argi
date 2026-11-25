@@ -124,7 +124,7 @@ how many generations survive fixed-point iteration.
 A helper selecting between two ordinary mutable references to distinct
 scalars can return a reference whose alternatives are both valid. A probe
 passes that result to a worker that writes through it and reads the chosen
-scalar after awaiting completion. The current checker rejects submission
+scalar after awaiting completion. The baseline checker rejects submission
 because the merged reference has no authenticated target. A direct local
 conditional assignment with the same two alternatives produces the same
 rejection. Passing the same scalar as both alternatives through the helper
@@ -140,6 +140,13 @@ must break the coverage guarantee. Compare this against existing offset and
 reinterpretation negatives before letting a mutation candidate contribute to
 the proof. This uses the same distinction as a join of owned backing:
 collective membership may survive even when an exact identity is lost.
+
+Execution admission now recognizes complete coverage of a reference selected
+through a control-flow join or instantiated from an ordinary summary.
+Each covered destination receives a loan with the same completion receipt.
+Fixtures 443 and 444X exercise disjoint access and conflicting access before
+completion. Fixture 445X joins a direct reference with an unbounded offset
+and checks that the uncovered alternative prevents admission.
 
 ## Branch snapshot cost
 
