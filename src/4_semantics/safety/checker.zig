@@ -1245,6 +1245,8 @@ pub const SafetyChecker = struct {
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
                     if (try self.rejectSharedOverlap(node.source, storage, state)) continue;
+                    // Evaluating the replacement may publish a new loan.
+                    try self.checkExecutionAccess(node.source, storage, null, .write, false, state);
                     // Replacement cleanup may end the old value while evaluating
                     // the RHS sequence. Its new value starts a fresh generation.
                     if (previous_state != .deinitialized and state.initializednessAtPlace(storage) == .deinitialized)
@@ -1267,7 +1269,7 @@ pub const SafetyChecker = struct {
                     try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
-                    if (state.shared_regions.items.len != 0) try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
+                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const target = try self.project(base, .{ .field = store.field_index });
@@ -1285,7 +1287,7 @@ pub const SafetyChecker = struct {
                         break :blk try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state);
                     } else null;
                     const value = try self.evaluate(function, store.value, state);
-                    if (state.shared_regions.items.len != 0) try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
+                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
@@ -1338,7 +1340,7 @@ pub const SafetyChecker = struct {
                         active.pointer = pointer;
                     };
                     const value = try self.evaluate(function, assignment.value, state);
-                    if (state.shared_regions.items.len != 0) try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
+                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     if (pointer.referenced_place) |target| {
                         if (!was_deinitialized and state.initializednessAtPlace(target) == .deinitialized and pointer.opaque_provenance.len == 0) {
                             const old_generation = try state.storageGeneration(target);
