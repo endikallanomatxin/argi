@@ -1937,6 +1937,11 @@ pub const Infer = struct {
         return self.graph.node(self.graph.node_refs.items[block.nodes.start]).content == .abort_statement;
     }
 
+    fn tracksLocalContents(self: *Infer, ty: ?graph_mod.GlobalTypeId) bool {
+        const known = ty orelse return false;
+        return self.typeContainsPointer(known) or types.hasDestructor(self.graph, known);
+    }
+
     fn inferBlock(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -2005,7 +2010,7 @@ pub const Infer = struct {
                             const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
                             // A field can carry destruction authority even
                             // when its representation has no reference leaves.
-                            if (!self.typeContainsPointer(selected.ty) and !types.hasDestructor(self.graph, selected.ty)) continue;
+                            if (!self.tracksLocalContents(selected.ty)) continue;
                             const exact_targets = try self.localAddressTargets(arguments[post.target.input_index].value);
                             const targets = try self.localMutationCandidates(arguments[post.target.input_index].value, 0);
                             for (targets) |target| {
@@ -2037,18 +2042,19 @@ pub const Infer = struct {
                     // a local alias. One selected value feeds every possible
                     // destination; never replay its opaque effects per target.
                     const targets = try self.localAddressTargets(store.struct_ptr);
-                    const reference_value = if (self.graph.node(store.value).ty) |ty| self.typeContainsPointer(ty) else false;
-                    if (!reference_value and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const ty = self.graph.node(store.value).ty;
+                    const tracked = self.tracksLocalContents(ty);
+                    if (!tracked and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target| {
                         const path = &[_]facts.Projection{.{ .field = store.field_index }};
-                        if (reference_value) try self.retainProjectedMutationValue(target, path, store.value);
+                        if (tracked) try self.retainProjectedMutationValue(target, path, store.value);
                         var updated = value;
-                        if (reference_value and targets.len != 1) {
+                        if (tracked and targets.len != 1) {
                             const previous = try self.projectValueEffect(try self.inferExpression(function_id, target), path[0]);
-                            updated = try self.joinStorageAlternatives(self.graph.node(store.value).ty, previous, value);
+                            updated = try self.joinStorageAlternatives(ty, previous, value);
                         }
-                        try self.storeSelectedValueEffect(function_id, target, path, updated, outputs, if (reference_value) .locals_and_outputs else .outputs);
+                        try self.storeSelectedValueEffect(function_id, target, path, updated, outputs, if (tracked) .locals_and_outputs else .outputs);
                     }
                 },
                 .array_store => |store| {
@@ -2061,16 +2067,17 @@ pub const Infer = struct {
                 },
                 .pointer_assignment => |store| {
                     const targets = try self.localAddressTargets(store.pointer);
-                    const reference_value = if (self.graph.node(store.value).ty) |ty| self.typeContainsPointer(ty) else false;
-                    if (!reference_value and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
+                    const ty = self.graph.node(store.value).ty;
+                    const tracked = self.tracksLocalContents(ty);
+                    if (!tracked and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
                     for (targets) |target| {
-                        if (reference_value) try self.retainProjectedMutationValue(target, &.{}, store.value);
-                        const updated = if (reference_value and targets.len != 1)
-                            try self.joinStorageAlternatives(self.graph.node(store.value).ty, try self.inferExpression(function_id, target), value)
+                        if (tracked) try self.retainProjectedMutationValue(target, &.{}, store.value);
+                        const updated = if (tracked and targets.len != 1)
+                            try self.joinStorageAlternatives(ty, try self.inferExpression(function_id, target), value)
                         else
                             value;
-                        try self.storeSelectedValueEffect(function_id, target, &.{}, updated, outputs, if (reference_value) .locals_and_outputs else .outputs);
+                        try self.storeSelectedValueEffect(function_id, target, &.{}, updated, outputs, if (tracked) .locals_and_outputs else .outputs);
                     }
                 },
                 .if_statement => |statement| {
