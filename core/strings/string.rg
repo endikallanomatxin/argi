@@ -184,10 +184,8 @@ _string_set_byte := (.string: $&String, .index: UIntNative, .value: UInt8) -> ()
 }
 
 _string_text_view := (.self: &String) -> (.view: StringView) {
-    if self&._length == 0 {
-        view = ""
-        return
-    }
+    -- The backing always includes an initialized trailing NUL, even for
+    -- empty text. A view keeps the same backing and shape dependencies.
     first ::= _trusted_allocation_byte_ro(
         .allocation = &self&._allocation, .offset = 0
     ).reference
