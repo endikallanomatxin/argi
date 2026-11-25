@@ -88,11 +88,18 @@ element accesses queue-controlled backing in addition to its structural
 fields. This probe separates the interface's ability to name that backing
 from the execution's ability to lend the queue exclusively.
 
-The next contrast is to publish the backing region from the queue's owner
-module and exercise the same loan without synchronization. A positive probe
-should read the second item after completion. A negative probe should
-reject access to the same backing before completion, including access
-through an independently obtained view.
+Moving that implementation into the queue's owner module gives access to
+its private fields. Declaring a named region mapped to
+`region(self._allocation)` and adding `writes(self.storage)` still exceeds
+the declared bounds. Mapping `region(self._allocation._storage_reference)`
+also fails. These paths identify a structural allocation slot or an
+optional reference slot. The access effect refers to the owned backing
+selected by the allocation, so the mapping needs a way to denote that
+existing storage identity.
+
+A positive probe should read the second item after completion without
+synchronization. A negative probe should reject access to the same backing
+before completion, including access through an independently obtained view.
 
 ## Acceptance criterion for storage summaries
 
