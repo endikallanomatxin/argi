@@ -2707,7 +2707,12 @@ pub const Infer = struct {
                 const value = try self.capability_value(function, assignment.value, flow);
                 const targets = try self.capability_address_targets(assignment.pointer, flow);
                 if (targets.len != 0) for (targets) |target| {
-                    try self.store_capability_target(function, target, value, flow);
+                    const replacement = if (targets.len == 1) value else try self.joinStorageAlternatives(
+                        self.graph.node(assignment.value).ty,
+                        try self.capability_value(function, target, flow),
+                        value,
+                    );
+                    try self.store_capability_target(function, target, replacement, flow);
                 } else try self.store_capability_target(function, assignment.pointer, value, flow);
             },
             .struct_field_store => |store| {
@@ -2716,7 +2721,12 @@ pub const Infer = struct {
                 const value = try self.capability_value(function, store.value, flow);
                 const targets = try self.capability_address_targets(store.struct_ptr, flow);
                 if (targets.len != 0) for (targets) |target| {
-                    try self.store_capability_field(function, target, store.field_index, value, flow);
+                    const replacement = if (targets.len == 1) value else try self.joinStorageAlternatives(
+                        store.field_type,
+                        try self.projectValueEffect(try self.capability_value(function, target, flow), .{ .field = store.field_index }),
+                        value,
+                    );
+                    try self.store_capability_field(function, target, store.field_index, replacement, flow);
                 } else try self.store_capability_field(function, store.struct_ptr, store.field_index, value, flow);
             },
             .array_store => |store| {
