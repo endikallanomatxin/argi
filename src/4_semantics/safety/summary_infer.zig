@@ -2003,7 +2003,9 @@ pub const Infer = struct {
                             const parameter = self.graph.fields.items[signature.input.start + post.target.input_index].ty;
                             if (self.graph.semanticType(parameter) != .pointer) continue;
                             const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
-                            if (!self.typeContainsPointer(selected.ty)) continue;
+                            // A field can carry destruction authority even
+                            // when its representation has no reference leaves.
+                            if (!self.typeContainsPointer(selected.ty) and !types.hasDestructor(self.graph, selected.ty)) continue;
                             const exact_targets = try self.localAddressTargets(arguments[post.target.input_index].value);
                             const targets = try self.localMutationCandidates(arguments[post.target.input_index].value, 0);
                             for (targets) |target| {
@@ -6633,7 +6635,11 @@ pub const Infer = struct {
         }
         if (!found) {
             const child = try self.allocator.create(facts.ValueEffect);
-            child.* = try self.storeEffectProjection(.{}, projections[1..], value);
+            // A sparse effect may describe every field through an input
+            // projection. Materializing one nested replacement must retain
+            // the inherited facts for siblings in that same subobject.
+            const inherited = if (projections.len > 1) try self.projectValueEffect(previous, projections[0]) else facts.ValueEffect{};
+            child.* = try self.storeEffectProjection(inherited, projections[1..], value);
             try fields.append(.{ .index = index, .value = child });
         }
         // Projected writes do not discard whole-value ownership or facts
@@ -6648,6 +6654,10 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = try fields.toOwnedSlice();
+        result.fields_are_updates = previous.fields_are_updates or (previous.fields.len == 0 and
+            previous.input_dependencies.len == 1 and previous.input_dependencies[0].transfers_ownership and
+            !previous.input_dependencies[0].validity_only and
+            previous.virtual_receiver_input != null and previous.virtual_receiver_input.?.eql(previous.input_dependencies[0].path));
         result.explicit_dependency = previous.explicit_dependency;
         result.owns_fresh_backing = previous.owns_fresh_backing and result.fresh_owned_roots.len == 1;
         return result;
@@ -7884,7 +7894,12 @@ pub const Infer = struct {
                 result.static_reference = static_reference;
         }
 
-        if (effect.fields.len != 0) {
+        if (effect.fields_are_updates) {
+            for (effect.fields) |field| {
+                const value = try self.substituteOutputInContext(function_id, field.value.*, arguments, override, context);
+                result = try self.storeEffectProjection(result, &.{.{ .field = field.index }}, value);
+            }
+        } else if (effect.fields.len != 0) {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
@@ -8147,6 +8162,7 @@ pub const Infer = struct {
         result.input_place_values = try self.projectInputPaths(effect.input_place_values, projection);
         result.input_owned_roots = try self.projectInputPaths(effect.input_owned_roots, projection);
         result.fields = &.{};
+        result.fields_are_updates = false;
         result.variants = &.{};
         result.known_choice_variant = null;
         return result;
@@ -9354,6 +9370,32 @@ test "projected summary writes retain only intrinsic explicit anchors on the par
     try std.testing.expect(updated.fields[0].value.explicit_dependency);
     const anchored = try infer.storeEffectProjection(.{ .explicit_dependency = true }, &.{.{ .field = 0 }}, child);
     try std.testing.expect(anchored.explicit_dependency);
+}
+
+test "nested replacement preserves projected input evidence for siblings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    var before = try infer.withOwnershipTransfer(try infer.inputValueEffect(0, &.{}));
+    before.virtual_receiver_input = .{ .input_index = 0 };
+    const updated = try infer.storeEffectProjection(before, &.{ .{ .field = 1 }, .{ .field = 2 } }, .{});
+    try std.testing.expect(updated.fields_are_updates);
+    const nested = try infer.projectValueEffect(updated, .{ .field = 1 });
+    try std.testing.expect(nested.fields_are_updates);
+    const sibling = try infer.projectValueEffect(nested, .{ .field = 3 });
+    try std.testing.expectEqual(@as(usize, 1), sibling.input_dependencies.len);
+    try std.testing.expect(sibling.input_dependencies[0].path.eql(.{
+        .input_index = 0,
+        .projections = &.{ .{ .field = 1 }, .{ .field = 3 } },
+    }));
+    const replaced = try infer.projectValueEffect(nested, .{ .field = 2 });
+    try std.testing.expect(facts.isEmptyValue(replaced));
 }
 
 test "fresh storage availability preserves unchanged trees and marks nested consumption" {

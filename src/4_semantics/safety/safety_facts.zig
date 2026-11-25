@@ -332,6 +332,9 @@ pub const ValueEffect = struct {
     opaque_generation_dependencies: []const InputPath = &.{},
     opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
+    /// Explicit replacements over a moved input. Other fields retain the
+    /// facts of the evaluated input snapshot.
+    fields_are_updates: bool = false,
     variants: []const OutputVariantEffect = &.{},
     known_choice_variant: ?u32 = null,
     fresh_dependencies: []const FreshEffectSource = &.{},

@@ -6236,7 +6236,14 @@ pub const SafetyChecker = struct {
             result = try self.mergeValueFacts(result, input);
         }
 
-        if (effect.fields.len != 0) {
+        if (effect.fields_are_updates) {
+            const previous = result;
+            for (effect.fields) |field| {
+                const value = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities, entries);
+                result = try self.replaceProjectedValue(result, .{ .field = field.index }, value);
+            }
+            result = try self.refreshProjectedValueRoots(previous, result);
+        } else if (effect.fields.len != 0) {
             // Explicit anchors belong to the value that introduced them. Child
             // anchors are checked recursively; flattening their flag would make
             // an enclosing owner retain replaced allocations as explicit loans.
@@ -12476,6 +12483,32 @@ test "copying input dependencies does not copy nested ownership" {
         .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
     }, &.{wrapped}, &state);
     try std.testing.expect(valueContainsOwnedRoot(moved, root));
+}
+
+test "sparse output writes preserve untouched backing and replace overwritten evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const replaced_backing = try state.tracker.establish(.fresh);
+    const untouched: facts.ValueFacts = .{ .owned_roots = &.{backing}, .concurrent_receiver = true };
+    const removed: facts.ValueFacts = .{ .owned_roots = &.{replaced_backing}, .concurrent_receiver = true };
+    const input: facts.ValueFacts = .{
+        .owned_roots = &.{ backing, replaced_backing },
+        .fields = &.{ .{ .index = 0, .value = &untouched }, .{ .index = 1, .value = &removed } },
+    };
+    const output = try checker.instantiateOutput(.{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
+        .fields = &.{.{ .index = 1, .value = &.{} }},
+        .fields_are_updates = true,
+    }, &.{input}, &state);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{backing}, output.owned_roots);
+    try std.testing.expect(SafetyChecker.representedSnapshotProjection(output, .{ .field = 0 }).?.concurrent_receiver);
+    try std.testing.expect(facts.isEmptyValue(SafetyChecker.representedSnapshotProjection(output, .{ .field = 1 }).?));
 }
 
 test "an exact owned output preserves the full input snapshot" {

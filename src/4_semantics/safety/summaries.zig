@@ -251,7 +251,7 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         a.input_owned_roots.len != b.input_owned_roots.len or
         a.opaque_generation_dependencies.len != b.opaque_generation_dependencies.len or
         a.opaque_storage_dependencies.len != b.opaque_storage_dependencies.len or
-        a.fields.len != b.fields.len or
+        a.fields_are_updates != b.fields_are_updates or a.fields.len != b.fields.len or
         a.variants.len != b.variants.len or
         a.fresh_dependencies.len != b.fresh_dependencies.len or
         a.fresh_owned_roots.len != b.fresh_owned_roots.len or
