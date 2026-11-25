@@ -10384,13 +10384,12 @@ pub const SafetyChecker = struct {
         _ = self;
         var result = fallback;
         for (state.places.items) |candidate| {
-            if (candidate.storage.root != fallback.root or candidate.storage.projections.len <= result.projections.len) continue;
-            var contains = false;
-            for (roots) |root| if (containsRoot(candidate.value.owned_roots, root)) {
-                contains = true;
-                break;
-            };
-            if (contains) result = candidate.storage;
+            if (!fallback.isPrefixOf(candidate.storage) or candidate.storage.projections.len <= result.projections.len) continue;
+            // A projected owner must cover the complete set of incoming
+            // roots. A sibling or a partial owner cannot stand for the join.
+            for (roots) |root| {
+                if (!containsRoot(candidate.value.owned_roots, root)) break;
+            } else result = candidate.storage;
         }
         return result;
     }
@@ -11877,6 +11876,25 @@ test "loop root widening is stable and preserves historical aliases" {
     try checker.widenLoopOwnedRoots(&context, &historical, &entry, &second_iteration);
     try std.testing.expect(!historical.tracker.dependenciesAreAlive(historical.getPlace(alias).?.value));
     try std.testing.expect(containsRoot(historical.getPlace(owner).?.value.owned_roots, second_replacement));
+}
+
+test "loop backing owner projection requires all incoming roots" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const owner: facts.Place = .{ .root = @enumFromInt(0), .projections = &.{.{ .field = 0 }} };
+    const nested: facts.Place = .{ .root = owner.root, .projections = &.{ .{ .field = 0 }, .{ .field = 0 } } };
+    const sibling: facts.Place = .{ .root = owner.root, .projections = &.{ .{ .field = 1 }, .{ .field = 0 } } };
+    const roots = [_]facts.ValidityRootId{ @enumFromInt(0), @enumFromInt(1) };
+    try state.places.append(.{ .storage = nested, .value = .{ .owned_roots = roots[0..1] } });
+    try state.places.append(.{ .storage = sibling, .value = .{ .owned_roots = &roots } });
+    try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(owner));
+    state.getPlace(nested).?.value.owned_roots = &roots;
+    try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(nested));
 }
 
 test "loop root trimming retains generations named by pending receipts" {
