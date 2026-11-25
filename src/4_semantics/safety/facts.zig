@@ -19,6 +19,7 @@ pub const ValidityRoot = base.ValidityRoot;
 pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
+pub const TaskOutputSelection = base.TaskOutputSelection;
 pub const ReferenceRelation = base.ReferenceRelation;
 pub const AccessMode = base.AccessMode;
 pub const commonVirtualNoAccess = base.commonVirtualNoAccess;

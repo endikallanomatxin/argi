@@ -32,7 +32,7 @@ pub const Copy = struct {
             },
             .pointer => |pointer| result: {
                 if (!pointer.is_const or pointer.sentinel() != null) @compileError("Fact snapshots accept immutable unsentinelized buffers only");
-                if (pointer.size != .slice and !(pointer.size == .one and (pointer.child == facts.ValueFacts or pointer.child == facts.ValueEffect or pointer.child == facts.SafetySummary)))
+                if (pointer.size != .slice and !(pointer.size == .one and (pointer.child == facts.ValueFacts or pointer.child == facts.ValueEffect or pointer.child == facts.SafetySummary or pointer.child == facts.TaskOutputSelection)))
                     @compileError("Unsupported pointer in published safety facts");
                 const length = if (pointer.size == .slice) source.len else 1;
                 if (length == 0) break :result &.{};
@@ -81,6 +81,31 @@ test "fact snapshots own shared values and projection buffers" {
     try std.testing.expect(result.fields[0].value == result.fields[1].value);
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{@enumFromInt(4)}, result.fields[0].value.acquisition_origins);
     try std.testing.expectEqual(@as(u32, 3), result.fields[0].value.referenced_place.?.projections[0].field);
+}
+
+test "task output selections survive publication from a scratch arena" {
+    const a = std.testing.allocator;
+    var publication = std.heap.ArenaAllocator.init(a);
+    defer publication.deinit();
+    var copy: Copy = .{ .allocator = publication.allocator(), .scratch = a };
+    defer copy.deinit();
+    var result: facts.ValueEffect = undefined;
+    {
+        var transient = std.heap.ArenaAllocator.init(a);
+        defer transient.deinit();
+        const scratch = transient.allocator();
+        const selection = try scratch.create(facts.TaskOutputSelection);
+        selection.* = .{
+            .receipt = .{ .input_index = 2, .projections = try scratch.dupe(facts.Projection, &.{.dereference}) },
+            .projection = try scratch.dupe(facts.Projection, &.{.{ .field = 3 }}),
+        };
+        result = try copy.value(facts.ValueEffect, .{ .task_output = selection });
+        try std.testing.expect(result.task_output.? != selection);
+    }
+    const stored = result.task_output.?;
+    try std.testing.expectEqual(@as(u32, 2), stored.receipt.input_index);
+    try std.testing.expect(stored.receipt.projections[0].eql(.dereference));
+    try std.testing.expect(stored.projection[0].eql(.{ .field = 3 }));
 }
 
 fn copyFailures(a: std.mem.Allocator) !void {

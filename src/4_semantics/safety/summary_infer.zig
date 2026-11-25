@@ -5690,10 +5690,10 @@ pub const Infer = struct {
                         access.target.projections[0] == .dereference and access.target.storage_domain == null)
                     {
                         var descriptor = captured.effect;
-                        if (descriptor.task_output_receipt) |origin| {
+                        if (descriptor.task_output) |selection| {
                             var translated = access;
-                            translated.target = origin;
-                            translated.execution_output_path = try std.mem.concat(self.allocator, facts.Projection, &.{ descriptor.task_output_projection, access.target.projections[1..] });
+                            translated.target = selection.receipt;
+                            translated.execution_output_path = try std.mem.concat(self.allocator, facts.Projection, &.{ selection.projection, access.target.projections[1..] });
                             try sink.addVirtualAccess(translated);
                             continue;
                         }
@@ -6485,7 +6485,10 @@ pub const Infer = struct {
         if (callee_function.safety_primitive == .recover_task_output_evidence) {
             if (arguments.len != 2) return .{};
             var value = try self.inferExpression(function_id, arguments[0].value);
-            value.task_output_receipt = try self.transferArgumentPath(function_id, .{ .input_index = 1, .projections = &.{.dereference} }, arguments[1].value);
+            value.task_output = if (try self.transferArgumentPath(function_id, .{ .input_index = 1, .projections = &.{.dereference} }, arguments[1].value)) |receipt|
+                try self.taskOutputSelection(.{ .receipt = receipt })
+            else
+                null;
 
             return value;
         }
@@ -6636,8 +6639,7 @@ pub const Infer = struct {
         // Projected writes do not discard whole-value ownership or facts
         // supplied by a previously selected aggregate-producing operation.
         var result = previous;
-        result.task_output_receipt = null;
-        result.task_output_projection = &.{};
+        result.task_output = null;
         result.staged_output_input = null;
         result.fields = &.{};
         for (fields.items) |field| {
@@ -7635,12 +7637,13 @@ pub const Infer = struct {
     ) !facts.ValueEffect {
         if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
-            .task_output_receipt = blk: {
-                const path = effect.task_output_receipt orelse break :blk null;
+            .task_output = blk: {
+                const selection = effect.task_output orelse break :blk null;
+                const path = selection.receipt;
                 if (override != null or path.input_index >= arguments.len) break :blk null;
-                break :blk try self.transferArgumentPath(function_id, path, arguments[path.input_index].value);
+                const receipt = (try self.transferArgumentPath(function_id, path, arguments[path.input_index].value)) orelse break :blk null;
+                break :blk try self.taskOutputSelection(.{ .receipt = receipt, .projection = selection.projection });
             },
-            .task_output_projection = effect.task_output_projection,
             .static_reference = effect.static_reference,
             .observes_fresh_backing = effect.observes_fresh_backing,
             .concurrent_receiver = effect.concurrent_receiver,
@@ -7996,7 +7999,7 @@ pub const Infer = struct {
     }
 
     fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
-        if (effect.task_output_receipt != null or effect.staged_output_input != null) return true;
+        if (effect.task_output != null or effect.staged_output_input != null) return true;
         if (effect.virtual_receiver_input != null or effect.concurrent_receiver_inputs.len != 0) return true;
         // Sparse tag-only facts still need the existing normalization path.
         if (effect.reference_relation != null) return true;
@@ -8059,12 +8062,20 @@ pub const Infer = struct {
         return merged;
     }
 
+    fn taskOutputSelection(self: *Infer, selection: facts.TaskOutputSelection) !*const facts.TaskOutputSelection {
+        const stored = try self.allocator.create(facts.TaskOutputSelection);
+        stored.* = selection;
+        return stored;
+    }
+
     fn projectValueEffect(self: *Infer, effect: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
         var result = try self.projectValueEffectStorage(effect, projection);
-        if (effect.task_output_receipt) |receipt| {
+        if (effect.task_output) |selection| {
             if (projection != .dereference and projection != .dynamic_index) {
-                result.task_output_receipt = receipt;
-                result.task_output_projection = try self.appendProjection(effect.task_output_projection, projection);
+                result.task_output = try self.taskOutputSelection(.{
+                    .receipt = selection.receipt,
+                    .projection = try self.appendProjection(selection.projection, projection),
+                });
             }
         }
         return result;
@@ -8087,8 +8098,7 @@ pub const Infer = struct {
             .dereference => {},
         }
         var result = effect;
-        result.task_output_receipt = null;
-        result.task_output_projection = &.{};
+        result.task_output = null;
         result.staged_output_input = null;
         result.static_reference = null;
         result.observes_fresh_backing = false;
@@ -8391,14 +8401,8 @@ pub const Infer = struct {
             if (!found) try variants.append(right_variant);
         }
 
-        const same_claim = if (left.task_output_receipt) |receipt|
-            right.task_output_receipt != null and receipt.eql(right.task_output_receipt.?) and
-                (facts.InputPath{ .input_index = 0, .projections = left.task_output_projection }).eql(.{ .input_index = 0, .projections = right.task_output_projection })
-        else
-            false;
         return .{
-            .task_output_receipt = if (same_claim) left.task_output_receipt else null,
-            .task_output_projection = if (same_claim) left.task_output_projection else &.{},
+            .task_output = facts.TaskOutputSelection.common(left.task_output, right.task_output),
             .static_reference = if (left.static_reference == right.static_reference) left.static_reference else null,
             .input_backing_observation = if (left.input_backing_observation) |path| blk: {
                 const other = right.input_backing_observation orelse break :blk null;
@@ -10865,16 +10869,16 @@ test "task output summaries preserve extraction only for an unchanged value" {
     var infer = Infer.init(allocator, &graph, &engine);
     defer infer.deinit();
     const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.dereference} };
-    const value: facts.ValueEffect = .{ .task_output_receipt = path };
-    const with_dependency: facts.ValueEffect = .{ .task_output_receipt = path, .explicit_dependency = true };
+    const value: facts.ValueEffect = .{ .task_output = &.{ .receipt = path } };
+    const with_dependency: facts.ValueEffect = .{ .task_output = &.{ .receipt = path }, .explicit_dependency = true };
     const common = try infer.mergeValueEffects(value, value);
-    try std.testing.expect(common.task_output_receipt.?.eql(path));
-    try std.testing.expect((try infer.mergeValueEffects(value, with_dependency)).task_output_receipt.?.eql(path));
-    try std.testing.expect((try infer.storeEffectProjection(value, &.{.{ .field = 0 }}, .{})).task_output_receipt == null);
-    const other: facts.ValueEffect = .{ .task_output_receipt = .{ .input_index = 1 } };
-    try std.testing.expect((try infer.mergeValueEffects(value, other)).task_output_receipt == null);
+    try std.testing.expect(common.task_output.?.receipt.eql(path));
+    try std.testing.expect((try infer.mergeValueEffects(value, with_dependency)).task_output.?.receipt.eql(path));
+    try std.testing.expect((try infer.storeEffectProjection(value, &.{.{ .field = 0 }}, .{})).task_output == null);
+    const other: facts.ValueEffect = .{ .task_output = &.{ .receipt = .{ .input_index = 1 } } };
+    try std.testing.expect((try infer.mergeValueEffects(value, other)).task_output == null);
     const projected = try infer.projectValueEffect(value, .{ .field = 0 });
-    try std.testing.expect(projected.task_output_receipt.?.eql(path));
-    try std.testing.expect(projected.task_output_projection[0].eql(.{ .field = 0 }));
-    try std.testing.expect((try infer.projectValueEffect(value, .dereference)).task_output_receipt == null);
+    try std.testing.expect(projected.task_output.?.receipt.eql(path));
+    try std.testing.expect(projected.task_output.?.projection[0].eql(.{ .field = 0 }));
+    try std.testing.expect((try infer.projectValueEffect(value, .dereference)).task_output == null);
 }

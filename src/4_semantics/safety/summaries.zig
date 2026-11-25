@@ -210,21 +210,14 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     return true;
 }
 
-fn placeProjectionEql(left: []const facts.Projection, right: []const facts.Projection) bool {
-    if (left.len != right.len) return false;
-    for (left, right) |a, b| if (!a.eql(b)) return false;
-    return true;
-}
-
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.input_backing_observation) |path| {
         if (b.input_backing_observation == null or !inputPathEql(path, b.input_backing_observation.?)) return false;
     } else if (b.input_backing_observation != null) return false;
     if ((a.staged_output_input == null) != (b.staged_output_input == null)) return false;
     if (a.staged_output_input) |path| if (!path.eql(b.staged_output_input.?)) return false;
-    if (!placeProjectionEql(a.task_output_projection, b.task_output_projection)) return false;
-    if ((a.task_output_receipt == null) != (b.task_output_receipt == null)) return false;
-    if (a.task_output_receipt) |left| if (!left.eql(b.task_output_receipt.?)) return false;
+    if ((a.task_output == null) != (b.task_output == null)) return false;
+    if (a.task_output != null and facts.TaskOutputSelection.common(a.task_output, b.task_output) == null) return false;
     if (a.static_reference != b.static_reference or a.observes_fresh_backing != b.observes_fresh_backing or a.owns_fresh_backing != b.owns_fresh_backing) return false;
     if (a.reference_relation) |path| {
         if (b.reference_relation == null or !path.eql(b.reference_relation.?)) return false;

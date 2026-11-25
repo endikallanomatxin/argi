@@ -5948,8 +5948,8 @@ pub const SafetyChecker = struct {
         entries: []const EntryPlaceValue,
     ) !facts.ValueFacts {
         var deferred_claim: ?facts.ExecutionId = null;
-        if (effect.task_output_projection.len == 0) if (effect.task_output_receipt) |path| {
-            const receipt = try self.loadSummaryInputValue(path, arguments, state, true);
+        if (effect.task_output) |selection| if (selection.projection.len == 0) {
+            const receipt = try self.loadSummaryInputValue(selection.receipt, arguments, state, true);
             if (try self.takeCertifiedExecutionOutput(receipt, state)) |output| return output;
             var identity = receipt.task_output_execution;
             if (collectUniqueExecutionReceipt(receipt, &identity)) if (identity) |id| {
@@ -16311,7 +16311,7 @@ test "stored task outcomes materialize ownership only on their certified complet
     const owned: facts.ValueFacts = .{ .owned_roots = &.{backing}, .intrinsic_backing_owner = backing };
     try std.testing.expect(state.retainExecutionOutput(execution, &owned));
     const receipt: facts.ValueFacts = .{ .task_output_execution = execution };
-    const output = try checker.instantiateOutput(.{ .task_output_receipt = .{ .input_index = 0 } }, &.{receipt}, &state);
+    const output = try checker.instantiateOutput(.{ .task_output = &.{ .receipt = .{ .input_index = 0 } } }, &.{receipt}, &state);
     try std.testing.expect(output.task_output_claim == execution);
     try std.testing.expectEqual(@as(usize, 0), output.owned_roots.len);
     var choice: facts.ValueFacts = .{ .variants = &.{.{ .index = 0, .value = &output }} };

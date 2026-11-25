@@ -261,11 +261,24 @@ test "erased access guarantees meet by operation index" {
     try std.testing.expectEqualSlices(u32, &.{2}, common);
 }
 
+pub const TaskOutputSelection = struct {
+    receipt: InputPath,
+    // A projected selection can prove access effects. Only selection of the
+    // whole result can reissue its ownership.
+    projection: []const place.Projection = &.{},
+
+    pub fn common(left: ?*const TaskOutputSelection, right: ?*const TaskOutputSelection) ?*const TaskOutputSelection {
+        const a = left orelse return null;
+        const b = right orelse return null;
+        if (a == b) return a;
+        if (!a.receipt.eql(b.receipt) or a.projection.len != b.projection.len) return null;
+        for (a.projection, b.projection) |x, y| if (!x.eql(y)) return null;
+        return a;
+    }
+};
+
 pub const ValueEffect = struct {
-    task_output_receipt: ?InputPath = null,
-    /// A projected recipe can prove effects of structural cleanup. Only
-    /// extraction of the whole result can reissue its ownership.
-    task_output_projection: []const place.Projection = &.{},
+    task_output: ?*const TaskOutputSelection = null,
     /// Exact entry value certified as this staged execution output. This
     /// selects access evidence only and conveys no ownership or lifetime.
     staged_output_input: ?InputPath = null,
