@@ -212,6 +212,8 @@ pub const ValueFacts = struct {
     /// places or owned roots. Copies retain them without granting validity.
     symbolic_pointees: []const SymbolicPointeeId = &.{},
     execution_receipts: []const ExecutionId = &.{},
+    /// Possible receipts remain obligations when selection loses precision.
+    execution_receipt_incomplete: bool = false,
     task_output_execution: ?ExecutionId = null,
     /// An output recipe awaiting its matching completion proof.
     task_output_claim: ?ExecutionId = null,
@@ -282,6 +284,7 @@ pub const ValueFacts = struct {
             .reference_coverage_complete = self.reference_coverage_complete,
             .symbolic_pointees = self.symbolic_pointees,
             .execution_receipts = self.execution_receipts,
+            .execution_receipt_incomplete = self.execution_receipt_incomplete,
             .opaque_provenance = self.opaque_provenance,
             .concurrent_receiver = self.concurrent_receiver,
             .virtual_no_access = self.virtual_no_access,
@@ -320,6 +323,7 @@ pub const ValueFacts = struct {
             .generation_outcomes = self.generation_outcomes,
             .completed_executions = self.completed_executions,
             .execution_receipts = self.execution_receipts,
+            .execution_receipt_incomplete = self.execution_receipt_incomplete,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,

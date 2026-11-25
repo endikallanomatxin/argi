@@ -3182,6 +3182,7 @@ pub const SafetyChecker = struct {
     }
 
     fn collectUniqueExecutionReceipt(value: facts.ValueFacts, selected: *?facts.ExecutionId) bool {
+        if (value.execution_receipt_incomplete) return false;
         // A completion certifies one execution. An envelope can repeat the
         // identity carried in its fields, or retain multiple may-identities.
         for (value.execution_receipts) |identity| {
@@ -6000,6 +6001,7 @@ pub const SafetyChecker = struct {
         var execution_ids = std.array_list.Managed(facts.ExecutionId).init(self.allocator);
         for (effect.input_execution_receipts) |path| {
             const value = try self.load_summary_input_value(path, arguments, state);
+            result.execution_receipt_incomplete = result.execution_receipt_incomplete or value.execution_receipt_incomplete;
             for (value.execution_receipts) |id| if (std.mem.indexOfScalar(facts.ExecutionId, execution_ids.items, id) == null) try execution_ids.append(id);
         }
         for (effect.fresh_executions) |fresh| {
@@ -6653,6 +6655,7 @@ pub const SafetyChecker = struct {
         result.virtual_no_access = &.{};
         result.completed_executions = &.{};
         result.task_output_execution = null;
+        result.execution_receipt_incomplete = parent.execution_receipt_incomplete or parent.execution_receipts.len != 0;
         return result;
     }
 
@@ -6833,6 +6836,7 @@ pub const SafetyChecker = struct {
             .storage_capabilities = try capabilities.toOwnedSlice(),
             .task_output_execution = if (left.task_output_execution == right.task_output_execution) left.task_output_execution else null,
             .execution_receipts = try executions.toOwnedSlice(),
+            .execution_receipt_incomplete = left.execution_receipt_incomplete or right.execution_receipt_incomplete,
             .referenced_place = if (!left.reference_target_incomplete and !right.reference_target_incomplete and left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .intrinsic_backing_owner = if (left.intrinsic_backing_owner == right.intrinsic_backing_owner) left.intrinsic_backing_owner else null,
@@ -11099,6 +11103,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.intrinsic_backing_owner != right.intrinsic_backing_owner) return false;
     if (left.task_output_execution != right.task_output_execution or left.task_output_claim != right.task_output_claim) return false;
+    if (left.execution_receipt_incomplete != right.execution_receipt_incomplete) return false;
     if (left.owned_backing != right.owned_backing) return false;
     if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
     if (left.reference_coverage_complete != right.reference_coverage_complete) return false;
@@ -16852,6 +16857,15 @@ test "dynamic projection requires a known extent for complete element evidence" 
     const missing_acquisition = try checker.projectValueFacts(acquisition, &.{.{ .field = 0 }});
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquisition.storage_capabilities, missing_acquisition.storage_capabilities);
     try std.testing.expect(missing_acquisition.storage_capability_incomplete);
+
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const receipt = try state.establishExecution(&.{});
+    const envelope: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
+    const missing_receipt = try checker.projectValueFacts(envelope, &.{.{ .field = 0 }});
+    try std.testing.expect(SafetyChecker.hasPendingExecution(missing_receipt, &state));
+    checker.completeExecutionReceipts(missing_receipt, &state);
+    try std.testing.expect(state.executionPending(receipt));
 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
