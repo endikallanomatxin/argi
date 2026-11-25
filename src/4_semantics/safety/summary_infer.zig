@@ -1994,6 +1994,27 @@ pub const Infer = struct {
         return self.isNumericContents(known) or self.typeContainsPointer(known) or types.hasDestructor(self.graph, known);
     }
 
+    fn applyDiscardedCallReplacements(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, earlier: []const graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
+        var current = node;
+        for (0..64) |_| {
+            const content = self.graph.node(current).content;
+            if (content != .function_call or content.function_call.callee_value != null) return;
+            const call = content.function_call;
+            const summary = self.engine.summaryFor(call.callee) orelse return;
+            if (summary.input_post_states.len != 0) {
+                try self.applyLocalCallReplacements(function, call.callee, call.input, outputs);
+                return;
+            }
+            // A discarded unary call with no replacement effects can wrap an
+            // evaluated argument call. Do not replay separate block statements
+            // or reorder arguments whose snapshots may alias one another.
+            const arguments = self.structArguments(call.input) orelse return;
+            if (arguments.len != 1 or summary.unknown_access or summary.global_accesses.len != 0 or summary.outcome_post_states.len != 0) return;
+            current = arguments[0].value;
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, earlier, current) != null) return;
+        }
+    }
+
     fn inferBlock(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -2001,7 +2022,8 @@ pub const Infer = struct {
         outputs: ?[]facts.ValueEffect,
     ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+        const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+        for (nodes, 0..) |node_id, statement_index| {
             try self.cancellation.check();
             const node = self.graph.node(node_id);
             switch (node.content) {
@@ -2045,7 +2067,7 @@ pub const Infer = struct {
                     }
                 },
                 .function_call => |call| {
-                    try self.applyLocalCallReplacements(function_id, call.callee, call.input, outputs);
+                    try self.applyDiscardedCallReplacements(function_id, node_id, nodes[0..statement_index], outputs);
                     if (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).input == .relocate) {
                         const arguments = self.structArguments(call.input) orelse continue;
                         if (arguments.len != 2) continue;
