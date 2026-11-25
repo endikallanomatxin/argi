@@ -16257,6 +16257,37 @@ test "joining observations requires agreement on owned backing" {
     try std.testing.expect((try checker.mergeValueFacts(observed, .{ .owned_backing = external })).owned_backing == null);
 }
 
+test "joined owners cannot acquire a backing relationship from crossed alternatives" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var checker = SafetyChecker.init(arena.allocator(), undefined, undefined);
+    defer checker.deinit();
+    const transfer = @import("transfer_evidence.zig");
+    const first: facts.ValidityRootId = @enumFromInt(0);
+    const second: facts.ValidityRootId = @enumFromInt(1);
+    const first_ref: facts.ValueFacts = .{ .owned_backing = first, .dependencies = &.{.{ .root = first }} };
+    const second_ref: facts.ValueFacts = .{ .owned_backing = second, .dependencies = &.{.{ .root = second }} };
+    const left: facts.ValueFacts = .{
+        .owned_roots = &.{first},
+        .intrinsic_backing_owner = first,
+        .fields = &.{.{ .index = 0, .value = &second_ref }},
+    };
+    const right: facts.ValueFacts = .{
+        .owned_roots = &.{second},
+        .intrinsic_backing_owner = second,
+        .fields = &.{.{ .index = 0, .value = &first_ref }},
+    };
+    const joined = try checker.joinObservedSymbolicValues(left, right, null, null, &.{});
+    const reference = facts.representedProjection(joined, .{ .field = 0 }).?;
+    try std.testing.expect(containsRoot(joined.owned_roots, first));
+    try std.testing.expect(containsRoot(joined.owned_roots, second));
+    try std.testing.expect(valueDependsOnRoot(reference, first));
+    try std.testing.expect(valueDependsOnRoot(reference, second));
+    try std.testing.expectEqual(null, transfer.backingOwner(joined, null));
+    try std.testing.expect(!transfer.observesTransferredBacking(reference, first));
+    try std.testing.expect(!transfer.observesTransferredBacking(reference, second));
+}
+
 test "summarized handoff retires only the projected owner" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
