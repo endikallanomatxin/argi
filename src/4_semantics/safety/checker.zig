@@ -8139,8 +8139,7 @@ pub const SafetyChecker = struct {
         pointer: facts.ValueFacts,
         state: *FunctionState,
     ) anyerror!bool {
-        if (pointer.reference_target_incomplete or pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return false;
-        const identity = pointer.symbolic_pointees[0];
+        const identity = exactSymbolicTarget(pointer) orelse return false;
         const entry = for (state.symbolic_pointees.items) |stored| {
             if (stored.identity == identity) break stored;
         } else return false;
@@ -8744,8 +8743,7 @@ pub const SafetyChecker = struct {
     // Tag refinement does not write the payload or discard descendant facts.
     // Branch clones own these records; joining different tags removes the proof.
     fn setSymbolicVariant(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, variant: u32) !void {
-        if (pointer.reference_target_incomplete or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return;
-        const identity = pointer.symbolic_pointees[0];
+        const identity = exactSymbolicTarget(pointer) orelse return;
         var stored = (try self.symbolicValueAt(state, identity)) orelse SymbolicStoredValue{ .identity = identity, .value = .{} };
         stored.value.known_choice_variant = variant;
         try state.setSymbolicValue(stored, false, true);
@@ -8764,8 +8762,7 @@ pub const SafetyChecker = struct {
             try state.setPlace(place, state.initializednessAtPlace(place), try self.joinObservedSymbolicValues(previous, value, null, null, &.{}));
         }
         for (pointer.symbolic_pointees) |identity| {
-            const strong = definite and !pointer.reference_target_incomplete and pointer.symbolic_pointees.len == 1 and pointer.mutation_places.len == 0 and
-                !state.symbolicStorageHasDynamicIndex(identity);
+            const strong = definite and exactSymbolicTarget(pointer) == identity and !state.symbolicStorageHasDynamicIndex(identity);
             const previous = try self.symbolicValueAt(state, identity);
             const next: SymbolicStoredValue = if (strong)
                 .{ .identity = identity, .value = value }
@@ -14317,6 +14314,10 @@ test "symbolic choice tag refinement preserves children and drops incompatible b
     const slot: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(0)} };
     const child: facts.ValueFacts = .{ .symbolic_pointees = &.{@enumFromInt(1)} };
     try state.symbolic_values.append(.{ .identity = @enumFromInt(1), .value = .{ .known_choice_variant = 7 } });
+    var mixed = slot;
+    mixed.mutation_places = &.{.{ .root = @enumFromInt(0) }};
+    try checker.setSymbolicVariant(&state, mixed, 0);
+    try std.testing.expectEqual(null, state.symbolicVariant(slot.symbolic_pointees[0]));
     try checker.setSymbolicVariant(&state, slot, 0);
     try std.testing.expectEqual(@as(usize, 2), state.symbolic_values.items.len);
     try std.testing.expectEqual(@as(?u32, 7), state.symbolicVariant(child.symbolic_pointees[0]));
@@ -15855,6 +15856,13 @@ test "joining known choices drops evidence from an excluded payload" {
     const joined = try checker.joinObservedSymbolicValues(left, right, null, null, &.{});
     const payload: facts.ValueFacts = facts.representedProjection(joined, .{ .variant = 0 }) orelse .{};
     try std.testing.expect(!payload.concurrent_receiver);
+}
+
+fn exactSymbolicTarget(value: facts.ValueFacts) ?facts.SymbolicPointeeId {
+    if (value.reference_target_incomplete or value.referenced_place != null or
+        value.mutation_places.len != 0 or value.symbolic_pointees.len != 1 or value.opaque_provenance.len != 0)
+        return null;
+    return value.symbolic_pointees[0];
 }
 
 fn hasReferenceTarget(value: facts.ValueFacts) bool {
