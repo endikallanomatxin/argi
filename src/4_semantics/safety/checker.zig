@@ -6608,39 +6608,11 @@ pub const SafetyChecker = struct {
         var exact_projection = true;
         for (projections, 0..) |projection, step| {
             switch (projection) {
-                .field => |wanted| {
-                    var found: ?facts.ValueFacts = null;
-                    for (current.fields) |field| if (field.index == wanted) {
-                        found = field.value.*;
-                        break;
-                    };
-                    if (found) |selected| {
-                        current = selected;
-                    } else {
-                        exact_projection = false;
-                        current.lexical_frame = null;
+                .field, .variant, .static_index => {
+                    if (projection == .variant) {
+                        if (current.known_choice_variant) |active| if (active != projection.variant) return .{};
                     }
-                },
-                .variant => |wanted| {
-                    var found: ?facts.ValueFacts = null;
-                    for (current.variants) |variant| if (variant.index == wanted) {
-                        found = variant.value.*;
-                        break;
-                    };
-                    if (found) |selected| {
-                        current = selected;
-                    } else {
-                        exact_projection = false;
-                        current.lexical_frame = null;
-                    }
-                },
-                .static_index => |wanted| {
-                    var found: ?facts.ValueFacts = null;
-                    for (current.fields) |field| if (field.index == wanted) {
-                        found = field.value.*;
-                        break;
-                    };
-                    if (found) |selected| {
+                    if (facts.representedProjection(current, projection)) |selected| {
                         current = selected;
                     } else {
                         exact_projection = false;
@@ -16866,6 +16838,12 @@ test "dynamic projection requires a known extent for complete element evidence" 
 
     const unrepresented = try checker.projectValueFacts(element, &.{.{ .field = 0 }});
     try std.testing.expect(!unrepresented.hasCompleteReferenceCoverage());
+
+    const choice: facts.ValueFacts = .{
+        .known_choice_variant = 1,
+        .variants = &.{.{ .index = 0, .value = &element }},
+    };
+    try std.testing.expect(facts.isEmptyValue(try checker.projectValueFacts(choice, &.{.{ .variant = 0 }})));
 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
