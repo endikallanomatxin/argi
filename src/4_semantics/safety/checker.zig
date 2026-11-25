@@ -10292,7 +10292,7 @@ pub const SafetyChecker = struct {
                 loopRootPhiStorage(context, existing_phi.?).?
             else
                 self.loopPhiOwnerStorage(joined, joined_place.storage, alternatives[0..alternative_count]);
-            const phi = try self.loopRootPhi(context, joined, logical_storage);
+            const phi = try self.loopRootPhi(context, joined, logical_storage) orelse continue;
             for (joined.places.items) |*related| {
                 if (!logical_storage.isPrefixOf(related.storage)) continue;
                 related.value = try facts.replaceValueRoots(self.allocator, related.value, alternatives[0..alternative_count], phi);
@@ -10400,11 +10400,16 @@ pub const SafetyChecker = struct {
         context: *LoopJoinContext,
         state: *FunctionState,
         storage: facts.Place,
-    ) !facts.ValidityRootId {
+    ) !?facts.ValidityRootId {
         _ = self;
         for (context.roots.items) |entry| if (entry.storage.eql(storage)) {
             const index = @intFromEnum(entry.root);
             if (index < state.tracker.roots.items.len) {
+                // A canonical identity can be recycled only after earlier
+                // observations and external obligations stop referring to it.
+                if (!state.tracker.isAlive(entry.root) and
+                    (rootIsStructurallyReferenced(state, entry.root) or pendingExecutionBorrowsRoot(state, entry.root)))
+                    return null;
                 state.tracker.roots.items[index].state = .alive;
                 state.tracker.roots.items[index].owned_resource = true;
             }
@@ -11002,7 +11007,7 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
-        if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
+        if (containsRoot(opaque_storage.hidden_dependencies, root) or containsRoot(opaque_storage.owner_roots, root)) return true;
     return false;
 }
 
@@ -11858,6 +11863,14 @@ test "loop root widening is stable and preserves historical aliases" {
     try checker.widenLoopOwnedRoots(&context, &fixed_point, &entry, &second_iteration);
     try std.testing.expectEqual(phi, fixed_point.getPlace(owner).?.value.owned_roots[0]);
     try std.testing.expectEqual(stable_root_count, fixed_point.tracker.roots.items.len);
+
+    var historical = try entry.clone(allocator);
+    defer historical.deinit();
+    try checker.joinState(&historical, &entry, &second_iteration);
+    historical.getPlace(alias).?.value = .{ .dependencies = &.{.{ .root = phi }} };
+    try checker.widenLoopOwnedRoots(&context, &historical, &entry, &second_iteration);
+    try std.testing.expect(!historical.tracker.dependenciesAreAlive(historical.getPlace(alias).?.value));
+    try std.testing.expect(containsRoot(historical.getPlace(owner).?.value.owned_roots, second_replacement));
 }
 
 test "loop root widening does not hide crossed stale dependencies" {
