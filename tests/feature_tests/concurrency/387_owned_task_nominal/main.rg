@@ -7,9 +7,22 @@ consume := (.owner: Owner) -> (.value: Int32) {
     held ::= ~owner
     value = held.value
 }
+
+edit := (.owner: Owner) -> (.result: Owner) {
+    held :: Owner = ~owner
+    held.value = 42
+    result = ~held
+}
+
 main := (.system: System) -> (.status_code: Int32) {
     provider ::= ThreadedExecutor(.ffi = system.ffi)
     executor ::= Virtual#(Executor)($&provider)
+    {
+        original ::= Owner(1)
+        task ::= unwrap_or_abort(async_owned#(edit)(.args = (.owner = ~original), .executor = executor, .ffi = system.ffi))
+        returned ::= unwrap_or_abort(await($&task))
+        if returned.value != 42 { abort }
+    }
     owner ::= Owner(42)
     started ::= async_owned#(consume)(.args = (.owner = ~owner), .executor = executor, .ffi = system.ffi)
     match started {
