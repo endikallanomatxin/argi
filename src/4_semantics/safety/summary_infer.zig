@@ -2295,16 +2295,16 @@ pub const Infer = struct {
         };
     }
 
-    fn store_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, index: u32, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
+    fn storeCapabilityProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, projection: facts.Projection, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
         const previous = try self.capability_value(function, target, flow);
-        const aggregate = try self.storeEffectProjection(previous, &.{.{ .field = index }}, value);
+        const aggregate = try self.storeEffectProjection(previous, &.{projection}, value);
         try self.store_capability_target(function, target, aggregate, flow);
     }
 
     fn store_capability_target(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
         switch (self.graph.node(target).content) {
             .binding_use => |binding| try flow.bindings.put(binding, value),
-            .struct_field_access => |field| try self.store_capability_field(function, field.value, field.field_index, value, flow),
+            .struct_field_access => |field| try self.storeCapabilityProjection(function, field.value, .{ .field = field.field_index }, value, flow),
             .dereference => |read| {
                 const targets = try self.capability_address_targets(read.pointer, flow);
                 if (targets.len != 0) for (targets) |place| {
@@ -2737,13 +2737,30 @@ pub const Infer = struct {
                         try self.projectValueEffect(try self.capability_value(function, target, flow), .{ .field = store.field_index }),
                         value,
                     );
-                    try self.store_capability_field(function, target, store.field_index, replacement, flow);
-                } else try self.store_capability_field(function, store.struct_ptr, store.field_index, value, flow);
+                    try self.storeCapabilityProjection(function, target, .{ .field = store.field_index }, replacement, flow);
+                } else try self.storeCapabilityProjection(function, store.struct_ptr, .{ .field = store.field_index }, value, flow);
             },
             .array_store => |store| {
                 try self.infer_capability_node(function, store.array_ptr, flow, exits);
+                const base = self.graph.node(store.array_ptr);
+                const targets = if (base.ty != null and types.arrayElement(self.graph, base.ty.?) != null)
+                    &[_]graph_mod.GlobalNodeId{store.array_ptr}
+                else
+                    try self.capability_address_targets(store.array_ptr, flow);
                 try self.infer_capability_node(function, store.index, flow, exits);
                 try self.infer_capability_node(function, store.value, flow, exits);
+                const index = self.staticIndex(store.index) orelse return;
+                if (targets.len == 0) return;
+                const projection: facts.Projection = .{ .static_index = index };
+                const value = try self.capability_value(function, store.value, flow);
+                for (targets) |target| {
+                    const replacement = if (targets.len == 1) value else try self.joinStorageAlternatives(
+                        self.graph.node(store.value).ty,
+                        try self.projectValueEffect(try self.capability_value(function, target, flow), projection),
+                        value,
+                    );
+                    try self.storeCapabilityProjection(function, target, projection, replacement, flow);
+                }
             },
             .array_index => |index| {
                 try self.infer_capability_node(function, index.array_ptr, flow, exits);
