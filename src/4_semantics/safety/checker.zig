@@ -9776,33 +9776,26 @@ pub const SafetyChecker = struct {
         }
         var projected = false;
         for (merged.fields) |field| {
-            var a: facts.ValueFacts = .{};
-            var b: facts.ValueFacts = .{};
-            for (left.fields) |candidate| if (candidate.index == field.index) {
-                a = candidate.value.*;
-                break;
-            };
-            for (right.fields) |candidate| if (candidate.index == field.index) {
-                b = candidate.value.*;
-                break;
-            };
-            result = try self.replaceProjectedValue(result, .{ .field = field.index }, try self.joinObservedSymbolicValues(a, b, left_state, right_state, generations));
+            const projection: facts.Projection = .{ .field = field.index };
+            const a = facts.representedProjection(left, projection) orelse facts.ValueFacts{};
+            const b = facts.representedProjection(right, projection) orelse facts.ValueFacts{};
+            result = try self.replaceProjectedValue(result, projection, try self.joinObservedSymbolicValues(a, b, left_state, right_state, generations));
             projected = true;
         }
         for (merged.variants) |variant| {
-            var a: ?facts.ValueFacts = null;
-            var b: ?facts.ValueFacts = null;
-            for (left.variants) |candidate| if (candidate.index == variant.index) {
-                a = candidate.value.*;
-                break;
-            };
-            for (right.variants) |candidate| if (candidate.index == variant.index) {
-                b = candidate.value.*;
-                break;
-            };
-            if (a == null and left.known_choice_variant != null and left.known_choice_variant.? != variant.index) continue;
-            if (b == null and right.known_choice_variant != null and right.known_choice_variant.? != variant.index) continue;
-            result = try self.replaceProjectedValue(result, .{ .variant = variant.index }, try self.joinObservedSymbolicValues(a orelse .{}, b orelse .{}, left_state, right_state, generations));
+            const projection: facts.Projection = .{ .variant = variant.index };
+            const a = facts.representedProjection(left, projection) orelse facts.ValueFacts{};
+            const b = facts.representedProjection(right, projection) orelse facts.ValueFacts{};
+            const excludes_left = if (left.known_choice_variant) |known| known != variant.index else false;
+            const excludes_right = if (right.known_choice_variant) |known| known != variant.index else false;
+            const payload: facts.ValueFacts = if (excludes_left)
+                b
+            else if (excludes_right)
+                a
+            else
+                try self.joinObservedSymbolicValues(a, b, left_state, right_state, generations);
+            if (valueFactsEqual(payload, variant.value.*)) continue;
+            result = try self.replaceProjectedValue(result, projection, payload);
             projected = true;
         }
         return if (projected) self.refreshProjectedValueRoots(merged, result) else result;
@@ -15828,6 +15821,23 @@ test "a symbolic singleton joined with an unknown alternative cannot strongly re
     const stored = (try checker.symbolicValueAt(&state, identity)).?.value;
     try std.testing.expect(valueDependsOnRoot(stored, old_root));
     try std.testing.expect(valueDependsOnRoot(stored, replacement_root));
+}
+
+test "joining known choices drops evidence from an excluded payload" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+
+    const stale: facts.ValueFacts = .{ .concurrent_receiver = true };
+    const left: facts.ValueFacts = .{ .known_choice_variant = 1, .variants = &.{.{ .index = 0, .value = &stale }} };
+    const right: facts.ValueFacts = .{ .known_choice_variant = 0 };
+    const joined = try checker.joinObservedSymbolicValues(left, right, null, null, &.{});
+    const payload: facts.ValueFacts = facts.representedProjection(joined, .{ .variant = 0 }) orelse .{};
+    try std.testing.expect(!payload.concurrent_receiver);
 }
 
 fn hasReferenceTarget(value: facts.ValueFacts) bool {
