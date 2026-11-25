@@ -2073,11 +2073,18 @@ pub const Infer = struct {
                 },
                 .array_store => |store| {
                     const targets = try self.arrayStorageTargets(store.array_ptr);
-                    if (!try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
+                    const ty = self.graph.node(store.value).ty;
+                    const tracked = projection == .static_index and self.tracksLocalContents(ty);
+                    if (!tracked and !try self.hasOutputDestination(function_id, targets, outputs)) continue;
                     const value = try self.inferExpression(function_id, store.value);
-                    for (targets) |target|
-                        try self.storeSelectedValueEffect(function_id, target, &.{projection}, value, outputs, .outputs);
+                    for (targets) |target| {
+                        const updated = if (tracked and targets.len != 1)
+                            try self.joinStorageAlternatives(ty, try self.projectValueEffect(try self.inferExpression(function_id, target), projection), value)
+                        else
+                            value;
+                        try self.storeSelectedValueEffect(function_id, target, &.{projection}, updated, outputs, if (tracked) .locals_and_outputs else .outputs);
+                    }
                 },
                 .pointer_assignment => |store| {
                     const targets = try self.localAddressTargets(store.pointer);
