@@ -8906,6 +8906,16 @@ pub const Infer = struct {
             result.fields = fields;
         }
         if (types.fields(self.graph, ty)) |range| {
+            // When both analyses refer to the same entry value, untouched
+            // fields already obtain their capabilities from its snapshot.
+            // For explicitly replaced fields the capability flow provides
+            // no additional observation. Keep the replacement facts intact.
+            if (destination.fields_are_updates and origin.fields.len == 0 and origin.input_dependencies.len == 1) {
+                const inherited = origin.input_dependencies[0];
+                if (!inherited.validity_only) if (projectedUpdateBase(destination)) |base| {
+                    if (base.eql(inherited.path)) return result;
+                };
+            }
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
             for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
@@ -9451,6 +9461,31 @@ test "nested replacement preserves projected input evidence for siblings" {
     const inherited = try infer.projectValueEffect(composed, .{ .field = 0 });
     try std.testing.expectEqual(@as(usize, 1), inherited.input_dependencies.len);
     try std.testing.expect(inherited.input_dependencies[0].path.eql(.{ .input_index = 4, .projections = &.{.{ .field = 0 }} }));
+}
+
+test "projected replacement does not regain the previous slot's capability" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } } });
+    const field: graph_mod.Field = .{ .name = .{ .start = 0, .len = 0 }, .source = .{ .file_index = 0, .offset = 0 }, .ty = @enumFromInt(0) };
+    try graph.fields.appendSlice(a, &.{ field, field });
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+
+    const entry = try infer.inputValueEffect(0, &.{});
+    var moved = try infer.withOwnershipTransfer(entry);
+    moved.virtual_receiver_input = .{ .input_index = 0 };
+    const updated = try infer.storeEffectProjection(moved, &.{.{ .field = 0 }}, .{});
+    const overlaid = try infer.overlay_capability_outputs(updated, entry, @enumFromInt(1));
+    try std.testing.expectEqual(@as(usize, 1), overlaid.fields.len);
+    try std.testing.expect(facts.isEmptyValue(try infer.projectValueEffect(overlaid, .{ .field = 0 })));
+    const untouched = try infer.projectValueEffect(overlaid, .{ .field = 1 });
+    try std.testing.expectEqual(@as(usize, 1), untouched.input_dependencies.len);
 }
 
 test "conditional projected replacements join with the original field" {
