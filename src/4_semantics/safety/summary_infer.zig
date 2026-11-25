@@ -9022,15 +9022,21 @@ pub const Infer = struct {
             result.fields = fields;
         }
         if (types.fields(self.graph, ty)) |range| {
-            // When both analyses refer to the same entry value, untouched
-            // fields already obtain their capabilities from its snapshot.
-            // For explicitly replaced fields the capability flow provides
-            // no additional observation. Keep the replacement facts intact.
-            if (destination.fields_are_updates and origin.fields.len == 0 and origin.input_dependencies.len == 1) {
-                const inherited = origin.input_dependencies[0];
-                if (!inherited.validity_only) if (projectedUpdateBase(destination)) |base| {
-                    if (base.eql(inherited.path)) return result;
-                };
+            if (destination.fields_are_updates) {
+                // Untouched fields come from the base snapshot at instantiation.
+                // An inherited projection cannot describe a replacement slot.
+                const fields = try self.allocator.dupe(facts.OutputFieldEffect, destination.fields);
+                for (fields) |*field| {
+                    const observed = for (origin.fields) |candidate| {
+                        if (candidate.index == field.index) break candidate.value;
+                    } else continue;
+                    const field_ty = self.graph.fields.items[range.start + field.index].ty;
+                    const value = try self.allocator.create(facts.ValueEffect);
+                    value.* = try self.overlay_capability_outputs(field.value.*, observed.*, field_ty);
+                    field.value = value;
+                }
+                result.fields = fields;
+                return result;
             }
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
             for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
@@ -9597,7 +9603,8 @@ test "projected replacement does not regain the previous slot's capability" {
     var moved = try infer.withOwnershipTransfer(entry);
     moved.virtual_receiver_input = .{ .input_index = 0 };
     const updated = try infer.storeEffectProjection(moved, &.{.{ .field = 0 }}, .{});
-    const overlaid = try infer.overlay_capability_outputs(updated, entry, @enumFromInt(1));
+    const partial_origin = try infer.storeEffectProjection(moved, &.{.{ .field = 1 }}, .{});
+    const overlaid = try infer.overlay_capability_outputs(updated, partial_origin, @enumFromInt(1));
     try std.testing.expectEqual(@as(usize, 1), overlaid.fields.len);
     try std.testing.expect(facts.isEmptyValue(try infer.projectValueEffect(overlaid, .{ .field = 0 })));
     const untouched = try infer.projectValueEffect(overlaid, .{ .field = 1 });
