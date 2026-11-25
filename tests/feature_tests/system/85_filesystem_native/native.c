@@ -34,7 +34,7 @@ static int probe_directory_limit(const char *path) {
 int32_t argi_filesystem_probe(void) {
     uintptr_t temporary = 0, directory = 0, length = 0;
     FILE *file = NULL;
-    char *path = NULL, *child = NULL, *link_path = NULL;
+    char *path = NULL, *child = NULL, *link_path = NULL, *stream_path = NULL;
     int result = 0, child_exists = 0, link_exists = 0;
 #ifdef _WIN32
     // Acquiring any standard endpoint must undo CRT text translation, even
@@ -77,7 +77,12 @@ int32_t argi_filesystem_probe(void) {
     if (_argi_fs_directory_next(directory, &name_length) != 1) { result = 12; goto done; }
     _argi_fs_directory_close(directory);
     directory = 0;
-    file = tmpfile();
+    /* Keep the stream in this test's temporary directory. */
+    stream_path = calloc(length + sizeof("/stream"), 1);
+    if (!stream_path) { result = 13; goto done; }
+    memcpy(stream_path, path, length);
+    memcpy(stream_path + length, "/stream", sizeof("/stream"));
+    file = fopen(stream_path, "w+b");
     if (!file || fwrite("abcd", 1, 4, file) != 4) { result = 13; goto done; }
     uint64_t position = 0;
     if (_argi_fs_seek((uintptr_t)file, 1, 0, &position) || position != 1) { result = 14; goto done; }
@@ -95,6 +100,11 @@ int32_t argi_filesystem_probe(void) {
     if (unlink(link_path)) { result = 24; goto done; }
     link_exists = 0;
 #endif
+    fclose(file);
+    file = NULL;
+    if (remove(stream_path)) { result = 33; goto done; }
+    free(stream_path);
+    stream_path = NULL;
     if (_argi_fs_rmdir((uint8_t *)child, strlen(child))) { result = 17; goto done; }
     child_exists = 0;
     if (_argi_fs_temp_close(temporary)) { result = 18; goto done; }
@@ -102,6 +112,8 @@ int32_t argi_filesystem_probe(void) {
     if (_argi_fs_metadata((uint8_t *)path, strlen(path), &kind, &size, &seconds, &nanoseconds) != -4) result = 19;
 done:
     if (file) fclose(file);
+    if (stream_path) (void)remove(stream_path);
+    free(stream_path);
     _argi_fs_directory_close(directory);
 #ifndef _WIN32
     if (link_exists) (void)unlink(link_path);
