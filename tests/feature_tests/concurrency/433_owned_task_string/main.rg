@@ -1,4 +1,8 @@
-forward := (.text: String) -> (.result: String) { result = ~text }
+forward_value := #(.T: Type) (.value: T) -> (.result: T) { result = ~value }
+
+forward := (.text: String) -> (.result: String) {
+    result = forward_value#(String)(.value = ~text)
+}
 
 Measure#(.R: Type): Contract = (
     .measure: (.receiver: R) -> (.length: UIntNative) where { reads(receiver) isolated() }
@@ -19,7 +23,8 @@ main := (.system: System) -> () {
     executor ::= Virtual#(Executor)($&provider)
     allocator ::= CAllocator(.ffi = system.ffi)
     {
-        local ::= unwrap_or_abort(string_with_length(.allocator = Virtual#(Allocator)($&allocator), .length = 3))
+        allocated ::= unwrap_or_abort(string_with_length(.allocator = Virtual#(Allocator)($&allocator), .length = 3))
+        local ::= forward_value#(String)(.value = ~allocated)
         if byte_length(.self = &local) != 3 { abort }
         borrowed ::= Virtual#(Measure)($&local)
         measurement ::= unwrap_or_abort(async#(measure_lent)(.args = (.text = borrowed), .executor = executor))
