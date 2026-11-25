@@ -385,3 +385,18 @@ structural fields or generations needs an output relation that describes
 the actual post-value. Worker-side virtual cleanup still
 requires a published isolation guarantee. The return path preserves value
 evidence without relaxing that separate interface obligation.
+
+Both `set_ascii` and `clear` expose the post-value gap. The first replaces
+the view generation while writing a byte. The second also changes the length.
+Both retain the allocation. A result recipe must carry the unchanged
+allocation facts and the structural replacement effects together. Task
+admission must instantiate that recipe against the evaluated submission and
+prove transferability before retaining the result. Cleanup must select its
+erased capabilities from that same result recipe. Await may renew only the
+roots in the retained result that were actually handed off.
+
+The counterexample is a worker that replaces `Allocation.data.address`,
+including when the write occurs while evaluating another argument to a
+forwarding helper. The input still owns cleanup for the original allocation.
+That ownership cannot authenticate the new address. A moved-input index on
+its own therefore cannot certify the post-value.
