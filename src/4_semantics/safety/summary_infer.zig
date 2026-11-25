@@ -8243,6 +8243,14 @@ pub const Infer = struct {
     fn joinStorageAlternatives(self: *Infer, value_type: ?graph_mod.GlobalTypeId, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
         if (summaries.valueEffectEql(left, right)) return left;
         var result = try self.mergeValueEffects(left, right);
+        // An unwritten field still comes from the moved input. Preserve a
+        // sparse update across alternatives only when they agree on that base.
+        if (left.fields_are_updates or right.fields_are_updates) {
+            if (projectedUpdateBase(left)) |base| {
+                if (projectedUpdateBase(right)) |other|
+                    result.fields_are_updates = base.eql(other);
+            }
+        }
         // An alternative can have no payload facts and still return any tag.
         // Only matching discriminants justify excluding other cases.
         result.known_choice_variant = if (left.known_choice_variant == right.known_choice_variant)
@@ -8274,7 +8282,7 @@ pub const Infer = struct {
                 null;
             const projection: ?facts.Projection = if (element != null)
                 .{ .static_index = child.index }
-            else if (child_type != null)
+            else if (child_type != null or result.fields_are_updates)
                 .{ .field = child.index }
             else
                 null;
@@ -8317,6 +8325,15 @@ pub const Infer = struct {
         }
         result.variants = variants;
         return result;
+    }
+
+    fn projectedUpdateBase(effect: facts.ValueEffect) ?facts.InputPath {
+        if (effect.input_dependencies.len != 1) return null;
+        const dependency = effect.input_dependencies[0];
+        if (!dependency.transfers_ownership or dependency.validity_only) return null;
+        if (effect.fields_are_updates) return dependency.path;
+        const original = effect.virtual_receiver_input orelse return null;
+        return if (effect.fields.len == 0 and original.eql(dependency.path)) original else null;
     }
 
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
@@ -9396,6 +9413,35 @@ test "nested replacement preserves projected input evidence for siblings" {
     }));
     const replaced = try infer.projectValueEffect(nested, .{ .field = 2 });
     try std.testing.expect(facts.isEmptyValue(replaced));
+}
+
+test "conditional projected replacements join with the original field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+
+    var original = try infer.withOwnershipTransfer(try infer.inputValueEffect(0, &.{}));
+    original.virtual_receiver_input = .{ .input_index = 0 };
+    const replaced = try infer.storeEffectProjection(original, &.{.{ .field = 0 }}, .{ .concurrent_receiver = true });
+    for ([_]facts.ValueEffect{
+        try infer.joinStorageAlternatives(null, original, replaced),
+        try infer.joinStorageAlternatives(null, replaced, original),
+    }) |joined| {
+        try std.testing.expect(joined.fields_are_updates);
+        const changed = try infer.projectValueEffect(joined, .{ .field = 0 });
+        try std.testing.expect(!changed.concurrent_receiver);
+        try std.testing.expectEqual(@as(usize, 1), changed.input_dependencies.len);
+        try std.testing.expect(changed.input_dependencies[0].path.eql(.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }));
+        const untouched = try infer.projectValueEffect(joined, .{ .field = 1 });
+        try std.testing.expectEqual(@as(usize, 1), untouched.input_dependencies.len);
+        try std.testing.expect(untouched.input_dependencies[0].path.eql(.{ .input_index = 0, .projections = &.{.{ .field = 1 }} }));
+    }
 }
 
 test "fresh storage availability preserves unchanged trees and marks nested consumption" {
