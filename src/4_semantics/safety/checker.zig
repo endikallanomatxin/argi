@@ -6646,6 +6646,9 @@ pub const SafetyChecker = struct {
         result.intrinsic_backing_owner = null;
         if (hasReferenceTarget(parent)) result.reference_target_incomplete = true;
         result.reference_coverage_complete = false;
+        // Possible acquisition identities remain visible to consumption
+        // checks. The missing slot does not prove the permission is present.
+        if (parent.storage_capabilities.len != 0) result.storage_capability_incomplete = true;
         result.concurrent_receiver = false;
         result.virtual_no_access = &.{};
         result.completed_executions = &.{};
@@ -16844,6 +16847,11 @@ test "dynamic projection requires a known extent for complete element evidence" 
     const missing_path = try checker.projectValueFacts(array, &.{ .{ .field = 1 }, .{ .field = 0 } });
     try std.testing.expect(missing_path.referenced_place == null);
     try std.testing.expectEqual(@as(usize, 0), missing_path.fields.len);
+
+    const acquisition: facts.ValueFacts = .{ .storage_capabilities = &.{@enumFromInt(0)} };
+    const missing_acquisition = try checker.projectValueFacts(acquisition, &.{.{ .field = 0 }});
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, acquisition.storage_capabilities, missing_acquisition.storage_capabilities);
+    try std.testing.expect(missing_acquisition.storage_capability_incomplete);
 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
