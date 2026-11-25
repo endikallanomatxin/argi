@@ -138,15 +138,18 @@ pub const Infer = struct {
         }
 
         fn addInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode) !void {
-            return self.addBackingInput(target, mode, false);
+            return self.addBackingInput(target, mode, false, false);
         }
 
-        fn addBackingInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode, backing: bool) !void {
+        fn addBackingInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode, backing: bool, numeric_write: bool) !void {
             for (self.inputs.items) |*existing| if (existing.virtual_method == null and existing.backing == backing and summaries.inputPathEql(existing.target, target)) {
-                if (mode == .write) existing.mode = .write;
+                if (mode == .write) {
+                    existing.numeric_backing_write = numeric_write and (existing.mode == .read or existing.numeric_backing_write);
+                    existing.mode = .write;
+                }
                 return;
             };
-            try self.inputs.append(.{ .target = target, .mode = mode, .backing = backing });
+            try self.inputs.append(.{ .target = target, .mode = mode, .backing = backing, .numeric_backing_write = numeric_write });
         }
 
         fn addGlobal(self: *AccessEffects, binding: u32, mode: facts.AccessMode) !void {
@@ -863,13 +866,7 @@ pub const Infer = struct {
             // A numeric content write cannot introduce hidden dependencies
             // when its value has no capability or lifetime facts. Conservative
             // opaque-access markers are not additional storage permissions.
-            const numeric_contents = switch (self.graph.semanticType(ty)) {
-                .builtin => |builtin| switch (builtin) {
-                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Bool => true,
-                    else => false,
-                },
-                else => false,
-            };
+            const numeric_contents = self.isNumericContents(ty);
             // A write to an embedded numeric field in a by-value argument
             // updates the callee's copy. Crossing a reference would make
             // the destination visible to the caller.
@@ -1297,8 +1294,9 @@ pub const Infer = struct {
         var call_sets = [_]?[]const forwarding.ForwardedCall{null} ** grades.len;
         var exact_moved_input: ?u32 = null;
         var owning_calls: ?[]const forwarding.ForwardedCall = null;
+        var preserving_statements: ?[]const graph_mod.GlobalNodeId = null;
         for (outputs, 0..) |*output, output_index| {
-            if (outputs.len == 1 and !accesses.unknown and accesses.inputs.items.len == 0 and accesses.globals.items.len == 0 and
+            if (outputs.len == 1 and allowsOwningForwardingAccess(accesses) and
                 accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency|
             {
                 const path = dependency.path;
@@ -1307,10 +1305,13 @@ pub const Infer = struct {
                 const input_type = self.graph.fields.items[function.input.start + path.input_index].ty;
                 if (!types.equal(self.graph, input_type, output_fields[output_index].ty)) continue;
                 if (owning_calls == null) owning_calls = try self.forwardedCalls(function, .owning);
-                if (try forwarding.provesWithCalls(self.allocator, self.graph, function, .{
+                const source: primitives.MethodSafetyContract.Dependency = .{
                     .input_index = path.input_index,
                     .output_index = @intCast(output_index),
-                }, true, owning_calls.?)) {
+                };
+                const exact = try forwarding.provesWithCalls(self.allocator, self.graph, function, source, true, owning_calls.?);
+                if (!exact and preserving_statements == null) preserving_statements = try self.owningPreservingStatements(function_id);
+                if (exact or try forwarding.provesWithDataEffects(self.allocator, self.graph, function, source, true, owning_calls.?, preserving_statements.?)) {
                     exact_moved_input = path.input_index;
                     break;
                 }
@@ -1429,6 +1430,80 @@ pub const Infer = struct {
         // The array-index node can name the dereferenced array value. Its
         // backing observation belongs to the pointer used for that load.
         return if (base == .dereference) base.dereference.pointer else access.array_ptr;
+    }
+
+    fn isNumericContents(self: *const Infer, ty: graph_mod.GlobalTypeId) bool {
+        return switch (self.graph.semanticType(ty)) {
+            .builtin => |builtin| switch (builtin) {
+                .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Bool => true,
+                else => false,
+            },
+            else => false,
+        };
+    }
+
+    fn allowsOwningForwardingAccess(accesses: AccessEffects) bool {
+        if (accesses.unknown) return false;
+        for (accesses.inputs.items) |access| {
+            if (access.virtual_method != null or (access.mode == .write and !access.numeric_backing_write)) return false;
+        }
+        for (accesses.globals.items) |access| if (access.mode == .write) return false;
+        return true;
+    }
+
+    fn owningPreservingStatements(self: *Infer, function: graph_mod.GlobalFunctionId) ![]const graph_mod.GlobalNodeId {
+        const body = self.graph.blocks.items[@intFromEnum(self.graph.function(function).body.?)];
+        var nodes: std.ArrayList(graph_mod.GlobalNodeId) = .empty;
+        for (self.graph.node_refs.items[body.nodes.start..][0..body.nodes.len]) |id| {
+            const preserves = switch (self.graph.node(id).content) {
+                .binding_declaration => |binding| if (self.graph.binding(binding).initialization) |value|
+                    self.ownerPreservingExpression(value, 0)
+                else
+                    false,
+                .pointer_assignment => |assignment| blk: {
+                    if (!self.ownerPreservingExpression(assignment.pointer, 0) or !self.ownerPreservingExpression(assignment.value, 0)) break :blk false;
+                    const ty = self.graph.node(assignment.value).ty orelse break :blk false;
+                    // This write cannot install reference-bearing contents.
+                    if (!self.isNumericContents(ty) or types.hasDestructor(self.graph, ty)) break :blk false;
+                    const pointer = try self.inferExpression(function, assignment.pointer);
+                    const relation = pointer.reference_relation orelse break :blk false;
+                    break :blk relation.grade == .checked_backing and self.embeddedInputReference(function, relation.source);
+                },
+                else => self.ownerPreservingExpression(id, 0),
+            };
+            if (preserves) try nodes.append(self.allocator, id);
+        }
+        return nodes.toOwnedSlice(self.allocator);
+    }
+
+    fn ownerPreservingExpression(self: *Infer, id: graph_mod.GlobalNodeId, depth: usize) bool {
+        if (depth >= 64) return false;
+        return switch (self.graph.node(id).content) {
+            .binding_use, .bool_literal, .int_literal, .float_literal => true,
+            .address_of, .denied_implicit_copy => |value| self.ownerPreservingExpression(value, depth + 1),
+            .struct_field_access => |field| self.ownerPreservingExpression(field.value, depth + 1),
+            .dereference => |read| self.ownerPreservingExpression(read.pointer, depth + 1),
+            .choice_literal => |choice| if (choice.payload) |payload| self.ownerPreservingExpression(payload, depth + 1) else true,
+            .struct_value_literal => |record| blk: {
+                for (self.graph.value_fields.items[record.fields.start..][0..record.fields.len]) |field| {
+                    if (!self.ownerPreservingExpression(field.value, depth + 1)) break :blk false;
+                }
+                break :blk true;
+            },
+            .function_call => |call| blk: {
+                if (call.callee_value != null) break :blk false;
+                const summary = self.engine.summaryFor(call.callee) orelse break :blk false;
+                if (summary.unknown_access or summary.input_post_states.len != 0 or summary.outcome_post_states.len != 0 or
+                    summary.invalidated_domains.len != 0 or summary.opaque_storage_effects.len != 0 or
+                    summary.retired_input_owners.len != 0 or summary.storage_capability_uses.len != 0 or
+                    summary.guarded_effects.len != 0 or summary.opaque_storage_empties.len != 0 or
+                    summary.completed_executions.len != 0 or summary.unresolved_transfer) break :blk false;
+                for (summary.input_accesses) |access| if (access.virtual_method != null or (access.mode == .write and !access.numeric_backing_write)) break :blk false;
+                for (summary.global_accesses) |access| if (access.mode != .read) break :blk false;
+                break :blk self.ownerPreservingExpression(call.input, depth + 1);
+            },
+            else => false,
+        };
     }
 
     const ForwardingMode = union(enum) {
@@ -5438,7 +5513,11 @@ pub const Infer = struct {
         if (paths.len == 0 and targets.len == 0) {
             const effect = try self.inferExpression(function, pointer);
             if (effect.reference_relation) |relation| if (!facts.ReferenceRelation.implies(relation.grade, .contained) and self.embeddedInputReference(function, relation.source)) {
-                try self.access_sink.?.addBackingInput(relation.source, mode, true);
+                const ty = if (self.graph.node(pointer).ty) |id| self.graph.semanticType(id) else null;
+                const numeric_write = mode == .write and relation.grade == .checked_backing and
+                    projections.len == 0 and ty != null and ty.? == .pointer and self.isNumericContents(ty.?.pointer.child) and
+                    !types.hasDestructor(self.graph, ty.?.pointer.child);
+                try self.access_sink.?.addBackingInput(relation.source, mode, true, numeric_write);
                 return;
             };
             // Array-valued operands address their own structural storage; they
@@ -5703,7 +5782,7 @@ pub const Infer = struct {
                 // caller storage. Crossing a reference leaf retains its effect.
                 if (access.backing or self.pathReachesReferent(ty, path.projections)) {
                     external = true;
-                    try sink.addBackingInput(path, access.mode, access.backing);
+                    try sink.addBackingInput(path, access.mode, access.backing, access.numeric_backing_write);
                 }
             }
             if (paths.len != 0) {
@@ -10763,6 +10842,19 @@ pub fn executionTransferWorker(graph: *const graph_mod.GlobalSemanticGraph, call
         break;
     }
     return null;
+}
+
+test "a numeric backing write guarantee must hold for every write in the summary" {
+    const path: facts.InputPath = .{ .input_index = 0 };
+    var accesses = Infer.AccessEffects.init(std.testing.allocator);
+    defer accesses.deinit();
+    try accesses.addBackingInput(path, .read, true, false);
+    try accesses.addBackingInput(path, .write, true, true);
+    try accesses.addBackingInput(path, .read, true, false);
+    try std.testing.expect(accesses.inputs.items[0].numeric_backing_write);
+    try accesses.addBackingInput(path, .write, true, false);
+    try accesses.addBackingInput(path, .write, true, true);
+    try std.testing.expect(!accesses.inputs.items[0].numeric_backing_write);
 }
 
 test "task output summaries preserve extraction only for an unchanged value" {

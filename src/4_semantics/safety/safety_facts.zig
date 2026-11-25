@@ -125,6 +125,9 @@ pub const InputAccess = struct {
     mode: AccessMode,
     /// Access within observed backing, not necessarily within the witness.
     backing: bool = false,
+    /// A checked write of numeric contents inside the backing reservation.
+    /// Generic backing access alone does not establish this guarantee.
+    numeric_backing_write: bool = false,
     /// An unbounded dispatch whose descriptor still has its entry value.
     /// This requires proof of the selected operation's access effects.
     virtual_method: ?u32 = null,

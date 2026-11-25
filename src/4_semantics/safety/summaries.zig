@@ -160,7 +160,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.exact_moved_input != b.exact_moved_input) return false;
     if (a.unknown_access != b.unknown_access or a.input_accesses.len != b.input_accesses.len or a.global_accesses.len != b.global_accesses.len) return false;
     for (a.input_accesses, b.input_accesses) |left, right|
-        if (left.mode != right.mode or left.backing != right.backing or !left.sameVirtualSelection(right)) return false;
+        if (left.mode != right.mode or left.backing != right.backing or left.numeric_backing_write != right.numeric_backing_write or !left.sameVirtualSelection(right)) return false;
     for (a.global_accesses, b.global_accesses) |left, right|
         if (left.binding != right.binding or left.mode != right.mode) return false;
     if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;

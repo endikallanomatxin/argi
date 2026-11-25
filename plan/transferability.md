@@ -377,8 +377,11 @@ issued generations conditionally, under the same completion proof as
 the result tag. Compilation does not require a different String or
 Allocation type for concurrent and local providers.
 
-This path currently supports workers with an exact moved-result summary.
-A worker that transforms its owned result needs a symbolic output relation
-that describes the actual post-value. Worker-side virtual cleanup still
+An exact moved-result summary can include checked numeric writes within
+an input’s backing. These writes change its data without replacing the
+owner representation or changing its retained capabilities. The access
+summary still describes the writes. A worker that changes the owner’s
+structural fields or generations needs an output relation that describes
+the actual post-value. Worker-side virtual cleanup still
 requires a published isolation guarantee. The return path preserves value
 evidence without relaxing that separate interface obligation.

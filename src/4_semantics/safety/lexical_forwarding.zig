@@ -16,6 +16,11 @@ pub fn proves(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemant
 }
 
 pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool, calls: []const ForwardedCall) !bool {
+    return provesWithDataEffects(allocator, graph, function, relation, owning, calls, &.{});
+}
+
+/// The input statements have been proved to preserve the owner representation.
+pub fn provesWithDataEffects(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool, calls: []const ForwardedCall, data_effects: []const graph_mod.GlobalNodeId) !bool {
     const block = graph.blocks.items[@intFromEnum(function.body orelse return false)];
     if (relation.input_index >= function.input_bindings.len or relation.output_index >= function.output_bindings.len) return false;
     const input = graph.binding_refs.items[function.input_bindings.start + relation.input_index];
@@ -32,7 +37,9 @@ pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
             if (record.deferred_initialization or binding == output or linksContains(links.items, binding)) return false;
             const initializer = record.initialization orelse return false;
             if (!isForwardingLink(graph, initializer, links.items, owning, calls)) {
-                if (owning or !independentMove(graph, initializer, links.items, output)) return false;
+                if (owning) {
+                    if (!containsNode(data_effects, id)) return false;
+                } else if (!independentMove(graph, initializer, links.items, output)) return false;
                 continue;
             }
             try links.append(binding);
@@ -57,11 +64,13 @@ pub fn provesWithCalls(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
             if (!owning and !independentExpression(graph, id, links.items, output, 0)) return false;
         },
         .return_statement => |ret| return ret.expression == null and assigned,
-        else => if (owning or !independentExpression(graph, id, links.items, output, 0)) return false,
+        else => if (owning) {
+            if (!containsNode(data_effects, id)) return false;
+        } else if (!independentExpression(graph, id, links.items, output, 0)) return false,
     };
     if (block.ret_val) |tail| {
-        if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, tail) == null and
-            (owning or !independentExpression(graph, tail, links.items, output, 0))) return false;
+        if (!containsNode(nodes, tail) and
+            (if (owning) !containsNode(data_effects, tail) else !independentExpression(graph, tail, links.items, output, 0))) return false;
     }
     return assigned;
 }
@@ -146,6 +155,10 @@ fn independentOperands(graph: *const graph_mod.GlobalSemanticGraph, value: anyty
         },
         else => true,
     };
+}
+
+fn containsNode(nodes: []const graph_mod.GlobalNodeId, id: graph_mod.GlobalNodeId) bool {
+    return std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, id) != null;
 }
 
 fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.GlobalBindingId) bool {
@@ -239,7 +252,9 @@ test "reference forwarding permits independent moved owners without consuming it
     try graph.blocks.append(a, graph.blocks.items[0]);
     try graph.blocks.append(a, graph.blocks.items[0]);
     try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .if_statement = .{
-        .condition = @enumFromInt(0), .then_block = @enumFromInt(1), .else_block = @enumFromInt(2),
+        .condition = @enumFromInt(0),
+        .then_block = @enumFromInt(1),
+        .else_block = @enumFromInt(2),
     } } });
     graph.node_refs.items[0] = @enumFromInt(7);
     graph.blocks.items[0].nodes = .{ .start = 0, .len = 1 };
