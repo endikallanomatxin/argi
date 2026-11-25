@@ -2010,21 +2010,21 @@ pub const Infer = struct {
                     if (self.engine.summaryFor(call.callee)) |summary| if (self.structArguments(call.input)) |arguments| {
                         // Replacement facts describe possible new local values;
                         // preserved cleanup facts do not describe replacements.
-                        const values = try self.allocator.alloc(facts.ValueEffect, summary.input_post_states.len);
-                        for (summary.input_post_states, values) |post, *value|
-                            value.* = if (post.initialization != .preserved and (post.initializedness == .initialized or post.initializedness == .maybe_initialized))
-                                try self.substituteOutput(function_id, post.value, arguments)
-                            else
-                                .{};
-                        for (summary.input_post_states, values) |post, value| {
+                        const Replacement = struct { post: *const facts.PlacePostState, value: facts.ValueEffect, ty: graph_mod.GlobalTypeId };
+                        var replacements: std.ArrayList(Replacement) = .empty;
+                        defer replacements.deinit(self.allocator);
+                        const signature = self.graph.function(call.callee);
+                        for (summary.input_post_states) |*post| {
                             if (post.initialization == .preserved or (post.initializedness != .initialized and post.initializedness != .maybe_initialized) or post.target.storage_domain != null or post.target.input_index >= arguments.len) continue;
-                            const signature = self.graph.function(call.callee);
+                            const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
+                            if (!self.tracksLocalContents(selected.ty)) continue;
                             const parameter = self.graph.fields.items[signature.input.start + post.target.input_index].ty;
                             if (self.graph.semanticType(parameter) != .pointer) continue;
-                            const selected = @import("access_bounds.zig").selectedType(self.graph, signature, post.target) catch continue;
-                            // A field can carry destruction authority even
-                            // when its representation has no reference leaves.
-                            if (!self.tracksLocalContents(selected.ty)) continue;
+                            try replacements.append(self.allocator, .{ .post = post, .value = try self.substituteOutput(function_id, post.value, arguments), .ty = selected.ty });
+                        }
+                        for (replacements.items) |replacement| {
+                            const post = replacement.post;
+                            const value = replacement.value;
                             const exact_targets = try self.localAddressTargets(arguments[post.target.input_index].value);
                             const targets = try self.localMutationCandidates(arguments[post.target.input_index].value, 0);
                             for (targets) |target| {
@@ -2036,7 +2036,7 @@ pub const Infer = struct {
                                     var previous = try self.inferExpression(function_id, target);
                                     for (post.target.projections) |projection|
                                         previous = try self.projectValueEffect(previous, projection);
-                                    updated = try self.joinStorageAlternatives(selected.ty, previous, value);
+                                    updated = try self.joinStorageAlternatives(replacement.ty, previous, value);
                                 }
                                 try self.storeSelectedValueEffect(function_id, target, post.target.projections, updated, outputs, .locals_and_outputs);
                             }
