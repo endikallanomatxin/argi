@@ -1269,6 +1269,7 @@ pub const SafetyChecker = struct {
                     const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
+                    try self.requireLive(function, node.source, pointer, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const target = try self.project(base, .{ .field = store.field_index });
@@ -1287,6 +1288,7 @@ pub const SafetyChecker = struct {
                     } else null;
                     const value = try self.evaluate(function, store.value, state);
                     try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
+                    try self.requireLive(function, node.source, pointer, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |base| {
                         const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
@@ -1355,6 +1357,7 @@ pub const SafetyChecker = struct {
                             try self.renewWriteReferenceSlot(state, operand, pointer);
                         }
                     }
+                    try self.requireLive(function, node.source, pointer, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |target| {
                         try state.setPlace(target, .initialized, value);
