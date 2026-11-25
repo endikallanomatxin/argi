@@ -1265,40 +1265,39 @@ pub const SafetyChecker = struct {
                 },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
-                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
-                    const symbolic = if (pointer.referenced_place == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
+                    const target = if (pointer.referenced_place) |base| try self.project(base, .{ .field = store.field_index }) else null;
+                    const symbolic = if (target == null) try self.projectSymbolicReference(pointer, store.field_index, state) else null;
                     const value = try self.evaluate(function, store.value, state);
-                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
-                    try self.requireLive(function, node.source, pointer, state);
+                    if (target != null and exactObservedPlace(pointer) != null) {
+                        try self.requireExecutionAccess(node.source, target.?, null, .write, state);
+                    } else try self.requireExecutionPointerAccess(node.source, symbolic orelse pointer, .write, state);
+                    try self.requireLive(function, node.source, symbolic orelse pointer, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (pointer.referenced_place) |base| {
-                        const target = try self.project(base, .{ .field = store.field_index });
-                        if (state.initializednessAtPlace(target) == .deinitialized)
-                            try self.refreshStorageGenerationChecked(node.source, state, target);
-                        try state.setPlace(target, .initialized, value);
-                    } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
+                    if (target) |place| {
+                        if (state.initializednessAtPlace(place) == .deinitialized)
+                            try self.refreshStorageGenerationChecked(node.source, state, place);
+                        try state.setPlace(place, .initialized, value);
+                    } else if (symbolic) |selected| try self.storeSymbolicValue(state, selected, value, true);
                 },
                 .array_store => |store| {
                     const pointer = try self.evaluateArrayStorage(function, node.source, store.array_ptr, state) orelse continue;
-                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
                     _ = try self.evaluate(function, store.index, state);
-                    const symbolic = if (pointer.referenced_place == null) blk: {
-                        const index = self.staticIndex(store.index) orelse break :blk null;
-                        break :blk try self.projectSymbolicStorage(pointer, .{ .static_index = index }, state);
-                    } else null;
+                    const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
+                    const target = if (pointer.referenced_place) |base| try self.project(base, projection) else null;
+                    const symbolic = if (target == null) try self.projectSymbolicStorage(pointer, projection, state) else null;
                     const value = try self.evaluate(function, store.value, state);
-                    try self.requireExecutionPointerAccess(node.source, pointer, .write, state);
-                    try self.requireLive(function, node.source, pointer, state);
+                    if (target != null and exactObservedPlace(pointer) != null) {
+                        try self.requireExecutionAccess(node.source, target.?, null, .write, state);
+                    } else try self.requireExecutionPointerAccess(node.source, symbolic orelse pointer, .write, state);
+                    try self.requireLive(function, node.source, symbolic orelse pointer, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (pointer.referenced_place) |base| {
-                        const projection: facts.Projection = if (self.staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
-                        const target = try self.project(base, projection);
+                    if (target) |place| {
                         // Two unknown indices need not identify the same cell.
                         // The second store cannot discard the first value.
-                        const previous = if (projection == .dynamic_index) state.getPlace(target) else null;
+                        const previous = if (projection == .dynamic_index) state.getPlace(place) else null;
                         const retained = if (previous) |entry|
                             try self.joinObservedSymbolicValues(
-                                try self.reconstructPlaceValue(state, target, entry.value),
+                                try self.reconstructPlaceValue(state, place, entry.value),
                                 value,
                                 null,
                                 null,
@@ -1306,8 +1305,8 @@ pub const SafetyChecker = struct {
                             )
                         else
                             value;
-                        try state.setPlace(target, .initialized, retained);
-                    } else if (symbolic) |target| try self.storeSymbolicValue(state, target, value, true);
+                        try state.setPlace(place, .initialized, retained);
+                    } else if (symbolic) |selected| try self.storeSymbolicValue(state, selected, value, true);
                 },
                 .pointer_assignment => |assignment| {
                     const operand = try self.evaluateWritePointer(function, assignment.pointer, state);
