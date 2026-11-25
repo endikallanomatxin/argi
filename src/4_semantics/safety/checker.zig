@@ -5024,7 +5024,16 @@ pub const SafetyChecker = struct {
         if (!state.tracker.dependenciesAreAlive(reference) or
             (reference.referenced_place == null and reference.mutation_places.len == 0))
         {
-            return self.requireExecutionPointerAccess(source, reference.derivedReference(), mode, state);
+            var derived = reference.derivedReference();
+            if (reference.acquisition_origins.len != 0 and
+                @import("transfer_evidence.zig").observesTransferredBacking(reference, reference.owned_backing) and
+                state.tracker.dependenciesAreAlive(reference))
+            {
+                // Acquired backing cannot overlap an ordinary lexical slot.
+                // The frame check still rejects external or indirect targets.
+                derived.lexical_frame = 0;
+            }
+            return self.requireExecutionPointerAccess(source, derived, mode, state);
         }
         if (reference.referenced_place) |element| {
             if (self.arrayBackingRootAtPlace(element)) |root| {
