@@ -1543,7 +1543,7 @@ pub const Infer = struct {
                 .binding_declaration => |binding| self.graph.binding(binding).initialization orelse continue,
                 else => continue,
             };
-            for (0..self.graph.nodes.items.len) |_| {
+            links: for (0..self.graph.nodes.items.len) |_| {
                 if (mode == .reference and mode.reference != .identity) if (self.checkedArrayElementSource(function, value)) |base| {
                     try calls.append(self.allocator, .{ .call = value, .argument = base });
                     value = base;
@@ -1572,8 +1572,13 @@ pub const Infer = struct {
                 const arguments = self.structArguments(selected[1]) orelse break;
                 const input_index = switch (mode) {
                     .owning => blk: {
-                        if (arguments.len != 1) break;
-                        break :blk selected[0].exact_moved_input orelse break;
+                        const moved = selected[0].exact_moved_input orelse break;
+                        // The summary certifies the call's output. Any other
+                        // argument evaluation must independently preserve the
+                        // submitted owner before the call takes custody.
+                        for (arguments, 0..) |extra, index|
+                            if (index != moved and !self.ownerPreservingExpression(extra.value, 0)) break :links;
+                        break :blk moved;
                     },
                     .reference => |grade| blk: {
                         const relation = selected[0].outputs[0].reference_relation orelse break;
