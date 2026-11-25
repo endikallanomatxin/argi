@@ -71,7 +71,7 @@ pub const Infer = struct {
     graph: *const graph_mod.GlobalSemanticGraph,
     engine: *summaries.Engine,
     evaluated_values: ?*EvaluatedValues = null,
-    bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
+    bindings: std.AutoHashMap(graph_mod.GlobalBindingId, *const facts.ValueEffect),
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
     // May-targets retain earlier aliases even after sequential reassignment.
     // Final value provenance alone cannot describe accesses earlier in a body.
@@ -199,7 +199,7 @@ pub const Infer = struct {
             .storage_allocator = allocator,
             .graph = graph,
             .engine = engine,
-            .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect).init(allocator),
+            .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, *const facts.ValueEffect).init(allocator),
             .place_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath).init(allocator),
             .access_place_bindings = .init(allocator),
             .module_bindings = .init(allocator),
@@ -1284,8 +1284,8 @@ pub const Infer = struct {
         for (outputs, output_bindings, 0..) |*output, binding, index| {
             if (index >= output_fields.len) continue;
             if (returned_bindings.get(binding)) |origin| {
-                output.* = try self.overlay_capability_outputs(output.*, origin, output_fields[index].ty);
-                if (stable_reference_sources) output.* = try self.overlayReturnedReferenceRelations(function_id, output.*, origin, output_fields[index].ty);
+                output.* = try self.overlay_capability_outputs(output.*, origin.*, output_fields[index].ty);
+                if (stable_reference_sources) output.* = try self.overlayReturnedReferenceRelations(function_id, output.*, origin.*, output_fields[index].ty);
             }
         }
         for (outputs) |*output| output.* = try self.mark_unavailable_fresh_storage(output.*, counts);
@@ -1904,10 +1904,22 @@ pub const Infer = struct {
         return true;
     }
 
+    fn bindingEffect(self: *Infer, effect: facts.ValueEffect) !*const facts.ValueEffect {
+        if (facts.isEmptyValue(effect)) return &facts.empty_value_effect;
+        const stored = try self.allocator.create(facts.ValueEffect);
+        stored.* = effect;
+        return stored;
+    }
+
+    fn joinBindingEffects(self: *Infer, binding: graph_mod.GlobalBindingId, left: *const facts.ValueEffect, right: *const facts.ValueEffect) !*const facts.ValueEffect {
+        if (left == right or summaries.valueEffectEql(left.*, right.*)) return left;
+        return self.bindingEffect(try self.joinStorageAlternatives(self.graph.binding(binding).ty, left.*, right.*));
+    }
+
     // Branches share immutable effect payloads, but retain independent output
     // vectors. Joining alternatives must not discard an earlier branch's loans.
     const OutputAlternatives = struct {
-        const Bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect);
+        const Bindings = std.AutoHashMap(graph_mod.GlobalBindingId, *const facts.ValueEffect);
         allocator: std.mem.Allocator,
         entry_bindings: Bindings,
         joined_bindings: ?Bindings = null,
@@ -1945,7 +1957,7 @@ pub const Infer = struct {
                     const binding = entry.key_ptr.*;
                     const slot = try joined.getOrPut(binding);
                     slot.value_ptr.* = if (slot.found_existing)
-                        try infer.joinStorageAlternatives(infer.graph.binding(binding).ty, slot.value_ptr.*, entry.value_ptr.*)
+                        try infer.joinBindingEffects(binding, slot.value_ptr.*, entry.value_ptr.*)
                     else
                         entry.value_ptr.*;
                 }
@@ -2169,7 +2181,7 @@ pub const Infer = struct {
                     const candidates = try self.localMutationCandidates(initialization, 0);
                     try self.local_mutation_candidates.put(binding, candidates);
                     try self.local_address_bindings.put(binding, try self.localAddressTargets(initialization));
-                    try self.bindings.put(binding, effect);
+                    try self.bindings.put(binding, try self.bindingEffect(effect));
                     try self.place_bindings.put(binding, try self.inferInputPaths(function_id, initialization));
                     try self.retainAccessTargets(binding, try self.accessTargets(function_id, initialization));
                 },
@@ -2197,7 +2209,7 @@ pub const Infer = struct {
                             if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, joined.items, target) == null) try joined.append(target);
                         }
                         try self.local_address_bindings.put(assignment.binding, try joined.toOwnedSlice());
-                        try self.bindings.put(assignment.binding, effect);
+                        try self.bindings.put(assignment.binding, try self.bindingEffect(effect));
                         try self.place_bindings.put(assignment.binding, try self.inferInputPaths(function_id, assignment.value));
                         try self.retainAccessTargets(assignment.binding, try self.accessTargets(function_id, assignment.value));
                     }
@@ -2288,7 +2300,7 @@ pub const Infer = struct {
                             const ty = self.graph.node(statement.expression).ty orelse continue;
                             const wanted = self.variantIndex(ty, case.variant) orelse continue;
                             const payload = try self.projectValueEffect(choice, .{ .variant = wanted });
-                            try self.bindings.put(binding, payload);
+                            try self.bindings.put(binding, try self.bindingEffect(payload));
                         }
                         try self.inferBlock(function_id, case.body, outputs);
                         if (!self.immediatelyAborts(case.body)) try alternatives.retain(self, function_id, outputs);
@@ -2320,7 +2332,7 @@ pub const Infer = struct {
         counts: std.array_list.Managed(CapabilityCount),
         addresses: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
         calls: std.AutoHashMap(graph_mod.GlobalNodeId, void),
-        bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
+        bindings: std.AutoHashMap(graph_mod.GlobalBindingId, *const facts.ValueEffect),
         reachable: bool = true,
         breaks_loop: bool = false,
 
@@ -2408,7 +2420,7 @@ pub const Infer = struct {
         entries = right.bindings.iterator();
         while (entries.next()) |entry| {
             const value = if (joined.bindings.get(entry.key_ptr.*)) |previous|
-                try self.joinStorageAlternatives(self.graph.binding(entry.key_ptr.*).ty, previous, entry.value_ptr.*)
+                try self.joinBindingEffects(entry.key_ptr.*, previous, entry.value_ptr.*)
             else
                 entry.value_ptr.*;
             try joined.bindings.put(entry.key_ptr.*, value);
@@ -2463,7 +2475,7 @@ pub const Infer = struct {
 
     fn store_capability_target(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, value: facts.ValueEffect, flow: *CapabilityFlow) anyerror!void {
         switch (self.graph.node(target).content) {
-            .binding_use => |binding| try flow.bindings.put(binding, value),
+            .binding_use => |binding| try flow.bindings.put(binding, try self.bindingEffect(value)),
             .struct_field_access => |field| try self.storeCapabilityProjection(function, field.value, .{ .field = field.field_index }, value, flow),
             .dereference => |read| {
                 const targets = try self.capability_address_targets(read.pointer, flow);
@@ -2566,7 +2578,7 @@ pub const Infer = struct {
                 break :blk try self.capability_value_inner(function, value, flow);
             },
             .binding_use => |binding| blk: {
-                if (self.bindings.get(binding)) |value| break :blk value;
+                if (self.bindings.get(binding)) |value| break :blk value.*;
                 const value = try self.inferExpression(function, node);
                 if (self.inputIndex(function, binding)) |input| if (self.graph.binding(binding).mutability == .constant)
                     break :blk try self.inputReferenceObservations(value, self.graph.binding(binding).ty, .{ .input_index = input }, 0);
@@ -2760,13 +2772,13 @@ pub const Infer = struct {
                 const record = self.graph.binding(binding);
                 if (!record.deferred_initialization) if (record.initialization) |value| {
                     try self.infer_capability_node(function, value, flow, exits);
-                    try flow.bindings.put(binding, try self.capability_value(function, value, flow));
+                    try flow.bindings.put(binding, try self.bindingEffect(try self.capability_value(function, value, flow)));
                     try flow.addresses.put(binding, try self.capability_address_targets(value, flow));
                 };
             },
             .assignment => |assignment| {
                 try self.infer_capability_node(function, assignment.value, flow, exits);
-                try flow.bindings.put(assignment.binding, try self.capability_value(function, assignment.value, flow));
+                try flow.bindings.put(assignment.binding, try self.bindingEffect(try self.capability_value(function, assignment.value, flow)));
                 try flow.addresses.put(assignment.binding, try self.capability_address_targets(assignment.value, flow));
             },
             .function_call => |call| {
@@ -2841,7 +2853,7 @@ pub const Infer = struct {
                     defer branch.deinit();
                     if (case.payload_binding) |binding| {
                         if (self.graph.node(statement.expression).ty) |ty| if (self.variantIndex(ty, case.variant)) |index| {
-                            try branch.bindings.put(binding, try self.projectValueEffect(choice, .{ .variant = index }));
+                            try branch.bindings.put(binding, try self.bindingEffect(try self.projectValueEffect(choice, .{ .variant = index })));
                         };
                     }
                     try self.infer_capability_block(function, case.body, &branch, exits);
@@ -4006,8 +4018,8 @@ pub const Infer = struct {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (self.replacement_storage) |replacement| blk: {
             if (replacement.cleanup == auto_id) break :blk facts.ValueEffect{ .input_place_values = replacement.targets };
-            break :blk if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
-        } else if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
+            break :blk if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else if (self.bindings.get(cleanup.ownerBinding().?)) |effect| effect.* else null;
+        } else if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else if (self.bindings.get(cleanup.ownerBinding().?)) |effect| effect.* else null;
         try self.applyCleanupInputPostStates(function_id, cleanup.deinit_fn, cleanup.input, cleanup.self_field_index, cleanup.fields, binding_effect, states);
         // A replacement retires the captured destination's old incarnation.
         // Receiver overrides deliberately omit whole-value consumption for
@@ -4683,8 +4695,8 @@ pub const Infer = struct {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = if (cleanup.targetNode()) |target|
             try self.inferExpression(function_id, target)
-        else if (self.bindings.get(cleanup.ownerBinding().?)) |value|
-            value
+        else if (self.bindings.get(cleanup.ownerBinding().?)) |stored|
+            stored.*
         else if (self.inputIndex(function_id, cleanup.ownerBinding().?)) |index|
             try self.inputValueEffect(index, &.{})
         else
@@ -6494,7 +6506,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.ownerBinding().?);
+        const binding_effect = if (cleanup.targetNode()) |target| try self.inferExpression(function_id, target) else if (self.bindings.get(cleanup.ownerBinding().?)) |effect| effect.* else null;
 
         if (cleanup.input) |input| {
             if (cleanup.storage == .indirect) {
@@ -6599,7 +6611,7 @@ pub const Infer = struct {
                     types.variants(self.graph, self.graph.binding(binding).ty) != null)
                     effect.virtual_receiver_input = .{ .input_index = index };
                 break :blk effect;
-            } else self.bindings.get(binding) orelse .{},
+            } else if (self.bindings.get(binding)) |effect| effect.* else .{},
             .move_value => |value| try self.withOwnershipTransfer(try self.inferExpression(function_id, value)),
             .denied_implicit_copy => |value| try self.inferExpression(function_id, value),
             .address_of => |value| blk: {
@@ -6880,9 +6892,9 @@ pub const Infer = struct {
                 if (self.outputIndex(function, binding)) |index| {
                     if (outputs) |values| values[index] = try self.storeEffectProjection(values[index], path, value);
                 } else if (scope == .locals_and_outputs) {
-                    const previous: facts.ValueEffect = self.bindings.get(binding) orelse .{};
+                    const previous: facts.ValueEffect = if (self.bindings.get(binding)) |effect| effect.* else .{};
                     const updated = try self.storeEffectProjection(previous, path, value);
-                    try self.bindings.put(binding, updated);
+                    try self.bindings.put(binding, try self.bindingEffect(updated));
                     if (path.len == 0) try self.place_bindings.put(binding, try self.opaqueGenerationSourcePaths(updated));
                 }
             },
@@ -9651,7 +9663,7 @@ test "result substitution observes new binding facts and symbolic overrides" {
         .{ .index = 0, .value = &dependency },
         .{ .index = 1, .value = &dependency },
     } };
-    try inference.bindings.put(@enumFromInt(0), .{ .fresh_storage_capabilities = &.{7} });
+    try inference.bindings.put(@enumFromInt(0), &.{ .fresh_storage_capabilities = &.{7} });
     const first = try inference.substituteOutput(@enumFromInt(0), result, &.{argument});
     for (first.fields) |field| try std.testing.expectEqual(@as(usize, 7), field.value.fresh_storage_capabilities[0]);
     const constant_payload: facts.ValueEffect = .{ .fresh_owned_roots = &.{23} };
@@ -9660,7 +9672,7 @@ test "result substitution observes new binding facts and symbolic overrides" {
     try std.testing.expect(summaries.valueEffectEql(constant, shared_constant));
     try std.testing.expect(constant.variants.ptr == shared_constant.variants.ptr);
 
-    try inference.bindings.put(@enumFromInt(0), .{ .fresh_storage_capabilities = &.{13} });
+    try inference.bindings.put(@enumFromInt(0), &.{ .fresh_storage_capabilities = &.{13} });
     const second = try inference.substituteOutput(@enumFromInt(0), result, &.{argument});
     for (second.fields) |field| try std.testing.expectEqual(@as(usize, 13), field.value.fresh_storage_capabilities[0]);
     // Exercise the dynamic buffer as well as the small ordinary-call buffer.
@@ -10474,7 +10486,7 @@ test "definite aggregate replacement renews embedded post-states but preserves b
 fn capabilityFlowCloneFailures(allocator: std.mem.Allocator) !void {
     var source = Infer.CapabilityFlow.init(std.testing.allocator);
     defer source.deinit();
-    try source.bindings.put(@enumFromInt(0), .{});
+    try source.bindings.put(@enumFromInt(0), &facts.empty_value_effect);
     try source.calls.put(@enumFromInt(1), {});
     try source.addresses.put(@enumFromInt(2), &.{@enumFromInt(3)});
     try source.counts.append(.{ .source = .{ .fresh = 7 }, .minimum = 1, .maximum = 1 });
@@ -11050,8 +11062,8 @@ test "alias target alternatives cannot borrow another target's universal referen
     defer flow.deinit();
     const reference: facts.ValueEffect = .{ .reference_relation = .{ .source = .{ .input_index = 0 } } };
     const known: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &reference }} };
-    try flow.bindings.put(@enumFromInt(0), known);
-    try flow.bindings.put(@enumFromInt(1), .{});
+    try flow.bindings.put(@enumFromInt(0), &known);
+    try flow.bindings.put(@enumFromInt(1), &facts.empty_value_effect);
     try flow.addresses.put(@enumFromInt(2), &.{ @enumFromInt(0), @enumFromInt(1) });
     try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(2), .content = .{ .dereference = .{
         .pointer = @enumFromInt(2),
@@ -11060,14 +11072,14 @@ test "alias target alternatives cannot borrow another target's universal referen
     } } });
     for ([_]graph_mod.GlobalNodeId{ @enumFromInt(2), @enumFromInt(3) }) |node| {
         for (0..2) |unknown_index| {
-            try flow.bindings.put(@enumFromInt(0), if (unknown_index == 0) .{} else known);
-            try flow.bindings.put(@enumFromInt(1), if (unknown_index == 1) .{} else known);
+            try flow.bindings.put(@enumFromInt(0), if (unknown_index == 0) &facts.empty_value_effect else &known);
+            try flow.bindings.put(@enumFromInt(1), if (unknown_index == 1) &facts.empty_value_effect else &known);
             const merged = try infer.capability_value(@enumFromInt(0), node, &flow);
             const field = try infer.projectValueEffect(merged, .{ .field = 0 });
             try std.testing.expect(field.reference_relation == null);
         }
-        try flow.bindings.put(@enumFromInt(0), known);
-        try flow.bindings.put(@enumFromInt(1), known);
+        try flow.bindings.put(@enumFromInt(0), &known);
+        try flow.bindings.put(@enumFromInt(1), &known);
         const common = try infer.projectValueEffect(try infer.capability_value(@enumFromInt(0), node, &flow), .{ .field = 0 });
         try std.testing.expect(common.reference_relation.?.eql(reference.reference_relation.?));
         try flow.addresses.put(@enumFromInt(2), &.{@enumFromInt(0)});
@@ -11076,8 +11088,8 @@ test "alias target alternatives cannot borrow another target's universal referen
         try flow.addresses.put(@enumFromInt(2), &.{ @enumFromInt(0), @enumFromInt(1) });
     }
 
-    try infer.bindings.put(@enumFromInt(0), known);
-    try infer.bindings.put(@enumFromInt(1), .{});
+    try infer.bindings.put(@enumFromInt(0), &known);
+    try infer.bindings.put(@enumFromInt(1), &facts.empty_value_effect);
     try infer.local_address_bindings.put(@enumFromInt(2), &.{@enumFromInt(0)});
     const single = (try infer.localPointeeEffect(@enumFromInt(0), @enumFromInt(2))).?;
     const retained = try infer.projectValueEffect(single, .{ .field = 0 });

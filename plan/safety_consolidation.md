@@ -119,6 +119,23 @@ machinery to stabilize owned roots of a slot. A general join should share
 the proof of ownership and observation, with the loop separately bounding
 how many generations survive fixed-point iteration.
 
+## Branch snapshot cost
+
+In a synthetic function, each branch assigns a scalar accumulator and adds
+one binding to the surrounding scope. Three runs per case used a ReleaseSafe
+compiler, a cold frontend and one frontend worker. The previous
+implementation copied effects by value into each binding map snapshot.
+Sharing immutable payloads between snapshots gives these medians:
+
+| Branches | Safety before | Safety after | Peak RSS before | Peak RSS after |
+| ---: | ---: | ---: | ---: | ---: |
+| 32 | 5.4 ms | 2.0 ms | 112 MiB | 111 MiB |
+| 128 | 63.7 ms | 16.9 ms | 166 MiB | 114 MiB |
+| 512 | 930.0 ms | 211.7 ms | 1,093 MiB | 154 MiB |
+
+A branch still walks the live binding map at the join. The remaining growth
+in time warrants a benchmark that isolates revisiting unchanged bindings.
+
 ## Extracting a transferable owner from opaque storage
 
 An extraction probe uses `DynamicArray#(String)`, inserts an owned String
