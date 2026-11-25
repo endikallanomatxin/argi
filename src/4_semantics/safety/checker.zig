@@ -8618,6 +8618,17 @@ pub const SafetyChecker = struct {
                     result.reference_target_incomplete = true;
                 }
             }
+            // Structural projections stay within each authenticated
+            // destination. Dereferencing a stored pointer can leave it.
+            result.reference_coverage_complete = projection != .dereference and
+                pointer.reference_coverage_complete and !result.reference_target_incomplete;
+            if (result.reference_coverage_complete) {
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                try dependencies.appendSlice(result.dependencies);
+                for (result.mutation_places) |place|
+                    try appendDependencyFact(&dependencies, .{ .root = try self.observeStorageGeneration(state, place) });
+                result.dependencies = try dependencies.toOwnedSlice();
+            }
             return result;
         }
         if (pointer.referenced_place != null or pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
@@ -15858,6 +15869,13 @@ test "projecting a mixed mutation reference preserves its symbolic alternative" 
     try std.testing.expectEqual(@as(usize, 1), projected.symbolic_pointees.len);
     try std.testing.expect(projected.referenced_place == null);
     try std.testing.expect(!projected.reference_target_incomplete);
+
+    var covered = pointer;
+    covered.reference_coverage_complete = true;
+    const projected_covered = (try checker.projectSymbolicReference(covered, 0, &state)).?;
+    try std.testing.expect(projected_covered.reference_coverage_complete);
+    const concrete_generation = try state.storageGeneration(projected_covered.mutation_places[0]);
+    try std.testing.expect(valueDependsOnRoot(projected_covered, concrete_generation));
 
     var partial = pointer;
     partial.symbolic_pointees = &.{ @enumFromInt(0), @enumFromInt(10) };
