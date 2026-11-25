@@ -58,5 +58,18 @@ main := (.system: System) -> () {
         discarded_task ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = ~unreturned), .executor = executor, .ffi = system.ffi))
         -- Dropping the future joins and destroys the unclaimed String.
     }
+    {
+        empty ::= unwrap_or_abort(string_with_shared_c_storage(.allocator = shared, .length = 0))
+        task ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = ~empty), .executor = executor, .ffi = system.ffi))
+        returned ::= unwrap_or_abort(await($&task))
+        empty_view ::= view(.self = &returned)
+        if byte_length(.self = &empty_view) != 0 { abort }
+        match bytes_get(.view = &empty_view, .index = 0) {
+            ..ok _ { abort }
+            ..error failure {
+                if is(.value = failure.reason, .variant = ..out_of_bounds) == false { abort }
+            }
+        }
+    }
     recover_ordinary(.owner = $&allocator)
 }
