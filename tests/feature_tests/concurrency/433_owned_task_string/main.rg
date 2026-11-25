@@ -25,5 +25,10 @@ main := (.system: System) -> () {
             ..error _ { abort }
         }
     }
+    {
+        unreturned ::= unwrap_or_abort(string_with_shared_c_storage(.allocator = shared, .length = 3))
+        discarded_task ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = ~unreturned), .executor = executor, .ffi = system.ffi))
+        -- Dropping the future joins and destroys the unclaimed String.
+    }
     recover_ordinary(.owner = $&allocator)
 }
