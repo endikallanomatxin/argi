@@ -230,8 +230,14 @@ pub const ValueFacts = struct {
 
     pub fn hasCompleteReferenceCoverage(self: ValueFacts) bool {
         if (self.reference_target_incomplete) return false;
-        if (self.reference_coverage_complete and self.mutation_places.len != 0) return true;
-        return self.referenced_place != null or self.symbolic_pointees.len != 0;
+        if (self.reference_coverage_complete)
+            return self.referenced_place != null or self.symbolic_pointees.len != 0 or self.mutation_places.len != 0;
+        if (self.referenced_place) |exact| {
+            if (self.symbolic_pointees.len != 0) return false;
+            for (self.mutation_places) |candidate| if (!exact.eql(candidate)) return false;
+            return true;
+        }
+        return self.symbolic_pointees.len == 1 and self.mutation_places.len == 0;
     }
 
     /// Traverses represented structural children. Guarded refinements are

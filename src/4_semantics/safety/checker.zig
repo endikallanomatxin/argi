@@ -6357,7 +6357,7 @@ pub const SafetyChecker = struct {
             result.referenced_place = null;
         }
         result.reference_coverage_complete = has_referent and reference_sources_covered and
-            !result.reference_target_incomplete and result.mutation_places.len != 0;
+            !result.reference_target_incomplete and hasReferenceTarget(result);
         // A validity-only anchor contributes a lifetime without changing the
         // address observed by the authenticated fresh-backing recipe.
         if (effect.observes_fresh_backing and effect.fresh_dependencies.len == 1 and
@@ -9801,7 +9801,7 @@ pub const SafetyChecker = struct {
     fn joinObservedSymbolicValues(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts, left_state: ?*const FunctionState, right_state: ?*const FunctionState, generations: []const SymbolicGenerationJoin) anyerror!facts.ValueFacts {
         if (generations.len == 0 and valueFactsEqual(left, right)) return left;
         var merged = try self.mergeValueFacts(left, right);
-        merged.reference_coverage_complete = merged.mutation_places.len != 0 and
+        merged.reference_coverage_complete = hasReferenceTarget(merged) and
             left.hasCompleteReferenceCoverage() and right.hasCompleteReferenceCoverage();
         if (hasReferenceTarget(left) != hasReferenceTarget(right)) {
             merged.reference_target_incomplete = true;
@@ -15880,10 +15880,11 @@ test "projecting a mixed mutation reference preserves its symbolic alternative" 
     try std.testing.expect(projected.referenced_place == null);
     try std.testing.expect(!projected.reference_target_incomplete);
 
+    try std.testing.expect(!projected.hasCompleteReferenceCoverage());
     var covered = pointer;
     covered.reference_coverage_complete = true;
     const projected_covered = (try checker.projectSymbolicReference(covered, 0, &state)).?;
-    try std.testing.expect(projected_covered.reference_coverage_complete);
+    try std.testing.expect(projected_covered.hasCompleteReferenceCoverage());
     const concrete_generation = try state.storageGeneration(projected_covered.mutation_places[0]);
     try std.testing.expect(valueDependsOnRoot(projected_covered, concrete_generation));
 
@@ -16056,6 +16057,7 @@ test "execution lending retains every concrete and symbolic target alternative" 
     try checker.collectExecutionLoans(@enumFromInt(1), .{
         .referenced_place = first,
         .mutation_places = &.{ first, second },
+        .reference_coverage_complete = true,
         .symbolic_pointees = &.{symbolic},
     }, &state, &loans, .{ .file_index = 0, .offset = 0 });
     try std.testing.expectEqual(@as(usize, 3), loans.items.len);
