@@ -5,6 +5,63 @@ working tree is a separate candidate. The published unknown-call gate already
 checks interference against pending loans before applying completion. The
 remaining storage problems can occur entirely in sequential code.
 
+## Evaluation and evidence at ownership boundaries
+
+An ownership-transfer probe at `581e10e4f` uses an owner whose destructor
+calls an erased verifier. A call replaces the verifier in the first argument
+of a two-argument consumer. When the replacement installs a concurrent
+verifier, the compiler rejects the transfer. Swapping the providers makes it
+accept an owner whose current verifier is local. Both programs have the same
+types and call structure. The second program is a safety regression because
+admission uses evidence about the overwritten slot.
+
+The summary evaluator currently splits value inference, local replacements and
+capability consumption among different expression walks. The discarded-call
+walk recognizes a unary wrapper shape. The capability walk models order and
+branching, but its value queries can still evaluate syntax against a later
+store. A call should have one evaluation event. Evaluate arguments in source
+order and preserve each by-value result and address as evaluated. Observe
+call-entry referent contents through those captured addresses after evaluating
+the arguments. Instantiate the result and all post-values from that entry
+state before committing the post-state. A later evaluation of the same
+binding uses the current store.
+
+Apply these rules in both the symbolic and concrete domains:
+
+- Projection of a snapshot reads its represented field. A sparse update
+  inherits absent fields from its base. In a complete snapshot, an
+  unrepresented field contributes no additional evidence. A stored reference
+  supplies an address and lifetime dependency. Dereferencing it observes
+  memory through the store at that point.
+- Composition collects jointly held facts about one value or state, such
+  as the dependencies of two fields of a record. An alternative-state join
+  retains every possible dependency, and retains a positive guarantee only
+  when it holds in every reachable alternative. Distinguish a missing fact
+  from an unreachable predecessor.
+- Replacement kills facts about the previous contents of the affected
+  projection. Borrow roots, storage identity and destruction obligations
+  change only according to their own transitions. Possible writes join the
+  replacement with the surviving entry alternatives.
+- Substitution interprets a symbolic value in a captured argument environment.
+  The environment is local to one call and carries no historical expression
+  chain. Preserve sparse updates through substitution when they still have a
+  common base.
+
+An owned worker result should use the same symbolic result relation as an
+ordinary call. Its transfer obligation is evaluated against the submitted
+snapshot and the result relation. The execution receipt authenticates the
+result and completion so extraction can reissue ownership with fresh
+generations. The result relation must account for replaced fields and each
+reachable normal return. An unknown relation cannot justify retaining
+caller-side metadata. Exact moves are the empty-update case of this model.
+
+Use paired replacement tests in both directions, including nested calls,
+discarded results, and conditional evaluation. Include a case where a later
+argument mutates a slot whose old value was captured by an earlier argument.
+Compare the same owner transformed by an ordinary call and by a worker.
+Measure full-suite results and compare frontend time, peak memory, output
+size and specialization counts with the same fixtures and build settings.
+
 ## Acceptance criterion for storage summaries
 
 A summary describes a relation between entry and exit stores. For every
