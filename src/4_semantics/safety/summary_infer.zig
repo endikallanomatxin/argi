@@ -2703,9 +2703,11 @@ pub const Infer = struct {
             },
             .pointer_assignment => |assignment| {
                 try self.infer_capability_node(function, assignment.pointer, flow, exits);
+                // The destination is evaluated before the RHS can retarget
+                // the reference used to select it.
+                const targets = try self.capability_address_targets(assignment.pointer, flow);
                 try self.infer_capability_node(function, assignment.value, flow, exits);
                 const value = try self.capability_value(function, assignment.value, flow);
-                const targets = try self.capability_address_targets(assignment.pointer, flow);
                 if (targets.len != 0) for (targets) |target| {
                     const replacement = if (targets.len == 1) value else try self.joinStorageAlternatives(
                         self.graph.node(assignment.value).ty,
@@ -2717,9 +2719,9 @@ pub const Infer = struct {
             },
             .struct_field_store => |store| {
                 try self.infer_capability_node(function, store.struct_ptr, flow, exits);
+                const targets = try self.capability_address_targets(store.struct_ptr, flow);
                 try self.infer_capability_node(function, store.value, flow, exits);
                 const value = try self.capability_value(function, store.value, flow);
-                const targets = try self.capability_address_targets(store.struct_ptr, flow);
                 if (targets.len != 0) for (targets) |target| {
                     const replacement = if (targets.len == 1) value else try self.joinStorageAlternatives(
                         store.field_type,
@@ -9490,7 +9492,7 @@ test "nested replacement preserves projected input evidence for siblings" {
     caller.virtual_receiver_input = .{ .input_index = 4 };
     caller = try infer.storeEffectProjection(caller, &.{.{ .field = 3 }}, .{ .concurrent_receiver = true });
     const arguments: []const graph_mod.ValueField = &.{.{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) }};
-    var entries = [_]Infer.ArgumentFacts{.{ .effect = caller }};
+    var entries = [_]Infer.ArgumentFacts{.{ .effect = caller, .paths = &.{}, .pointee_ready = true }};
     var context: Infer.SubstitutionContext = .{ .infer = &infer, .function = @enumFromInt(0), .arguments = arguments, .entries = &entries };
     const composed = try infer.substituteOutputInContext(@enumFromInt(0), updated, arguments, null, &context);
     try std.testing.expect(composed.fields_are_updates);
