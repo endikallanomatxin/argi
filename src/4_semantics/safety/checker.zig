@@ -10403,15 +10403,13 @@ pub const SafetyChecker = struct {
         _ = self;
         for (context.roots.items) |entry| if (entry.storage.eql(storage)) {
             const index = @intFromEnum(entry.root);
-            if (index < state.tracker.roots.items.len) {
-                // A canonical identity can be recycled only after earlier
-                // observations and external obligations stop referring to it.
-                if (!state.tracker.isAlive(entry.root) and
-                    rootRetainedAcrossLoop(state, entry.root))
-                    return null;
-                state.tracker.roots.items[index].state = .alive;
-                state.tracker.roots.items[index].owned_resource = true;
-            }
+            const live = index < state.tracker.roots.items.len and state.tracker.isAlive(entry.root);
+            // Check retention before materializing an identity absent from
+            // this branch. A retained observation must keep its old meaning.
+            if (!live and rootRetainedAcrossLoop(state, entry.root)) return null;
+            try state.tracker.materialize(entry.root);
+            state.tracker.roots.items[index].state = .alive;
+            state.tracker.roots.items[index].owned_resource = true;
             return entry.root;
         };
         const root = try state.tracker.establish(.fresh);
@@ -11851,6 +11849,13 @@ test "loop root widening is stable and preserves historical aliases" {
     try std.testing.expect(joined.tracker.dependenciesAreAlive(widened_owner));
     try std.testing.expect(!joined.tracker.dependenciesAreAlive(joined.getPlace(alias).?.value));
     const stable_root_count = joined.tracker.roots.items.len;
+
+    var without_phi = try entry.clone(allocator);
+    defer without_phi.deinit();
+    try std.testing.expect(@intFromEnum(phi) >= without_phi.tracker.roots.items.len);
+    try std.testing.expectEqual(phi, (try checker.loopRootPhi(&context, &without_phi, owner)).?);
+    try std.testing.expect(without_phi.tracker.isAlive(phi));
+    try std.testing.expect(without_phi.tracker.roots.items[@intFromEnum(phi)].present);
 
     var second_iteration = try joined.clone(allocator);
     defer second_iteration.deinit();
