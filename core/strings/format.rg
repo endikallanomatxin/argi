@@ -69,7 +69,7 @@ _format_text_owned := (.value: StringView, .allocator: Virtual#(Allocator)) -> (
     assume allocator
 
     out ::= string_with_capacity(.capacity = value._length)!
-    push_view($&out, .view = value)!
+    append_text_assume_capacity($&out, .text = value)
 
     result = ..ok ~out
 }
