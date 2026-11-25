@@ -4,9 +4,9 @@ forward := (.text: String) -> (.result: String) {
     result = forward_value#(String)(.value = ~text, .tag = 1)
 }
 
-edit := (.text: String) -> (.result: String) {
+edit := (.text: String, .byte: UInt8) -> (.result: String) {
     owned :: String = ~text
-    _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 2, .byte = 67))
+    _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 2, .byte = byte))
     result = ~owned
 }
 
@@ -44,7 +44,7 @@ main := (.system: System) -> () {
     if byte_length(.self = &text) == 3 { selected = ~text } else { selected = ~text }
     forwarded ::= forward(.text = ~selected)
     {
-        task ::= unwrap_or_abort(async_owned#(forward)(.args = (.text = edit(.text = ~forwarded)), .executor = executor, .ffi = system.ffi))
+        task ::= unwrap_or_abort(async_owned#(edit)(.args = (.text = edit(.text = ~forwarded, .byte = 65), .byte = 67), .executor = executor, .ffi = system.ffi))
         outcome ::= await($&task)
         match outcome {
             ..ok ~returned {

@@ -16,7 +16,11 @@ implement Executor#(DiscardingExecutor) (
     }
 )
 
-return_owner := (.value: String) -> (.result: String) { result = ~value }
+return_owner := (.value: String) -> (.result: String) {
+    owned :: String = ~value
+    _ = unwrap_or_abort(set_ascii(.self = $&owned, .index = 0, .byte = 65))
+    result = ~owned
+}
 main := (.system: System) -> () {
     provider ::= DiscardingExecutor(.ffi = system.ffi, .start = true)
     executor ::= Virtual#(Executor)($&provider)

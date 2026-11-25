@@ -3424,7 +3424,7 @@ pub const SafetyChecker = struct {
             // through the caller's specialized execution effect.
             if (summary_infer.executionTransferWorker(self.graph, callee)) |worker| {
                 if (self.active_summaries) |engine| if (engine.summaryFor(worker)) |summary| {
-                    if (summary.exact_moved_input != null) return .{};
+                    if (summary.exact_moved_input != null or summary_infer.updatedExecutionOutput(self.graph, worker, summary) != null) return .{};
                 };
             }
             if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
@@ -3452,7 +3452,8 @@ pub const SafetyChecker = struct {
                 const receipt = try self.admitExecution(ty, values[0], state, source, transfers);
                 if (transfers and receipt.execution_receipts.len != 0) {
                     if (summary_infer.executionTransferWorker(self.graph, callee)) |worker| if (self.active_summaries) |engine| {
-                        if (engine.summaryFor(worker)) |summary| _ = try self.retainForwardedExecutionOutput(summary.exact_moved_input, ty, values[0], receipt, state);
+                        if (engine.summaryFor(worker)) |summary|
+                            _ = try self.retainForwardedExecutionOutput(summary.exact_moved_input, ty, values[0], receipt, state);
                     };
                 }
                 break :blk receipt;
@@ -5981,7 +5982,9 @@ pub const SafetyChecker = struct {
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
                 if (fresh.exact_moved_output_input != null)
-                    _ = try self.retainForwardedExecutionOutput(fresh.exact_moved_output_input, @enumFromInt(fresh.input_type), inputs, receipt, state);
+                    _ = try self.retainForwardedExecutionOutput(fresh.exact_moved_output_input, @enumFromInt(fresh.input_type), inputs, receipt, state)
+                else if (fresh.updated_output) |output|
+                    try self.retainUpdatedExecutionOutput(output.*, @enumFromInt(fresh.input_type), inputs, receipt, state, self.active_summary_call_source orelse capture_source);
                 if (self.active_fresh_executions) |map| try map.put(fresh.source, new_id);
                 break :blk new_id;
             };
@@ -7646,6 +7649,36 @@ pub const SafetyChecker = struct {
         root: facts.ValidityRootId,
     ) !bool {
         return self.endRoots(source, state, &.{root});
+    }
+
+    fn retainUpdatedExecutionOutput(
+        self: *SafetyChecker,
+        output: facts.ValueEffect,
+        input_type: graph_mod.GlobalTypeId,
+        inputs: facts.ValueFacts,
+        receipt: facts.ValueFacts,
+        state: *FunctionState,
+        source: primitives.SourceRef,
+    ) anyerror!void {
+        const layout = types.fields(self.graph, input_type) orelse return error.InvalidExecutionInput;
+        const index = output.input_dependencies[0].path.input_index;
+        if (index >= layout.len) return error.InvalidExecutionInput;
+        const arguments = try self.allocator.alloc(facts.ValueFacts, layout.len);
+        defer self.allocator.free(arguments);
+        for (arguments, 0..) |*value, ordinal|
+            value.* = representedSnapshotProjection(inputs, .{ .field = @intCast(ordinal) }) orelse .{};
+        const value = try self.instantiateSummaryOutputs(&.{output}, null, arguments, state, &.{});
+        const ty = self.graph.fields.items[layout.start + index].ty;
+        if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) {
+            try self.report(source, "task result lacks a static ownership-transfer guarantee", .{});
+            return;
+        }
+        var identity: ?facts.ExecutionId = null;
+        if (!collectUniqueExecutionReceipt(receipt, &identity)) return error.InvalidExecutionInput;
+        const stored = try self.allocator.create(facts.ValueFacts);
+        stored.* = value;
+        if (!state.retainExecutionOutput(identity orelse return error.InvalidExecutionInput, stored))
+            return error.InvalidExecutionInput;
     }
 
     fn retainForwardedExecutionOutput(

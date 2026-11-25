@@ -6735,6 +6735,7 @@ pub const Infer = struct {
                 .input_type = @intFromEnum(input_type),
                 .transfers_custody = transfers,
                 .exact_moved_output_input = if (summary) |checked| checked.exact_moved_input else null,
+                .updated_output = if (summary) |checked| updatedExecutionOutput(self.graph, worker.?, checked) else null,
             };
             return .{ .fresh_executions = executions, .fresh_cleanup_obligation = true };
         }
@@ -6746,12 +6747,27 @@ pub const Infer = struct {
             const receipt = try self.inferExpression(function_id, node.address_of);
             if (receipt.fresh_executions.len != 1) return result;
             const execution = receipt.fresh_executions[0];
-            const selected = execution.exact_moved_output_input orelse return result;
+
             // The worker certifies the whole move. Cleanup only consumes
             // the current descriptor facts at the selected projection.
             // The submitted value itself can contain local replacements.
             const staged = try self.allocator.create(facts.ValueEffect);
-            staged.* = try self.projectStagedOutput(execution.inputs.*, .{ .field = selected });
+            if (execution.exact_moved_output_input) |selected| {
+                staged.* = try self.projectStagedOutput(execution.inputs.*, .{ .field = selected });
+            } else if (execution.updated_output) |output| {
+                const layout = types.fields(self.graph, @enumFromInt(execution.input_type)) orelse return result;
+                const entries = try self.allocator.alloc(ArgumentFacts, layout.len);
+                defer self.allocator.free(entries);
+                @memset(entries, .{});
+                var context: SubstitutionContext = .{
+                    .infer = self,
+                    .function = function_id,
+                    .arguments = &.{},
+                    .entries = entries,
+                    .snapshot = execution.inputs.*,
+                };
+                staged.* = try self.substituteOutputInContext(output.*, null, &context);
+            } else return result;
             result.staged_output = staged;
             return result;
         }
@@ -7854,6 +7870,9 @@ pub const Infer = struct {
         function: graph_mod.GlobalFunctionId,
         arguments: []const graph_mod.ValueField,
         entries: []ArgumentFacts,
+        // A submitted input is an aggregate of already evaluated by-value
+        // arguments. It has no expression whose address can be evaluated again.
+        snapshot: ?facts.ValueEffect = null,
 
         fn init(infer: *Infer, function: graph_mod.GlobalFunctionId, arguments: []const graph_mod.ValueField, buffer: []ArgumentFacts) !SubstitutionContext {
             const entries = if (arguments.len <= buffer.len) buffer[0..arguments.len] else try infer.allocator.alloc(ArgumentFacts, arguments.len);
@@ -7867,12 +7886,17 @@ pub const Infer = struct {
 
         fn effect(self: *SubstitutionContext, index: u32) !facts.ValueEffect {
             const entry = &self.entries[index];
-            if (entry.effect == null)
-                entry.effect = try self.infer.inferExpression(self.function, self.arguments[index].value);
+            if (entry.effect == null) {
+                entry.effect = if (self.snapshot) |value|
+                    try self.infer.projectStagedOutput(value, .{ .field = index })
+                else
+                    try self.infer.inferExpression(self.function, self.arguments[index].value);
+            }
             return entry.effect.?;
         }
 
         fn paths(self: *SubstitutionContext, index: u32) ![]const facts.InputPath {
+            if (self.snapshot != null) return &.{};
             const entry = &self.entries[index];
             if (entry.paths == null)
                 entry.paths = try self.infer.inferInputPaths(self.function, self.arguments[index].value);
@@ -7880,6 +7904,7 @@ pub const Infer = struct {
         }
 
         fn pointee(self: *SubstitutionContext, index: u32) !?facts.ValueEffect {
+            if (self.snapshot != null) return null;
             const entry = &self.entries[index];
             if (!entry.pointee_ready) {
                 entry.pointee = try self.infer.localPointeeEffect(self.function, self.arguments[index].value);
@@ -7934,7 +7959,7 @@ pub const Infer = struct {
         var input_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
         for (effect.input_domains) |domain| {
             var resolved = false;
-            if (domain.path.input_index < arguments.len) {
+            if (domain.path.input_index < context.entries.len) {
                 var value = (try context.pointee(domain.path.input_index)) orelse try context.effect(domain.path.input_index);
                 for (domain.path.projections) |projection| value = try self.projectValueEffect(value, projection);
                 for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
@@ -7961,7 +7986,7 @@ pub const Infer = struct {
             // Folding a known domain also transports its locating reads. These
             // effects are already relative to this caller, unlike the selector.
             for (domain.value.input_domains) |selector| {
-                if (selector.path.input_index >= arguments.len) continue;
+                if (selector.path.input_index >= context.entries.len) continue;
                 var selected = (try context.pointee(selector.path.input_index)) orelse try context.effect(selector.path.input_index);
                 for (selector.path.projections) |projection| selected = try self.projectValueEffect(selected, projection);
                 for (selected.domain_values) |inner| if (inner.domain_index == selector.domain_index) {
@@ -7975,11 +8000,11 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.substituteOutputInContext(execution.inputs.*, override, context);
-            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .inputs = inputs };
+            mapped.* = .{ .source = execution.source, .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .updated_output = execution.updated_output, .inputs = inputs };
         }
         result.fresh_executions = executions;
         for (effect.input_execution_receipts) |path| {
-            if (path.input_index >= arguments.len) continue;
+            if (path.input_index >= context.entries.len) continue;
             var value = if (override) |symbolic|
                 if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
             else
@@ -7992,7 +8017,7 @@ pub const Infer = struct {
             result.fresh_executions = try self.mergeFreshExecutions(result.fresh_executions, value.fresh_executions);
         }
         for (effect.input_storage_authorizations) |path| {
-            if (path.input_index >= arguments.len) {
+            if (path.input_index >= context.entries.len) {
                 result.storage_capability_incomplete = true;
                 continue;
             }
@@ -8007,7 +8032,7 @@ pub const Infer = struct {
             if (!try self.retainStorageAuthorization(&result, value)) result.storage_capability_incomplete = true;
         }
         for (effect.input_storage_capabilities) |path| {
-            if (path.input_index >= arguments.len) continue;
+            if (path.input_index >= context.entries.len) continue;
             var value = if (override) |symbolic|
                 if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
             else
@@ -8019,7 +8044,7 @@ pub const Infer = struct {
             result = try self.mergeValueEffects(result, try self.scalar_storage_effect(value));
         }
         for (effect.input_acquisition_origins) |path| {
-            if (path.input_index >= arguments.len) continue;
+            if (path.input_index >= context.entries.len) continue;
             var value = if (override) |symbolic|
                 if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
             else
@@ -8056,7 +8081,7 @@ pub const Infer = struct {
 
         var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_receiver_values) |path| {
-            if (path.input_index >= arguments.len) continue;
+            if (path.input_index >= context.entries.len) continue;
             if ((try context.paths(path.input_index)).len == 0) {
                 if (try context.pointee(path.input_index)) |pointee| {
                     var value = pointee;
@@ -8073,7 +8098,7 @@ pub const Infer = struct {
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         var input_place_value_overrides: facts.ValueEffect = .{};
         for (effect.input_place_values) |path| {
-            if (path.input_index >= arguments.len) continue;
+            if (path.input_index >= context.entries.len) continue;
             if (override) |symbolic| if (symbolic.input_index == path.input_index) {
                 var value = symbolic.effect;
                 for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
@@ -8117,7 +8142,7 @@ pub const Infer = struct {
 
         var forwarded_owner: ?facts.FreshEffectSource = null;
         for (effect.input_dependencies) |dependency| {
-            if (dependency.path.input_index >= arguments.len) continue;
+            if (dependency.path.input_index >= context.entries.len) continue;
             if (override) |symbolic| {
                 if (symbolic.input_index == dependency.path.input_index and dependency.path.projections.len == 0)
                     continue;
@@ -8192,7 +8217,7 @@ pub const Infer = struct {
                 if (mapped.len == 1 and self.embeddedInputReference(function_id, mapped[0]))
                     result.reference_relation = .{ .source = mapped[0], .grade = relation.grade };
             }
-            if (result.reference_relation == null and relation.source.storage_domain == null and relation.source.input_index < arguments.len) {
+            if (result.reference_relation == null and relation.source.storage_domain == null and relation.source.input_index < context.entries.len) {
                 const replaced = if (override) |replacement| replacement.input_index == relation.source.input_index else false;
                 if (!replaced) {
                     var selected = try context.effect(relation.source.input_index);
@@ -8210,7 +8235,7 @@ pub const Infer = struct {
         result.concurrent_receiver = effect.concurrent_receiver;
         result.virtual_no_access = effect.virtual_no_access;
         if (effect.virtual_receiver_input) |path| {
-            if (path.input_index < arguments.len) {
+            if (path.input_index < context.entries.len) {
                 var selected = if (override) |replacement|
                     if (replacement.input_index == path.input_index) replacement.effect else try context.effect(path.input_index)
                 else
@@ -8225,7 +8250,7 @@ pub const Infer = struct {
         if (effect.concurrent_receiver_inputs.len != 0) {
             var required: facts.ValueEffect = .{ .concurrent_receiver = true };
             for (effect.concurrent_receiver_inputs) |path| {
-                if (path.input_index >= arguments.len) {
+                if (path.input_index >= context.entries.len) {
                     required = .{};
                     break;
                 }
@@ -8251,7 +8276,7 @@ pub const Infer = struct {
         result.observes_fresh_backing = effect.observes_fresh_backing and result.fresh_dependencies.len == 1 and
             effect.fresh_dependencies.len == 1 and result.fresh_dependencies[0] == effect.fresh_dependencies[0];
         if (effect.input_backing_observation) |path| {
-            if (path.storage_domain == null and path.input_index < arguments.len) {
+            if (path.storage_domain == null and path.input_index < context.entries.len) {
                 var selected = if (override) |replacement|
                     if (replacement.input_index == path.input_index) replacement.effect else try context.effect(path.input_index)
                 else
@@ -8267,7 +8292,7 @@ pub const Infer = struct {
         // merged during substitution cannot invalidate the checked selector.
         if (effect.task_output) |selection| {
             const path = selection.receipt;
-            if (override == null and path.input_index < arguments.len) {
+            if (context.snapshot == null and override == null and path.input_index < context.entries.len) {
                 if (try self.transferArgumentPath(function_id, path, arguments[path.input_index].value)) |receipt|
                     result.task_output = try self.taskOutputSelection(.{ .receipt = receipt, .projection = selection.projection });
             }
@@ -8412,6 +8437,16 @@ pub const Infer = struct {
                 result.virtual_receiver_input = null
             else
                 path.projections = try self.appendProjection(path.projections, projection);
+        } else if (effect.fields_are_updates and (projection == .field or projection == .static_index)) {
+            if (projectedUpdateBase(effect)) |base| {
+                // This slot was absent from the replacement set. Its receiver
+                // identity is the same projection of the captured input.
+                result.virtual_receiver_input = .{
+                    .input_index = base.input_index,
+                    .storage_domain = base.storage_domain,
+                    .projections = try self.appendProjection(base.projections, projection),
+                };
+            }
         }
         if (result.concurrent_receiver_inputs.len != 0) {
             if (projection == .dereference or projection == .dynamic_index) {
@@ -8972,7 +9007,7 @@ pub const Infer = struct {
         for (effect.fresh_executions, executions) |execution, *mapped| {
             const inputs = try self.allocator.create(facts.ValueEffect);
             inputs.* = try self.rebaseFreshSources(execution.inputs.*, call_node);
-            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .inputs = inputs };
+            mapped.* = .{ .source = (try self.rebaseFreshSlice(&.{execution.source}, call_node))[0], .input_type = execution.input_type, .transfers_custody = execution.transfers_custody, .exact_moved_output_input = execution.exact_moved_output_input, .updated_output = execution.updated_output, .inputs = inputs };
         }
         result.fresh_executions = executions;
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
@@ -9026,6 +9061,8 @@ pub const Infer = struct {
                 inputs.* = try self.joinStorageAlternatives(@enumFromInt(entry.input_type), existing.inputs.*, entry.inputs.*);
                 if (existing.exact_moved_output_input != entry.exact_moved_output_input)
                     existing.exact_moved_output_input = null;
+                if (!summaries.optionalValueEffectEql(existing.updated_output, entry.updated_output))
+                    existing.updated_output = null;
                 existing.inputs = inputs;
                 found = true;
                 break;
@@ -11354,6 +11391,64 @@ test "observed stores share summary payloads and survive publication without loc
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_owned_roots.len);
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_storage_capabilities.len);
     try std.testing.expectEqual(@as(usize, 0), unresolved.fresh_executions.len);
+}
+
+pub fn updatedExecutionOutput(graph: *const graph_mod.GlobalSemanticGraph, worker: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) ?*const facts.ValueEffect {
+    if (summary.outputs.len != 1 or summary.unknown_access or summary.unresolved_transfer) return null;
+    if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or
+        summary.invalidated_domains.len != 0 or summary.storage_capability_uses.len != 0) return null;
+    const output = &summary.outputs[0];
+    if (!output.fields_are_updates) return null;
+    const base = Infer.projectedUpdateBase(output.*) orelse return null;
+    const function = graph.function(worker);
+    if (function.output.len != 1 or base.input_index >= function.input.len or base.storage_domain != null or base.projections.len != 0) return null;
+    const input_type = graph.fields.items[function.input.start + base.input_index].ty;
+    const output_type = graph.fields.items[function.output.start].ty;
+    if (!types.equal(graph, input_type, output_type)) return null;
+    // The input transfer proves all untouched slots. Updated slots must
+    // establish their guarantees independently of the submitted value.
+    if (!isPortableSnapshotUpdate(graph, output_type, output.*, base, true)) return null;
+    return output;
+}
+
+fn isPortableSnapshotUpdate(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, effect: facts.ValueEffect, position: facts.InputPath, outer: bool) bool {
+    var metadata = effect;
+    metadata.fields = &.{};
+    metadata.fields_are_updates = false;
+    metadata.fresh_cleanup_obligation = false;
+
+    // A validity-only read of the same slot can retain an existing
+    // dependency but cannot introduce a dependency on another argument.
+    for (effect.input_dependencies) |dependency| if (!dependency.path.eql(position)) return false;
+    for (effect.input_execution_receipts) |path| if (!path.eql(position)) return false;
+    for (effect.input_place_values) |path| if (!path.eql(position)) return false;
+    if (effect.input_backing_observation) |path| if (!path.eql(position)) return false;
+    if (effect.virtual_receiver_input) |path| if (!path.eql(position)) return false;
+    metadata.input_dependencies = &.{};
+    metadata.input_execution_receipts = &.{};
+    metadata.input_place_values = &.{};
+    metadata.input_backing_observation = null;
+    metadata.virtual_receiver_input = null;
+    for (effect.input_storage_capabilities) |path| if (!path.eql(position)) return false;
+    metadata.input_storage_capabilities = &.{};
+    if (!facts.isEmptyValue(metadata)) return false;
+    if (!outer and !@import("transfer_evidence.zig").proves(graph, ty, .{})) return false;
+    if (effect.fields.len == 0) return true;
+    const layout = types.fields(graph, ty) orelse return false;
+    var buffer: [64]facts.Projection = undefined;
+    if (position.projections.len >= buffer.len) return false;
+    @memcpy(buffer[0..position.projections.len], position.projections);
+    const projections = buffer[0 .. position.projections.len + 1];
+    for (effect.fields) |field| {
+        if (field.index >= layout.len) return false;
+        projections[position.projections.len] = .{ .field = field.index };
+        const child_type = graph.fields.items[layout.start + field.index].ty;
+        if (!isPortableSnapshotUpdate(graph, child_type, field.value.*, .{
+            .input_index = position.input_index,
+            .projections = projections,
+        }, false)) return false;
+    }
+    return true;
 }
 
 pub fn executionTransferWorker(graph: *const graph_mod.GlobalSemanticGraph, callee: graph_mod.GlobalFunctionId) ?graph_mod.GlobalFunctionId {

@@ -62,6 +62,20 @@ admitted loan's actual boundary.
 
 ## Returning an owned result
 
+A worker can return a moved input after replacing structural fields. The
+worker summary must describe the output as sparse updates over one whole
+input of the same type. Untouched slots keep the evidence from the captured
+input. Updated slots must be transferable without inspecting their contents
+and may retain only evidence selected from the same slot. The submission
+proof therefore covers the result even when the executor accepts the request
+and then reports failure.
+
+The same output recipe supplies the descriptor facts for staged cleanup and
+the concrete facts retained by the execution receipt. Extraction after
+certified completion renews owned generations. A recipe that requires fresh
+backing, reads another slot, or leaves access effects unknown cannot use
+this path.
+
 The worker checks the actual result before publishing it. A type-level
 Transferable conformance can certify an owner whose cleanup and safety
 obligations travel entirely with the value. The native output slot currently

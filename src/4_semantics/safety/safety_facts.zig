@@ -191,6 +191,7 @@ pub const FreshExecution = struct {
     input_type: u32,
     transfers_custody: bool = false,
     exact_moved_output_input: ?u32 = null,
+    updated_output: ?*const ValueEffect = null,
 };
 
 /// A universal relation to an evaluated input observation. This is not a
