@@ -118,7 +118,7 @@ pub const Infer = struct {
         transfers: std.array_list.Managed(facts.InputPath),
         retired_owners: std.array_list.Managed(facts.InputPath),
         unresolved_transfer: bool = false,
-        deferred_virtual: ?facts.InputAccess = null,
+        deferred_virtual: std.array_list.Managed(facts.InputAccess),
         deferred_virtual_only_call: bool = false,
 
         fn init(allocator: std.mem.Allocator) AccessEffects {
@@ -127,6 +127,7 @@ pub const Infer = struct {
                 .globals = .init(allocator),
                 .transfers = .init(allocator),
                 .retired_owners = .init(allocator),
+                .deferred_virtual = .init(allocator),
             };
         }
 
@@ -135,6 +136,7 @@ pub const Infer = struct {
             self.globals.deinit();
             self.transfers.deinit();
             self.retired_owners.deinit();
+            self.deferred_virtual.deinit();
         }
 
         fn addInput(self: *AccessEffects, target: facts.InputPath, mode: facts.AccessMode) !void {
@@ -167,14 +169,19 @@ pub const Infer = struct {
             try self.inputs.append(access);
         }
 
+        fn deferVirtualAccess(self: *AccessEffects, access: facts.InputAccess, only_call: bool) !void {
+            self.deferred_virtual_only_call = self.deferred_virtual.items.len == 0 and only_call;
+            try self.deferred_virtual.append(access);
+        }
+
         fn closeVirtualAccess(self: *AccessEffects) !void {
-            const access = self.deferred_virtual orelse return;
+            if (self.deferred_virtual.items.len == 0) return;
             // Without ordered effects, any potential change to reference
             // slots can invalidate an entry-relative descriptor selection.
             if (!self.deferred_virtual_only_call and (self.has_loops or self.unstable_targets or self.reference_writes)) {
                 self.unknown = true;
             } else {
-                try self.inputs.append(access);
+                for (self.deferred_virtual.items) |access| try self.addVirtualAccess(access);
             }
         }
     };
@@ -1297,7 +1304,7 @@ pub const Infer = struct {
         var preserving_statements: ?[]const graph_mod.GlobalNodeId = null;
         for (outputs, 0..) |*output, output_index| {
             if (outputs.len == 1 and preservesOwnerAccess(accesses.unknown, accesses.inputs.items, accesses.globals.items) and
-                accesses.deferred_virtual == null and post_states.items.len == 0) for (output.input_dependencies) |dependency|
+                accesses.deferred_virtual.items.len == 0 and post_states.items.len == 0) for (output.input_dependencies) |dependency|
             {
                 const path = dependency.path;
                 if (!dependency.transfers_ownership or dependency.validity_only or path.projections.len != 0 or
@@ -5395,12 +5402,12 @@ pub const Infer = struct {
                     sink.unknown = true;
                     return;
                 };
-                if (summary.unknown_access and sink.deferred_virtual == null and summary.guarded_effects.len == 0 and
+                if (summary.unknown_access and summary.guarded_effects.len == 0 and
                     self.graph.node(call.handle).content == .address_of)
                 {
                     const descriptor = self.graph.node(call.handle).content.address_of;
                     if (try self.entryVirtualDescriptor(function, descriptor, 0)) |target| {
-                        sink.deferred_virtual = .{ .target = target, .mode = .write, .virtual_method = call.method_index };
+                        try sink.deferVirtualAccess(.{ .target = target, .mode = .write, .virtual_method = call.method_index }, false);
                         summary.unknown_access = false;
                     }
                 }
@@ -5731,7 +5738,7 @@ pub const Infer = struct {
                         };
                     }
                 }
-                if (sink.deferred_virtual == null and override == null and access.target.input_index < arguments.len) {
+                if (override == null and access.target.input_index < arguments.len) {
                     var argument = arguments[access.target.input_index].value;
                     var suffix = access.target.projections;
                     if (self.graph.node(argument).content == .address_of and suffix.len != 0 and suffix[0] == .dereference) {
@@ -5742,11 +5749,10 @@ pub const Infer = struct {
                         var translated = access;
                         translated.target = origin;
                         translated.target.projections = try std.mem.concat(self.allocator, facts.Projection, &.{ origin.projections, suffix });
-                        sink.deferred_virtual = translated;
                         // A sole direct call transports its already verified
                         // entry selection before applying its postconditions.
                         // This includes consuming a field during cleanup.
-                        sink.deferred_virtual_only_call = arguments.len == 1 and self.onlyDirectCall(function, input, callee);
+                        try sink.deferVirtualAccess(translated, arguments.len == 1 and self.onlyDirectCall(function, input, callee));
                         continue;
                     }
                 }
