@@ -8274,6 +8274,11 @@ pub const Infer = struct {
     fn joinStorageAlternatives(self: *Infer, value_type: ?graph_mod.GlobalTypeId, left: facts.ValueEffect, right: facts.ValueEffect) anyerror!facts.ValueEffect {
         if (summaries.valueEffectEql(left, right)) return left;
         var result = try self.mergeValueEffects(left, right);
+        // Staged access evidence describes an occupied result slot. A join
+        // can retain it only when both alternatives describe the same facts.
+        if (left.staged_output) |output| if (right.staged_output) |other| {
+            if (summaries.valueEffectEql(output.*, other.*)) result.staged_output = output;
+        };
         // An unwritten field still comes from the moved input. Preserve a
         // sparse update across alternatives only when they agree on that base.
         if (left.fields_are_updates or right.fields_are_updates) {
@@ -11063,4 +11068,24 @@ test "task output summaries preserve extraction only for an unchanged value" {
     try std.testing.expect(projected.task_output.?.receipt.eql(path));
     try std.testing.expect(projected.task_output.?.projection[0].eql(.{ .field = 0 }));
     try std.testing.expect((try infer.projectValueEffect(value, .dereference)).task_output == null);
+}
+
+test "staged task cleanup evidence requires agreement across alternatives" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, &graph, &engine);
+    defer infer.deinit();
+    const recipe: facts.ValueEffect = .{ .virtual_receiver_input = .{ .input_index = 0 } };
+    const same_recipe = recipe;
+    const other_recipe: facts.ValueEffect = .{ .virtual_receiver_input = .{ .input_index = 1 } };
+    const first: facts.ValueEffect = .{ .staged_output = &recipe };
+    const second: facts.ValueEffect = .{ .staged_output = &same_recipe, .explicit_dependency = true };
+    const different: facts.ValueEffect = .{ .staged_output = &other_recipe };
+    try std.testing.expect((try infer.joinStorageAlternatives(null, first, second)).staged_output == &recipe);
+    try std.testing.expect((try infer.joinStorageAlternatives(null, first, different)).staged_output == null);
+    try std.testing.expect((try infer.joinStorageAlternatives(null, first, .{})).staged_output == null);
 }
