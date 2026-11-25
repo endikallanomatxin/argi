@@ -5725,7 +5725,7 @@ pub const Infer = struct {
                         if (try self.stagedOutputEffect(function, argument, access.target.projections)) |output| {
                             var descriptor = output.*;
                             for (access.execution_output_path.?) |projection|
-                                descriptor = try self.projectValueEffect(descriptor, projection);
+                                descriptor = try self.projectStagedOutput(descriptor, projection);
                             if (!descriptor.reference_target_incomplete) {
                                 if (std.mem.indexOfScalar(u32, descriptor.virtual_no_access, method) != null) continue;
                                 if (descriptor.virtual_receiver_input) |source| {
@@ -6101,6 +6101,26 @@ pub const Infer = struct {
         var slot = try self.inferExpression(function, content.address_of);
         for (projections[1..]) |projection| slot = try self.projectValueEffect(slot, projection);
         return slot.staged_output;
+    }
+
+    fn projectStagedOutput(self: *Infer, value: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
+        switch (projection) {
+            .field, .static_index => |index| {
+                if (value.fields.len != 0 and !value.fields_are_updates) {
+                    for (value.fields) |field| if (field.index == index) return field.value.*;
+                    return .{};
+                }
+            },
+            .variant => |index| {
+                if (value.known_choice_variant) |known| if (known != index) return .{};
+                if (value.variants.len != 0) {
+                    for (value.variants) |variant| if (variant.index == index) return variant.value.*;
+                    return .{};
+                }
+            },
+            .dereference, .dynamic_index => return .{},
+        }
+        return self.projectValueEffect(value, projection);
     }
 
     fn localPointeeEffect(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) !?facts.ValueEffect {
@@ -6535,7 +6555,7 @@ pub const Infer = struct {
             // the current descriptor facts at the selected projection.
             // The submitted value itself can contain local replacements.
             const staged = try self.allocator.create(facts.ValueEffect);
-            staged.* = try self.projectValueEffect(execution.inputs.*, .{ .field = selected });
+            staged.* = try self.projectStagedOutput(execution.inputs.*, .{ .field = selected });
             result.staged_output = staged;
             return result;
         }
@@ -11172,6 +11192,16 @@ test "staged task cleanup evidence requires agreement across alternatives" {
     const forwarded = try infer.substituteOutputInContext(@enumFromInt(0), first, arguments, null, &context);
     try std.testing.expectEqual(@as(u32, 3), forwarded.staged_output.?.virtual_receiver_input.?.input_index);
     try std.testing.expect(forwarded.virtual_receiver_input == null);
+
+    var aggregate = recipe;
+    aggregate.fields = &.{.{ .index = 0, .value = &same_recipe }};
+    try std.testing.expect((try infer.projectStagedOutput(aggregate, .{ .field = 0 })).virtual_receiver_input.?.eql(recipe.virtual_receiver_input.?));
+    try std.testing.expect(facts.isEmptyValue(try infer.projectStagedOutput(aggregate, .{ .field = 1 })));
+    aggregate.fields_are_updates = true;
+    try std.testing.expect((try infer.projectStagedOutput(aggregate, .{ .field = 1 })).virtual_receiver_input.?.eql(.{
+        .input_index = 0,
+        .projections = &.{.{ .field = 1 }},
+    }));
 }
 
 test "task submission alternatives cannot supply missing field guarantees" {
