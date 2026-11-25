@@ -1304,7 +1304,8 @@ pub const Infer = struct {
         var owning_calls: ?[]const forwarding.ForwardedCall = null;
         var preserving_statements: ?[]const graph_mod.GlobalNodeId = null;
         for (outputs, 0..) |*output, output_index| {
-            if (outputs.len == 1 and preservesOwnerAccess(accesses.unknown, accesses.inputs.items, accesses.globals.items) and
+            if (outputs.len == 1 and !output.fields_are_updates and
+                preservesOwnerAccess(accesses.unknown, accesses.inputs.items, accesses.globals.items) and
                 accesses.deferred_virtual.items.len == 0 and post_states.items.len == 0) for (output.input_dependencies) |dependency|
             {
                 const path = dependency.path;
