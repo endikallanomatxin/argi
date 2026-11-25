@@ -119,6 +119,28 @@ machinery to stabilize owned roots of a slot. A general join should share
 the proof of ownership and observation, with the loop separately bounding
 how many generations survive fixed-point iteration.
 
+## Extracting a transferable owner from opaque storage
+
+An extraction probe uses `DynamicArray#(String)`, inserts an owned String
+with `push_assume_capacity`, and takes it out with `pop` through an ordinary
+forwarding function. Allocate the array before sharing the provider so the
+array's allocation effects do not obscure the extraction.
+
+| Inserted values | Operation after extraction | Observed result |
+| --- | --- | --- |
+| One String with a local deallocator | Read its byte and destroy it locally | Compiles and runs |
+| One String with a concurrent deallocator | Read its byte while the provider is shared | Rejects because the reference target is not proved independent of shared storage |
+| One String with a concurrent deallocator | Transfer to a worker and await the returned owner | Rejects for missing transfer evidence |
+| One local and one concurrent String | Transfer the extracted value | Rejects for missing transfer evidence |
+
+The extraction primitive issues fresh cleanup custody and retains external
+dependencies from opaque storage. It cannot reconstruct the erased release
+capability or the relationship between the extracted address and its
+backing. Insertion must establish those guarantees collectively if extraction
+is to recover them. The collective guarantee cannot discharge the retained
+lifetime and access obligations, and successful extraction must still
+transfer cleanup custody for exactly one element.
+
 ## Acceptance criterion for storage summaries
 
 A summary describes a relation between entry and exit stores. For every
