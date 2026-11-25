@@ -125,7 +125,11 @@ A helper selecting between two ordinary mutable references to distinct
 scalars can return a reference whose alternatives are both valid. A probe
 passes that result to a worker that writes through it and reads the chosen
 scalar after awaiting completion. The current checker rejects submission
-because the merged reference has no authenticated target. The retained
+because the merged reference has no authenticated target. A direct local
+conditional assignment with the same two alternatives produces the same
+rejection. Passing the same scalar as both alternatives through the helper
+compiles and runs, including the worker write and the read after completion.
+The retained
 `mutation_places` can weaken facts about possible destinations, but give
 no evidence of complete coverage of the accessed extent.
 
@@ -500,3 +504,13 @@ inside the original extent. A raw offset into an adjacent allocation cannot
 inherit the first slot's destination. Collection case 115 needs the same
 range check but starts from a lexical array with an already known identity.
 Test the first-slot case independently before adding offset precision.
+
+### Program suite baseline after the summary join changes
+
+On Linux, ReleaseSafe program validation at `975be6641` passed 226 shared
+cases, skipped 10 and failed the geometry kernel with an ended-root
+diagnostic in `_extrusion_buffers`. The build step gates all 16 fixture
+workers on the shared run, so the workers were invoked separately with
+the same installed bundle and runner. They passed 2,521 cases, skipped one
+and failed 28 with zero leaks. The failed fixture identities match the
+earlier `0d485` run, which passed 2,512 worker cases.
