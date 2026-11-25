@@ -1951,7 +1951,9 @@ pub const Infer = struct {
 
     fn tracksLocalContents(self: *Infer, ty: ?graph_mod.GlobalTypeId) bool {
         const known = ty orelse return false;
-        return self.typeContainsPointer(known) or types.hasDestructor(self.graph, known);
+        // Address and receipt bits can carry storage evidence despite their
+        // scalar layout. Writing them must update the local value recipe.
+        return self.isNumericContents(known) or self.typeContainsPointer(known) or types.hasDestructor(self.graph, known);
     }
 
     fn inferBlock(
