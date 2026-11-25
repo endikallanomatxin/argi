@@ -1,4 +1,11 @@
-replace_address := (.slot: $&UIntNative) -> () { slot& = 0 }
+replace_address := (.slot: $&UIntNative) -> (.tag: UInt8) {
+    slot& = 0
+    tag = 1
+}
+
+forward := (.tag: UInt8, .allocation: Allocation) -> (.result: Allocation) {
+    result = ~allocation
+}
 
 set_first_byte := (.allocation: &Allocation, .byte: UInt8) -> () {
     pointer ::= trusted_establish_allocation_slot#(UInt8)(
@@ -10,8 +17,7 @@ set_first_byte := (.allocation: &Allocation, .byte: UInt8) -> () {
 mutate := (.value: Allocation) -> (.result: Allocation) {
     owned :: Allocation = ~value
     set_first_byte(.allocation = &owned, .byte = 8)
-    replace_address(.slot = $&owned.data.address)
-    result = ~owned
+    result = forward(.tag = replace_address(.slot = $&owned.data.address), .allocation = ~owned)
 }
 
 main := (.system: System) -> () {
