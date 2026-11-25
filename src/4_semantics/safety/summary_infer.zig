@@ -6308,19 +6308,12 @@ pub const Infer = struct {
     }
 
     fn projectStagedOutput(self: *Infer, value: facts.ValueEffect, projection: facts.Projection) !facts.ValueEffect {
+        if (facts.representedProjection(value, projection)) |child| return child;
         switch (projection) {
-            .field, .static_index => |index| {
-                if (value.fields.len != 0 and !value.fields_are_updates) {
-                    for (value.fields) |field| if (field.index == index) return field.value.*;
-                    return .{};
-                }
-            },
+            .field, .static_index => if (value.fields.len != 0 and !value.fields_are_updates) return .{},
             .variant => |index| {
                 if (value.known_choice_variant) |known| if (known != index) return .{};
-                if (value.variants.len != 0) {
-                    for (value.variants) |variant| if (variant.index == index) return variant.value.*;
-                    return .{};
-                }
+                if (value.variants.len != 0) return .{};
             },
             .dereference, .dynamic_index => return .{},
         }

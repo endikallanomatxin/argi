@@ -343,6 +343,21 @@ pub const DomainFacts = struct {
 /// Only a wholly empty value may omit its element records. In a mixed
 /// aggregate, explicit empty children prevent projection from inheriting
 /// a sibling's dependency or ownership facts from the aggregate envelope.
+/// Select an explicitly represented child without inheriting enclosing facts.
+pub fn representedProjection(value: anytype, projection: Projection) ?@TypeOf(value) {
+    switch (projection) {
+        .field, .static_index => |index| {
+            for (value.fields) |field| if (field.index == index) return field.value.*;
+        },
+        .variant => |index| {
+            if (value.known_choice_variant) |active| if (active != index) return null;
+            for (value.variants) |variant| if (variant.index == index) return variant.value.*;
+        },
+        .dereference, .dynamic_index => {},
+    }
+    return null;
+}
+
 pub fn isEmptyValue(value: anytype) bool {
     inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |field| {
         const item = @field(value, field.name);

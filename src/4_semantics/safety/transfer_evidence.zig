@@ -99,9 +99,7 @@ fn valueFailure(
         for (graph.variants.items[variants.start..][0..variants.len], 0..) |variant, index| {
             if (value.known_choice_variant) |known| if (known != index) continue;
             const payload = variant.payload_type orelse continue;
-            const selected = for (value.variants) |entry| {
-                if (entry.index == index) break entry.value.*;
-            } else facts.ValueFacts{};
+            const selected = facts.representedProjection(value, .{ .variant = @intCast(index) }) orelse facts.ValueFacts{};
             if (valueFailure(graph, payload, selected, markers, owner, depth + 1)) |reason| return reason;
         }
         return null;
@@ -203,8 +201,7 @@ pub fn requiresResultMetadata(value: facts.ValueFacts, depth: usize) bool {
 }
 
 fn fieldValue(value: facts.ValueFacts, index: usize) facts.ValueFacts {
-    for (value.fields) |field| if (field.index == index) return field.value.*;
-    return .{};
+    return facts.representedProjection(value, .{ .field = @intCast(index) }) orelse .{};
 }
 
 test "erased transfer evidence belongs to the captured value" {

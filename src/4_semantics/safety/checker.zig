@@ -3144,7 +3144,7 @@ pub const SafetyChecker = struct {
                 if (value.known_choice_variant) |active| if (active != index) continue;
                 const payload = variant.payload_type orelse continue;
                 if (!self.inputTypeNeedsLoan(payload, 0, true)) continue;
-                const child = representedSnapshotProjection(value, .{ .variant = @intCast(index) }) orelse {
+                const child = facts.representedProjection(value, .{ .variant = @intCast(index) }) orelse {
                     try self.report(source, "execution input is missing loan evidence for a possible choice payload", .{});
                     return;
                 };
@@ -3154,7 +3154,7 @@ pub const SafetyChecker = struct {
         }
         if (types.fields(self.graph, ty)) |fields| for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
             if (self.inputTypeNeedsLoan(field.ty, 0, true))
-                try self.collectExecutionLoansIn(field.ty, representedSnapshotProjection(value, .{ .field = @intCast(index) }) orelse .{}, state, loans, source, transfers_custody, owner);
+                try self.collectExecutionLoansIn(field.ty, facts.representedProjection(value, .{ .field = @intCast(index) }) orelse .{}, state, loans, source, transfers_custody, owner);
         };
     }
 
@@ -5080,7 +5080,7 @@ pub const SafetyChecker = struct {
                 },
                 // Reference provenance carried by sibling fields does not
                 // make this structural field selection ambiguous.
-                .field, .static_index => value = representedSnapshotProjection(value, projection) orelse return .{},
+                .field, .static_index => value = facts.representedProjection(value, projection) orelse return .{},
                 else => return .{},
             }
         }
@@ -5680,7 +5680,7 @@ pub const SafetyChecker = struct {
                     projections = projections[projection_index + 1 ..];
                     break :blk referent;
                 }
-                value = representedSnapshotProjection(value, projection) orelse return null;
+                value = facts.representedProjection(value, projection) orelse return null;
             }
             return null;
         };
@@ -6395,7 +6395,7 @@ pub const SafetyChecker = struct {
         if (path.storage_domain != null or path.input_index >= arguments.len) return null;
         var selected = arguments[path.input_index];
         for (path.projections) |projection| {
-            selected = representedSnapshotProjection(selected, projection) orelse return null;
+            selected = facts.representedProjection(selected, projection) orelse return null;
         }
         return selected;
     }
@@ -6407,7 +6407,7 @@ pub const SafetyChecker = struct {
         var value = arguments[path.input_index];
         for (path.projections) |projection| {
             if (projection != .dereference) {
-                value = representedSnapshotProjection(value, projection) orelse return .{};
+                value = facts.representedProjection(value, projection) orelse return .{};
                 continue;
             }
             if (value.reference_target_incomplete) return .{};
@@ -6422,20 +6422,6 @@ pub const SafetyChecker = struct {
             }
         }
         return value;
-    }
-
-    fn representedSnapshotProjection(value: facts.ValueFacts, projection: facts.Projection) ?facts.ValueFacts {
-        switch (projection) {
-            .field, .static_index => |index| {
-                for (value.fields) |field| if (field.index == index) return field.value.*;
-            },
-            .variant => |index| {
-                if (value.known_choice_variant) |active| if (active != index) return null;
-                for (value.variants) |variant| if (variant.index == index) return variant.value.*;
-            },
-            .dereference, .dynamic_index => {},
-        }
-        return null;
     }
 
     fn instantiateRegionEffect(self: *SafetyChecker, domain_index: u32, effect: facts.ValueEffect, arguments: []const facts.ValueFacts, state: *FunctionState, observe_handles: bool) !facts.DomainFacts {
@@ -7666,7 +7652,7 @@ pub const SafetyChecker = struct {
         const arguments = try self.allocator.alloc(facts.ValueFacts, layout.len);
         defer self.allocator.free(arguments);
         for (arguments, 0..) |*value, ordinal|
-            value.* = representedSnapshotProjection(inputs, .{ .field = @intCast(ordinal) }) orelse .{};
+            value.* = facts.representedProjection(inputs, .{ .field = @intCast(ordinal) }) orelse .{};
         const value = try self.instantiateSummaryOutputs(&.{output}, null, arguments, state, &.{});
         const ty = self.graph.fields.items[layout.start + index].ty;
         if (@import("transfer_evidence.zig").failure(self.graph, ty, value)) |reason| {
@@ -7693,7 +7679,7 @@ pub const SafetyChecker = struct {
         const layout = types.fields(self.graph, input_type) orelse return false;
         if (index >= layout.len) return false;
         const ty = self.graph.fields.items[layout.start + index].ty;
-        const value = representedSnapshotProjection(inputs, .{ .field = index }) orelse return false;
+        const value = facts.representedProjection(inputs, .{ .field = index }) orelse return false;
         if (!@import("transfer_evidence.zig").proves(self.graph, ty, value)) return false;
         var identity: ?facts.ExecutionId = null;
         if (!collectUniqueExecutionReceipt(receipt, &identity)) return false;
@@ -7711,7 +7697,7 @@ pub const SafetyChecker = struct {
         var value = (execution.output.accessEvidence() orelse return .{}).*;
         for (projections) |projection| {
             switch (projection) {
-                .field, .static_index, .variant => value = representedSnapshotProjection(value, projection) orelse return .{},
+                .field, .static_index, .variant => value = facts.representedProjection(value, projection) orelse return .{},
                 .dereference, .dynamic_index => return .{},
             }
         }
@@ -12540,8 +12526,8 @@ test "sparse output writes preserve untouched backing and replace overwritten ev
         .fields_are_updates = true,
     }, &.{input}, &state);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{backing}, output.owned_roots);
-    try std.testing.expect(SafetyChecker.representedSnapshotProjection(output, .{ .field = 0 }).?.concurrent_receiver);
-    try std.testing.expect(facts.isEmptyValue(SafetyChecker.representedSnapshotProjection(output, .{ .field = 1 }).?));
+    try std.testing.expect(SafetyChecker.facts.representedProjection(output, .{ .field = 0 }).?.concurrent_receiver);
+    try std.testing.expect(facts.isEmptyValue(SafetyChecker.facts.representedProjection(output, .{ .field = 1 }).?));
 }
 
 test "an exact owned output preserves the full input snapshot" {
@@ -14030,7 +14016,7 @@ test "worker ingress seeds reference arrays inside choice payloads" {
     var generation: ?facts.ValidityRootId = null;
     const value = try checker.seedExecutionValue(choice, &state, &backing, &generation);
     try std.testing.expect(value.known_choice_variant == null);
-    const payload = SafetyChecker.representedSnapshotProjection(value, .{ .variant = 1 }).?;
+    const payload = SafetyChecker.facts.representedProjection(value, .{ .variant = 1 }).?;
     try std.testing.expectEqual(@as(usize, 2), payload.fields.len);
     const first = payload.fields[0].value.symbolic_pointees[0];
     const second = payload.fields[1].value.symbolic_pointees[0];
@@ -16650,7 +16636,7 @@ test "virtual evidence follows only the selected receiver snapshot" {
     }};
     const path: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .variant = 1 }} };
     try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&arguments, path) == null);
-    try std.testing.expect(SafetyChecker.representedSnapshotProjection(arguments[0], path.projections[0]) == null);
+    try std.testing.expect(SafetyChecker.facts.representedProjection(arguments[0], path.projections[0]) == null);
     var unknown = arguments;
     unknown[0].known_choice_variant = null;
     try std.testing.expect(SafetyChecker.snapshotVirtualEvidence(&unknown, path).?.concurrent_receiver);
