@@ -8575,7 +8575,7 @@ pub const SafetyChecker = struct {
     }
 
     fn projectSymbolicStorage(self: *SafetyChecker, pointer: facts.ValueFacts, projection: facts.Projection, state: *FunctionState) !?facts.ValueFacts {
-        if (pointer.referenced_place == null and pointer.mutation_places.len != 0) {
+        if (pointer.referenced_place == null and (pointer.mutation_places.len != 0 or pointer.symbolic_pointees.len > 1)) {
             var targets = std.array_list.Managed(facts.Place).init(self.allocator);
             for (pointer.mutation_places) |place| try appendPlaceFact(&targets, try self.project(place, projection));
             var result = pointer.referenceCopy();
@@ -8587,8 +8587,11 @@ pub const SafetyChecker = struct {
                 var symbolic = pointer.referenceCopy();
                 symbolic.mutation_places = &.{};
                 symbolic.symbolic_pointees = &.{identity};
-                if (try self.projectSymbolicStorage(symbolic, projection, state)) |child|
+                if (try self.projectSymbolicStorage(symbolic, projection, state)) |child| {
                     result = try self.mergeValueFacts(result, child);
+                } else {
+                    result.reference_target_incomplete = true;
+                }
             }
             return result;
         }
@@ -15801,6 +15804,18 @@ test "projecting a mixed mutation reference preserves its symbolic alternative" 
     try std.testing.expectEqual(@as(usize, 1), projected.mutation_places.len);
     try std.testing.expectEqual(@as(usize, 1), projected.symbolic_pointees.len);
     try std.testing.expect(projected.referenced_place == null);
+    try std.testing.expect(!projected.reference_target_incomplete);
+
+    var partial = pointer;
+    partial.symbolic_pointees = &.{ @enumFromInt(0), @enumFromInt(10) };
+    const projected_partial = (try checker.projectSymbolicReference(partial, 0, &state)).?;
+    try std.testing.expect(projected_partial.reference_target_incomplete);
+    try std.testing.expectEqual(@as(usize, 1), projected_partial.symbolic_pointees.len);
+
+    partial.mutation_places = &.{};
+    const projected_symbolic = (try checker.projectSymbolicReference(partial, 0, &state)).?;
+    try std.testing.expect(projected_symbolic.reference_target_incomplete);
+    try std.testing.expectEqualSlices(facts.SymbolicPointeeId, projected.symbolic_pointees, projected_symbolic.symbolic_pointees);
 }
 
 test "a symbolic singleton joined with an unknown alternative cannot strongly replace storage" {
