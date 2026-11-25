@@ -8625,23 +8625,20 @@ pub const Infer = struct {
         result.fields = fields;
         const variants = try self.allocator.dupe(facts.OutputVariantEffect, result.variants);
         for (variants) |*child| {
-            var a: ?facts.ValueEffect = null;
-            var b: ?facts.ValueEffect = null;
-            for (left.variants) |candidate| if (candidate.index == child.index) {
-                a = candidate.value.*;
-                break;
-            };
-            for (right.variants) |candidate| if (candidate.index == child.index) {
-                b = candidate.value.*;
-                break;
-            };
-            // A missing payload is unreachable only when the other case is
-            // known. Sparse or unknown choice facts cannot prove exclusion.
-            const excludes_a = a == null and left.known_choice_variant != null and left.known_choice_variant.? != child.index;
-            const excludes_b = b == null and right.known_choice_variant != null and right.known_choice_variant.? != child.index;
-            if (excludes_a or excludes_b) continue;
-            const left_payload = a orelse try self.projectValueEffect(left, .{ .variant = child.index });
-            const right_payload = b orelse try self.projectValueEffect(right, .{ .variant = child.index });
+            const projection: facts.Projection = .{ .variant = child.index };
+            const excludes_left = if (left.known_choice_variant) |known| known != child.index else false;
+            const excludes_right = if (right.known_choice_variant) |known| known != child.index else false;
+            if (excludes_left or excludes_right) {
+                const payload = try self.allocator.create(facts.ValueEffect);
+                payload.* = if (excludes_left and excludes_right)
+                    .{}
+                else
+                    try self.projectValueEffect(if (excludes_left) right else left, projection);
+                child.value = payload;
+                continue;
+            }
+            const left_payload = try self.projectValueEffect(left, projection);
+            const right_payload = try self.projectValueEffect(right, projection);
             const variants_range = if (value_type) |ty| types.variants(self.graph, ty) else null;
             const child_type: ?graph_mod.GlobalTypeId = if (variants_range) |range|
                 (if (child.index < range.len) self.graph.variants.items[range.start + child.index].payload_type else null)
@@ -11490,6 +11487,16 @@ test "an excluded variant cannot select a staged execution result" {
     try std.testing.expect(facts.isEmptyValue(try infer.projectValueEffect(effect, .{ .variant = 1 })));
     const possible = try infer.projectValueEffect(effect, .{ .variant = 0 });
     try std.testing.expect(possible.task_output != null);
+
+    const stale_payload: facts.ValueEffect = .{ .concurrent_receiver = true };
+    const excluded: facts.ValueEffect = .{
+        .known_choice_variant = 1,
+        .variants = &.{.{ .index = 0, .value = &stale_payload }},
+    };
+    const joined = try infer.joinStorageAlternatives(null, excluded, effect);
+    const selected = try infer.projectValueEffect(joined, .{ .variant = 0 });
+    try std.testing.expect(!selected.concurrent_receiver);
+    try std.testing.expect(selected.task_output != null);
 }
 
 test "a numeric backing write guarantee must hold for every write in the summary" {
