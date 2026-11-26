@@ -446,6 +446,13 @@ pub const Tracker = struct {
             projected: ValidityRootId,
         };
 
+        /// Possible targets selected from a stable parent slot. A partition
+        /// can cover several resources across successive observations.
+        pub const ProjectionPartition = struct {
+            base: EmbeddedBase,
+            selector: SymbolicStorageSelector,
+        };
+
         pub const ProjectedStorage = struct {
             parent: SymbolicPointeeId,
             parent_generation: ValidityRootId,
@@ -460,10 +467,6 @@ pub const Tracker = struct {
             generation: ValidityRootId,
             selector: SymbolicStorageSelector,
         };
-        const EmbeddedSlot = struct {
-            base: EmbeddedBase,
-            selector: SymbolicStorageSelector,
-        };
         next_id: u32 = 0,
         next_symbolic_id: u32 = 0,
         next_capability_id: u32 = 0,
@@ -476,12 +479,20 @@ pub const Tracker = struct {
         projected_storage: std.ArrayList(ProjectedStorage) = .empty,
         projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
         projection_parents: std.AutoHashMapUnmanaged(ValidityRootId, void) = .empty,
-        embedded_slots: std.AutoHashMapUnmanaged(EmbeddedSlot, ValidityRootId) = .empty,
+        embedded_slots: std.AutoHashMapUnmanaged(ProjectionPartition, ValidityRootId) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
         pub fn embeddedBase(self: *const RootNamespace, identity: SymbolicPointeeId) EmbeddedBase {
             const index = self.projectionIndex(identity) orelse return .{ .input = identity };
             return .{ .projected = self.projected_storage.items[index].backing };
+        }
+
+        /// This key groups possible targets. Exact reads and updates still
+        /// use the projected observation identity and its generation.
+        pub fn projectionPartition(self: *const RootNamespace, identity: SymbolicPointeeId) ?ProjectionPartition {
+            const index = self.projectionIndex(identity) orelse return null;
+            const observation = self.projected_storage.items[index];
+            return .{ .base = self.embeddedBase(observation.parent), .selector = observation.selector };
         }
 
         pub fn internProducer(self: *RootNamespace, allocator: std.mem.Allocator, producer: Producer) !RootProducerId {
@@ -515,7 +526,7 @@ pub const Tracker = struct {
             self.projection_observations.putAssumeCapacityNoClobber(key, self.projected_storage.items.len);
             self.projection_parents.putAssumeCapacity(row.parent_generation, {});
             if (row.selector.embedded()) {
-                const slot: EmbeddedSlot = .{ .base = self.embeddedBase(row.parent), .selector = row.selector };
+                const slot: ProjectionPartition = .{ .base = self.embeddedBase(row.parent), .selector = row.selector };
                 const entry = self.embedded_slots.getOrPutAssumeCapacity(slot);
                 if (entry.found_existing) {
                     std.debug.assert(entry.value_ptr.* == row.backing);
