@@ -72,10 +72,14 @@ pub fn storageMayOverlap(graph: *const g.GlobalSemanticGraph, left: @import("pla
     for (left.projections[0..common], right.projections[0..common], 0..) |a, b, index| {
         if (a.eql(b)) continue;
         if (a != .field or b != .field) return false;
-        const container = storageType(graph, .{ .root = left.root, .projections = left.projections[0..index] }) orelse return true;
-        return types.isCUnion(graph, container);
+        const container = storageType(graph, .{ .root = left.root, .projections = left.projections[0..index] });
+        return fieldsMayOverlap(graph, container);
     }
     return false;
+}
+
+pub fn fieldsMayOverlap(graph: *const g.GlobalSemanticGraph, container: ?g.GlobalTypeId) bool {
+    return if (container) |ty| types.isCUnion(graph, ty) else true;
 }
 
 pub fn selectedType(graph: *const g.GlobalSemanticGraph, function: g.Function, path: facts.InputPath) !struct { ty: g.GlobalTypeId, external: bool, mutable: bool } {

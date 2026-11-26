@@ -2710,7 +2710,7 @@ pub const SafetyChecker = struct {
             try self.reportInputAliasConflict(source, conflict, ids);
             return false;
         };
-        for (first.symbolic) |left| for (second.symbolic) |right| if (state.symbolicStorageMayOverlap(left, right)) {
+        for (first.symbolic) |left| for (second.symbolic) |right| if (state.symbolicStorageMayOverlap(self.graph, left, right)) {
             try self.reportInputAliasConflict(source, conflict, ids);
             return false;
         };
@@ -2758,7 +2758,7 @@ pub const SafetyChecker = struct {
             const symbolic_observed = try self.symbolicConsumptionValue(conflict.observed, ids, arguments, state);
             if (symbolic_consumed != null and symbolic_observed != null) {
                 for (symbolic_consumed.?.symbolic_pointees) |consumed| for (symbolic_observed.?.symbolic_pointees) |observed| {
-                    if (state.symbolicStorageMayOverlap(consumed, observed)) {
+                    if (state.symbolicStorageMayOverlap(self.graph, consumed, observed)) {
                         try self.reportInputAliasConflict(source, conflict, ids);
                         return false;
                     }
@@ -3362,7 +3362,7 @@ pub const SafetyChecker = struct {
                 else if (storage) |place|
                     if (loan.storage) |other| self.storageMayOverlap(place, other) or (place.root == other.root and self.abstractVirtualAccessStorage(place) and self.abstractVirtualAccessStorage(other)) else loan.symbolic != null and (self.graph.isModuleBinding(place.root) or self.abstractExternalAccessStorage(place))
                 else if (symbolic) |identity|
-                    if (loan.symbolic) |other| state.symbolicStorageMayOverlap(identity, other) else loan.storage != null and (self.graph.isModuleBinding(loan.storage.?.root) or self.abstractExternalAccessStorage(loan.storage.?))
+                    if (loan.symbolic) |other| state.symbolicStorageMayOverlap(self.graph, identity, other) else loan.storage != null and (self.graph.isModuleBinding(loan.storage.?.root) or self.abstractExternalAccessStorage(loan.storage.?))
                 else
                     false;
                 if (!overlaps) {
@@ -14850,9 +14850,9 @@ test "projected symbolic array elements retain independent generations without e
     const last = (try checker.projectSymbolicStorage(parent, .{ .static_index = 999_999 }, &left)).?;
     try std.testing.expectEqual(null, try checker.projectSymbolicStorage(parent, .{ .static_index = 1_000_000 }, &left));
     const unknown = (try checker.projectSymbolicStorage(parent, .dynamic_index, &left)).?;
-    try std.testing.expect(left.symbolicStorageMayOverlap(unknown.symbolic_pointees[0], first.symbolic_pointees[0]));
-    try std.testing.expect(left.symbolicStorageMayOverlap(last.symbolic_pointees[0], unknown.symbolic_pointees[0]));
-    try std.testing.expect(!left.symbolicStorageMayOverlap(first.symbolic_pointees[0], last.symbolic_pointees[0]));
+    try std.testing.expect(left.symbolicStorageMayOverlap(&graph, unknown.symbolic_pointees[0], first.symbolic_pointees[0]));
+    try std.testing.expect(left.symbolicStorageMayOverlap(&graph, last.symbolic_pointees[0], unknown.symbolic_pointees[0]));
+    try std.testing.expect(!left.symbolicStorageMayOverlap(&graph, first.symbolic_pointees[0], last.symbolic_pointees[0]));
     try std.testing.expectEqual(@as(usize, 3), namespace.projected_storage.items.len);
     const initial = right.initialProjectedPointee(first.symbolic_pointees[0]).?;
     try std.testing.expectEqual(@as(?graph_mod.GlobalTypeId, @enumFromInt(0)), initial.ty);

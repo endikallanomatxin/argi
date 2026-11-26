@@ -981,7 +981,7 @@ pub const State = struct {
         }
     }
 
-    pub fn symbolicStorageMayOverlap(self: *const State, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {
+    pub fn symbolicStorageMayOverlap(self: *const State, graph: *const graph_mod.GlobalSemanticGraph, left: facts.SymbolicPointeeId, right: facts.SymbolicPointeeId) bool {
         const namespace = self.tracker.namespace orelse return left == right;
         var a = left;
         var b = right;
@@ -999,9 +999,17 @@ pub const State = struct {
             const b_index = self.symbolicProjectionIndex(b) orelse return false;
             const first = namespace.projected_storage.items[a_index];
             const second = namespace.projected_storage.items[b_index];
-            if (first.parent == second.parent and first.parent_generation == second.parent_generation) {
+            if (first.parent == second.parent or std.meta.eql(namespace.embeddedBase(first.parent), namespace.embeddedBase(second.parent))) {
                 if (first.selector.projection == .dynamic_index or second.selector.projection == .dynamic_index) return true;
-                return first.selector.eql(second.selector);
+                if (first.selector.eql(second.selector)) return true;
+                if (first.selector.projection != .field or second.selector.projection != .field) return false;
+                const container = if (self.symbolicPointee(first.parent)) |parent|
+                    parent.ty
+                else if (namespace.projectionIndex(first.parent)) |index|
+                    namespace.projected_storage.items[index].ty
+                else
+                    null;
+                return @import("access_bounds.zig").fieldsMayOverlap(graph, container);
             }
             a = first.parent;
             b = second.parent;
@@ -1595,14 +1603,45 @@ test "Safety choice refinements propagate allocation failure without discarding 
     try std.testing.expect(!state.variantRejected(storage, 2));
 }
 
+test "Safety symbolic overlap uses union layout across parent generations" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } },
+        .{ .structural = .{ .fields = .{ .start = 0, .len = 2 }, .layout = .c_union } },
+    });
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var state = State.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    for (0..2) |index| {
+        var parent = try state.establishSymbolicInput(@enumFromInt(index), null);
+        const prior = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+        const generation = try state.tracker.establish(.fresh);
+        parent.generation = generation;
+        const other = (try state.projectSymbolicStorage(parent, .{ .field = 1 }, null)).?;
+        const current = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+        try std.testing.expect(prior.identity != current.identity);
+        try std.testing.expect(state.symbolicStorageMayOverlap(&graph, prior.identity, current.identity));
+        try std.testing.expectEqual(index == 1, state.symbolicStorageMayOverlap(&graph, prior.identity, other.identity));
+        try std.testing.expectEqual(index == 1, state.symbolicStorageMayOverlap(&graph, other.identity, prior.identity));
+    }
+}
+
 test "Safety symbolic overlap compares unequal-depth paths at their common ancestor" {
     const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 0 } } });
     var namespace: facts.Tracker.RootNamespace = .{};
     defer namespace.deinit(allocator);
     var state = State.init(allocator);
     defer state.deinit();
     state.tracker.namespace = &namespace;
     const generation: facts.ValidityRootId = @enumFromInt(0);
+    try state.symbolic_pointees.append(.{ .identity = @enumFromInt(0), .generation = generation, .initializedness = .initialized, .ty = @enumFromInt(0) });
     // owner.first.shape and owner.second.allocation.receipt have different
     // depths but remain disjoint. Unknown array indices remain conservative.
     const edges = [_]struct { parent: u32, field: facts.Projection }{
@@ -1624,7 +1663,7 @@ test "Safety symbolic overlap compares unequal-depth paths at their common ances
         .selector = .{ .projection = edge.field },
         .parent_generation = generation,
         .identity = @enumFromInt(identity),
-        .backing = generation,
+        .backing = @enumFromInt(identity),
         .generation = generation,
     });
     try namespace.projected_storage.append(allocator, .{
@@ -1632,16 +1671,16 @@ test "Safety symbolic overlap compares unequal-depth paths at their common ances
         .selector = .{ .projection = .{ .field = 1 } },
         .parent_generation = @enumFromInt(1),
         .identity = @enumFromInt(13),
-        .backing = generation,
+        .backing = @enumFromInt(2),
         .generation = generation,
     });
-    for ([_][2]u32{ .{ 3, 5 }, .{ 1, 5 }, .{ 3, 8 }, .{ 9, 10 }, .{ 11, 12 } }) |pair| {
-        try std.testing.expect(!state.symbolicStorageMayOverlap(@enumFromInt(pair[0]), @enumFromInt(pair[1])));
-        try std.testing.expect(!state.symbolicStorageMayOverlap(@enumFromInt(pair[1]), @enumFromInt(pair[0])));
+    for ([_][2]u32{ .{ 3, 5 }, .{ 1, 5 }, .{ 3, 8 }, .{ 9, 10 }, .{ 11, 12 }, .{ 1, 13 } }) |pair| {
+        try std.testing.expect(!state.symbolicStorageMayOverlap(&graph, @enumFromInt(pair[0]), @enumFromInt(pair[1])));
+        try std.testing.expect(!state.symbolicStorageMayOverlap(&graph, @enumFromInt(pair[1]), @enumFromInt(pair[0])));
     }
-    for ([_][2]u32{ .{ 0, 5 }, .{ 2, 5 }, .{ 5, 5 }, .{ 3, 7 }, .{ 1, 13 } }) |pair| {
-        try std.testing.expect(state.symbolicStorageMayOverlap(@enumFromInt(pair[0]), @enumFromInt(pair[1])));
-        try std.testing.expect(state.symbolicStorageMayOverlap(@enumFromInt(pair[1]), @enumFromInt(pair[0])));
+    for ([_][2]u32{ .{ 0, 5 }, .{ 2, 5 }, .{ 5, 5 }, .{ 3, 7 }, .{ 2, 13 } }) |pair| {
+        try std.testing.expect(state.symbolicStorageMayOverlap(&graph, @enumFromInt(pair[0]), @enumFromInt(pair[1])));
+        try std.testing.expect(state.symbolicStorageMayOverlap(&graph, @enumFromInt(pair[1]), @enumFromInt(pair[0])));
     }
 }
 
