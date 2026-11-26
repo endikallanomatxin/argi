@@ -10756,11 +10756,7 @@ pub const SafetyChecker = struct {
     fn isDetachedLoopProjection(state: *const FunctionState, entry: *const FunctionState, exits: ?*const FunctionState, namespace: *const facts.Tracker.RootNamespace, row: state_mod.SymbolicPointeeState) !bool {
         const index = namespace.projectionIndex(row.identity) orelse return false;
         const projection = namespace.projected_storage.items[index];
-        const parent = state.symbolicPointee(projection.parent) orelse return false;
-        if (parent.generation == null or parent.generation == projection.parent_generation) return false;
-        const ordinal = @intFromEnum(projection.parent_generation);
-        if (ordinal >= state.tracker.roots.items.len or !state.tracker.roots.items[ordinal].present or
-            state.tracker.roots.items[ordinal].state != .dead) return false;
+        if (!hasRetiredProjectionParent(state, projection)) return false;
         // Opaque provenance recovery can match an observation by root
         // even when a value no longer carries the symbolic cell identity.
         for ([_]?facts.ValidityRootId{ row.generation, row.backing }) |candidate| {
@@ -10771,6 +10767,14 @@ pub const SafetyChecker = struct {
             if (exits) |exit| if (try rootRetainedAcrossLoop(exit, root)) return false;
         }
         return true;
+    }
+
+    fn hasRetiredProjectionParent(state: *const FunctionState, projection: facts.Tracker.RootNamespace.ProjectedStorage) bool {
+        const parent = state.symbolicPointee(projection.parent) orelse return false;
+        if (parent.generation == null or parent.generation == projection.parent_generation) return false;
+        const ordinal = @intFromEnum(projection.parent_generation);
+        return ordinal < state.tracker.roots.items.len and state.tracker.roots.items[ordinal].present and
+            state.tracker.roots.items[ordinal].state == .dead;
     }
 
     fn trimCompletedLoopExecutions(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
@@ -10853,6 +10857,13 @@ pub const SafetyChecker = struct {
                 if (retainMaterializedLoopSeed(state, retained, initial.root)) return;
             }
             for (namespace.projected_storage.items) |projection| {
+                if (hasRetiredProjectionParent(state, projection)) {
+                    // Keep the retirement that rules out lazy recreation.
+                    // Embedded backing can still be reused by a new key.
+                    if (retained.record(projection.parent_generation)) return;
+                    if (retainMaterializedLoopSeed(state, retained, projection.backing)) return;
+                    continue;
+                }
                 if (retainMaterializedLoopSeed(state, retained, projection.backing) or
                     retainMaterializedLoopSeed(state, retained, projection.generation)) return;
             }
@@ -13161,6 +13172,31 @@ test "loop capability trimming preserves consumption for break observations" {
     defer joined.deinit();
     try joined.joinCapabilities(&header, &exit);
     try std.testing.expectEqual(.maybe_consumed, joined.capabilityState(capability));
+}
+
+test "loop root trimming drops detached projection seeds while retaining backing" {
+    const allocator = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const parent = try state.establishSymbolicInput(@enumFromInt(0), null);
+    const renewed = try state.tracker.establish(.fresh);
+    const child = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    const backing = state.symbolicPointee(child.identity).?.backing.?;
+    state.tracker.end(parent.generation.?);
+    state.symbolic_pointees.items[0].generation = renewed;
+    state.symbolic_pointees.shrinkRetainingCapacity(1);
+    var context = SafetyChecker.LoopJoinContext.init(allocator);
+    defer context.deinit();
+    try checker.trimUnreferencedLoopRoots(&context, &state);
+    try std.testing.expectEqual(@as(usize, @intFromEnum(child.generation)), state.tracker.roots.items.len);
+    try std.testing.expect(state.tracker.isAlive(backing));
+    try std.testing.expect(!state.tracker.isAlive(parent.generation.?));
+    try std.testing.expectEqual(null, state.initialProjectedPointee(child.identity));
 }
 
 test "loop root trimming preserves retired lazy lexical seeds" {
