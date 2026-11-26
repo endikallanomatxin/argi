@@ -1093,3 +1093,57 @@ test "loop owner rebasing preserves an expired conditional observation" {
     try std.testing.expectEqual(value.dependencies[1], rebased.dependencies[1]);
     try std.testing.expect(!tracker.dependenciesAreAlive(rebased));
 }
+
+pub fn valueFactsEqual(left: ValueFacts, right: ValueFacts) bool {
+    if (left.intrinsic_backing_owner != right.intrinsic_backing_owner) return false;
+    if (left.task_output_execution != right.task_output_execution or left.task_output_claim != right.task_output_claim) return false;
+    if (left.execution_receipt_incomplete != right.execution_receipt_incomplete) return false;
+    if (left.owned_backing != right.owned_backing) return false;
+    if (left.reference_target_incomplete != right.reference_target_incomplete) return false;
+    if (left.reference_coverage_complete != right.reference_coverage_complete) return false;
+    if (left.mutation_places.len != right.mutation_places.len) return false;
+    for (left.mutation_places, right.mutation_places) |a, b| if (!a.eql(b)) return false;
+    if (left.lexical_frame != right.lexical_frame) return false;
+    if (!std.mem.eql(ExecutionId, left.execution_receipts, right.execution_receipts)) return false;
+    if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
+    for (left.symbolic_pointees) |identity|
+        if (std.mem.indexOfScalar(SymbolicPointeeId, right.symbolic_pointees, identity) == null) return false;
+    if (left.domains.len != right.domains.len) return false;
+    for (left.domains, right.domains) |a, b| {
+        if (a.domain_index != b.domain_index or a.storages.len != b.storages.len or !std.mem.eql(SymbolicPointeeId, a.symbolic_pointees, b.symbolic_pointees)) return false;
+        if (a.required_reads.len != b.required_reads.len) return false;
+        for (a.required_reads, b.required_reads) |x, y| if (!x.eql(y)) return false;
+        if (a.traversals.len != b.traversals.len) return false;
+        for (a.traversals, b.traversals) |x, y| if (!x.eql(y)) return false;
+        for (a.storages, b.storages) |x, y| if (!x.eql(y)) return false;
+    }
+    if (left.explicit_dependency != right.explicit_dependency or
+        left.integer_address != right.integer_address or
+        left.foreign_storage != right.foreign_storage or
+        left.storage_capability_incomplete != right.storage_capability_incomplete or
+        left.known_choice_variant != right.known_choice_variant or
+        !std.mem.eql(StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
+        !std.mem.eql(StorageCapabilityId, left.acquisition_origins, right.acquisition_origins) or
+        left.concurrent_receiver != right.concurrent_receiver or
+        !std.mem.eql(u32, left.virtual_no_access, right.virtual_no_access) or
+        left.dependencies.len != right.dependencies.len or
+        left.owned_roots.len != right.owned_roots.len or
+        left.fields.len != right.fields.len or
+        left.variants.len != right.variants.len or
+        left.opaque_provenance.len != right.opaque_provenance.len or left.generation_outcomes.len != right.generation_outcomes.len) return false;
+    if (left.choice_selectors.len != right.choice_selectors.len or left.choice_observations.len != right.choice_observations.len or left.guarded_values.len != right.guarded_values.len) return false;
+    for (left.choice_selectors, right.choice_selectors) |a, b| if (!a.eql(b)) return false;
+    for (left.choice_observations, right.choice_observations) |a, b| if (!a.eql(b)) return false;
+    for (left.guarded_values, right.guarded_values) |a, b| if (!a.eql(b)) return false;
+    if (!std.mem.eql(ExecutionId, left.completed_executions, right.completed_executions)) return false;
+    for (left.generation_outcomes, right.generation_outcomes) |a, b| if (!a.eql(b)) return false;
+    for (left.dependencies, right.dependencies) |a, b| if (!std.meta.eql(a, b)) return false;
+    for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
+    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
+    if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
+    for (left.opaque_provenance, right.opaque_provenance) |a, b|
+        if (!a.storage.eql(b.storage) or a.generation != b.generation) return false;
+    for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
+    for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
+    return true;
+}

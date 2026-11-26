@@ -232,7 +232,7 @@ pub const State = struct {
                     const other = right[j].output;
                     if (shared.output != .unavailable or other != .unavailable) {
                         const evidence = shared.output.accessEvidence();
-                        const common = if (evidence == other.accessEvidence()) evidence else null;
+                        const common = if (sameExecutionOutputEvidence(evidence, other.accessEvidence())) evidence else null;
                         shared.output = if (shared.output == .retained and other == .retained and common != null)
                             .{ .retained = common.? }
                         else
@@ -271,7 +271,7 @@ pub const State = struct {
                     for (execution.loans, opposite.loans) |a, b| if (!a.eql(b)) return false;
                 }
             }
-            if (execution.output.accessEvidence() != opposite.output.accessEvidence()) return false;
+            if (!sameExecutionOutputEvidence(execution.output.accessEvidence(), opposite.output.accessEvidence())) return false;
             if ((execution.output == .retained) != (opposite.output == .retained)) return false;
             // Unavailable pending output can still accept custody. A consumed
             // output cannot, even after its access evidence has been lost.
@@ -284,6 +284,11 @@ pub const State = struct {
 
     fn compareExecutionId(id: facts.ExecutionId, entry: facts.ExecutionState) std.math.Order {
         return std.math.order(@intFromEnum(id), @intFromEnum(entry.id));
+    }
+
+    fn sameExecutionOutputEvidence(left: ?*const facts.ValueFacts, right: ?*const facts.ValueFacts) bool {
+        if (left == right) return true;
+        return if (left != null and right != null) facts.valueFactsEqual(left.?.*, right.?.*) else false;
     }
 
     fn executionIndex(self: *const State, id: facts.ExecutionId) ?usize {
@@ -1757,6 +1762,27 @@ test "pending execution equality ignores completed history and compares receipt 
     left.completeExecution(@enumFromInt(1));
     right.completeExecution(extra);
     try std.testing.expect(left.samePendingExecutions(&right));
+}
+
+test "execution joins retain equivalent output facts stored separately" {
+    const allocator = std.testing.allocator;
+    var left = State.init(allocator);
+    defer left.deinit();
+    var right = State.init(allocator);
+    defer right.deinit();
+    var joined = State.init(allocator);
+    defer joined.deinit();
+    const id = try left.establishExecution(&.{});
+    try std.testing.expectEqual(id, try right.establishExecution(&.{}));
+    var first: facts.ValueFacts = .{ .known_choice_variant = 0 };
+    var second: facts.ValueFacts = .{ .known_choice_variant = 0 };
+    try std.testing.expect(left.retainExecutionOutput(id, &first));
+    try std.testing.expect(right.retainExecutionOutput(id, &second));
+    try std.testing.expect(left.samePendingExecutions(&right));
+    try joined.joinExecutions(left.executions.items, right.executions.items);
+    try std.testing.expect(joined.executionState(id).?.output == .retained);
+    second.known_choice_variant = 1;
+    try std.testing.expect(!left.samePendingExecutions(&right));
 }
 
 test "pending execution equality includes loan generations and access modes" {
