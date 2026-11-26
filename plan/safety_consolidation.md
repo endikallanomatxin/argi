@@ -801,6 +801,14 @@ transfer preserves that producer when it reissues the root. The loop
 header currently uses the partition for expired resource observations
 whose roots have no other retained obligations.
 
+At loop headers, an embedded reference write whose parent generation
+has ended can move to the history of its stable backing. This requires
+the old observation to be unreachable from values, opaque storage,
+loans, entry and exits. The history retains all reaching payloads and
+discards exact overwrite proofs about the aged observation. Other
+symbolic cells can still alias the write. The history key cannot be
+used as a current storage observation.
+
 In the reduced bridge trace, the destination's symbolic identity 0
 keeps backing 0 while the first two joined observations are 26 and 39.
 The second transition creates six more projected identities and an

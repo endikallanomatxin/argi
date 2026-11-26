@@ -146,13 +146,14 @@ pub const SafetyChecker = struct {
         expired_lexical_observation: ?facts.ValidityRootId = null,
         expired_resource_observation: ?facts.ValidityRootId = null,
         expired_produced_resources: std.AutoHashMap(facts.RootProducerId, facts.ValidityRootId),
+        historical_reference_writes: std.AutoHashMap(facts.ValidityRootId, facts.SymbolicPointeeId),
         first_loop_root: u32 = 0,
         lexical_observations: std.array_list.Managed(LoopRootPhi),
         roots: std.array_list.Managed(LoopRootPhi),
         symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
 
         fn init(allocator: std.mem.Allocator) LoopJoinContext {
-            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator), .lexical_observations = .init(allocator), .expired_produced_resources = .init(allocator) };
+            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator), .lexical_observations = .init(allocator), .expired_produced_resources = .init(allocator), .historical_reference_writes = .init(allocator) };
         }
 
         fn deinit(self: *LoopJoinContext) void {
@@ -160,6 +161,7 @@ pub const SafetyChecker = struct {
             self.symbolic.deinit();
             self.lexical_observations.deinit();
             self.expired_produced_resources.deinit();
+            self.historical_reference_writes.deinit();
         }
     };
 
@@ -10295,6 +10297,7 @@ pub const SafetyChecker = struct {
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.summarizeHistoricalObservations(&join_context, &next);
+            try self.summarizeDetachedLoopWrites(&join_context, &next, &entry);
             try self.trimDefaultSymbolicProjections(&next, &entry, join_context.exits);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
@@ -10672,6 +10675,55 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn summarizeDetachedLoopWrites(self: *SafetyChecker, context: *LoopJoinContext, state: *FunctionState, entry: *const FunctionState) !void {
+        const namespace = state.tracker.namespace orelse return;
+        if (state.reference_writes.items.len == 0) return;
+        var retained: RetainedSymbolic = .{ .namespace = namespace, .identities = .init(self.state_allocator) };
+        defer retained.identities.deinit();
+        try retained.recordState(state, false);
+        try retained.recordState(entry, true);
+        if (context.exits) |exit| try retained.recordState(exit, true);
+
+        var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
+        defer state.reference_writes = stores.definitions;
+        var index: usize = 0;
+        while (index < stores.definitions.items.len) {
+            const definition = stores.definitions.items[index];
+            if (definition.target != .symbolic or definition.summarized or retained.identities.contains(definition.target.symbolic)) {
+                index += 1;
+                continue;
+            }
+            const projection_index = namespace.projectionIndex(definition.target.symbolic) orelse {
+                index += 1;
+                continue;
+            };
+            const projection = namespace.projected_storage.items[projection_index];
+            const row = state.symbolicPointee(definition.target.symbolic) orelse {
+                index += 1;
+                continue;
+            };
+            // Retain exact coordinates for externally visible cells and
+            // for non-embedded projections that can select another object.
+            if (!projection.selector.embedded() or @intFromEnum(projection.parent_generation) < context.first_loop_root or
+                !try isDetachedLoopProjection(state, entry, context.exits, namespace, row))
+            {
+                index += 1;
+                continue;
+            }
+            const partition = try context.historical_reference_writes.getOrPut(projection.backing);
+            if (!partition.found_existing) {
+                if (namespace.next_symbolic_id == std.math.maxInt(u32)) {
+                    _ = context.historical_reference_writes.remove(projection.backing);
+                    return error.SafetySymbolicIdentityLimit;
+                }
+                partition.value_ptr.* = @enumFromInt(namespace.next_symbolic_id);
+                namespace.next_symbolic_id += 1;
+            }
+            try stores.summarizeObservation(definition.target, .{ .symbolic = partition.value_ptr.* }, ReferenceStoreContext{ .checker = self });
+            state.reference_writes = stores.definitions;
+        }
+    }
+
     fn trimDefaultSymbolicProjections(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
         const namespace = state.tracker.namespace orelse return;
         if (state.symbolic_pointees.items.len == 0) return;
@@ -10691,10 +10743,10 @@ pub const SafetyChecker = struct {
         // Entry rows are reintroduced by every loop join. Keep their explicit
         // materialization and anything that is reachable from an exit.
         for (entry.symbolic_pointees.items) |row| try retained.record(row.identity);
-        try retained.recordState(state);
+        try retained.recordState(state, true);
         if (exits) |exit| {
             for (exit.symbolic_pointees.items) |row| try retained.record(row.identity);
-            try retained.recordState(exit);
+            try retained.recordState(exit, true);
         }
 
         var kept: usize = 0;
@@ -11510,13 +11562,13 @@ const RetainedSymbolic = struct {
         if (storage == .symbolic) try self.record(storage.symbolic);
     }
 
-    fn recordState(self: *@This(), state: *const SafetyChecker.FunctionState) !void {
+    fn recordState(self: *@This(), state: *const SafetyChecker.FunctionState, include_write_keys: bool) !void {
         for (state.symbolic_values.items) |value| try self.record(value.identity);
         for (state.opaque_storages.items) |row| try self.recordStorage(row.storage);
-        for (state.reference_writes.items) |row| {
+        if (include_write_keys) for (state.reference_writes.items) |row| {
             try self.recordStorage(row.target);
             for (row.overwritten) |storage| try self.recordStorage(storage);
-        }
+        };
         for (state.executions.items) |execution| {
             if (!execution.pending) continue;
             for (execution.loans) |loan| if (loan.symbolic) |identity| try self.record(identity);
@@ -11702,6 +11754,42 @@ test "loop execution reduction retains observed and exit receipts" {
     try std.testing.expect(header.executionState(observed) != null);
     try std.testing.expect(header.executionState(exits) != null);
     try std.testing.expect(@intFromEnum(try header.establishExecution(&.{})) > @intFromEnum(exits));
+}
+
+test "loop reference writes keep detached payloads under one weak backing partition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var header = try entry.clone(allocator);
+    defer header.deinit();
+    var parent = try header.establishSymbolicInput(@enumFromInt(0), null);
+    var context = SafetyChecker.LoopJoinContext.init(allocator);
+    defer context.deinit();
+    const dependency = try header.tracker.establish(.fresh);
+    for (0..2) |_| {
+        const field = (try header.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+        try header.reference_writes.append(.{
+            .target = .{ .symbolic = field.identity },
+            .value = .{ .dependencies = &.{.{ .root = dependency }} },
+            .must_write = true,
+        });
+        header.tracker.end(parent.generation.?);
+        parent.generation = try header.tracker.establish(.fresh);
+        header.symbolic_pointees.items[0] = parent;
+        try checker.summarizeDetachedLoopWrites(&context, &header, &entry);
+        try std.testing.expectEqual(@as(usize, 1), header.reference_writes.items.len);
+        try std.testing.expect(header.reference_writes.items[0].summarized);
+        try std.testing.expect(!header.reference_writes.items[0].must_write);
+        try std.testing.expect(valueDependsOnRoot(header.reference_writes.items[0].value, dependency));
+    }
+    try std.testing.expectEqual(@as(usize, 1), context.historical_reference_writes.count());
 }
 
 test "loop projection reduction preserves retained domains and lazily restores default rows" {
