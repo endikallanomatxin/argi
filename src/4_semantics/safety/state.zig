@@ -705,7 +705,11 @@ pub const State = struct {
             const following = try std.math.add(u32, next, 1);
             identity = @enumFromInt(next);
             for (namespace.projected_storage.items) |entry| {
-                if (entry.parent_generation == parent_generation and entry.selector.eql(selector)) {
+                // Embedded fields keep their physical backing when the same
+                // parent storage receives a new value. Loaded references and
+                // erased domains can instead select different storage.
+                const same_parent_storage = selector.embedded() and entry.parent == parent.identity;
+                if ((same_parent_storage or entry.parent_generation == parent_generation) and entry.selector.eql(selector)) {
                     backing = entry.backing;
                     break;
                 }
@@ -1890,4 +1894,26 @@ test "lazy symbolic projections require a live parent observation" {
 
     sibling.tracker.end(parent.generation.?);
     try std.testing.expect(sibling.initialProjectedPointee(field.identity) == null);
+}
+
+test "embedded symbolic fields keep backing across parent replacement" {
+    const a = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = State.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    var parent = try state.establishSymbolicInput(@enumFromInt(0), null);
+    const first = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    const first_domain = (try state.projectSymbolicDomain(parent, 0)).?;
+    state.tracker.end(parent.generation.?);
+    parent.generation = try state.tracker.establish(.fresh);
+    state.symbolic_pointees.items[0] = parent;
+    const current = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    const current_domain = (try state.projectSymbolicDomain(parent, 0)).?;
+
+    try std.testing.expect(first.identity != current.identity);
+    try std.testing.expect(first.generation != current.generation);
+    try std.testing.expectEqual(state.symbolicPointee(first.identity).?.backing, state.symbolicPointee(current.identity).?.backing);
+    try std.testing.expect(state.symbolicPointee(first_domain.identity).?.backing != state.symbolicPointee(current_domain.identity).?.backing);
 }
