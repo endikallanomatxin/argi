@@ -10611,6 +10611,13 @@ pub const SafetyChecker = struct {
             for (context.lexical_observations.items) |phi| if (phi.root == id) continue :roots;
             if (try rootHasExternalLoopObligation(state, id) or try loopObservationHasProtectedUses(state, id, .observation_only)) continue;
 
+            // With no remaining observer, remove the retired root without
+            // materializing a history partition for its producer.
+            if (!try visitLoopStateValues(state, RetainedRoot{ .contains = id })) {
+                try mapping.put(id, id);
+                continue;
+            }
+
             const expired = existing orelse blk: {
                 const fresh = try state.tracker.establish(.fresh);
                 if (!lexical and root.producer != null)
@@ -11638,9 +11645,10 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     fresh.clearRetainingCapacity();
     const second = try checker.instantiateFreshRoot(0, &state, &fresh);
     const other = try checker.instantiateFreshRoot(1, &state, &fresh);
+    const unobserved = try checker.instantiateFreshRoot(2, &state, &fresh);
     try std.testing.expect(first != second);
     const opaque_owner = try state.tracker.establish(.fresh);
-    for ([_]facts.ValidityRootId{ first, second, other, opaque_owner }) |root| {
+    for ([_]facts.ValidityRootId{ first, second, other, unobserved, opaque_owner }) |root| {
         state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
         state.tracker.end(root);
     }
@@ -11649,8 +11657,9 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first, .retirement_mark = retired_mark }, .{ .root = second }, .{ .root = other } } });
     try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{}, .owner_roots = &.{opaque_owner} });
     try checker.summarizeExpiredObservations(&context, &state);
-    try std.testing.expectEqual(@as(usize, 2), namespace.producers.count());
+    try std.testing.expectEqual(@as(usize, 3), namespace.producers.count());
     try std.testing.expectEqual(@as(usize, 2), context.expired_produced_resources.count());
+    try std.testing.expect(!state.tracker.roots.items[@intFromEnum(unobserved)].present);
     const value = state.getPlace(storage).?.value;
     try std.testing.expectEqual(@as(usize, 2), value.dependencies.len);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(value));
