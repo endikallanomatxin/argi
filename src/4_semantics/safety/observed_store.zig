@@ -150,8 +150,10 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
         }
 
         pub fn needsInitial(self: *const Self, target: Key, context: anytype) bool {
-            for (self.definitions.items) |definition|
-                if (definition.must_write and context.relation(target, definition.target) == .same) return false;
+            for (self.definitions.items) |definition| {
+                if (definition.must_write and context.relation(target, definition.target) == .same)
+                    return self.isSummary(target);
+            }
             return true;
         }
 
@@ -160,9 +162,16 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             if (context.relation(target, source.target) == .disjoint) return false;
             for (self.definitions.items) |later| {
                 if (!later.must_write or context.relation(target, later.target) != .same) continue;
-                if (contains(later.overwritten, source.target)) return false;
+                // An exact overwrite can exclude an old payload at a
+                // specific cell only.
+                if (contains(later.overwritten, source.target)) return self.isSummary(target);
             }
             return true;
+        }
+
+        fn isSummary(self: *const Self, target: Key) bool {
+            const selected = self.index(target) orelse return false;
+            return self.definitions.items[selected].summarized;
         }
 
         pub fn read(self: *const Self, target: Key, initial: Value, context: anytype) !Value {
@@ -601,6 +610,19 @@ test "observed store ages a partition and drops only obsolete kill proofs" {
     try std.testing.expect(store.definitions.items[2].summarized);
     try std.testing.expectEqual(@as(u8, 3), store.definitions.items[2].value);
     try std.testing.expectEqual(@as(u8, 11), try store.read(testKey(3), 0, context));
+}
+
+test "observed store reads of a history key retain initial and historical payloads" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var store = Bits.init(arena.allocator(), std.testing.allocator);
+    defer store.deinit();
+    const context: BitContext = .{ .aliases = .{ 0, 0, 0 } };
+    try store.store(testKey(0), 2, true, context);
+    try store.summarizeObservation(testKey(0), testKey(1), context);
+    try store.store(testKey(2), 4, true, context);
+    try std.testing.expectEqual(@as(u8, 7), try store.read(testKey(1), 1, context));
+    try std.testing.expectEqual(@as(u8, 4), try store.read(testKey(2), 1, context));
 }
 
 test "observed stores reject exact overwrites of summarized observations" {
