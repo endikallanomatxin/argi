@@ -168,6 +168,7 @@ pub const SafetyChecker = struct {
     };
 
     const LoopJoinContext = struct {
+        exits: ?*const FunctionState = null,
         roots: std.array_list.Managed(LoopRootPhi),
         symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
 
@@ -10184,6 +10185,8 @@ pub const SafetyChecker = struct {
         // Stable identities can still propagate through a chain of slots.
         // This bounds solver work; equality alone certifies convergence.
         const propagation_budget = @max(generation_budget, entry.places.items.len +| 1);
+        var exits: ?FunctionState = null;
+        defer if (exits) |*exit_state| exit_state.deinit();
         for (0..propagation_budget) |step| {
             var iteration = try self.cloneState(&current);
             defer iteration.deinit();
@@ -10191,6 +10194,7 @@ pub const SafetyChecker = struct {
             defer transfers.deinit();
 
             try self.validateBlock(function, body, &iteration, &transfers);
+            if (transfers.break_state) |*break_state| try self.mergeLoopTransfer(&exits, break_state);
             if (transfers.continue_state) |*continue_state|
                 try self.mergeLoopTransfer(&iteration, continue_state);
             if (iteration.reachable) {
@@ -10207,6 +10211,9 @@ pub const SafetyChecker = struct {
             var next = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
             defer next.deinit();
             try self.joinState(&next, &entry, &iteration);
+            // A break observes its own iteration's generations. Keep its
+            // facts out of the header while protecting their identities.
+            join_context.exits = if (exits) |*exit_state| exit_state else null;
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             const converged = statesEqual(&current, &next);
             // Fresh generations still use the legacy approximation. Do not
@@ -10215,7 +10222,7 @@ pub const SafetyChecker = struct {
                 !initial_identities.eql(LoopIdentityFrontier.capture(&next)) and
                 loopEntryObservationsEqual(&current, &next, initial_identities.roots);
             if (converged or generation_cutoff) {
-                if (transfers.break_state) |*break_state| try self.mergeLoopTransfer(&next, break_state);
+                if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
                 try self.copyState(state, &next);
                 return;
             }
@@ -10451,6 +10458,7 @@ pub const SafetyChecker = struct {
                 continue;
             }
             const canonical = existing.?;
+            if (context.exits) |exits| if (try rootRetainedAcrossLoop(exits, canonical)) continue;
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
             if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
@@ -10522,6 +10530,7 @@ pub const SafetyChecker = struct {
     ) !?facts.ValidityRootId {
         _ = self;
         for (context.roots.items) |entry| if (entry.storage.eql(storage)) {
+            if (context.exits) |exits| if (try rootRetainedAcrossLoop(exits, entry.root)) return null;
             const index = @intFromEnum(entry.root);
             const live = index < state.tracker.roots.items.len and state.tracker.isAlive(entry.root);
             // Check retention before materializing an identity absent from
@@ -15054,6 +15063,15 @@ test "loop symbolic observations canonicalize only without retained historical a
     try checker.trimUnreferencedLoopRoots(&context, &next);
     try std.testing.expectEqual(canonical, next.symbolic_pointees.items[0].generation.?);
     try std.testing.expect(statesEqual(&stable_state, &next));
+
+    // A break can retain the old observation even when the backedge does not.
+    try checker.joinState(&next, &left, &repeated);
+    const after_break = next.symbolic_pointees.items[0].generation.?;
+    context.exits = &stable_state;
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    context.exits = null;
+    try std.testing.expect(after_break != canonical);
+    try std.testing.expectEqual(after_break, next.symbolic_pointees.items[0].generation.?);
     try checker.joinState(&next, &left, &repeated);
     const borrowed = next.symbolic_pointees.items[0].generation.?;
     _ = try next.establishExecution(&.{.{ .generations = &.{borrowed}, .mode = .read }});

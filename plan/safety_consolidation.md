@@ -446,6 +446,10 @@ The concrete loop driver evaluates the condition on entry and on each
 backedge. Fallthrough and continue feed the increment and then the
 condition. Break contributes to the exit without re-evaluating either.
 The pending-loan check examines the state after these backedge effects.
+Each abstract transfer contributes break states to an exit accumulator.
+Its observations stay out of the header and constrain generation-name
+reuse while the solver advances. This preserves effects seen on earlier
+exits when a later header has widened its observations.
 Fixture 417X exercises a condition that observes an old alias after a
 continue, even though the resource slot has already been reinitialized.
 
