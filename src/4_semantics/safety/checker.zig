@@ -8979,10 +8979,11 @@ pub const SafetyChecker = struct {
                 break :blk self.typeContainsPointer(ty);
             } else false;
             try state.setSymbolicValue(next, strong, retain_empty);
-            if (strong) if (self.symbolicCellType(state, identity)) |ty| if (isPointer(self.graph, ty)) {
+            if (self.symbolicCellType(state, identity)) |ty| if (isPointer(self.graph, ty)) {
                 var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
                 defer state.reference_writes = stores.definitions;
-                try stores.store(.{ .symbolic = identity }, value, true, ReferenceStoreContext{ .checker = self, .state = state });
+                // A write that may occur can still reach another alias.
+                try stores.store(.{ .symbolic = identity }, value, strong, ReferenceStoreContext{ .checker = self, .state = state });
             };
         }
     }
@@ -15454,6 +15455,10 @@ test "symbolic stored references survive snapshots and joins without inventing e
     try std.testing.expect(valueDependsOnRoot(uncertain.value, first));
     try checker.joinState(&joined, &state, &state);
     try std.testing.expect(statesEqual(&joined, &state));
+    try checker.storeSymbolicValue(&state, slot, second_value, false);
+    const reaching = try checker.readReferenceStore(&state, @enumFromInt(2), .{});
+    try std.testing.expect(valueDependsOnRoot(reaching, first));
+    try std.testing.expect(valueDependsOnRoot(reaching, second));
 }
 
 test "initial symbolic reference reads intern referents independently of slot ownership" {
