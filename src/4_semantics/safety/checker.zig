@@ -10545,16 +10545,7 @@ pub const SafetyChecker = struct {
             while (ids.next()) |id| visitor.retain(&.{id.*});
         }
         if (visitor.limit == visitor.capacity) return;
-        var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(self.state_allocator);
-        defer guards.deinit();
-        inline for (.{ state.places.items, state.symbolic_values.items, state.reference_writes.items }) |entries| {
-            for (entries) |entry| if (try visitValueFactGraph(entry.value, &guards, &visitor)) return;
-        }
-        for (state.executions.items) |execution| {
-            if (execution.output.accessEvidence()) |output| {
-                if (try visitValueFactGraph(output.*, &guards, &visitor)) return;
-            }
-        }
+        if (try visitLoopStateValues(state, &visitor)) return;
         state.storage_capabilities.shrinkRetainingCapacity(visitor.limit);
     }
 
@@ -11251,15 +11242,30 @@ const RetainedRoot = union(enum) {
     }
 };
 
-fn visitExternalLoopRoots(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, guards: *std.AutoHashMap(*const facts.ValueFacts, void)) !bool {
+// Every retained value store participates in loop normalization, including
+// snapshots whose task has already completed or transferred its output.
+fn visitLoopStateValues(state: *const SafetyChecker.FunctionState, visitor: anytype) !bool {
+    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
+    defer guards.deinit();
+    inline for (.{ state.places.items, state.symbolic_values.items, state.reference_writes.items }) |entries| {
+        for (entries) |entry| {
+            if (try SafetyChecker.visitValueFactGraph(entry.value, &guards, visitor)) return true;
+        }
+    }
+    for (state.executions.items) |execution| {
+        if (execution.output.accessEvidence()) |output| {
+            if (try SafetyChecker.visitValueFactGraph(output.*, &guards, visitor)) return true;
+        }
+    }
+    return false;
+}
+
+fn visitDirectLoopObligations(state: *const SafetyChecker.FunctionState, retained: RetainedRoot) bool {
     for (state.opaque_storages.items) |storage|
         if (retained.recordSlice(storage.hidden_dependencies) or retained.recordSlice(storage.owner_roots)) return true;
     for (state.executions.items) |execution| {
         if (execution.pending) {
             for (execution.loans) |loan| if (retained.recordSlice(loan.generations)) return true;
-        }
-        if (execution.output.accessEvidence()) |output| {
-            if (try SafetyChecker.visitValueFactGraph(output.*, guards, retained)) return true;
         }
     }
     return false;
@@ -11309,7 +11315,14 @@ fn loopObservationHasUnmappedUses(state: *const SafetyChecker.FunctionState, roo
 fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
     var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
     defer guards.deinit();
-    return visitExternalLoopRoots(state, .{ .contains = root }, &guards);
+    const retained: RetainedRoot = .{ .contains = root };
+    if (visitDirectLoopObligations(state, retained)) return true;
+    for (state.executions.items) |execution| {
+        if (execution.output.accessEvidence()) |output| {
+            if (try SafetyChecker.visitValueFactGraph(output.*, &guards, retained)) return true;
+        }
+    }
+    return false;
 }
 
 fn retainMaterializedLoopSeed(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, root: facts.ValidityRootId) bool {
@@ -11322,24 +11335,16 @@ fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts
 }
 
 fn visitLoopRoots(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, excluded: ?*const SafetyChecker.StorageGeneration) !bool {
-    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
-    defer guards.deinit();
-    if (try visitExternalLoopRoots(state, retained, &guards)) return true;
+    if (visitDirectLoopObligations(state, retained)) return true;
     for (state.symbolic_pointees.items) |pointee| {
         if (pointee.backing) |root| if (retained.record(root)) return true;
         if (pointee.generation) |root| if (retained.record(root)) return true;
     }
-    for (state.places.items) |stored|
-        if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
-    for (state.symbolic_values.items) |stored|
-        if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
-    for (state.reference_writes.items) |stored|
-        if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
     for (state.storage_generations.items) |*storage_generation| {
         if (storage_generation == excluded) continue;
         if (retained.record(storage_generation.generation)) return true;
     }
-    return false;
+    return visitLoopStateValues(state, retained);
 }
 
 // Clones and joins normally retain entry order. A hint only avoids
