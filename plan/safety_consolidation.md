@@ -449,6 +449,13 @@ The pending-loan check examines the state after these backedge effects.
 Fixture 417X exercises a condition that observes an old alias after a
 continue, even though the resource slot has already been reinitialized.
 
+Input post-state inference uses the same edge order. It joins continue
+with fallthrough before executing the increment and the next condition.
+Break effects contribute to the exit without producing an observation
+on a later iteration. Fixtures 142X and 286 exercise the same aliased
+call with repeated execution and with a break, respectively. The summary
+still approximates repeated effects from one abstract backedge.
+
 A concrete probe uses two lexical resources and twelve reference slots
 initialized to the first resource. Each iteration copies the references
 from high indices to low indices in assignment order (slot 11 receives

@@ -99,7 +99,7 @@ pub const Infer = struct {
     body_output_alternatives: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, []const BodyOutputAlternative) = .empty,
     collecting_capture_sources: bool = false,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
-    loop_post_effects: ?*InputPostStateFlow = null,
+    loop_post_effects: ?*LoopPostTransfers = null,
     replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, write: graph_mod.GlobalNodeId, targets: []const facts.InputPath, reference_slots: []const facts.InputPath } = null,
 
     const ForwardOrigin = struct {
@@ -3138,6 +3138,16 @@ pub const Infer = struct {
         }
     };
 
+    const LoopPostTransfers = struct {
+        break_flow: ?InputPostStateFlow = null,
+        continue_flow: ?InputPostStateFlow = null,
+
+        fn deinit(self: *LoopPostTransfers) void {
+            if (self.break_flow) |*flow| flow.deinit();
+            if (self.continue_flow) |*flow| flow.deinit();
+        }
+    };
+
     const OpaqueEmptyState = struct {
         emptied: std.array_list.Managed(facts.InputPath),
         reachable: bool = true,
@@ -3314,69 +3324,13 @@ pub const Infer = struct {
                     try self.inferInputPostStates(function_id, child, &else_flow, exits);
                 try self.joinInputPostStateFallthrough(flow, &then_flow, &else_flow);
             },
-            .while_statement => |statement| {
-                var loop_observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-                defer loop_observations.deinit();
-                const parent_observations = self.observation_sink;
-                if (parent_observations != null) self.observation_sink = &loop_observations;
-                defer self.observation_sink = parent_observations;
-                try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
-                var transfers = InputPostStateFlow.init(self.allocator);
-                defer transfers.deinit();
-                const previous_loop = self.loop_post_effects;
-                self.loop_post_effects = &transfers;
-                defer self.loop_post_effects = previous_loop;
-                var body_flow = try flow.clone(self.allocator);
-                defer body_flow.deinit();
-                try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
-                try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
-                if (parent_observations) |parent| for (loop_observations.items) |path| {
-                    // A later iteration observes generations ended by an
-                    // earlier one, even when its source read precedes the drop.
-                    try self.recordStorageObservation(path, body_flow.states.items);
-                    try appendInputPath(parent, path);
-                };
-                try self.joinInputPostStates(states, states, &body_flow.states);
-                for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
-                for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
-                if (!self.selectedOutputUnchangedByLoops()) flow.outcome = .unknown;
-            },
+            .while_statement => |statement| try self.inferLoopPostStates(function_id, statement.condition, statement.body, null, flow, exits),
             .for_statement => |statement| {
                 if (statement.init) |initialization|
                     try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
                 if (!flow.reachable) return;
                 flow.collapse();
-                var loop_observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-                defer loop_observations.deinit();
-                const parent_observations = self.observation_sink;
-                if (parent_observations != null) self.observation_sink = &loop_observations;
-                defer self.observation_sink = parent_observations;
-                try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
-                var transfers = InputPostStateFlow.init(self.allocator);
-                defer transfers.deinit();
-                const previous_loop = self.loop_post_effects;
-                self.loop_post_effects = &transfers;
-                defer self.loop_post_effects = previous_loop;
-                var body_flow = try flow.clone(self.allocator);
-                defer body_flow.deinit();
-                try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
-                if (statement.increment) |increment| {
-                    // A continue still executes the increment. Joining it for
-                    // every loop alternative is conservative for break paths.
-                    const previous_sink = self.post_domain_sink;
-                    self.post_domain_sink = &body_flow.domains;
-                    defer self.post_domain_sink = previous_sink;
-                    try self.inferInputPostStatesNode(function_id, increment, &body_flow, exits);
-                }
-                try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
-                if (parent_observations) |parent| for (loop_observations.items) |path| {
-                    try self.recordStorageObservation(path, body_flow.states.items);
-                    try appendInputPath(parent, path);
-                };
-                try self.joinInputPostStates(states, states, &body_flow.states);
-                for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
-                for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
-                if (!self.selectedOutputUnchangedByLoops()) flow.outcome = .unknown;
+                try self.inferLoopPostStates(function_id, statement.condition, statement.body, statement.increment, flow, exits);
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -3422,8 +3376,8 @@ pub const Infer = struct {
             .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
             .break_statement, .continue_statement => {
                 if (self.loop_post_effects) |transfers| {
-                    try self.joinInputPostStates(&transfers.states, &transfers.states, states);
-                    for (flow.domains.items) |domain| try appendDomain(&transfers.domains, domain);
+                    const destination = if (node.content == .break_statement) &transfers.break_flow else &transfers.continue_flow;
+                    try self.joinInputPostStateFlowBranch(destination, flow);
                 }
                 flow.reachable = false;
             },
@@ -3431,6 +3385,57 @@ pub const Infer = struct {
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
             else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
         }
+    }
+
+    fn inferLoopPostStates(
+        self: *Infer,
+        function: graph_mod.GlobalFunctionId,
+        condition: graph_mod.GlobalNodeId,
+        body: graph_mod.GlobalBlockId,
+        increment: ?graph_mod.GlobalNodeId,
+        flow: *InputPostStateFlow,
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+    ) anyerror!void {
+        var observations = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        defer observations.deinit();
+        const parent_observations = self.observation_sink;
+        if (parent_observations != null) self.observation_sink = &observations;
+        defer self.observation_sink = parent_observations;
+        try self.inferInputPostStatesNode(function, condition, flow, exits);
+        flow.collapse();
+
+        var transfers: LoopPostTransfers = .{};
+        defer transfers.deinit();
+        const previous_loop = self.loop_post_effects;
+        self.loop_post_effects = &transfers;
+        defer self.loop_post_effects = previous_loop;
+
+        var backedge = try flow.clone(self.allocator);
+        defer backedge.deinit();
+        try self.inferInputPostStates(function, body, &backedge, exits);
+        if (transfers.continue_flow) |*continued|
+            try self.joinInputPostStateFallthrough(&backedge, &backedge, continued);
+        if (increment) |advance|
+            try self.inferInputPostStatesNode(function, advance, &backedge, exits);
+        try self.inferInputPostStatesNode(function, condition, &backedge, exits);
+
+        if (parent_observations) |parent| {
+            self.observation_sink = parent;
+            for (observations.items) |path| {
+                // Later iterations can observe a generation retired by a
+                // previous backedge even when the source read precedes it.
+                try self.recordStorageObservation(path, if (backedge.reachable) backedge.states.items else &.{});
+            }
+        }
+        if (backedge.reachable) {
+            try self.joinInputPostStates(&flow.states, &flow.states, &backedge.states);
+            for (backedge.domains.items) |domain| try appendDomain(&flow.domains, domain);
+        }
+        if (transfers.break_flow) |*broken| {
+            try self.joinInputPostStates(&flow.states, &flow.states, &broken.states);
+            for (broken.domains.items) |domain| try appendDomain(&flow.domains, domain);
+        }
+        if (!self.selectedOutputUnchangedByLoops()) flow.outcome = .unknown;
     }
 
     fn inferInputPostStatesRange(
