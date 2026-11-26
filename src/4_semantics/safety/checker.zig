@@ -11990,9 +11990,14 @@ fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const Saf
         };
         if (!found) return false;
     }
-    for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.summarized_instances != b.summarized_instances or a.producer != b.producer or a.outcome_guard != b.outcome_guard or
+    for (left.tracker.roots.items, right.tracker.roots.items) |a, b| {
+        if (a.present != b.present or a.owned_resource != b.owned_resource or a.summarized_instances != b.summarized_instances or a.producer != b.producer or a.outcome_guard != b.outcome_guard or
             (a.present and a.retirement_mark != b.retirement_mark)) return false;
+        // Historical partitions grant no live witness. Possible liveness
+        // still represents the case where every instance has ended.
+        if (a.state != b.state and !(relation == .covers and a.summarized_instances and
+            a.state == .maybe_alive and b.state == .dead)) return false;
+    }
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b| {
         if (relation == .equal) {
             if (a != b) return false;
@@ -12068,6 +12073,22 @@ test "loop state coverage permits weak writes and still compares opaque obligati
     successor.reference_writes.items[0].must_write = false;
     try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
     header.opaque_storages.items[0].outcome_guard = 1;
+    try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
+}
+
+test "loop state coverage admits ended instances of the same historical partition" {
+    const allocator = std.testing.allocator;
+    var header = SafetyChecker.FunctionState.init(allocator);
+    defer header.deinit();
+    var successor = SafetyChecker.FunctionState.init(allocator);
+    defer successor.deinit();
+    const root: facts.ValidityRootId = @enumFromInt(0);
+    try header.tracker.roots.append(.{ .id = root, .state = .maybe_alive, .summarized_instances = true });
+    try successor.tracker.roots.append(.{ .id = root, .state = .dead, .summarized_instances = true });
+    try std.testing.expect(compareLoopStates(&header, &successor, .covers));
+    try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    try std.testing.expect(!statesEqual(&header, &successor));
+    successor.tracker.roots.items[0].summarized_instances = false;
     try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
 }
 
