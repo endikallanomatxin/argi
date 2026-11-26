@@ -757,6 +757,57 @@ paths caused lost FFI and execution obligations, so completeness must be
 consumed by an explicit destination query independently of dependency
 substitution.
 
+### Loop header domain
+
+Use a bounded recency abstraction for each abstract storage or producer
+partition. Keep entry-relative identities rigid. Name a projection by
+its base partition and typed path, with an unresolved suffix once the
+statically distinguished path ends. Partition fresh production by the
+operation or summary output role and its abstract destination. Repeated
+traversal and recursive summary substitution must reuse these partitions.
+Overlapping partitions denote possible aliases, including distinct
+entry-relative paths and overlapping union alternatives.
+
+Each partition can distinguish a current singleton from a summary of
+prior or non-singleton instances. Producing a new singleton ages the
+previous singleton into the summary in one simultaneous substitution.
+Apply that substitution to reference payloads, reaching writes,
+projection keys, hidden contents, owner associations, choice evidence,
+authority grants and execution receipts. A location whose base was aged
+also loses its strong-update proof. A previously invalid observation
+remains invalid after aging. An observation of a potentially live older
+instance carries possible liveness and possible authority separately.
+Neither possibility suffices to authorize a use.
+
+The summary component represents multiplicity. Joining two cleanup
+obligations into the same partition must retain the possibility of
+multiple owners. A store, release, completion or cleanup may remove an
+obligation from the summary component only with proof that it applies to
+every represented instance. Otherwise the operation retains the possible
+outstanding obligations. Opaque contents use the same representation for
+contained observations and owner associations. Unknown traversal loses
+precision in the target and retains possible hidden effects.
+
+Compute loop headers by joining entry with the abstract backedge.
+Compare complete states in the same partition namespace, including
+storage contents and deferred effects. Accept when the backedge is
+included in the header. Accumulate breaks and condition-false exits in
+the same namespace while preserving their own facts. Maintain may sets
+by union and definite evidence by intersection. With finite partitions,
+bounded instance multiplicity and finite evidence components, a
+monotone header sequence can grow only finitely often. A worklist over
+changed partitions can avoid replay where transfer dependencies are
+available.
+
+Before replacing the current driver, test the abstraction with a fresh
+generation observed before replacement, two simultaneously live owners
+from one producer, and an old projection retained through an opaque
+domain. Check the aging substitution against bounded concrete traces.
+Then verify inclusion for the full backedge, including fresh symbolic
+writes and suspended authority. Run the dynamic array growth and
+reserved-capacity controls alongside stale-view, lexical-escape and
+mixed-generation rejection cases.
+
 ## Function boundary
 
 Publish entry requirements, may-access footprint, and a conservative
