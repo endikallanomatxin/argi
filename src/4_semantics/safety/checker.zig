@@ -13491,8 +13491,8 @@ test "generation outcome proofs cannot be replayed after another call or invalid
     state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 1;
     try checker.activate_conditional_resources(&state, preserved);
     try std.testing.expect(state.tracker.isAlive(generation));
-    state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
-    state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 2;
+    try std.testing.expect(state.tracker.deferRetirement(generation, 1));
+    try std.testing.expect(!state.tracker.deferRetirement(generation, 2));
     try checker.activate_conditional_resources(&state, preserved);
     try std.testing.expect(!state.tracker.isAlive(generation));
     state.tracker.end(generation);

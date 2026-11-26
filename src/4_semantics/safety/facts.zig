@@ -512,6 +512,9 @@ pub const Tracker = struct {
         if (root.state == .alive) {
             root.state = .maybe_alive;
             root.outcome_guard = guard;
+        } else if (root.outcome_guard != guard) {
+            // Neither outcome can resolve uncertainty introduced by the other.
+            root.outcome_guard = 0;
         }
         return root.state == .maybe_alive and root.outcome_guard == guard;
     }
@@ -537,6 +540,18 @@ pub const Tracker = struct {
         place_facts.value = .{};
     }
 };
+
+test "independent guarded retirements invalidate either outcome proof" {
+    var tracker = Tracker.init(std.testing.allocator);
+    defer tracker.deinit();
+    const root = try tracker.establish(.fresh);
+    try std.testing.expect(tracker.deferRetirement(root, 1));
+    try std.testing.expect(tracker.deferRetirement(root, 1));
+    try std.testing.expect(!tracker.deferRetirement(root, 2));
+    try std.testing.expect(!tracker.deferRetirement(root, 1));
+    try std.testing.expectEqual(@as(u64, 0), tracker.roots.items[@intFromEnum(root)].outcome_guard);
+    try std.testing.expect(!tracker.isAlive(root));
+}
 
 test "indexed safety facts key places by GlobalBindingId" {
     const binding: graph.GlobalBindingId = @enumFromInt(5);
