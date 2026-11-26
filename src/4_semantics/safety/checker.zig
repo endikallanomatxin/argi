@@ -10282,6 +10282,7 @@ pub const SafetyChecker = struct {
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.summarizeExpiredObservations(&join_context, &next);
+            try self.trimDefaultSymbolicProjections(&next, &entry, join_context.exits);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
             try forgetUnobservedRetirementMarks(&next, &entry, join_context.exits);
@@ -10646,6 +10647,38 @@ pub const SafetyChecker = struct {
             if (@intFromEnum(expired) < state.tracker.roots.items.len and state.tracker.roots.items[@intFromEnum(expired)].present)
                 try appendRootFact(&state.lexical_storage_generations, expired);
         }
+    }
+
+    fn trimDefaultSymbolicProjections(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
+        const namespace = state.tracker.namespace orelse return;
+        if (state.symbolic_pointees.items.len == 0) return;
+        var retained: RetainedSymbolic = .{ .namespace = namespace, .identities = .init(self.state_allocator) };
+        defer retained.identities.deinit();
+
+        // Keep input entries and any row that differs from its lazy seed.
+        // Each retained row needs its parents for path resolution.
+        for (state.symbolic_pointees.items) |row| {
+            const seed = state.initialProjectedPointee(row.identity);
+            if (seed == null or row.input_path != null or row.initializedness != seed.?.initializedness or
+                row.ty != seed.?.ty or row.generation != seed.?.generation or row.backing != seed.?.backing)
+                try retained.record(row.identity);
+        }
+        // Entry rows are reintroduced by every loop join. Keep their explicit
+        // materialization and anything that is reachable from an exit.
+        for (entry.symbolic_pointees.items) |row| try retained.record(row.identity);
+        try retained.recordState(state);
+        if (exits) |exit| {
+            for (exit.symbolic_pointees.items) |row| try retained.record(row.identity);
+            try retained.recordState(exit);
+        }
+
+        var kept: usize = 0;
+        for (state.symbolic_pointees.items) |row| {
+            if (!retained.identities.contains(row.identity)) continue;
+            state.symbolic_pointees.items[kept] = row;
+            kept += 1;
+        }
+        state.symbolic_pointees.shrinkRetainingCapacity(kept);
     }
 
     fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize, exits: ?*const FunctionState) !void {
@@ -11378,6 +11411,48 @@ const RetainedRoot = union(enum) {
     }
 };
 
+const RetainedSymbolic = struct {
+    namespace: *const facts.Tracker.RootNamespace,
+    identities: std.AutoHashMap(facts.SymbolicPointeeId, void),
+
+    fn record(self: *@This(), identity: facts.SymbolicPointeeId) !void {
+        var current = identity;
+        while (!(try self.identities.getOrPut(current)).found_existing) {
+            const index = self.namespace.projectionIndex(current) orelse return;
+            current = self.namespace.projected_storage.items[index].parent;
+        }
+    }
+
+    fn recordStorage(self: *@This(), storage: facts.StorageIdentity) !void {
+        if (storage == .symbolic) try self.record(storage.symbolic);
+    }
+
+    fn recordState(self: *@This(), state: *const SafetyChecker.FunctionState) !void {
+        for (state.symbolic_values.items) |value| try self.record(value.identity);
+        for (state.opaque_storages.items) |row| try self.recordStorage(row.storage);
+        for (state.reference_writes.items) |row| {
+            try self.recordStorage(row.target);
+            for (row.overwritten) |storage| try self.recordStorage(storage);
+        }
+        for (state.executions.items) |execution| {
+            if (!execution.pending) continue;
+            for (execution.loans) |loan| if (loan.symbolic) |identity| try self.record(identity);
+        }
+        _ = try visitLoopStateValues(state, self);
+    }
+
+    pub fn visit(self: *@This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+        for (value.symbolic_pointees) |identity| try self.record(identity);
+        for (value.domains) |domain| {
+            for (domain.symbolic_pointees) |identity| try self.record(identity);
+            for (domain.required_reads) |storage| try self.recordStorage(storage);
+        }
+        for (value.opaque_provenance) |provenance| try self.recordStorage(provenance.storage);
+        for (value.generation_outcomes) |outcome| try self.recordStorage(outcome.storage);
+        return false;
+    }
+};
+
 // Every retained value store participates in loop normalization, including
 // snapshots whose task has already completed or transferred its output.
 fn visitLoopStateValues(state: *const SafetyChecker.FunctionState, visitor: anytype) !bool {
@@ -11517,6 +11592,27 @@ fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, entry: *
 
 fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
     return visitLoopRoots(state, .{ .contains = root }, null);
+}
+
+test "loop projection reduction preserves retained domains and lazily restores default rows" {
+    const allocator = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    const parent = try entry.establishSymbolicInput(@enumFromInt(0), null);
+    var header = try entry.clone(allocator);
+    defer header.deinit();
+    const field = (try header.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    const domain = (try header.projectSymbolicDomain(parent, 0)).?;
+    try header.opaque_storages.append(.{ .storage = .{ .symbolic = domain.identity }, .hidden_dependencies = &.{} });
+    try checker.trimDefaultSymbolicProjections(&header, &entry, null);
+    try std.testing.expectEqual(null, header.symbolicPointee(field.identity));
+    try std.testing.expect(header.symbolicPointee(domain.identity) != null);
+    try std.testing.expectEqual(field, (try header.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?);
 }
 
 test "loop expiry summarizes retired resource observations and retains opaque custody" {
