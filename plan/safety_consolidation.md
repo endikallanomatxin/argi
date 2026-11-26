@@ -471,11 +471,12 @@ before enabling the representation for general function bodies.
 Reuse the entry-relative site and role keys when substituting summaries,
 so a summary does not publish solver-local IDs.
 
-The concrete loop driver still has a fallback after eight transitions
-for fresh identities. Its lexical propagation checks catch known
-counterexamples without certifying that the next edge is covered.
-Replace this fallback through the complete abstract representation
-above. Compare checker
+The concrete loop driver requires equality of consecutive headers.
+Exhausting its work budget rejects an unsettled header. The strict
+Debug loop run passed 33 fixtures and failed 14. The failures include
+valid array growth and iterator loops, and negative fixtures that stop
+before their intended diagnostic. Use these as precision requirements
+for the bounded abstraction above. Compare checker
 time, peak memory, abstract loop iterations, and retained facts on the same
 input while scaling the number of owners, loan receipts, and wrapper calls.
 Use the existing stale-alias, opaque-retention, and disjoint-loan controls
@@ -621,7 +622,7 @@ expected diagnostic. Keeping the twelfth-slot read and assigning only
 the live reference to the first slot compiles. A generation budget must
 never terminate propagation of a separate changing store fact.
 
-The generation cutoff now waits for the lexical slots' dependencies on
+The former generation cutoff waited for the lexical slots' dependencies on
 entry roots to stabilize. Fixture 420X requires the diagnostic at the
 twelfth-slot read. The check compares entry root identity and
 whether each witness remains valid in its own predecessor. The raw
@@ -632,7 +633,7 @@ symbolic stores or opaque domains still need a checked widening.
 
 Fixture 421X replaces the old owner on each iteration before taking
 its address. Its relevant observation is born inside the loop. The
-cutoff now also checks concrete reference targets and sets of possible
+cutoff also checked concrete reference targets and sets of possible
 mutation destinations in lexical slots. These identities stay comparable
 as generations change. The fixture requires rejection at the final
 dereference. A change of observation through the same destination still
