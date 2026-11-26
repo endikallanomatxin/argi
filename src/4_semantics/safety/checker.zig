@@ -11814,9 +11814,11 @@ fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const Saf
         const match = findOpaqueStorageEntry(right.opaque_storages.items, opaque_storage.storage, index) orelse return false;
         const other = right.opaque_storages.items[match];
         if (opaque_storage.outcome_guard != other.outcome_guard) return false;
-        if (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
-        for (opaque_storage.hidden_dependencies) |dependency|
-            if (!containsRoot(other.hidden_dependencies, dependency)) return false;
+        if (relation == .equal and opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
+        // Hidden dependencies are may-obligations. Keep the domain,
+        // owner associations and its conditional emptying proof exact.
+        for (other.hidden_dependencies) |dependency|
+            if (!containsRoot(opaque_storage.hidden_dependencies, dependency)) return false;
         if (opaque_storage.owner_roots.len != other.owner_roots.len) return false;
         for (opaque_storage.owner_roots) |root| if (!containsRoot(other.owner_roots, root)) return false;
     }
@@ -11859,6 +11861,13 @@ test "loop state coverage permits weak writes and still compares opaque obligati
     try std.testing.expect(compareLoopStates(&header, &successor, .covers));
     try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
     try successor.opaque_storages.append(.{ .storage = target, .hidden_dependencies = &.{} });
+    try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
+    try header.opaque_storages.append(.{ .storage = target, .hidden_dependencies = &.{@enumFromInt(0)} });
+    try std.testing.expect(compareLoopStates(&header, &successor, .covers));
+    // Use matching store facts to isolate the reverse domain comparison.
+    successor.reference_writes.items[0].must_write = false;
+    try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    header.opaque_storages.items[0].outcome_guard = 1;
     try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
 }
 

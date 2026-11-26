@@ -834,10 +834,10 @@ available.
 
 Choice refinements are definite evidence. A covering header may omit
 an incoming refinement, but every refinement it claims must also hold
-in the incoming state. Opaque rows still require exact comparison:
-hidden dependencies also participate in transferred-domain lookup.
-Before widening those rows by set inclusion, decouple that lookup from
-the may-dependency set so extra obligations cannot select a destination.
+in the incoming state. Opaque rows with the same domain identity,
+owner associations and outcome guard compare hidden dependencies by
+set inclusion. Transferred-domain lookup uses those dependencies to
+collect possible writes without selecting a single destination.
 
 Before replacing the current driver, test the abstraction with a fresh
 generation observed before replacement, two simultaneously live owners
