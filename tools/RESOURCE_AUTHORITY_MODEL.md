@@ -353,6 +353,24 @@ Argi destructors. Thread affinity, synchronized/delegated cleanup, partial failu
 recursive owners, opaque storage, and recovery after worker failure remain open.
 The experiment does not demonstrate transfer of String in the compiler.
 
+### Backing observations after a join
+
+The backing observation experiment checks a separate lifetime witness. On
+each predecessor, the observed generation must be live and match the selected
+owner. After proving that relationship, capture each possible generation and
+its latest retirement mark from the joined state. A subsequent retirement of
+any candidate invalidates the witness while preserving every physical target
+for overlap checks. Address reuse selects a different generation and does not
+validate observations of the retired generation.
+
+A maximum merge of retirement marks requires events allocated across the
+whole analysis, independently of branch snapshots. The experiment provides
+a counterexample for branch-local counters: a later retirement repeats a mark
+already seen on the other branch, so the maximum stays equal to the captured
+mark. This experiment covers one join and one subsequent retirement per branch.
+It leaves loop convergence, guarded summary transport and integration with
+cleanup and execution obligations to the compiler implementation.
+
 ### Combined transition exploration and counterexample
 
 The experiment also combines loans, completion, protection, acquisitions, owner

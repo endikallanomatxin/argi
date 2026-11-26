@@ -1468,6 +1468,62 @@ def joined_owner_experiments():
     assert admitted == 1
 
 
+def backing_observation_experiments():
+    """Compare evidence captured after a join to the concrete branch histories."""
+    # Each world keeps exactly one backing. The other backing has been
+    # retired, or was never present. Marks identify retirement events, not
+    # allocations or access grants.
+    worlds = (
+        (0, frozenset((0,)), (0, 0)),
+        (1, frozenset((1,)), (1, 0)),
+    )
+
+    def marks_at_join(predecessors):
+        return tuple(map(max, zip(*(marks for _, _, marks in predecessors))))
+
+    def capture(predecessors, targets):
+        if not all(target == owner and target in live
+                   for (owner, live, _), target in zip(predecessors, targets, strict=True)):
+            raise Denied()
+        marks = marks_at_join(predecessors)
+        return tuple((target, marks[target]) for target in sorted(set(targets)))
+
+    def still_valid(observation, predecessors):
+        marks = marks_at_join(predecessors)
+        return all(marks[target] == captured for target, captured in observation)
+
+    denied(lambda: capture(worlds, (0, 0)))  # Historical observation.
+    denied(lambda: capture(worlds, (1, 0)))  # Crossed owner/target pairing.
+    current = capture(worlds, (0, 1))
+    assert current == ((0, 1), (1, 0))
+    assert still_valid(current, worlds)
+
+    # A later branch may retire its selected backing. Take the union of
+    # possible retirements even if the other branch does nothing.
+    for retirements in product((False, True), repeat=len(worlds)):
+        successors = []
+        for event, ((owner, live, marks), retire) in enumerate(zip(worlds, retirements), start=2):
+            if retire:
+                live = live - {owner}
+                marks = tuple(event if index == owner else mark for index, mark in enumerate(marks))
+            successors.append((owner, live, marks))
+        assert still_valid(current, successors) == all(owner in live for owner, live, _ in successors)
+
+    # Branch-local counters can repeat a mark already seen on a sibling
+    # path. A max join then hides a real later retirement.
+    repeated_mark = ((0, frozenset(), (1, 0)), worlds[1])
+    assert not all(owner in live for owner, live, _ in repeated_mark)
+    assert still_valid(current, repeated_mark)
+
+    # Reusing the same physical address does not change an observation of
+    # the retired generation. The witness remains invalid after a new owner
+    # is established; a new capture uses the new generation's identity.
+    reused = ((2, frozenset((2,)), (2, 0, 0)), (1, worlds[1][1], (1, 0, 0)))
+    assert not still_valid(current, reused)
+    denied(lambda: capture(reused, (0, 1)))
+    assert still_valid(capture(reused, (2, 1)), reused)
+
+
 def explore_interactions(depth=4):
     """Combine transitions under explicit allocation/identity bounds.
 
@@ -1534,6 +1590,7 @@ if __name__ == "__main__":
     adversarial_traces()
     owner_experiments()
     joined_owner_experiments()
+    backing_observation_experiments()
     substitution_experiments()
     protected_experiments()
     protected_loans_checked = protected_lending_experiments()
@@ -1556,6 +1613,7 @@ if __name__ == "__main__":
     print("Opaque result recipes: input substitution, slot/capture separation and snapshot contrasts passed")
     print("Ownership/latent cleanup adversarial cases passed")
     print("Joined ownership: checked backing per alternative, pending loans and cleanup custody")
+    print("Backing observations: checked conditional retirement and exposed branch-local mark reuse")
     print("Receipt/region substitution adversarial cases passed")
     print("Protected-access adversarial traces passed (not included in the exhaustive loan exploration)")
     print(f"Acquisition-derived lending: {protected_loans_checked} region/mode combinations and nested/reader contrasts passed")
