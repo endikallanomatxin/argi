@@ -9912,14 +9912,9 @@ pub const SafetyChecker = struct {
                 const a = left_state.?.tracker.roots.items;
                 const b = right_state.?.tracker.roots.items;
                 const i = @intFromEnum(root);
-                const a_live = i < a.len and a[i].state == .alive;
-                const b_live = i < b.len and b[i].state == .alive;
-                if (a_live == b_live) continue;
-                const owner = if (a_live) left else right;
-                const other = if (a_live) right else left;
-                const tracker = if (a_live) &left_state.?.tracker else &right_state.?.tracker;
-                if (!containsRoot(owner.owned_roots, root) or !validObservationsOfRoot(owner, root, tracker) or
-                    valueDependsOnRoot(other, root) or containsRoot(other.owned_roots, root)) continue;
+                if (!ownerAlternativeCoversRoot(left, root, &left_state.?.tracker) or
+                    !ownerAlternativeCoversRoot(right, root, &right_state.?.tracker)) continue;
+                if (i < a.len and a[i].state == .alive and i < b.len and b[i].state == .alive) continue;
                 const mark = @max(if (i < a.len) a[i].retirement_mark else 1, if (i < b.len) b[i].retirement_mark else 1);
                 if (updated == null) updated = try self.allocator.dupe(facts.ValidityDependency, result.dependencies);
                 updated.?[index].retirement_mark = mark;
@@ -10993,6 +10988,18 @@ fn loopRootPhiForStorage(context: *const SafetyChecker.LoopJoinContext, storage:
 fn loopRootPhiStorage(context: *const SafetyChecker.LoopJoinContext, root: facts.ValidityRootId) ?facts.Place {
     for (context.roots.items) |entry| if (entry.root == root) return entry.storage;
     return null;
+}
+
+fn ownerAlternativeCoversRoot(value: facts.ValueFacts, root: facts.ValidityRootId, tracker: *const facts.Tracker) bool {
+    if (!containsRoot(value.owned_roots, root)) return !valueDependsOnRoot(value, root);
+    if (@intFromEnum(root) >= tracker.roots.items.len) return false;
+    if (!tracker.isAlive(root)) {
+        // The prior join must have certified this alternative backing.
+        for (value.dependencies) |dependency| {
+            if (dependency.root == root and tracker.dependencyIsAlive(dependency)) break;
+        } else return false;
+    }
+    return validObservationsOfRoot(value, root, tracker);
 }
 
 fn validObservationsOfRoot(value: facts.ValueFacts, root: facts.ValidityRootId, tracker: *const facts.Tracker) bool {

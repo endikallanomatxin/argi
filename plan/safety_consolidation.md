@@ -167,9 +167,11 @@ other value, a dependency on the current owner records the joined mark. The
 input-owned-roots summary recipe copies that dependency into a new observation.
 Ordinary aliases retain their original dependencies. Collection fixtures 178X
 and 179 exercise this contrast. The mechanism also recovers the geometric
-growth and priority queue fixtures. Word count still loses validity at its
-loop header. Repeated joins and generation substitution need to preserve
-valid witnesses without changing what their physical roots denote.
+growth and priority queue fixtures. At subsequent joins, an incoming owner
+can use its still-valid witness in place of unconditional root liveness.
+Every incoming value must either prove its owned observation or omit that
+root entirely. This lets word count retain its current backing in the loop
+without changing what any physical root denotes.
 
 The retirement mark certifies access through an observation. It is not a
 precondition for carrying conditional cleanup custody in the owning value.
