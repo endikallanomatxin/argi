@@ -6705,8 +6705,12 @@ pub const SafetyChecker = struct {
         if (parent.storage_capabilities.len != 0) result.storage_capability_incomplete = true;
         result.concurrent_receiver = false;
         result.virtual_no_access = &.{};
+        // Outcome proofs are tied to the selected value's discriminant.
+        result.generation_outcomes = &.{};
         result.completed_executions = &.{};
         result.task_output_execution = null;
+        result.task_output_claim = null;
+        result.choice_selectors = &.{};
         var receipts = std.array_list.Managed(facts.ExecutionId).init(self.allocator);
         defer receipts.deinit();
         try collectPossibleExecutionReceipts(parent, &receipts);
@@ -17070,7 +17074,7 @@ test "virtual evidence follows only the selected receiver snapshot" {
     try std.testing.expect(!result.concurrent_receiver);
 }
 
-test "an uncovered projection cannot reuse a sibling choice discriminant" {
+test "an uncovered projection cannot reuse choice or outcome evidence" {
     const a = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     var checker = SafetyChecker.init(a, undefined, &graph);
@@ -17080,6 +17084,9 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
         .known_choice_variant = 1,
         .virtual_no_access = &.{1},
         .task_output_execution = @enumFromInt(1),
+        .task_output_claim = @enumFromInt(1),
+        .generation_outcomes = &.{.{ .storage = .{ .place = .{ .root = @enumFromInt(0) } }, .generation = @enumFromInt(0), .guard = 1, .invalidates = false }},
+        .choice_selectors = &.{.{ .call = 1, .selector = .{ .subject = .output, .index = 0, .variant_index = 1 } }},
         .completed_executions = &.{@enumFromInt(1)},
         .concurrent_receiver = true,
         .fields = &.{.{ .index = 0, .value = &child }},
@@ -17093,6 +17100,9 @@ test "an uncovered projection cannot reuse a sibling choice discriminant" {
     try std.testing.expectEqual(@as(usize, 1), exact.virtual_no_access.len);
     try std.testing.expect(!missing.concurrent_receiver);
     try std.testing.expect(missing.task_output_execution == null);
+    try std.testing.expect(missing.task_output_claim == null);
+    try std.testing.expectEqual(@as(usize, 0), missing.generation_outcomes.len);
+    try std.testing.expectEqual(@as(usize, 0), missing.choice_selectors.len);
     try std.testing.expectEqual(@as(usize, 0), missing.completed_executions.len);
     try std.testing.expectEqual(@as(usize, 0), missing.virtual_no_access.len);
     const nested = try checker.projectValueFacts(parent, &.{ .{ .field = 1 }, .{ .field = 0 } });
