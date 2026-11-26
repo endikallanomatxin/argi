@@ -125,6 +125,23 @@ omitting growth both compile and run. The join therefore loses the proof
 that the current backing is live even when no old view is retained. The
 unconditional-growth stale-view control remains independently necessary.
 
+The [conditional owner replacement](examples/conditional_owned_backing/main.rg)
+reproducer narrows this failure to a single ordinary branch. Each predecessor
+leaves an initialized array with one backing. The new iterator after the join
+is rejected. Adding `else { return }` leaves only the replacement predecessor
+and the same iterator compiles and runs. The existing collection fixture 29X
+still rejects an element reference retained across unconditional growth.
+
+Prove the relationship between a current observation and its backing on each
+incoming path before joining the evidence. Merged owner-root membership alone
+is insufficient, since a joined value can retain roots from multiple paths
+or from historical observations. Resulting observations must retain every
+possible retirement and overlap obligation. Apply the same rule at loop
+headers, with a bounded representation for renewed generations. Use the
+single-branch reproducer and the stale-view control before evaluating the
+larger word count, CSV and URI consumers. Investigate the geometry kernel
+diagnostics independently until their backing relationship has been traced.
+
 ### Lending a reference selected at a join
 
 A helper selecting between two ordinary mutable references to distinct
