@@ -10543,9 +10543,7 @@ pub const SafetyChecker = struct {
             // Recycling that generation would make a fresh parent find old
             // child state, including partial initialization and retired roots.
             if (joined.tracker.namespace) |namespace| {
-                for (namespace.projected_storage.items) |projection| {
-                    if (projection.parent_generation == canonical) continue :pointees;
-                }
+                if (namespace.hasProjectionFrom(canonical)) continue :pointees;
             }
             try joined.tracker.materialize(canonical);
             var replacement = joined.tracker.roots.items[@intFromEnum(current)];

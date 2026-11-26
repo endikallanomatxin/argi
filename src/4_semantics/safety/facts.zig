@@ -475,6 +475,7 @@ pub const Tracker = struct {
         producers: std.AutoArrayHashMapUnmanaged(Producer, void) = .empty,
         projected_storage: std.ArrayList(ProjectedStorage) = .empty,
         projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
+        projection_parents: std.AutoHashMapUnmanaged(ValidityRootId, void) = .empty,
         embedded_slots: std.AutoHashMapUnmanaged(EmbeddedSlot, ValidityRootId) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
@@ -498,15 +499,21 @@ pub const Tracker = struct {
             return self.embedded_slots.get(.{ .base = self.embeddedBase(observation.parent), .selector = observation.selector });
         }
 
+        pub fn hasProjectionFrom(self: *const RootNamespace, generation: ValidityRootId) bool {
+            return self.projection_parents.contains(generation);
+        }
+
         pub fn reserveProjection(self: *RootNamespace, allocator: std.mem.Allocator, selector: SymbolicStorageSelector) !void {
             try self.projected_storage.ensureUnusedCapacity(allocator, 1);
             try self.projection_observations.ensureUnusedCapacity(allocator, 1);
+            try self.projection_parents.ensureUnusedCapacity(allocator, 1);
             if (selector.embedded()) try self.embedded_slots.ensureUnusedCapacity(allocator, 1);
         }
 
         pub fn publishProjection(self: *RootNamespace, row: ProjectedStorage) void {
             const key: ProjectionObservation = .{ .parent = row.parent, .generation = row.parent_generation, .selector = row.selector };
             self.projection_observations.putAssumeCapacityNoClobber(key, self.projected_storage.items.len);
+            self.projection_parents.putAssumeCapacity(row.parent_generation, {});
             if (row.selector.embedded()) {
                 const slot: EmbeddedSlot = .{ .base = self.embeddedBase(row.parent), .selector = row.selector };
                 const entry = self.embedded_slots.getOrPutAssumeCapacity(slot);
@@ -546,6 +553,8 @@ pub const Tracker = struct {
             errdefer result.projected_storage.deinit(allocator);
             result.projection_observations = try self.projection_observations.clone(allocator);
             errdefer result.projection_observations.deinit(allocator);
+            result.projection_parents = try self.projection_parents.clone(allocator);
+            errdefer result.projection_parents.deinit(allocator);
             result.embedded_slots = try self.embedded_slots.clone(allocator);
             return result;
         }
@@ -555,6 +564,7 @@ pub const Tracker = struct {
             self.initial_storage.deinit(allocator);
             self.projected_storage.deinit(allocator);
             self.projection_observations.deinit(allocator);
+            self.projection_parents.deinit(allocator);
             self.embedded_slots.deinit(allocator);
         }
     };
