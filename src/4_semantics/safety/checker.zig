@@ -9979,10 +9979,17 @@ pub const SafetyChecker = struct {
         try joined.joinSymbolicPointees(left, right);
 
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
+        try joined.tracker.roots.ensureTotalCapacity(root_count);
         for (0..root_count) |index| {
             const id: facts.ValidityRootId = @enumFromInt(index);
             const left_present = index < left.tracker.roots.items.len and left.tracker.roots.items[index].present;
             const right_present = index < right.tracker.roots.items.len and right.tracker.roots.items[index].present;
+            if (!left_present and !right_present) {
+                // The shared namespace can contain observations from paths
+                // outside this join. Neither predecessor materialized them.
+                joined.tracker.roots.appendAssumeCapacity(.{ .id = id, .present = false, .state = .dead });
+                continue;
+            }
             const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (left_present)
                 left.tracker.roots.items[index].state
             else if (self.storageGenerationWasOnlyMaterializedIn(id, right, left))
@@ -9997,9 +10004,8 @@ pub const SafetyChecker = struct {
                 .dead;
             const left_owned = left_present and left.tracker.roots.items[index].owned_resource;
             const right_owned = right_present and right.tracker.roots.items[index].owned_resource;
-            try joined.tracker.roots.append(.{
+            joined.tracker.roots.appendAssumeCapacity(.{
                 .id = id,
-                .present = left_present or right_present,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
                 .retirement_mark = @max(
@@ -12225,6 +12231,49 @@ test "joined dependency marks detect retirement on a single later branch" {
     try checker.joinState(&later, &joined, &later);
     try std.testing.expect(!later.tracker.dependencyIsAlive(observation));
     try std.testing.expect(!statesEqual(&joined, &later));
+}
+
+test "safety joins keep unmaterialized namespace slots absent" {
+    const allocator = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    var right = SafetyChecker.FunctionState.init(allocator);
+    defer right.deinit();
+    left.tracker.namespace = &namespace;
+    right.tracker.namespace = &namespace;
+
+    const left_root = try left.tracker.establish(.fresh);
+    var unrelated = SafetyChecker.FunctionState.init(allocator);
+    defer unrelated.deinit();
+    unrelated.tracker.namespace = &namespace;
+    const gap = try unrelated.tracker.establish(.fresh);
+    const right_root = try right.tracker.establish(.fresh);
+
+    const parent: facts.SymbolicPointeeId = @enumFromInt(0);
+    const child: facts.SymbolicPointeeId = @enumFromInt(1);
+    try left.symbolic_pointees.append(.{ .identity = parent, .initializedness = .initialized, .generation = left_root });
+    try namespace.projected_storage.append(allocator, .{
+        .parent = parent,
+        .parent_generation = left_root,
+        .selector = .{ .projection = .{ .field = 0 } },
+        .identity = child,
+        .backing = gap,
+        .generation = gap,
+    });
+    try std.testing.expect(left.initialProjectedPointee(child) != null);
+
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    try std.testing.expectEqual(.maybe_alive, joined.tracker.roots.items[@intFromEnum(left_root)].state);
+    try std.testing.expectEqual(.maybe_alive, joined.tracker.roots.items[@intFromEnum(right_root)].state);
+    const absent = joined.tracker.roots.items[@intFromEnum(gap)];
+    try std.testing.expect(!absent.present);
+    try std.testing.expectEqual(.dead, absent.state);
 }
 
 test "joined projections observe a fresh lexical generation after replacement" {
