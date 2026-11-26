@@ -870,9 +870,9 @@ pub fn remapValueRoots(allocator: std.mem.Allocator, value: ValueFacts, mapping:
     return (try replaceValueRootsIfChanged(allocator, value, .{ .sources = &.{}, .destinations = .{ .map = mapping } })) orelse value;
 }
 
-/// Summarize dependencies whose mapped source and destination are both
-/// permanently retired. Retirement marks cannot establish a witness here.
-pub fn summarizeExpiredDependencies(allocator: std.mem.Allocator, value: ValueFacts, mapping: *const std.AutoHashMap(ValidityRootId, ValidityRootId)) !ValueFacts {
+/// Summarize dependencies that lack a live witness. The caller proves
+/// the destination cannot revalidate any mapped observation.
+pub fn summarizeHistoricalDependencies(allocator: std.mem.Allocator, value: ValueFacts, mapping: *const std.AutoHashMap(ValidityRootId, ValidityRootId)) !ValueFacts {
     return (try replaceValueRootsIfChanged(allocator, value, .{
         .sources = &.{},
         .destinations = .{ .map = mapping },

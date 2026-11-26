@@ -10294,7 +10294,7 @@ pub const SafetyChecker = struct {
             join_context.exits = if (exits) |*exit_state| exit_state else null;
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
-            try self.summarizeExpiredObservations(&join_context, &next);
+            try self.summarizeHistoricalObservations(&join_context, &next);
             try self.trimDefaultSymbolicProjections(&next, &entry, join_context.exits);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
@@ -10592,10 +10592,10 @@ pub const SafetyChecker = struct {
         }
     }
 
-    /// Expired dependencies created inside the loop can share an invalid
-    /// observation when the roots name no retained storage or obligation.
+    /// Unusable observations created inside the loop can share a history
+    /// root when they name no retained storage or obligation.
     /// Keep lexical escape evidence and owned-resource identity distinct.
-    fn summarizeExpiredObservations(self: *SafetyChecker, context: *LoopJoinContext, state: *FunctionState) !void {
+    fn summarizeHistoricalObservations(self: *SafetyChecker, context: *LoopJoinContext, state: *FunctionState) !void {
         const namespace = state.tracker.namespace orelse return;
         var mapping: std.AutoHashMap(facts.ValidityRootId, facts.ValidityRootId) = .init(self.state_allocator);
         defer mapping.deinit();
@@ -10603,7 +10603,9 @@ pub const SafetyChecker = struct {
         roots: for (@min(context.first_loop_root, root_count)..root_count) |index| {
             const root = state.tracker.roots.items[index];
             const id = root.id;
-            if (!root.present or root.state != .dead or root.outcome_guard != 0) continue;
+            if (!root.present or root.outcome_guard != 0) continue;
+            const possibly_live = root.state == .maybe_alive and root.owned_resource;
+            if (root.state != .dead and !possibly_live) continue;
             const lexical = containsRoot(state.lexical_storage_generations.items, id);
             if (lexical == root.owned_resource) continue;
             const history = if (lexical) &context.expired_lexical_observation else &context.expired_resource_observation;
@@ -10620,7 +10622,7 @@ pub const SafetyChecker = struct {
             for (context.roots.items) |phi| if (phi.root == id) continue :roots;
             for (context.symbolic.items) |phi| if (phi.root == id) continue :roots;
             for (context.lexical_observations.items) |phi| if (phi.root == id) continue :roots;
-            if (try rootHasExternalLoopObligation(state, id) or try loopObservationHasProtectedUses(state, id, .observation_only)) continue;
+            if (try rootHasExternalLoopObligation(state, id) or try loopObservationHasProtectedUses(state, id, if (possibly_live) .unmarked_observation_only else .observation_only)) continue;
 
             // With no remaining observer, remove the retired root without
             // materializing a history partition for its producer.
@@ -10637,10 +10639,13 @@ pub const SafetyChecker = struct {
                     history.* = fresh;
                 break :blk fresh;
             };
+            const existing_live = existing != null and @intFromEnum(expired) < state.tracker.roots.items.len and
+                state.tracker.roots.items[@intFromEnum(expired)].present and
+                state.tracker.roots.items[@intFromEnum(expired)].state == .maybe_alive;
             try state.tracker.materialize(expired);
             state.tracker.roots.items[@intFromEnum(expired)] = .{
                 .id = expired,
-                .state = .dead,
+                .state = if (possibly_live or existing_live) .maybe_alive else .dead,
                 .owned_resource = root.owned_resource,
                 .producer = root.producer,
                 .summarized_instances = true,
@@ -10649,9 +10654,9 @@ pub const SafetyChecker = struct {
             try mapping.put(id, expired);
         }
         if (mapping.count() == 0) return;
-        for (state.places.items) |*place| place.value = try facts.summarizeExpiredDependencies(self.allocator, place.value, &mapping);
-        for (state.symbolic_values.items) |*stored| stored.value = try facts.summarizeExpiredDependencies(self.allocator, stored.value, &mapping);
-        for (state.reference_writes.items) |*stored| stored.value = try facts.summarizeExpiredDependencies(self.allocator, stored.value, &mapping);
+        for (state.places.items) |*place| place.value = try facts.summarizeHistoricalDependencies(self.allocator, place.value, &mapping);
+        for (state.symbolic_values.items) |*stored| stored.value = try facts.summarizeHistoricalDependencies(self.allocator, stored.value, &mapping);
+        for (state.reference_writes.items) |*stored| stored.value = try facts.summarizeHistoricalDependencies(self.allocator, stored.value, &mapping);
         var kept: usize = 0;
         for (state.lexical_storage_generations.items) |id| {
             if (mapping.contains(id)) continue;
@@ -11541,7 +11546,7 @@ fn visitDirectLoopObligations(state: *const SafetyChecker.FunctionState, retaine
 // Structural rebasing leaves conditional witnesses and opaque metadata
 // untouched. Expiry can fold the mark of a dead observation. Guarded
 // snapshots are outside both substitutions.
-const LoopRootSubstitution = enum { owner_rebase, observation_only };
+const LoopRootSubstitution = enum { owner_rebase, observation_only, unmarked_observation_only };
 
 fn loopObservationHasProtectedUses(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId, substitution: LoopRootSubstitution) !bool {
     const Visitor = struct {
@@ -11549,7 +11554,7 @@ fn loopObservationHasProtectedUses(state: *const SafetyChecker.FunctionState, ro
         substitution: LoopRootSubstitution,
 
         pub fn visit(self: @This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
-            if (self.substitution == .observation_only and (value.intrinsic_backing_owner == self.root or
+            if (self.substitution != .owner_rebase and (value.intrinsic_backing_owner == self.root or
                 value.owned_backing == self.root or containsRoot(value.owned_roots, self.root))) return true;
             if (self.substitution != .observation_only) for (value.dependencies) |dependency| {
                 if (dependency.root == self.root and dependency.retirement_mark != 0) return true;
@@ -11726,19 +11731,20 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     const opaque_owner = try state.tracker.establish(.fresh);
     for ([_]facts.ValidityRootId{ first, second, other, unobserved, opaque_owner }) |root| {
         state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
-        state.tracker.end(root);
+        if (root == second) state.tracker.markPossiblyRetired(root) else state.tracker.end(root);
     }
     const storage: facts.Place = .{ .root = @enumFromInt(0) };
     const retired_mark = state.tracker.roots.items[@intFromEnum(first)].retirement_mark;
     try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first, .retirement_mark = retired_mark }, .{ .root = second }, .{ .root = other } } });
     try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{}, .owner_roots = &.{opaque_owner} });
-    try checker.summarizeExpiredObservations(&context, &state);
+    try checker.summarizeHistoricalObservations(&context, &state);
     try std.testing.expectEqual(@as(usize, 3), namespace.producers.count());
     try std.testing.expectEqual(@as(usize, 2), context.expired_produced_resources.count());
     try std.testing.expect(!state.tracker.roots.items[@intFromEnum(unobserved)].present);
     const value = state.getPlace(storage).?.value;
     try std.testing.expectEqual(@as(usize, 2), value.dependencies.len);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(value));
+    try std.testing.expectEqual(.maybe_alive, state.tracker.roots.items[@intFromEnum(value.dependencies[0].root)].state);
     for (value.dependencies) |dependency| {
         try std.testing.expectEqual(@as(u32, 0), dependency.retirement_mark);
         try std.testing.expect(state.tracker.roots.items[@intFromEnum(dependency.root)].owned_resource);
