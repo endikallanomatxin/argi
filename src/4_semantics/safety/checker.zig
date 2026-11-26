@@ -143,6 +143,7 @@ pub const SafetyChecker = struct {
 
     const LoopJoinContext = struct {
         exits: ?*const FunctionState = null,
+        expired_lexical_observation: ?facts.ValidityRootId = null,
         lexical_observations: std.array_list.Managed(LoopRootPhi),
         roots: std.array_list.Managed(LoopRootPhi),
         symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
@@ -10215,6 +10216,7 @@ pub const SafetyChecker = struct {
             join_context.exits = if (exits) |*exit_state| exit_state else null;
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
+            try self.summarizeExpiredLexicalObservations(&join_context, &next, &entry);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
             try forgetUnobservedRetirementMarks(&next, &entry, join_context.exits);
@@ -10459,7 +10461,7 @@ pub const SafetyChecker = struct {
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
             if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
-            if (try loopObservationHasUnmappedUses(joined, current)) continue;
+            if (try loopObservationHasProtectedUses(joined, current, .owner_rebase)) continue;
             // Projection identities are interned by the parent's generation.
             // Recycling that generation would make a fresh parent find old
             // child state, including partial initialization and retired roots.
@@ -10507,6 +10509,55 @@ pub const SafetyChecker = struct {
             state.tracker.roots.items[@intFromEnum(root)] = .{ .id = root, .state = if (entry.needs_current_generation) .dead else .alive };
             entry.generation = root;
         }
+    }
+
+    /// Expired dependencies on loop-local storage carry only an invalid
+    /// observation. The value's target and access facts retain their own
+    /// identities. Keep roots that also name storage or another obligation.
+    fn summarizeExpiredLexicalObservations(self: *SafetyChecker, context: *LoopJoinContext, state: *FunctionState, entry: *const FunctionState) !void {
+        const namespace = state.tracker.namespace orelse return;
+        var mapping: std.AutoHashMap(facts.ValidityRootId, facts.ValidityRootId) = .init(self.state_allocator);
+        defer mapping.deinit();
+        roots: for (state.lexical_storage_generations.items) |id| {
+            const root = state.tracker.roots.items[@intFromEnum(id)];
+            if (!root.present or root.state != .dead or root.owned_resource or root.outcome_guard != 0) continue;
+            if (id == context.expired_lexical_observation or namespaceNamesRoot(namespace, id)) continue;
+            if (containsRoot(entry.lexical_storage_generations.items, id) or try rootRetainedAcrossLoop(entry, id)) continue;
+            if (context.exits) |exit| if (try rootRetainedAcrossLoop(exit, id)) continue;
+            for (state.storage_generations.items) |storage| if (storage.generation == id) continue :roots;
+            for (state.symbolic_pointees.items) |pointee| {
+                if (pointee.generation == id or pointee.backing == id) continue :roots;
+            }
+            for (context.roots.items) |phi| if (phi.root == id) continue :roots;
+            for (context.symbolic.items) |phi| if (phi.root == id) continue :roots;
+            for (context.lexical_observations.items) |phi| if (phi.root == id) continue :roots;
+            if (try rootHasExternalLoopObligation(state, id) or try loopObservationHasProtectedUses(state, id, .observation_only)) continue;
+
+            const expired = context.expired_lexical_observation orelse blk: {
+                const fresh = try state.tracker.establish(.fresh);
+                context.expired_lexical_observation = fresh;
+                break :blk fresh;
+            };
+            try mapping.put(id, expired);
+        }
+        if (mapping.count() == 0) return;
+        const expired = context.expired_lexical_observation.?;
+        try state.tracker.materialize(expired);
+        state.tracker.roots.items[@intFromEnum(expired)] = .{ .id = expired, .state = .dead, .retirement_mark = facts.Tracker.untracked_retirement };
+        for (state.places.items) |*place| place.value = try facts.remapValueRoots(self.allocator, place.value, &mapping);
+        for (state.symbolic_values.items) |*stored| stored.value = try facts.remapValueRoots(self.allocator, stored.value, &mapping);
+        for (state.reference_writes.items) |*stored| stored.value = try facts.remapValueRoots(self.allocator, stored.value, &mapping);
+        var kept: usize = 0;
+        for (state.lexical_storage_generations.items) |id| {
+            if (mapping.contains(id)) {
+                state.tracker.roots.items[@intFromEnum(id)] = .{ .id = id, .state = .dead, .present = false };
+                continue;
+            }
+            state.lexical_storage_generations.items[kept] = id;
+            kept += 1;
+        }
+        state.lexical_storage_generations.shrinkRetainingCapacity(kept);
+        try appendRootFact(&state.lexical_storage_generations, expired);
     }
 
     fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize, exits: ?*const FunctionState) !void {
@@ -11270,11 +11321,16 @@ fn visitDirectLoopObligations(state: *const SafetyChecker.FunctionState, retaine
 
 // Structural rebasing leaves conditional witnesses and opaque metadata
 // untouched. A guarded snapshot is also outside that substitution.
-fn loopObservationHasUnmappedUses(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
+const LoopRootSubstitution = enum { owner_rebase, observation_only };
+
+fn loopObservationHasProtectedUses(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId, substitution: LoopRootSubstitution) !bool {
     const Visitor = struct {
         root: facts.ValidityRootId,
+        substitution: LoopRootSubstitution,
 
         pub fn visit(self: @This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+            if (self.substitution == .observation_only and (value.intrinsic_backing_owner == self.root or
+                value.owned_backing == self.root or containsRoot(value.owned_roots, self.root))) return true;
             for (value.dependencies) |dependency|
                 if (dependency.root == self.root and dependency.retirement_mark != 0) return true;
             for (value.opaque_provenance) |provenance|
@@ -11288,7 +11344,7 @@ fn loopObservationHasUnmappedUses(state: *const SafetyChecker.FunctionState, roo
     };
     var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
     defer guards.deinit();
-    const visitor: Visitor = .{ .root = root };
+    const visitor: Visitor = .{ .root = root, .substitution = substitution };
     const retained: RetainedRoot = .{ .contains = root };
     inline for (.{ state.places.items, state.symbolic_values.items, state.reference_writes.items }) |entries| {
         for (entries) |entry| {
