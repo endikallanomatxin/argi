@@ -10043,6 +10043,17 @@ pub const SafetyChecker = struct {
             }
             if (!found) try joined.storage_generations.append(candidate);
         }
+        for (joined.storage_generations.items) |*entry| {
+            if (entry.needs_current_generation) continue;
+            const root = joined.tracker.roots.items[@intFromEnum(entry.generation)];
+            // A projection may have been observed on only one predecessor.
+            // An ended observation does not identify the new value at that
+            // place, even if neither branch installed a replacement entry.
+            if (root.state == .maybe_alive and root.outcome_guard == 0 and
+                left.initializednessAtPlace(entry.storage) == .initialized and
+                right.initializednessAtPlace(entry.storage) == .initialized)
+                entry.needs_current_generation = true;
+        }
         for (left.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
         for (right.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
 
@@ -11953,6 +11964,41 @@ test "loop backing owner projection requires all incoming roots" {
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(owner));
     state.getPlace(nested).?.value.owned_roots = &roots;
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(nested));
+}
+
+test "joined projections observe a fresh lexical generation after replacement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var checker = SafetyChecker.init(a, undefined, &graph);
+    defer checker.deinit();
+    var entry = SafetyChecker.FunctionState.init(a);
+    defer entry.deinit();
+
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const place: facts.Place = .{ .root = binding, .projections = &.{.{ .field = 0 }} };
+    try entry.setPlace(.{ .root = binding }, .initialized, .{});
+    var replaced = try entry.clone(a);
+    defer replaced.deinit();
+    const historical = try replaced.storageGeneration(place);
+    replaced.tracker.end(historical);
+
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    for ([_][2]*const SafetyChecker.FunctionState{ .{ &entry, &replaced }, .{ &replaced, &entry } }) |branches| {
+        try checker.joinState(&joined, branches[0], branches[1]);
+        const current = try joined.storageGeneration(place);
+        try std.testing.expect(current != historical);
+        try std.testing.expect(joined.tracker.isAlive(current));
+        try std.testing.expect(!joined.tracker.isAlive(historical));
+    }
+
+    try replaced.setPlace(.{ .root = binding }, .moved, .{});
+    try checker.joinState(&joined, &entry, &replaced);
+    try std.testing.expectEqual(historical, try joined.storageGeneration(place));
+    try std.testing.expect(!joined.tracker.isAlive(historical));
 }
 
 test "loop root trimming retains generations named by pending receipts" {

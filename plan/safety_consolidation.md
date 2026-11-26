@@ -132,6 +132,14 @@ is rejected. Adding `else { return }` leaves only the replacement predecessor
 and the same iterator compiles and runs. The existing collection fixture 29X
 still rejects an element reference retained across unconditional growth.
 
+The failed iterator originally carried three maybe-live generations in the
+reduced program. One belonged to a lexical field observed on only one
+predecessor. The slot was initialized on both paths, but the join had retained
+the older generation entry without marking it for renewal. Renewing the
+lexical observation on demand removes that generation from the failure. The
+two remaining generations identify different heap backings and still need a
+proof relating each backing to the owner on its incoming path.
+
 Prove the relationship between a current observation and its backing on each
 incoming path before joining the evidence. Merged owner-root membership alone
 is insufficient, since a joined value can retain roots from multiple paths
