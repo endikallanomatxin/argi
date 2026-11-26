@@ -2437,8 +2437,11 @@ pub const Infer = struct {
             };
             try joined.addresses.put(entry.key_ptr.*, try targets.toOwnedSlice());
         }
-        for (left.calls.keys()) |call| try joined.calls.put(self.allocator, call, {});
-        for (right.calls.keys()) |call| try joined.calls.put(self.allocator, call, {});
+        // A join can skip an evaluation only when every incoming path
+        // already evaluated it. A one-sided cache entry is not proof.
+        for (left.calls.keys()) |call| {
+            if (right.calls.contains(call)) try joined.calls.put(self.allocator, call, {});
+        }
         joined.reachable = left.reachable or right.reachable;
         output.deinit();
         output.* = joined;
@@ -10543,6 +10546,25 @@ fn capabilityFlowCloneFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, 1), result.bindings.count());
     try std.testing.expectEqual(@as(usize, 1), result.calls.count());
     try std.testing.expectEqual(@as(usize, 1), result.addresses.count());
+}
+
+test "capability branch joins only cache calls evaluated on both paths" {
+    const a = std.testing.allocator;
+    var infer: Infer = undefined;
+    infer.allocator = a;
+    var left = Infer.CapabilityFlow.init(a);
+    defer left.deinit();
+    var right = Infer.CapabilityFlow.init(a);
+    defer right.deinit();
+    var joined = Infer.CapabilityFlow.init(a);
+    defer joined.deinit();
+    const common: graph_mod.GlobalNodeId = @enumFromInt(0);
+    const conditional: graph_mod.GlobalNodeId = @enumFromInt(1);
+    try left.calls.put(a, common, {});
+    try right.calls.put(a, common, {});
+    try left.calls.put(a, conditional, {});
+    try infer.join_capability_flows(&joined, &left, &right);
+    try std.testing.expectEqualSlices(graph_mod.GlobalNodeId, &.{common}, joined.calls.keys());
 }
 
 test "capability flow cloning preserves initialized maps on allocation failure" {
