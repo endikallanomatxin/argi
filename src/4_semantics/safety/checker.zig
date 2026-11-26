@@ -10682,7 +10682,7 @@ pub const SafetyChecker = struct {
         // unless it belongs to a retired parent. Retained descendants and
         // observations still keep their rows for path and obligation lookup.
         for (state.symbolic_pointees.items) |row| {
-            if (try isDetachedLoopProjection(state, namespace, row)) continue;
+            if (try isDetachedLoopProjection(state, entry, exits, namespace, row)) continue;
             const seed = state.initialProjectedPointee(row.identity);
             if (seed == null or row.input_path != null or row.initializedness != seed.?.initializedness or
                 row.ty != seed.?.ty or row.generation != seed.?.generation or row.backing != seed.?.backing)
@@ -10706,7 +10706,7 @@ pub const SafetyChecker = struct {
         state.symbolic_pointees.shrinkRetainingCapacity(kept);
     }
 
-    fn isDetachedLoopProjection(state: *const FunctionState, namespace: *const facts.Tracker.RootNamespace, row: state_mod.SymbolicPointeeState) !bool {
+    fn isDetachedLoopProjection(state: *const FunctionState, entry: *const FunctionState, exits: ?*const FunctionState, namespace: *const facts.Tracker.RootNamespace, row: state_mod.SymbolicPointeeState) !bool {
         const index = namespace.projectionIndex(row.identity) orelse return false;
         const projection = namespace.projected_storage.items[index];
         const parent = state.symbolicPointee(projection.parent) orelse return false;
@@ -10720,6 +10720,8 @@ pub const SafetyChecker = struct {
             const root = candidate orelse continue;
             const retained: RetainedRoot = .{ .contains = root };
             if (visitDirectLoopObligations(state, retained) or try visitLoopStateValues(state, retained)) return false;
+            if (try rootRetainedAcrossLoop(entry, root)) return false;
+            if (exits) |exit| if (try rootRetainedAcrossLoop(exit, root)) return false;
         }
         return true;
     }
@@ -11724,6 +11726,12 @@ test "loop projection reduction preserves retained domains and lazily restores d
     header.tracker.end(parent.generation.?);
     header.symbolic_pointees.items[0].generation = try header.tracker.establish(.fresh);
     header.setSymbolicInitializedness(field.identity, .deinitialized);
+    var exit = try entry.clone(allocator);
+    defer exit.deinit();
+    try exit.tracker.materialize(field.generation);
+    try exit.setPlace(.{ .root = @enumFromInt(0) }, .initialized, .{ .dependencies = &.{.{ .root = field.generation }} });
+    try checker.trimDefaultSymbolicProjections(&header, &entry, &exit);
+    try std.testing.expect(header.symbolicPointee(field.identity) != null);
     try checker.trimDefaultSymbolicProjections(&header, &entry, null);
     try std.testing.expectEqual(null, header.symbolicPointee(field.identity));
     try std.testing.expect(header.symbolicPointee(domain.identity) != null);
