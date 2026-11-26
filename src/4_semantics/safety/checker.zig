@@ -4099,8 +4099,12 @@ pub const SafetyChecker = struct {
             return;
         }
         try self.closeOpaqueOwnedRoots(source, owner, state, null);
-        if (try self.inferOpaqueDomain(state, values[0])) |storage| {
-            try self.markOpaqueArgumentAccess(argument_ids, 0, state, storage);
+        var domains = std.array_list.Managed(StorageIdentity).init(self.state_allocator);
+        defer domains.deinit();
+        try self.collectOpaqueWriteDomains(state, values[0], &domains);
+        if (domains.items.len == 1)
+            try self.markOpaqueArgumentAccess(argument_ids, 0, state, domains.items[0]);
+        for (domains.items) |storage| {
             try self.hideOpaqueDependencies(state, storage, owner);
         }
     }
@@ -4210,24 +4214,22 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn inferOpaqueDomain(
+    fn collectOpaqueWriteDomains(
         self: *SafetyChecker,
         state: *FunctionState,
         pointer: facts.ValueFacts,
-    ) !?StorageIdentity {
-        var storages = std.array_list.Managed(StorageIdentity).init(self.allocator);
-        defer storages.deinit();
-        try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
-        if (storages.items.len != 0) return storages.items[0];
-        var index = state.places.items.len;
-        while (index > 0) {
-            index -= 1;
-            const candidate = state.places.items[index];
+        storages: *std.array_list.Managed(StorageIdentity),
+    ) !void {
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, storages);
+        if (storages.items.len != 0) return;
+        for (state.places.items) |candidate| {
             if (candidate.initializedness != .initialized) continue;
-            for (pointer.dependencies) |dependency|
-                if (valueContainsOwnedRoot(candidate.value, dependency.root)) return .{ .place = candidate.storage };
+            for (pointer.dependencies) |dependency| {
+                if (!valueContainsOwnedRoot(candidate.value, dependency.root)) continue;
+                try appendStorageIdentity(storages, .{ .place = candidate.storage });
+                break;
+            }
         }
-        return null;
     }
 
     fn rejectOpaqueRelocation(
@@ -7639,13 +7641,8 @@ pub const SafetyChecker = struct {
         // access to the domain must constrain the lifetime of its target.
         var domains = std.array_list.Managed(StorageIdentity).init(self.allocator);
         defer domains.deinit();
-        try self.collectOpaqueDomainsAccessedBy(state, pointer, &domains);
-        if (domains.items.len == 0) {
-            if (try self.inferOpaqueDomain(state, pointer)) |domain|
-                try domains.append(domain)
-            else
-                try collectTransferredOpaqueDomains(state, pointer, &domains);
-        }
+        try self.collectOpaqueWriteDomains(state, pointer, &domains);
+        if (domains.items.len == 0) try collectTransferredOpaqueDomains(state, pointer, &domains);
         if (domains.items.len != 0 and try hasPendingExecution(value, state)) {
             try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
             return;
@@ -11938,6 +11935,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
 
 test "opaque writes retain all transferred destination candidates" {
     const allocator = std.testing.allocator;
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const owner: facts.ValidityRootId = @enumFromInt(0);
@@ -11950,6 +11949,13 @@ test "opaque writes retain all transferred destination candidates" {
     defer domains.deinit();
     const pointer: facts.ValueFacts = .{ .dependencies = &.{.{ .root = owner }} };
     try SafetyChecker.collectTransferredOpaqueDomains(&state, pointer, &domains);
+    try std.testing.expectEqual(@as(usize, 2), domains.items.len);
+    try std.testing.expect(domains.items[0].eql(.{ .place = first }));
+    try std.testing.expect(domains.items[1].eql(.{ .place = second }));
+    state.places.items[0].initializedness = .initialized;
+    state.places.items[1].initializedness = .initialized;
+    domains.clearRetainingCapacity();
+    try checker.collectOpaqueWriteDomains(&state, pointer, &domains);
     try std.testing.expectEqual(@as(usize, 2), domains.items.len);
     try std.testing.expect(domains.items[0].eql(.{ .place = first }));
     try std.testing.expect(domains.items[1].eql(.{ .place = second }));
