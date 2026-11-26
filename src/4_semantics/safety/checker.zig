@@ -12074,13 +12074,15 @@ fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const Saf
         const match = findOpaqueStorageEntry(right.opaque_storages.items, opaque_storage.storage, index) orelse return false;
         const other = right.opaque_storages.items[match];
         if (opaque_storage.outcome_guard != other.outcome_guard) return false;
-        if (relation == .equal and opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
-        // Hidden dependencies are may-obligations. Keep the domain,
-        // owner associations and its conditional emptying proof exact.
+        if (relation == .equal and
+            (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len or
+                opaque_storage.owner_roots.len != other.owner_roots.len)) return false;
+        // Hidden dependencies and possible owners are may facts. The
+        // domain identity and conditional emptying proof remain exact.
         for (other.hidden_dependencies) |dependency|
             if (!containsRoot(opaque_storage.hidden_dependencies, dependency)) return false;
-        if (opaque_storage.owner_roots.len != other.owner_roots.len) return false;
-        for (opaque_storage.owner_roots) |root| if (!containsRoot(other.owner_roots, root)) return false;
+        for (other.owner_roots) |root|
+            if (!containsRoot(opaque_storage.owner_roots, root)) return false;
     }
     for (left.choice_active.items) |candidate| {
         var found = false;
@@ -12127,6 +12129,13 @@ test "loop state coverage permits weak writes and still compares opaque obligati
     // Use matching store facts to isolate the reverse domain comparison.
     successor.reference_writes.items[0].must_write = false;
     try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    // Owner associations are may evidence independent of hidden contents.
+    successor.opaque_storages.items[0].hidden_dependencies = header.opaque_storages.items[0].hidden_dependencies;
+    header.opaque_storages.items[0].owner_roots = &.{ @enumFromInt(1), @enumFromInt(2) };
+    successor.opaque_storages.items[0].owner_roots = &.{@enumFromInt(2)};
+    try std.testing.expect(compareLoopStates(&header, &successor, .covers));
+    try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    try std.testing.expect(!statesEqual(&header, &successor));
     header.opaque_storages.items[0].outcome_guard = 1;
     try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
 }
