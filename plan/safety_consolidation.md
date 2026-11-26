@@ -366,6 +366,74 @@ additional obligations, with their own native assumptions.
 
 ## Concrete state and transitions
 
+### Evidence boundaries and shared operations
+
+The checker already stores separate facts for storage, lifetime, authority,
+and cleanup. Its operations do not enforce that separation. For example,
+`ValidityDependency` stores a root and retirement mark, but the same root ID
+also appears in `owned_roots`, opaque provenance, and execution loans.
+`collectDependencyRoots` can therefore feed a lifetime reconstruction even
+though it intentionally discards the mark. The native and symbolic domains
+also each implement their own aggregate projection and alternative join.
+
+Keep the existing facts and make their operations explicit:
+
+| Question | Evidence consumed | Result of losing precision |
+| --- | --- | --- |
+| Which storage could this operation touch? | Typed place or symbolic route, with completeness | Retain all known alternatives and an unresolved footprint |
+| Is this observation still valid? | Generation and the observation's retirement evidence | Require unconditional liveness when conditional proof is lost |
+| Is this execution allowed to access it? | Mode and covered region checked against outstanding loans and shared authority | Keep possible conflicts until a certified completion |
+| Who must destroy this value? | Selected owner slot or authenticated custody transition, plus latent cleanup requirements | Retain every possible cleanup obligation |
+
+Give lifetime transport a typed interface over `ValidityDependency` and
+confine root-only collection to identity queries such as overlap, retirement,
+and retention. Form a bare dependency only at a new observation, or at an
+explicit loss of proof with conservative semantics. Apply the same boundary
+to opaque storage: its retention record may use identity for retirement
+checks, but publishing an observation needs a retained witness or an explicit
+loss of proof. Owner membership can justify a custody operation and cannot
+repair an independently captured alias.
+
+Use the existing structural facts to share projection and collection rules.
+Separate combining facts from one value from joining alternative values.
+Combine retains obligations from both operands. Join unions obligations and
+keeps a positive guarantee only with a proof on every relevant predecessor.
+Projection selects an explicit child, a completely covered alternative set,
+or an unresolved selection. Each outcome should drive every evidence domain
+through the same traversal. Concrete values and summary recipes can retain
+their own leaves without duplicating these structural decisions.
+
+#### Summaries and loop convergence
+
+In a summary, distinguish the recipe that selects a value from the evidence
+requested from it. Reuse `InputPath`, `InputRoute`, and capture phases to
+select an evaluated argument, an entry observation, or checked post-state
+contents. Apply the requested access, lifetime, or custody operation to
+that selection. Rebase fresh callee identities before substituting caller
+evidence. Cache only caller-relative recipes. A summary must never infer
+authority or custody solely from a dependency that survived substitution.
+
+The current loop driver compares concrete states, including raw retirement
+marks on owned roots, and publishes the last state after eight iterations.
+That bound alone does not prove the resulting state includes every backedge
+successor. A widening must preserve earlier observations and pending effects
+while abstracting fresh internal generations. Compare retained observation
+validity and obligation relationships, with any renaming consistent across
+owners, observations, opaque contents, and receipts. An iteration budget can
+trigger a conservative widening. Accept the result only after checking that
+it covers the next abstract backedge. Never treat a canonical current
+generation as evidence that a historical observation became valid again.
+
+Migrate lifetime collection and summary selection first, then replace the
+loop cutoff with a checked widening. Keep the representation sparse over
+observed paths. Reuse canonical immutable slices where possible and avoid
+enumerating combinations of branches or array indices. Compare checker
+time, peak memory, abstract loop iterations, and retained facts on the same
+input while scaling the number of owners, loan receipts, and wrapper calls.
+Use the existing stale-alias, opaque-retention, and disjoint-loan controls
+alongside growth loops. Add a loop whose observable effect needs more than
+eight steps to propagate before replacing the cutoff.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old
