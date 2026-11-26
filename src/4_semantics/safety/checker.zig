@@ -11205,23 +11205,36 @@ fn findStorageEntry(entries: anytype, storage: facts.Place, hint: usize) ?usize 
     return null;
 }
 
-/// Compare the dependencies on pre-loop roots in each lexical slot. New
-/// incarnation names can keep changing after these independent facts settle.
+/// Lexical destinations can propagate independently of the names assigned
+/// to their current observations.
 fn loopEntryObservationsEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState, root_limit: usize) bool {
     for (left.places.items, 0..) |place, index| {
-        const other = if (findStorageEntry(right.places.items, place.storage, index)) |found|
-            right.places.items[found].value.dependencies
+        const other: facts.ValueFacts = if (findStorageEntry(right.places.items, place.storage, index)) |found|
+            right.places.items[found].value
         else
-            &.{};
-        if (!loopEntryDependenciesCovered(place.value.dependencies, &left.tracker, other, &right.tracker, root_limit) or
-            !loopEntryDependenciesCovered(other, &right.tracker, place.value.dependencies, &left.tracker, root_limit)) return false;
+            .{};
+        if (!loopLexicalTargetsEqual(place.value, other) or
+            !loopEntryDependenciesCovered(place.value.dependencies, &left.tracker, other.dependencies, &right.tracker, root_limit) or
+            !loopEntryDependenciesCovered(other.dependencies, &right.tracker, place.value.dependencies, &left.tracker, root_limit)) return false;
     }
     for (right.places.items, 0..) |place, index| {
+        if (findStorageEntry(left.places.items, place.storage, index) != null) continue;
+        if (!loopLexicalTargetsEqual(place.value, .{})) return false;
         for (place.value.dependencies) |dependency| {
-            if (@intFromEnum(dependency.root) >= root_limit) continue;
-            if (findStorageEntry(left.places.items, place.storage, index) == null) return false;
-            break;
+            if (@intFromEnum(dependency.root) < root_limit) return false;
         }
+    }
+    return true;
+}
+
+fn loopLexicalTargetsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
+    if (left.referenced_place) |place| if (!place.eql(right.referenced_place.?)) return false;
+    if (left.mutation_places.len != right.mutation_places.len) return false;
+    for (left.mutation_places) |place| {
+        for (right.mutation_places) |other| {
+            if (place.eql(other)) break;
+        } else return false;
     }
     return true;
 }

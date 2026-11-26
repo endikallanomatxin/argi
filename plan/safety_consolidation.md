@@ -565,12 +565,13 @@ valid, as in the UTF-8 copy-after-continue fixture. This gate addresses
 the demonstrated propagation loss. Changes confined to new roots,
 symbolic stores or opaque domains still need a checked widening.
 
-A follow-up replaces the assignment to the first slot with a replacement
-of the old owner followed by taking its address, and removes the saved
-entry reference. This variant still compiles. It creates the relevant
-observation inside the loop, outside the entry-root comparison. Preserve
-this distinction when extending the convergence check to current and
-historical observations of the same destination.
+Fixture 421X replaces the old owner on each iteration before taking
+its address. Its relevant observation is born inside the loop. The
+cutoff now also checks concrete reference targets and sets of possible
+mutation destinations in lexical slots. These identities stay comparable
+as generations change. The fixture requires rejection at the final
+dereference. A change of observation through the same destination still
+requires a checked widening of the generation relation.
 
 In a Debug experiment, requiring exact equality at the existing work
 budget rejected both the valid growth control and the mixed probe for
