@@ -5533,7 +5533,7 @@ pub const SafetyChecker = struct {
                     if (post_values[post_index]) |value| {
                         if (symbolic_access) |access| {
                             const definite = post_state.initialization == .definite;
-                            if (definite and post_state.ends_previous_roots and !try self.endReplacedSymbolicOwners(source, state, access)) continue;
+                            if (post_state.ends_previous_roots and !try self.retireReplacedSymbolicOwners(source, state, access, definite)) continue;
                             try self.storeSymbolicValue(state, access, value, definite);
                         }
                     }
@@ -5652,7 +5652,7 @@ pub const SafetyChecker = struct {
         try self.completePostCaptures(source, state, captures.items);
     }
 
-    fn endReplacedSymbolicOwners(self: *SafetyChecker, source: primitives.SourceRef, state: *FunctionState, access: facts.ValueFacts) !bool {
+    fn retireReplacedSymbolicOwners(self: *SafetyChecker, source: primitives.SourceRef, state: *FunctionState, access: facts.ValueFacts, definite: bool) !bool {
         const identity = exactSymbolicTarget(access) orelse return true;
         if (access.opaque_provenance.len != 0 or state.symbolicStorageHasDynamicIndex(identity)) return true;
         const previous = try self.symbolicValueAt(state, identity);
@@ -5660,7 +5660,7 @@ pub const SafetyChecker = struct {
         var owners = std.array_list.Managed(facts.ValidityRootId).init(self.state_allocator);
         defer owners.deinit();
         try collectOwnedRoots(value, &owners);
-        return self.endRoots(source, state, owners.items);
+        return self.retireRoots(source, state, owners.items, definite);
     }
 
     fn completePostCaptures(
@@ -7914,6 +7914,16 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         roots: []const facts.ValidityRootId,
     ) !bool {
+        return self.retireRoots(source, state, roots, true);
+    }
+
+    fn retireRoots(
+        self: *SafetyChecker,
+        source: primitives.SourceRef,
+        state: *FunctionState,
+        roots: []const facts.ValidityRootId,
+        definite: bool,
+    ) !bool {
         for (roots) |root| {
             if (pendingExecutionBorrowsRoot(state, root)) {
                 try self.report(source, "cannot end storage borrowed by a pending execution", .{});
@@ -7930,7 +7940,9 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot end a root while opaque storage hides a dependency on it", .{});
             return false;
         }
-        for (roots) |root| state.tracker.end(root);
+        for (roots) |root| {
+            if (definite) state.tracker.end(root) else state.tracker.markPossiblyRetired(root);
+        }
         return true;
     }
 
@@ -15382,7 +15394,11 @@ test "symbolic replacement retires owner roots without retiring backing or borro
         .dependencies = &.{.{ .root = borrowed }},
     } });
     const access: facts.ValueFacts = .{ .symbolic_pointees = &.{identity}, .dependencies = &.{ .{ .root = backing }, .{ .root = observation } } };
-    try std.testing.expect(try checker.endReplacedSymbolicOwners(.{ .file_index = 0, .offset = 0 }, &state, access));
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try std.testing.expect(try checker.retireReplacedSymbolicOwners(source, &state, access, false));
+    try std.testing.expectEqual(.maybe_alive, state.tracker.roots.items[@intFromEnum(owner)].state);
+    try std.testing.expect(!state.tracker.dependencyIsAlive(.{ .root = owner }));
+    try std.testing.expect(try checker.retireReplacedSymbolicOwners(source, &state, access, true));
     try std.testing.expect(!state.tracker.isAlive(owner));
     try std.testing.expect(state.tracker.dependenciesAreAlive(access));
     try std.testing.expect(state.tracker.isAlive(borrowed));

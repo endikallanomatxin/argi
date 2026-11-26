@@ -633,6 +633,15 @@ pub const Tracker = struct {
         root.outcome_guard = 0;
     }
 
+    /// A possible retirement with no result that can refine it.
+    pub fn markPossiblyRetired(self: *Tracker, id: ValidityRootId) void {
+        const root = &self.roots.items[@intFromEnum(id)];
+        if (root.state == .dead) return;
+        root.state = .maybe_alive;
+        root.outcome_guard = 0;
+        self.recordRetirement(root);
+    }
+
     /// Register a possible retirement whose result can still refine this root.
     /// A nested projection may encounter the same transition more than once.
     pub fn deferRetirement(self: *Tracker, id: ValidityRootId, guard: u64) bool {
