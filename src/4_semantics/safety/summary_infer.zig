@@ -2808,7 +2808,9 @@ pub const Infer = struct {
 
             var next = CapabilityFlow.init(self.allocator);
             defer next.deinit();
-            try self.join_capability_flows(&next, flow, &backedge);
+            // The header includes entry and every previously reached
+            // alternative. Keep that evidence when propagating a new turn.
+            try self.join_capability_flows(&next, &header, &backedge);
             if (self.capabilityLoopStateEqual(&header, &next)) {
                 std.mem.swap(CapabilityFlow, &header, &next);
                 break;
@@ -2821,8 +2823,10 @@ pub const Infer = struct {
     }
 
     fn capabilityLoopStateEqual(self: *Infer, left: *const CapabilityFlow, right: *const CapabilityFlow) bool {
-        if (left.counts.items.len != right.counts.items.len or left.conflicts.items.len != right.conflicts.items.len or
+        if (left.reachable != right.reachable or left.calls.count() != right.calls.count() or
+            left.counts.items.len != right.counts.items.len or left.conflicts.items.len != right.conflicts.items.len or
             left.bindings.count() != right.bindings.count() or left.addresses.count() != right.addresses.count()) return false;
+        for (left.calls.keys()) |call| if (!right.calls.contains(call)) return false;
         for (left.counts.items, right.counts.items) |a, b| {
             if (!self.capability_source_equal(a.source, b.source) or a.minimum != b.minimum or
                 a.maximum != b.maximum or a.requires_authorization != b.requires_authorization) return false;
