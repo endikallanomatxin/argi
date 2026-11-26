@@ -209,6 +209,24 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
             return true;
         }
 
+        /// Inclusion in a common observation namespace. The caller first
+        /// transports any renamed or summarized keys to that namespace.
+        pub fn covers(self: *const Self, incoming: *const Self, context: anytype) bool {
+            for (incoming.definitions.items) |source| {
+                const target = self.definitions.items[self.index(source.target) orelse return false];
+                if (source.summarized and !target.summarized) return false;
+                if (!context.covers(target.value, source.value)) return false;
+            }
+            for (self.definitions.items) |target| {
+                if (!target.must_write) continue;
+                const source = incoming.definitions.items[incoming.index(target.target) orelse return false];
+                if (!source.must_write) return false;
+                for (target.overwritten) |key|
+                    if (!contains(source.overwritten, key)) return false;
+            }
+            return true;
+        }
+
         /// Shallow payload/proof copies are sufficient within one proof arena.
         /// Cross-arena publication still requires the ordinary fact snapshotter.
         pub fn snapshot(self: *const Self, allocator: std.mem.Allocator) ![]const Definition {
@@ -256,7 +274,34 @@ const BitContext = struct {
     pub fn equal(_: @This(), a: u8, b: u8) bool {
         return a == b;
     }
+    pub fn covers(_: @This(), a: u8, b: u8) bool {
+        return a | b == a;
+    }
 };
+
+test "observed store coverage checks possible payloads and definite overwrite proofs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const context: BitContext = .{};
+    var left = Bits.init(alloc, alloc);
+    defer left.deinit();
+    try left.store(testKey(0), 1, false, context);
+    try left.store(testKey(1), 2, true, context);
+    var right = Bits.init(alloc, alloc);
+    defer right.deinit();
+    try right.store(testKey(1), 2, true, context);
+    try right.store(testKey(0), 4, false, context);
+    var joined = try Bits.join(alloc, alloc, &left, &right, context);
+    defer joined.deinit();
+    try std.testing.expect(joined.covers(&left, context));
+    try std.testing.expect(joined.covers(&right, context));
+    try std.testing.expect(!left.covers(&joined, context));
+    try std.testing.expect(!right.covers(&joined, context));
+    try right.store(testKey(0), 1, false, context);
+    try std.testing.expect(!left.covers(&right, context));
+    try std.testing.expect(right.covers(&left, context));
+}
 
 test "observed stores preserve every three-cell alias valuation and optional write" {
     for (0..216) |sequence| for (0..8) |mandatory| {
