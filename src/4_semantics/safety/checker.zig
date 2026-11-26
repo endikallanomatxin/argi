@@ -11796,8 +11796,11 @@ fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const Saf
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
         if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.summarized_instances != b.summarized_instances or a.producer != b.producer or a.outcome_guard != b.outcome_guard or
             (a.present and a.retirement_mark != b.retirement_mark)) return false;
-    for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
-        if (a != b) return false;
+    for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b| {
+        if (relation == .equal) {
+            if (a != b) return false;
+        } else if (!a.covers(b)) return false;
+    }
     for (left.lexical_storage_generations.items) |root|
         if (!containsRoot(right.lexical_storage_generations.items, root)) return false;
     for (left.places.items, 0..) |left_place, index| {
@@ -11868,6 +11871,20 @@ test "loop state coverage permits weak writes and still compares opaque obligati
     successor.reference_writes.items[0].must_write = false;
     try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
     header.opaque_storages.items[0].outcome_guard = 1;
+    try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
+}
+
+test "loop state coverage distinguishes absent capability receipts from uncertain consumption" {
+    const allocator = std.testing.allocator;
+    var header = SafetyChecker.FunctionState.init(allocator);
+    defer header.deinit();
+    var successor = SafetyChecker.FunctionState.init(allocator);
+    defer successor.deinit();
+    try header.storage_capabilities.append(.maybe_consumed);
+    try successor.storage_capabilities.append(.available);
+    try std.testing.expect(compareLoopStates(&header, &successor, .covers));
+    try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    successor.storage_capabilities.items[0] = .absent;
     try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
 }
 

@@ -24,6 +24,12 @@ pub const StorageCapabilityState = enum {
         if (right == .absent) return left;
         return if (left == right) left else .maybe_consumed;
     }
+
+    pub fn covers(self: StorageCapabilityState, incoming: StorageCapabilityState) bool {
+        // Absence is also used for reserved identities that may still be
+        // established. Keep it distinct when checking a successor.
+        return self == incoming or (self == .maybe_consumed and incoming != .absent);
+    }
 };
 pub const StorageGeneration = struct {
     storage: facts.Place,
