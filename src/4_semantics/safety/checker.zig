@@ -1379,13 +1379,11 @@ pub const SafetyChecker = struct {
                     try self.joinState(state, &then_state, &else_state);
                 },
                 .while_statement => |statement| {
-                    _ = try self.evaluate(function, statement.condition, state);
-                    try self.validateLoop(function, statement.body, state, null);
+                    try self.validateLoop(function, statement.condition, statement.body, state, null);
                 },
                 .for_statement => |statement| {
                     if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
-                    _ = try self.evaluate(function, statement.condition, state);
-                    try self.validateLoop(function, statement.body, state, statement.increment);
+                    try self.validateLoop(function, statement.condition, statement.body, state, statement.increment);
                 },
                 .switch_statement => |switch_id| try self.validateSwitch(function, switch_id, state, loop_transfers),
                 .return_statement => |ret| {
@@ -10148,6 +10146,7 @@ pub const SafetyChecker = struct {
     fn validateLoop(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
+        condition: graph_mod.GlobalNodeId,
         body: graph_mod.GlobalBlockId,
         state: *FunctionState,
         increment: ?graph_mod.GlobalNodeId,
@@ -10159,6 +10158,7 @@ pub const SafetyChecker = struct {
         defer self.allocator.free(existing_places);
         for (existing_places) |place_facts| _ = try state.storageGeneration(place_facts.storage);
 
+        _ = try self.evaluate(function, condition, state);
         var entry = try self.cloneState(state);
         defer entry.deinit();
         var current = try self.cloneState(state);
@@ -10175,15 +10175,17 @@ pub const SafetyChecker = struct {
             defer transfers.deinit();
 
             try self.validateBlock(function, body, &iteration, &transfers);
-            for (iteration.executions.items) |execution| {
-                if (!execution.pending or entry.executionPending(execution.id)) continue;
-                try self.report(self.graph.declaration(self.graph.function(function).declaration).source, "pending execution loans must complete within their loop iteration", .{});
-                return;
-            }
             if (transfers.continue_state) |*continue_state|
                 try self.mergeLoopTransfer(&iteration, continue_state);
             if (iteration.reachable) {
                 if (increment) |node| _ = try self.evaluate(function, node, &iteration);
+                // Fallthrough and continue both reach the next test after the increment.
+                _ = try self.evaluate(function, condition, &iteration);
+                for (iteration.executions.items) |execution| {
+                    if (!execution.pending or entry.executionPending(execution.id)) continue;
+                    try self.report(self.graph.declaration(self.graph.function(function).declaration).source, "pending execution loans must complete within their loop iteration", .{});
+                    return;
+                }
             }
 
             if (last_break) |*break_state| break_state.deinit();

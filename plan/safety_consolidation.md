@@ -442,6 +442,13 @@ Use the existing stale-alias, opaque-retention, and disjoint-loan controls
 alongside growth loops. Add a loop whose observable effect needs more than
 eight steps to propagate before replacing the cutoff.
 
+The concrete loop driver evaluates the condition on entry and on each
+backedge. Fallthrough and continue feed the increment and then the
+condition. Break contributes to the exit without re-evaluating either.
+The pending-loan check examines the state after these backedge effects.
+Fixture 417X exercises a condition that observes an old alias after a
+continue, even though the resource slot has already been reinitialized.
+
 A concrete probe uses two lexical resources and twelve reference slots
 initialized to the first resource. Each iteration copies the references
 from high indices to low indices in assignment order (slot 11 receives
@@ -452,6 +459,13 @@ version is rejected at the final dereference. A twelve-step control that
 only assigns references to the first resource compiles. The long probe
 uses fixed identities with no acquisitions or allocation in the loop, so
 it isolates propagation depth from generation widening.
+
+The positive scaling control retains both resources and reads the tail.
+With the eight-iteration cutoff, medians of three ReleaseSafe builds
+with one frontend worker and the frontend cache disabled were 1.29,
+1.54, 2.23, and 7.88 ms in GlobalSafety for 4, 12, 32, and 128 slots.
+These timings are a baseline for the incomplete solver. Future
+comparisons must record the number of abstract iterations alongside time.
 
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
