@@ -2782,6 +2782,7 @@ pub const Infer = struct {
         defer if (broken) |*exit| exit.deinit();
         const budget = 64 +| header.bindings.count();
         for (0..budget) |_| {
+            try self.cancellation.check();
             var transfers: LoopTransfersFor(CapabilityFlow) = .{};
             defer transfers.deinit();
             self.loop_capability_effects = &transfers;

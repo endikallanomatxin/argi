@@ -10259,6 +10259,7 @@ pub const SafetyChecker = struct {
         var exits: ?FunctionState = null;
         defer if (exits) |*exit_state| exit_state.deinit();
         for (0..propagation_budget) |_| {
+            try self.cancellation.check();
             var iteration = try self.cloneState(&current);
             defer iteration.deinit();
             var transfers: LoopTransfers = .{};
