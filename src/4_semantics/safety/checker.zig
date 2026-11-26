@@ -1416,16 +1416,15 @@ pub const SafetyChecker = struct {
                     };
                 },
             }
-            if (!state.reachable) {
-                try self.endBlockStorage(block_id, state);
-                if (loop_transfers) |transfers| {
-                    if (transfers.break_state) |*break_state| try self.endBlockStorage(block_id, break_state);
-                    if (transfers.continue_state) |*continue_state| try self.endBlockStorage(block_id, continue_state);
-                }
-                return;
-            }
+            if (!state.reachable) break;
         }
         try self.endBlockStorage(block_id, state);
+        if (loop_transfers) |transfers| {
+            // A conditional transfer leaves this scope even if a sibling
+            // branch reaches its ordinary fallthrough.
+            if (transfers.break_state) |*break_state| try self.endBlockStorage(block_id, break_state);
+            if (transfers.continue_state) |*continue_state| try self.endBlockStorage(block_id, continue_state);
+        }
     }
 
     fn validateSwitch(
