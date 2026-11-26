@@ -10217,6 +10217,7 @@ pub const SafetyChecker = struct {
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
+            try forgetUnobservedRetirementMarks(&next, join_context.exits);
             if (statesEqual(&current, &next)) {
                 if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
                 try self.copyState(state, &next);
@@ -11332,6 +11333,30 @@ fn namespaceNamesRoot(namespace: *const facts.Tracker.RootNamespace, root: facts
 fn retainMaterializedLoopSeed(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, root: facts.ValidityRootId) bool {
     const index = @intFromEnum(root);
     return index < state.tracker.roots.items.len and state.tracker.roots.items[index].present and retained.record(root);
+}
+
+// An unowned, unguarded generation without a marked witness has only
+// its liveness state left. The namespace counter still advances, so
+// later retirements always invalidate witnesses created after this join.
+fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, exits: ?*const SafetyChecker.FunctionState) !void {
+    const Witnesses = struct {
+        roots: std.AutoHashMap(facts.ValidityRootId, void),
+
+        pub fn visit(visitor: *@This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+            for (value.dependencies) |dependency| {
+                if (dependency.retirement_mark != 0) try visitor.roots.put(dependency.root, {});
+            }
+            return false;
+        }
+    };
+    var witnesses: Witnesses = .{ .roots = .init(state.places.allocator) };
+    defer witnesses.roots.deinit();
+    _ = try visitLoopStateValues(state, &witnesses);
+    if (exits) |exit_state| _ = try visitLoopStateValues(exit_state, &witnesses);
+    for (state.tracker.roots.items) |*root| {
+        if (root.state != .maybe_alive or root.owned_resource or root.outcome_guard != 0 or witnesses.roots.contains(root.id)) continue;
+        root.retirement_mark = std.math.maxInt(u32);
+    }
 }
 
 fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
