@@ -467,6 +467,27 @@ with one frontend worker and the frontend cache disabled were 1.29,
 These timings are a baseline for the incomplete solver. Future
 comparisons must record the number of abstract iterations alongside time.
 
+A diagnostic experiment raised the limit to 256 and rejected any loop
+without structural equality at that limit. The loop suite returned 27
+passes and 11 failures, including positive iterator, ownership, and text
+cases. A second run traced three representative cases with a 24-step
+limit. The long reference-chain probe stabilized at iteration 12
+(zero-based) and then reported the stale dereference. By contrast:
+
+| Fixture | Tracked roots at the ninth transition | Places before and after | Continued growth |
+| --- | ---: | ---: | --- |
+| 12 iterator loops | 28 to 30 | 8 to 8 | Two roots per transition |
+| 261 fresh alias | 86 to 93 | 11 to 11 | Seven roots per transition and a reused owner alternates between live and dead |
+| 268X local escape through continue | 12 to 13 | 4 to 4 | One root per transition |
+
+The convergence comparison needs to quotient generation names while
+preserving their relationships to live observations and obligations.
+The iterator and local-escape cases provide controls for historical
+generations. The fresh-alias case additionally requires retaining the
+relationship between current ownership and its valid observations
+across the backedge. Re-run these cases before testing a larger budget
+or applying the resulting solver to summary state.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old
