@@ -473,6 +473,13 @@ bounds. Continue paths run the increment before counts widen. A
 capability consumed exclusively on a break contributes to the loop exit
 with its finite count, as fixture 419 verifies.
 
+The capability transfer now replays calls first evaluated by the loop
+condition after the backedge updates its arguments. Call deduplication
+still applies within each evaluation. In fixture 422X the entry test
+uses a local allocation, while the body retargets the argument to a
+caller-owned acquisition. The repeated test must publish the effect
+on that caller input.
+
 A concrete probe uses two lexical resources and twelve reference slots
 initialized to the first resource. Each iteration copies the references
 from high indices to low indices in assignment order (slot 11 receives

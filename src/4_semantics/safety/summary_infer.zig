@@ -2334,18 +2334,18 @@ pub const Infer = struct {
         conflicts: std.array_list.Managed(CapabilityConflict),
         counts: std.array_list.Managed(CapabilityCount),
         addresses: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
-        calls: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+        calls: std.AutoArrayHashMapUnmanaged(graph_mod.GlobalNodeId, void),
         bindings: std.AutoHashMap(graph_mod.GlobalBindingId, *const facts.ValueEffect),
         reachable: bool = true,
 
         fn init(allocator: std.mem.Allocator) CapabilityFlow {
-            return .{ .conflicts = .init(allocator), .counts = .init(allocator), .bindings = .init(allocator), .calls = .init(allocator), .addresses = .init(allocator) };
+            return .{ .conflicts = .init(allocator), .counts = .init(allocator), .bindings = .init(allocator), .calls = .empty, .addresses = .init(allocator) };
         }
         fn deinit(self: *CapabilityFlow) void {
+            self.calls.deinit(self.counts.allocator);
             self.counts.deinit();
             self.conflicts.deinit();
             self.bindings.deinit();
-            self.calls.deinit();
             self.addresses.deinit();
         }
         fn clone(self: *const CapabilityFlow, allocator: std.mem.Allocator) !CapabilityFlow {
@@ -2354,7 +2354,7 @@ pub const Infer = struct {
             try result.counts.appendSlice(self.counts.items);
             try result.conflicts.appendSlice(self.conflicts.items);
             result.bindings = try self.bindings.cloneWithAllocator(allocator);
-            result.calls = try self.calls.cloneWithAllocator(allocator);
+            result.calls = try self.calls.clone(allocator);
             result.addresses = try self.addresses.cloneWithAllocator(allocator);
             result.reachable = self.reachable;
             return result;
@@ -2437,10 +2437,8 @@ pub const Infer = struct {
             };
             try joined.addresses.put(entry.key_ptr.*, try targets.toOwnedSlice());
         }
-        var calls = left.calls.keyIterator();
-        while (calls.next()) |call| try joined.calls.put(call.*, {});
-        calls = right.calls.keyIterator();
-        while (calls.next()) |call| try joined.calls.put(call.*, {});
+        for (left.calls.keys()) |call| try joined.calls.put(self.allocator, call, {});
+        for (right.calls.keys()) |call| try joined.calls.put(self.allocator, call, {});
         joined.reachable = left.reachable or right.reachable;
         output.deinit();
         output.* = joined;
@@ -2769,9 +2767,9 @@ pub const Infer = struct {
         exits: *?CapabilityFlow,
     ) anyerror!void {
         if (!flow.reachable) return;
-        const before_loop = try self.allocator.dupe(CapabilityCount, flow.counts.items);
-        defer self.allocator.free(before_loop);
+        const before_condition = flow.calls.count();
         try self.infer_capability_node(function, condition, flow, exits);
+        if (!flow.reachable) return;
 
         var transfers: LoopTransfersFor(CapabilityFlow) = .{};
         defer transfers.deinit();
@@ -2787,8 +2785,14 @@ pub const Infer = struct {
         if (backedge.reachable) if (increment) |advance|
             try self.infer_capability_node(function, advance, &backedge, exits);
         if (backedge.reachable) {
+            // Block results can reuse a call within one evaluation. Only the
+            // calls first evaluated by this condition run again on the edge.
+            for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
+            try self.infer_capability_node(function, condition, &backedge, exits);
+        }
+        if (backedge.reachable) {
             for (backedge.counts.items) |*count| {
-                const prior = for (before_loop) |entry| {
+                const prior = for (flow.counts.items) |entry| {
                     if (self.capability_source_equal(count.source, entry.source)) break entry.maximum;
                 } else 0;
                 if (count.maximum > prior) count.maximum = 2;
@@ -2805,7 +2809,7 @@ pub const Infer = struct {
             // Block result expressions can reference an already evaluated call
             // node. Codegen caches that value; do not consume it a second time.
             if (flow.calls.contains(node)) return;
-            try flow.calls.put(node, {});
+            try flow.calls.put(self.allocator, node, {});
         }
         switch (self.graph.node(node).content) {
             .binding_declaration => |binding| {
@@ -10495,7 +10499,7 @@ fn capabilityFlowCloneFailures(allocator: std.mem.Allocator) !void {
     var source = Infer.CapabilityFlow.init(std.testing.allocator);
     defer source.deinit();
     try source.bindings.put(@enumFromInt(0), &facts.empty_value_effect);
-    try source.calls.put(@enumFromInt(1), {});
+    try source.calls.put(source.counts.allocator, @enumFromInt(1), {});
     try source.addresses.put(@enumFromInt(2), &.{@enumFromInt(3)});
     try source.counts.append(.{ .source = .{ .fresh = 7 }, .minimum = 1, .maximum = 1 });
     var result = try source.clone(allocator);
