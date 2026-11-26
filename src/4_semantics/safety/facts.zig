@@ -422,6 +422,14 @@ pub const SymbolicStorageSelector = StorageSelector;
 pub const Tracker = struct {
     /// Cloned branch states share identities, never reuse another branch's ID.
     pub const RootNamespace = struct {
+        /// Embedded projections follow physical storage across observations.
+        /// Ordinary symbolic inputs may share a validity root without sharing
+        /// a storage identity.
+        pub const EmbeddedBase = union(enum) {
+            input: SymbolicPointeeId,
+            projected: ValidityRootId,
+        };
+
         next_id: u32 = 0,
         next_symbolic_id: u32 = 0,
         next_capability_id: u32 = 0,
@@ -440,6 +448,11 @@ pub const Tracker = struct {
             ty: ?graph.GlobalTypeId = null,
         }) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
+
+        pub fn embeddedBase(self: *const RootNamespace, identity: SymbolicPointeeId) EmbeddedBase {
+            const index = self.projectionIndex(identity) orelse return .{ .input = identity };
+            return .{ .projected = self.projected_storage.items[index].backing };
+        }
 
         /// Projections are appended in identity allocation order. Ordinary
         /// symbolic inputs can occupy gaps in the projection table.
