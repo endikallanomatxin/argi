@@ -10216,7 +10216,7 @@ pub const SafetyChecker = struct {
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
-            try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len);
+            try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
             if (statesEqual(&current, &next)) {
                 if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
                 try self.copyState(state, &next);
@@ -10508,7 +10508,7 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize) !void {
+    fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize, exits: ?*const FunctionState) !void {
         // Only a monotonic namespace can discard a row without allowing
         // the next acquisition to reuse its identity.
         if (state.tracker.namespace == null or state.storage_capabilities.items.len <= entry_count) return;
@@ -10536,6 +10536,7 @@ pub const SafetyChecker = struct {
         }
         if (visitor.limit == visitor.capacity) return;
         if (try visitLoopStateValues(state, &visitor)) return;
+        if (exits) |exit_state| if (try visitLoopStateValues(exit_state, &visitor)) return;
         state.storage_capabilities.shrinkRetainingCapacity(visitor.limit);
     }
 
@@ -12478,11 +12479,34 @@ test "loop capability trimming preserves nested acquisition origins" {
     const receipt = try state.establishExecution(&.{});
     try std.testing.expect(state.retainExecutionOutput(receipt, &output));
     state.completeExecution(receipt);
-    try checker.trimLoopCapabilities(&state, 0);
+    try checker.trimLoopCapabilities(&state, 0, null);
     try std.testing.expectEqual(.available, state.capabilityState(retained));
     try std.testing.expectEqual(.absent, state.capabilityState(unused));
     const next = try state.establishCapability();
     try std.testing.expect(@intFromEnum(next) > @intFromEnum(unused));
+}
+
+test "loop capability trimming preserves consumption for break observations" {
+    const a = std.testing.allocator;
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var header = SafetyChecker.FunctionState.init(a);
+    defer header.deinit();
+    header.tracker.namespace = &namespace;
+    const capability = try header.establishCapability();
+    var exit = try header.clone(a);
+    defer exit.deinit();
+    try exit.setPlace(.{ .root = @enumFromInt(0) }, .initialized, .{ .storage_capabilities = &.{capability} });
+    header.consumeCapability(capability, true);
+
+    try checker.trimLoopCapabilities(&header, 0, &exit);
+    try std.testing.expectEqual(.consumed, header.capabilityState(capability));
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try joined.joinCapabilities(&header, &exit);
+    try std.testing.expectEqual(.maybe_consumed, joined.capabilityState(capability));
 }
 
 test "loop root trimming preserves retired lazy lexical seeds" {
