@@ -351,7 +351,7 @@ pub const Resolver = struct {
         if (!try self.associatedArgumentsMatch(located, &evidence_bindings, contract_use.arguments))
             return self.virtualConstructionFailure(source, "selected conformance has incompatible associated elements for the virtual interface");
         if (joint) {
-            if (!try self.validateJointVirtualInterface(contract_use, contract_ty, located, source)) return null;
+            if (!try self.validateJointVirtualInterface(contract_use, contract_ty, located, captures.?, source)) return null;
             return self.virtualConstructionFailure(source, "joint virtual dispatch is not supported yet");
         }
 
@@ -442,12 +442,12 @@ pub const Resolver = struct {
         return captures;
     }
 
-    fn validateJointVirtualInterface(self: *Resolver, use: ContractUse, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !bool {
+    fn validateJointVirtualInterface(self: *Resolver, use: ContractUse, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, captures: []const JointCapture, source: primitives.SourceRef) !bool {
         const module = &self.modules[located.module_index];
         const storage = &module.semantic.parameterized_storage;
         for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
             const name = module.text(requirement.name);
-            const reason = try self.jointVirtualSignatureFailure(use, contract_ty, located, requirement, @intCast(index));
+            const reason = try self.jointVirtualSignatureFailure(use, contract_ty, located, captures, requirement, @intCast(index));
             if (reason) |message| {
                 self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = message };
                 return false;
@@ -456,7 +456,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn jointVirtualSignatureFailure(self: *Resolver, use: ContractUse, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, index: u32) !?[]const u8 {
+    fn jointVirtualSignatureFailure(self: *Resolver, use: ContractUse, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, captures: []const JointCapture, requirement: parameterized_storage.ContractRequirement, index: u32) !?[]const u8 {
         const signature = requirement.signature orelse return "implementation-defined operation signatures require static selection and cannot be virtualized";
         if (requirement.parameters.len != 0) return "generic contract operations require static specialization and cannot be virtualized";
         if (requirement.safety_contract == null) return "virtual methods require a declared safety contract";
@@ -470,8 +470,18 @@ pub const Resolver = struct {
         const inputs = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
         const outputs = global_types.fields(self.graph, instance.output) orelse return error.InvalidContractRequirementOutput;
         if (pattern_fields.len != inputs.len) return error.InvalidContractRequirementInput;
-        for (self.graph.fields.items[inputs.start..][0..inputs.len], storage.ir.fields.items[pattern_fields.start..][0..pattern_fields.len]) |field, pattern| {
-            if (self.captureParticipantIndex(located, pattern.ty) != null) continue;
+        const virtual_arguments = @import("virtual_arguments.zig");
+        var bindings: std.ArrayList(virtual_arguments.ContextCapture) = .empty;
+        defer bindings.deinit(self.allocator);
+        for (storage.ir.fields.items[pattern_fields.start..][0..pattern_fields.len], 0..) |pattern, input| {
+            const participant = self.captureParticipantIndex(located, pattern.ty) orelse continue;
+            try bindings.append(self.allocator, .{ .input = @intCast(input), .field = captures[participant].field_index });
+        }
+        const positions = try self.allocator.alloc(virtual_arguments.Source, inputs.len);
+        defer self.allocator.free(positions);
+        try virtual_arguments.bindContext(positions, bindings.items);
+        for (self.graph.fields.items[inputs.start..][0..inputs.len], positions) |field, position| {
+            if (position == .capture) continue;
             if (try contract_safety.containsErasedParticipant(self, field.ty, contract_ty))
                 return "a hidden participant is only allowed as a direct captured input";
         }

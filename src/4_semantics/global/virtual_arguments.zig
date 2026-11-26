@@ -8,12 +8,32 @@ pub const Source = union(enum) {
     argument: u32,
 };
 
+pub const ContextCapture = struct {
+    input: u32,
+    field: u32,
+};
+
 pub fn bind(positions: []Source, captures: []const u32) error{InvalidVirtualCapture}!void {
     for (positions) |*position| position.* = .{ .argument = 0 };
     for (captures, 0..) |position, index| {
-        if (position >= positions.len or positions[position] == .capture) return error.InvalidVirtualCapture;
-        positions[position] = .{ .capture = @intCast(index) };
+        try bindCapture(positions, position, @intCast(index));
     }
+    numberArguments(positions);
+}
+
+/// The capture payload is the field index of the borrowed context record.
+pub fn bindContext(positions: []Source, captures: []const ContextCapture) error{InvalidVirtualCapture}!void {
+    for (positions) |*position| position.* = .{ .argument = 0 };
+    for (captures) |capture| try bindCapture(positions, capture.input, capture.field);
+    numberArguments(positions);
+}
+
+fn bindCapture(positions: []Source, input: u32, capture: u32) error{InvalidVirtualCapture}!void {
+    if (input >= positions.len or positions[input] == .capture) return error.InvalidVirtualCapture;
+    positions[input] = .{ .capture = capture };
+}
+
+fn numberArguments(positions: []Source) void {
     var next: u32 = 0;
     for (positions) |*position| {
         if (position.* == .capture) continue;
@@ -58,4 +78,22 @@ test "virtual binding keeps capture order and residual argument order independen
     try std.testing.expectEqual(@as(?usize, null), inputForArgument(&positions, 3));
     try std.testing.expectError(error.InvalidVirtualCapture, bind(&positions, &.{ 1, 1 }));
     try std.testing.expectError(error.InvalidVirtualCapture, bind(&positions, &.{5}));
+}
+
+test "virtual binding selects record fields independently of input order" {
+    var positions: [4]Source = undefined;
+    try bindContext(&positions, &.{
+        .{ .input = 2, .field = 0 },
+        .{ .input = 0, .field = 3 },
+    });
+    try std.testing.expectEqualDeep([4]Source{
+        .{ .capture = 3 },
+        .{ .argument = 0 },
+        .{ .capture = 0 },
+        .{ .argument = 1 },
+    }, positions);
+    try std.testing.expectError(error.InvalidVirtualCapture, bindContext(&positions, &.{
+        .{ .input = 1, .field = 0 },
+        .{ .input = 1, .field = 3 },
+    }));
 }
