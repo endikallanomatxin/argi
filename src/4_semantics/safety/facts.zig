@@ -446,9 +446,12 @@ pub const Tracker = struct {
             projected: ValidityRootId,
         };
 
-        /// Possible targets selected from a stable parent slot. A partition
-        /// can cover several resources across successive observations.
-        pub const ProjectionPartition = struct {
+        pub const ProjectionPartition = enum(u32) { _ };
+        const PartitionStep = struct {
+            parent: union(enum) { input: SymbolicPointeeId, projected: ProjectionPartition },
+            selector: SymbolicStorageSelector,
+        };
+        const EmbeddedSlot = struct {
             base: EmbeddedBase,
             selector: SymbolicStorageSelector,
         };
@@ -461,6 +464,7 @@ pub const Tracker = struct {
             backing: ValidityRootId,
             generation: ValidityRootId,
             ty: ?graph.GlobalTypeId = null,
+            partition: ProjectionPartition = undefined,
         };
         pub const ProjectionObservation = struct {
             parent: SymbolicPointeeId,
@@ -479,7 +483,8 @@ pub const Tracker = struct {
         projected_storage: std.ArrayList(ProjectedStorage) = .empty,
         projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
         projection_parents: std.AutoHashMapUnmanaged(ValidityRootId, void) = .empty,
-        embedded_slots: std.AutoHashMapUnmanaged(ProjectionPartition, ValidityRootId) = .empty,
+        embedded_slots: std.AutoHashMapUnmanaged(EmbeddedSlot, ValidityRootId) = .empty,
+        projection_partitions: std.AutoHashMapUnmanaged(PartitionStep, ProjectionPartition) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
         pub fn embeddedBase(self: *const RootNamespace, identity: SymbolicPointeeId) EmbeddedBase {
@@ -491,8 +496,7 @@ pub const Tracker = struct {
         /// use the projected observation identity and its generation.
         pub fn projectionPartition(self: *const RootNamespace, identity: SymbolicPointeeId) ?ProjectionPartition {
             const index = self.projectionIndex(identity) orelse return null;
-            const observation = self.projected_storage.items[index];
-            return .{ .base = self.embeddedBase(observation.parent), .selector = observation.selector };
+            return self.projected_storage.items[index].partition;
         }
 
         pub fn internProducer(self: *RootNamespace, allocator: std.mem.Allocator, producer: Producer) !RootProducerId {
@@ -518,6 +522,7 @@ pub const Tracker = struct {
             try self.projected_storage.ensureUnusedCapacity(allocator, 1);
             try self.projection_observations.ensureUnusedCapacity(allocator, 1);
             try self.projection_parents.ensureUnusedCapacity(allocator, 1);
+            try self.projection_partitions.ensureUnusedCapacity(allocator, 1);
             if (selector.embedded()) try self.embedded_slots.ensureUnusedCapacity(allocator, 1);
         }
 
@@ -526,13 +531,21 @@ pub const Tracker = struct {
             self.projection_observations.putAssumeCapacityNoClobber(key, self.projected_storage.items.len);
             self.projection_parents.putAssumeCapacity(row.parent_generation, {});
             if (row.selector.embedded()) {
-                const slot: ProjectionPartition = .{ .base = self.embeddedBase(row.parent), .selector = row.selector };
+                const slot: EmbeddedSlot = .{ .base = self.embeddedBase(row.parent), .selector = row.selector };
                 const entry = self.embedded_slots.getOrPutAssumeCapacity(slot);
                 if (entry.found_existing) {
                     std.debug.assert(entry.value_ptr.* == row.backing);
                 } else entry.value_ptr.* = row.backing;
             }
-            self.projected_storage.appendAssumeCapacity(row);
+            const step: PartitionStep = .{
+                .parent = if (self.projectionPartition(row.parent)) |partition| .{ .projected = partition } else .{ .input = row.parent },
+                .selector = row.selector,
+            };
+            const partition = self.projection_partitions.getOrPutAssumeCapacity(step);
+            if (!partition.found_existing) partition.value_ptr.* = @enumFromInt(@intFromEnum(row.identity));
+            var observed = row;
+            observed.partition = partition.value_ptr.*;
+            self.projected_storage.appendAssumeCapacity(observed);
         }
 
         /// Projections are appended in identity allocation order. Ordinary
@@ -567,6 +580,8 @@ pub const Tracker = struct {
             result.projection_parents = try self.projection_parents.clone(allocator);
             errdefer result.projection_parents.deinit(allocator);
             result.embedded_slots = try self.embedded_slots.clone(allocator);
+            errdefer result.embedded_slots.deinit(allocator);
+            result.projection_partitions = try self.projection_partitions.clone(allocator);
             return result;
         }
         pub fn deinit(self: *RootNamespace, allocator: std.mem.Allocator) void {
@@ -577,6 +592,7 @@ pub const Tracker = struct {
             self.projection_observations.deinit(allocator);
             self.projection_parents.deinit(allocator);
             self.embedded_slots.deinit(allocator);
+            self.projection_partitions.deinit(allocator);
         }
     };
     namespace: ?*RootNamespace = null,

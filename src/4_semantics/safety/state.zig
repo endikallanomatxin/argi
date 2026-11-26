@@ -2042,6 +2042,10 @@ test "embedded symbolic fields keep backing across parent replacement" {
     const current_domain = (try state.projectSymbolicDomain(parent, 0)).?;
     const current_nested = (try state.projectSymbolicStorage(state.symbolicPointee(current.identity).?, .{ .field = 1 }, null)).?;
 
+    const old_domain_field = (try state.projectSymbolicStorage(state.symbolicPointee(first_domain.identity).?, .{ .field = 2 }, null)).?;
+    const new_domain_field = (try state.projectSymbolicStorage(state.symbolicPointee(current_domain.identity).?, .{ .field = 2 }, null)).?;
+    try std.testing.expectEqual(namespace.projectionPartition(old_domain_field.identity), namespace.projectionPartition(new_domain_field.identity));
+    try std.testing.expect(state.symbolicPointee(old_domain_field.identity).?.backing != state.symbolicPointee(new_domain_field.identity).?.backing);
     const other_domain = (try state.projectSymbolicDomain(parent, 1)).?;
     const first_key = namespace.projectionPartition(first_domain.identity).?;
     try std.testing.expectEqual(first_key, namespace.projectionPartition(current_domain.identity).?);

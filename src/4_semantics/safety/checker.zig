@@ -146,7 +146,7 @@ pub const SafetyChecker = struct {
         expired_lexical_observation: ?facts.ValidityRootId = null,
         expired_resource_observation: ?facts.ValidityRootId = null,
         expired_produced_resources: std.AutoHashMap(facts.RootProducerId, facts.ValidityRootId),
-        historical_reference_writes: std.AutoHashMap(facts.ValidityRootId, facts.SymbolicPointeeId),
+        historical_reference_writes: std.AutoHashMap(facts.Tracker.RootNamespace.ProjectionPartition, facts.SymbolicPointeeId),
         first_loop_root: u32 = 0,
         lexical_observations: std.array_list.Managed(LoopRootPhi),
         roots: std.array_list.Managed(LoopRootPhi),
@@ -10692,7 +10692,7 @@ pub const SafetyChecker = struct {
         try retained.recordState(entry, true);
         if (context.exits) |exit| try retained.recordState(exit, true);
 
-        var sources: std.AutoArrayHashMapUnmanaged(facts.ValidityRootId, std.ArrayList(StorageIdentity)) = .empty;
+        var sources: std.AutoArrayHashMapUnmanaged(facts.Tracker.RootNamespace.ProjectionPartition, std.ArrayList(StorageIdentity)) = .empty;
         defer {
             for (sources.values()) |*group| group.deinit(self.state_allocator);
             sources.deinit(self.state_allocator);
@@ -10706,18 +10706,18 @@ pub const SafetyChecker = struct {
             // for non-embedded projections that can select another object.
             if (!projection.selector.embedded() or @intFromEnum(projection.parent_generation) < context.first_loop_root or
                 !try isDetachedLoopProjection(state, entry, context.exits, namespace, row)) continue;
-            const group = try sources.getOrPut(self.state_allocator, projection.backing);
+            const group = try sources.getOrPut(self.state_allocator, projection.partition);
             if (!group.found_existing) group.value_ptr.* = .empty;
             try group.value_ptr.append(self.state_allocator, definition.target);
         }
 
         var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
         defer state.reference_writes = stores.definitions;
-        for (sources.keys(), sources.values()) |backing, group| {
-            const partition = try context.historical_reference_writes.getOrPut(backing);
+        for (sources.keys(), sources.values()) |key, group| {
+            const partition = try context.historical_reference_writes.getOrPut(key);
             if (!partition.found_existing) {
                 if (namespace.next_symbolic_id == std.math.maxInt(u32)) {
-                    _ = context.historical_reference_writes.remove(backing);
+                    _ = context.historical_reference_writes.remove(key);
                     return error.SafetySymbolicIdentityLimit;
                 }
                 partition.value_ptr.* = @enumFromInt(namespace.next_symbolic_id);
