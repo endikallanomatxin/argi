@@ -4,5 +4,7 @@ const expectFrontendFailureWithoutNoise = support.expectFrontendFailureWithoutNo
 pub const isolation: support.Isolation = .fixture;
 
 test "feature_tests/execution/269X_conditional_retarget_historical_reference" {
-    try expectFrontendFailureWithoutNoise("tests/feature_tests/execution/269X_conditional_retarget_historical_reference", "reference depends on a root that has ended", "failed without a diagnostic");
+    // The conditional target must be proved before creating a replacement
+    // plan. The exact-target case in 267X reaches the historical alias check.
+    try expectFrontendFailureWithoutNoise("tests/feature_tests/execution/269X_conditional_retarget_historical_reference", "cannot replace owning storage through an incomplete reference target set", "failed without a diagnostic");
 }
