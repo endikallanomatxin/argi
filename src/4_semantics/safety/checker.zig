@@ -10306,9 +10306,11 @@ pub const SafetyChecker = struct {
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
             try forgetUnobservedRetirementMarks(&next, &entry, join_context.exits);
-            if (statesEqual(&current, &next)) {
-                if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
-                try self.copyState(state, &next);
+            if (compareLoopStates(&current, &next, .covers)) {
+                // Publish the header that covered the transfer, including
+                // any extra reaching writes it retained.
+                if (exits) |*exit_state| try self.mergeLoopTransfer(&current, exit_state);
+                try self.copyState(state, &current);
                 return;
             }
             std.mem.swap(FunctionState, &current, &next);
@@ -11740,14 +11742,25 @@ fn findOpaqueStorageEntry(entries: []const SafetyChecker.OpaqueStorage, storage:
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
+    return compareLoopStates(left, right, .equal);
+}
+
+fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState, relation: enum { equal, covers }) bool {
     const left_stores = @import("state.zig").ReferenceStores{ .fact_allocator = left.tracker.allocator, .definitions = left.reference_writes };
     const right_stores = @import("state.zig").ReferenceStores{ .fact_allocator = right.tracker.allocator, .definitions = right.reference_writes };
     const Equal = struct {
         pub fn equal(_: @This(), a: facts.ValueFacts, b: facts.ValueFacts) bool {
             return valueFactsEqual(a, b);
         }
+
+        // Payload inclusion currently requires exact fact equality.
+        pub const covers = equal;
     };
-    if (!left_stores.eql(&right_stores, Equal{})) return false;
+    if (relation == .equal) {
+        if (!left_stores.eql(&right_stores, Equal{})) return false;
+    } else {
+        if (left.tracker.namespace != right.tracker.namespace or !left_stores.covers(&right_stores, Equal{})) return false;
+    }
     if (!left.samePendingExecutions(right)) return false;
     if (left.shared_regions.items.len != right.shared_regions.items.len) return false;
     for (left.shared_regions.items) |region| {
@@ -11836,6 +11849,21 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (!found) return false;
     }
     return true;
+}
+
+test "loop state coverage permits weak writes and still compares opaque obligations" {
+    const allocator = std.testing.allocator;
+    var header = SafetyChecker.FunctionState.init(allocator);
+    defer header.deinit();
+    var successor = SafetyChecker.FunctionState.init(allocator);
+    defer successor.deinit();
+    const target: facts.StorageIdentity = .{ .symbolic = @enumFromInt(0) };
+    try header.reference_writes.append(.{ .target = target, .must_write = false, .value = .{} });
+    try successor.reference_writes.append(.{ .target = target, .must_write = true, .value = .{} });
+    try std.testing.expect(compareLoopStates(&header, &successor, .covers));
+    try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    try successor.opaque_storages.append(.{ .storage = target, .hidden_dependencies = &.{} });
+    try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
