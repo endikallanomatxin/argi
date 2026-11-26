@@ -511,6 +511,30 @@ identity is reused as a canonical name, it receives the current
 generation's metadata. A root substitution leaves marked observations
 attached to their original retirement evidence.
 
+The concrete driver allows propagation to continue past eight
+transitions when the loop has allocated no validity, symbolic, storage
+capability, or execution identity. The entry place count supplies a
+work budget, while exact state equality provides the convergence check.
+Exhausting that budget reports non-convergence. This closes the
+twelve-slot stale-reference case (fixture 418X). Loops that mint
+identities within the original budget still use the prior approximation
+and need a sound generalization of generation widening.
+
+Three alternating Debug builds per revision, with one frontend worker
+and the frontend cache disabled, measured the fixed-identity controls:
+
+| Slots | Old GlobalSafety median, ms | New GlobalSafety median, ms |
+| ---: | ---: | ---: |
+| 4 | 6.76 | 6.82 |
+| 12 | 7.56 | 7.81 |
+| 32 | 10.60 | 15.97 |
+| 128 | 31.50 | 252.15 |
+
+At 128 slots the checker cloned state 136 times. Whole-state rescans
+are expensive when information advances one slot per iteration. This
+control measures the cost of removing the propagation cutoff and
+provides a baseline for dependency-directed updates.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old

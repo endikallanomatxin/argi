@@ -141,6 +141,32 @@ pub const SafetyChecker = struct {
         root: facts.ValidityRootId,
     };
 
+    const LoopIdentityFrontier = struct {
+        roots: usize,
+        symbolic: usize,
+        capabilities: usize,
+        executions: usize,
+
+        fn capture(state: *const FunctionState) LoopIdentityFrontier {
+            if (state.tracker.namespace) |namespace| return .{
+                .roots = namespace.next_id,
+                .symbolic = namespace.next_symbolic_id,
+                .capabilities = namespace.next_capability_id,
+                .executions = namespace.next_execution_id,
+            };
+            return .{
+                .roots = state.tracker.roots.items.len,
+                .symbolic = state.symbolic_pointees.items.len,
+                .capabilities = state.storage_capabilities.items.len,
+                .executions = state.executions.items.len,
+            };
+        }
+
+        fn eql(self: LoopIdentityFrontier, other: LoopIdentityFrontier) bool {
+            return std.meta.eql(self, other);
+        }
+    };
+
     const LoopJoinContext = struct {
         roots: std.array_list.Managed(LoopRootPhi),
         symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
@@ -10163,12 +10189,15 @@ pub const SafetyChecker = struct {
         defer entry.deinit();
         var current = try self.cloneState(state);
         defer current.deinit();
-        var last_break: ?FunctionState = null;
-        defer if (last_break) |*break_state| break_state.deinit();
         var join_context = LoopJoinContext.init(self.allocator);
         defer join_context.deinit();
 
-        for (0..8) |_| {
+        const initial_identities = LoopIdentityFrontier.capture(&entry);
+        const generation_budget = 8;
+        // Stable identities can still propagate through a chain of slots.
+        // This bounds solver work; equality alone certifies convergence.
+        const propagation_budget = @max(generation_budget, entry.places.items.len +| 1);
+        for (0..propagation_budget) |step| {
             var iteration = try self.cloneState(&current);
             defer iteration.deinit();
             var transfers: LoopTransfers = .{};
@@ -10188,29 +10217,25 @@ pub const SafetyChecker = struct {
                 }
             }
 
-            if (last_break) |*break_state| break_state.deinit();
-            last_break = null;
-            last_break = if (transfers.break_state) |*break_state|
-                try self.cloneState(break_state)
-            else
-                null;
-
             var next = FunctionState.initWithAllocators(self.allocator, self.state_allocator);
-            errdefer next.deinit();
+            defer next.deinit();
             try self.joinState(&next, &entry, &iteration);
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
-            if (statesEqual(&current, &next)) {
-                if (last_break) |*break_state| try self.mergeLoopTransfer(&next, break_state);
+            const converged = statesEqual(&current, &next);
+            // Keep the existing generation widening for loops that mint
+            // identities in the first eight transitions.
+            const generation_cutoff = step + 1 == generation_budget and
+                !initial_identities.eql(LoopIdentityFrontier.capture(&next));
+            if (converged or generation_cutoff) {
+                if (transfers.break_state) |*break_state| try self.mergeLoopTransfer(&next, break_state);
                 try self.copyState(state, &next);
-                next.deinit();
                 return;
             }
-            current.deinit();
-            current = next;
+            std.mem.swap(FunctionState, &current, &next);
         }
 
-        if (last_break) |*break_state| try self.mergeLoopTransfer(&current, break_state);
-        try self.copyState(state, &current);
+        try self.report(self.graph.node(condition).source, "loop safety analysis did not converge", .{});
+        state.reachable = false;
     }
 
     fn widenLoopOwnedRoots(
