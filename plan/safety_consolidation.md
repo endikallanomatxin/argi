@@ -488,6 +488,14 @@ relationship between current ownership and its valid observations
 across the backedge. Re-run these cases before testing a larger budget
 or applying the resulting solver to summary state.
 
+The loop root inventory now uses one traversal to find the retained
+prefix of the tracker. It includes guarded snapshots, retained execution
+outputs, pending loans, opaque records, and canonical roots in the loop
+context. Ended lexical classifications follow their referenced roots.
+The same traversal supports point queries when deciding whether an
+existing root can be reused. Trimming discards an unreferenced suffix
+without reusing its identities or merging any observations.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old

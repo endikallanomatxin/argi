@@ -10447,28 +10447,23 @@ pub const SafetyChecker = struct {
     }
 
     fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) !void {
-        while (state.tracker.roots.items.len != 0) {
-            const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
-            var referenced = false;
-            for (context.roots.items) |entry| if (entry.root == root) {
-                referenced = true;
-                break;
-            };
-            if (!referenced) for (context.symbolic.items) |entry| if (entry.root == root) {
-                referenced = true;
-                break;
-            };
-            if (!referenced) referenced = try rootRetainedAcrossLoop(state, root);
-            if (referenced) return;
-            var lexical_index: usize = 0;
-            while (lexical_index < state.lexical_storage_generations.items.len) {
-                if (state.lexical_storage_generations.items[lexical_index] == root)
-                    _ = state.lexical_storage_generations.orderedRemove(lexical_index)
-                else
-                    lexical_index += 1;
-            }
-            _ = state.tracker.roots.pop();
+        if (state.tracker.roots.items.len == 0) return;
+        var limit: usize = 0;
+        const retained: RetainedRoot = .{ .highest = .{ .limit = &limit, .root_count = state.tracker.roots.items.len } };
+        for (context.roots.items) |entry| _ = retained.record(entry.root);
+        for (context.symbolic.items) |entry| _ = retained.record(entry.root);
+        if (limit == state.tracker.roots.items.len) return;
+        _ = try visitLoopRoots(state, retained);
+        if (limit >= state.tracker.roots.items.len) return;
+
+        var kept: usize = 0;
+        for (state.lexical_storage_generations.items) |root| {
+            if (@intFromEnum(root) >= limit) continue;
+            state.lexical_storage_generations.items[kept] = root;
+            kept += 1;
         }
+        state.lexical_storage_generations.shrinkRetainingCapacity(kept);
+        state.tracker.roots.shrinkRetainingCapacity(limit);
         _ = self;
     }
 
@@ -11097,42 +11092,72 @@ fn valueDependsOnDeadRootWithOwners(
     return false;
 }
 
-const RetainedRoot = struct {
-    root: facts.ValidityRootId,
+const RetainedRoot = union(enum) {
+    contains: facts.ValidityRootId,
+    highest: struct { limit: *usize, root_count: usize },
+
+    fn record(self: @This(), root: facts.ValidityRootId) bool {
+        switch (self) {
+            .contains => |target| return root == target,
+            .highest => |bounds| {
+                const index = @intFromEnum(root);
+                if (index < bounds.root_count) bounds.limit.* = @max(bounds.limit.*, @as(usize, index) + 1);
+                return bounds.limit.* == bounds.root_count;
+            },
+        }
+    }
+
+    fn recordSlice(self: @This(), roots: []const facts.ValidityRootId) bool {
+        for (roots) |root| if (self.record(root)) return true;
+        return false;
+    }
 
     fn visit(self: @This(), value: facts.ValueFacts) error{}!bool {
-        const root = self.root;
-        if (value.intrinsic_backing_owner == root or value.owned_backing == root or containsRoot(value.owned_roots, root)) return true;
-        for (value.dependencies) |dependency| if (dependency.root == root) return true;
-        for (value.opaque_provenance) |provenance| if (provenance.generation == root) return true;
+        if (value.intrinsic_backing_owner) |root| if (self.record(root)) return true;
+        if (value.owned_backing) |root| if (self.record(root)) return true;
+        if (self.recordSlice(value.owned_roots)) return true;
+        for (value.dependencies) |dependency| if (self.record(dependency.root)) return true;
+        for (value.opaque_provenance) |provenance| if (self.record(provenance.generation)) return true;
         for (value.generation_outcomes) |outcome| {
-            if (outcome.generation == root or containsRoot(outcome.owned_roots, root)) return true;
-            if (outcome.relocation) |relocation| if (relocation.generation == root) return true;
+            if (self.record(outcome.generation) or self.recordSlice(outcome.owned_roots)) return true;
+            if (outcome.relocation) |relocation| if (self.record(relocation.generation)) return true;
         }
         return false;
     }
 };
 
-fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
-    if (SafetyChecker.pendingExecutionBorrowsRoot(state, root)) return true;
+fn visitExternalLoopRoots(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, guards: *std.AutoHashMap(*const facts.ValueFacts, void)) !bool {
     for (state.opaque_storages.items) |storage|
-        if (containsRoot(storage.hidden_dependencies, root) or containsRoot(storage.owner_roots, root)) return true;
-    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.tracker.allocator);
-    defer guards.deinit();
-    const retained = RetainedRoot{ .root = root };
-    for (state.executions.items) |execution| if (execution.output.accessEvidence()) |output| {
-        if (try SafetyChecker.visitValueFactGraph(output.*, &guards, retained)) return true;
-    };
+        if (retained.recordSlice(storage.hidden_dependencies) or retained.recordSlice(storage.owner_roots)) return true;
+    for (state.executions.items) |execution| {
+        if (execution.pending) {
+            for (execution.loans) |loan| if (retained.recordSlice(loan.generations)) return true;
+        }
+        if (execution.output.accessEvidence()) |output| {
+            if (try SafetyChecker.visitValueFactGraph(output.*, guards, retained)) return true;
+        }
+    }
     return false;
 }
 
-fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
-    if (try rootHasExternalLoopObligation(state, root)) return true;
-    for (state.symbolic_pointees.items) |pointee|
-        if (pointee.backing == root or pointee.generation == root) return true;
-    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.tracker.allocator);
+fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
+    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
     defer guards.deinit();
-    const retained = RetainedRoot{ .root = root };
+    return visitExternalLoopRoots(state, .{ .contains = root }, &guards);
+}
+
+fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
+    return visitLoopRoots(state, .{ .contains = root });
+}
+
+fn visitLoopRoots(state: *const SafetyChecker.FunctionState, retained: RetainedRoot) !bool {
+    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
+    defer guards.deinit();
+    if (try visitExternalLoopRoots(state, retained, &guards)) return true;
+    for (state.symbolic_pointees.items) |pointee| {
+        if (pointee.backing) |root| if (retained.record(root)) return true;
+        if (pointee.generation) |root| if (retained.record(root)) return true;
+    }
     for (state.places.items) |stored|
         if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
     for (state.symbolic_values.items) |stored|
@@ -11140,7 +11165,7 @@ fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts
     for (state.reference_writes.items) |stored|
         if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
     for (state.storage_generations.items) |storage_generation|
-        if (storage_generation.generation == root) return true;
+        if (retained.record(storage_generation.generation)) return true;
     return false;
 }
 
@@ -12177,7 +12202,11 @@ test "loop root trimming follows guarded snapshots and retained task outputs" {
 
     const guarded_root = try state.tracker.establish(.fresh);
     const output_root = try state.tracker.establish(.fresh);
-    _ = try state.tracker.establish(.fresh);
+    for (0..16) |_| {
+        const discarded = try state.tracker.establish(.fresh);
+        try state.lexical_storage_generations.append(discarded);
+    }
+    try context.roots.append(.{ .storage = .{ .root = @enumFromInt(0) }, .root = @enumFromInt(32) });
     var snapshot: facts.ValueFacts = .{ .dependencies = &.{.{ .root = guarded_root }} };
     snapshot.guarded_values = &.{.{ .call = 0, .conditions = .{}, .entry_facts = .{}, .value = &snapshot }};
     try state.setPlace(.{ .root = @enumFromInt(0) }, .initialized, .{ .guarded_values = snapshot.guarded_values });
@@ -12189,6 +12218,7 @@ test "loop root trimming follows guarded snapshots and retained task outputs" {
     state.tracker.end(output_root);
     try checker.trimUnreferencedLoopRoots(&context, &state);
     try std.testing.expectEqual(@as(usize, 2), state.tracker.roots.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.lexical_storage_generations.items.len);
     try std.testing.expect(try rootRetainedAcrossLoop(&state, guarded_root));
     try std.testing.expect(!state.tracker.isAlive(output_root));
 }
