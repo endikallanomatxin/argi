@@ -5256,7 +5256,17 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        if (!try self.validateSummaryExecutionAccess(source, summary, argument_ids, arguments, state)) return;
+        if (!try self.validateSummaryExecutionAccess(source, summary, argument_ids, arguments, state)) {
+            // Report independent retention failures without publishing any
+            // completion from a rejected call.
+            if (summary.opaque_storage_effects.len != 0 or summary.input_post_states.len != 0) {
+                var candidate = try self.cloneState(state);
+                defer candidate.deinit();
+                try self.applyExecutionCompletions(summary.completed_executions, arguments, &candidate);
+                _ = try self.validateOpaqueExecutionRetention(source, summary, arguments, &candidate);
+            }
+            return;
+        }
         try self.applyExecutionCompletions(summary.completed_executions, arguments, state);
         if (!try self.validateOpaqueExecutionRetention(source, summary, arguments, state)) return;
         for (summary.input_post_states) |post| {
