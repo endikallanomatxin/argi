@@ -10678,9 +10678,11 @@ pub const SafetyChecker = struct {
         var retained: RetainedSymbolic = .{ .namespace = namespace, .identities = .init(self.state_allocator) };
         defer retained.identities.deinit();
 
-        // Keep input entries and any row that differs from its lazy seed.
-        // Each retained row needs its parents for path resolution.
+        // Keep input entries and any row that differs from its lazy seed
+        // unless it belongs to a retired parent. Retained descendants and
+        // observations still keep their rows for path and obligation lookup.
         for (state.symbolic_pointees.items) |row| {
+            if (try isDetachedLoopProjection(state, namespace, row)) continue;
             const seed = state.initialProjectedPointee(row.identity);
             if (seed == null or row.input_path != null or row.initializedness != seed.?.initializedness or
                 row.ty != seed.?.ty or row.generation != seed.?.generation or row.backing != seed.?.backing)
@@ -10702,6 +10704,24 @@ pub const SafetyChecker = struct {
             kept += 1;
         }
         state.symbolic_pointees.shrinkRetainingCapacity(kept);
+    }
+
+    fn isDetachedLoopProjection(state: *const FunctionState, namespace: *const facts.Tracker.RootNamespace, row: state_mod.SymbolicPointeeState) !bool {
+        const index = namespace.projectionIndex(row.identity) orelse return false;
+        const projection = namespace.projected_storage.items[index];
+        const parent = state.symbolicPointee(projection.parent) orelse return false;
+        if (parent.generation == null or parent.generation == projection.parent_generation) return false;
+        const ordinal = @intFromEnum(projection.parent_generation);
+        if (ordinal >= state.tracker.roots.items.len or !state.tracker.roots.items[ordinal].present or
+            state.tracker.roots.items[ordinal].state != .dead) return false;
+        // Opaque provenance recovery can match an observation by root
+        // even when a value no longer carries the symbolic cell identity.
+        for ([_]?facts.ValidityRootId{ row.generation, row.backing }) |candidate| {
+            const root = candidate orelse continue;
+            const retained: RetainedRoot = .{ .contains = root };
+            if (visitDirectLoopObligations(state, retained) or try visitLoopStateValues(state, retained)) return false;
+        }
+        return true;
     }
 
     fn trimCompletedLoopExecutions(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
@@ -11701,6 +11721,12 @@ test "loop projection reduction preserves retained domains and lazily restores d
     try std.testing.expectEqual(null, header.symbolicPointee(field.identity));
     try std.testing.expect(header.symbolicPointee(domain.identity) != null);
     try std.testing.expectEqual(field, (try header.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?);
+    header.tracker.end(parent.generation.?);
+    header.symbolic_pointees.items[0].generation = try header.tracker.establish(.fresh);
+    header.setSymbolicInitializedness(field.identity, .deinitialized);
+    try checker.trimDefaultSymbolicProjections(&header, &entry, null);
+    try std.testing.expectEqual(null, header.symbolicPointee(field.identity));
+    try std.testing.expect(header.symbolicPointee(domain.identity) != null);
 }
 
 test "loop expiry summarizes retired resource observations and retains opaque custody" {
