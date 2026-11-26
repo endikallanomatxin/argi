@@ -4753,12 +4753,8 @@ pub const SafetyChecker = struct {
             // Retain current facts in the caller, but make availability and
             // owned generations uncertain until this call's result is selected.
             try state.setPlace(storage, .maybe_initialized, previous);
-            state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
-            state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = guard;
-            for (owned_roots) |root| if (state.tracker.roots.items[@intFromEnum(root)].state == .alive) {
-                state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
-                state.tracker.roots.items[@intFromEnum(root)].outcome_guard = guard;
-            };
+            _ = state.tracker.deferRetirement(generation, guard);
+            for (owned_roots) |root| _ = state.tracker.deferRetirement(root, guard);
             for (summary.outcome_post_states) |outcome| {
                 if (outcome.output_index != output_index) continue;
                 var consumes = false;
@@ -4769,12 +4765,7 @@ pub const SafetyChecker = struct {
                 try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = .{ .place = storage }, .generation = generation, .guard = guard, .invalidates = consumes, .resource_state = if (consumes) .deinitialized else .initialized, .owned_roots = owned_roots, .source = source });
                 for (state.storage_generations.items) |child| {
                     if (child.storage.eql(storage) or !storage.isPrefixOf(child.storage)) continue;
-                    const entry = &state.tracker.roots.items[@intFromEnum(child.generation)];
-                    if (entry.state == .alive) {
-                        entry.state = .maybe_alive;
-                        entry.outcome_guard = guard;
-                    }
-                    if (entry.outcome_guard == guard) try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = .{ .place = child.storage }, .generation = child.generation, .guard = guard, .invalidates = consumes, .source = source });
+                    if (state.tracker.deferRetirement(child.generation, guard)) try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = .{ .place = child.storage }, .generation = child.generation, .guard = guard, .invalidates = consumes, .source = source });
                 }
             }
         }
@@ -4803,8 +4794,7 @@ pub const SafetyChecker = struct {
                 entry.outcome_guard = 0;
                 continue;
             }
-            entry.state = .maybe_alive;
-            entry.outcome_guard = guard;
+            _ = state.tracker.deferRetirement(root, guard);
             for (summary.outcome_post_states) |outcome| {
                 if (outcome.output_index != output_index) continue;
                 const invalidates = try self.outcomeInvalidatesStorage(outcome, argument_ids, arguments, state, storage);
@@ -4901,10 +4891,8 @@ pub const SafetyChecker = struct {
                     const destination_generation = try state.storageGeneration(to);
                     try state.setPlace(to, .maybe_initialized, current);
                     try state.setPlace(from, .maybe_initialized, current);
-                    for (&[_]facts.ValidityRootId{ generation, destination_generation }) |root| {
-                        state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
-                        state.tracker.roots.items[@intFromEnum(root)].outcome_guard = guard;
-                    }
+                    _ = state.tracker.deferRetirement(generation, guard);
+                    _ = state.tracker.deferRetirement(destination_generation, guard);
                     for (summary.outcome_post_states) |outcome| {
                         if (outcome.output_index != output_index) continue;
                         var moved = false;
@@ -4921,12 +4909,7 @@ pub const SafetyChecker = struct {
                         });
                         for (state.storage_generations.items) |child| {
                             if (child.storage.eql(from) or !from.isPrefixOf(child.storage)) continue;
-                            const entry = &state.tracker.roots.items[@intFromEnum(child.generation)];
-                            if (entry.state == .alive) {
-                                entry.state = .maybe_alive;
-                                entry.outcome_guard = guard;
-                            }
-                            if (entry.outcome_guard == guard) try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = .{ .place = child.storage }, .generation = child.generation, .guard = guard, .invalidates = moved, .source = source });
+                            if (state.tracker.deferRetirement(child.generation, guard)) try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = .{ .place = child.storage }, .generation = child.generation, .guard = guard, .invalidates = moved, .source = source });
                         }
                     }
                     return;

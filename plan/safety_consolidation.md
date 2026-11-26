@@ -153,6 +153,14 @@ obtained before the replacement. It must continue to reject when the new
 iterator in the reduced program is accepted. Both cases exercise the same
 conditional retirement, with the observation taken on opposite sides of it.
 
+Retirement includes guarded outcomes before the outcome is selected. An
+observation that sees only unconditional retirements could survive a call
+that may free the selected backing. `Tracker.end` and
+`Tracker.deferRetirement` cover the concrete retirement transitions. A
+control-flow join combines their effects. The loop fixed point will need to
+compare the surviving observations and their obligations, since requiring
+fresh event numbers to repeat would prevent convergence.
+
 Prove the relationship between a current observation and its backing on each
 incoming path before joining the evidence. Merged owner-root membership alone
 is insufficient, since a joined value can retain roots from multiple paths

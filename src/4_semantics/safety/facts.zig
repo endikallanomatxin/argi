@@ -499,8 +499,21 @@ pub const Tracker = struct {
     }
 
     pub fn end(self: *Tracker, id: ValidityRootId) void {
-        self.roots.items[@intFromEnum(id)].state = .dead;
-        self.roots.items[@intFromEnum(id)].outcome_guard = 0;
+        const root = &self.roots.items[@intFromEnum(id)];
+        root.state = .dead;
+        root.outcome_guard = 0;
+    }
+
+    /// Register a possible retirement whose result can still refine this root.
+    /// A nested projection may encounter the same transition more than once.
+    pub fn deferRetirement(self: *Tracker, id: ValidityRootId, guard: u64) bool {
+        std.debug.assert(guard != 0);
+        const root = &self.roots.items[@intFromEnum(id)];
+        if (root.state == .alive) {
+            root.state = .maybe_alive;
+            root.outcome_guard = guard;
+        }
+        return root.state == .maybe_alive and root.outcome_guard == guard;
     }
 
     pub fn isAlive(self: *const Tracker, id: ValidityRootId) bool {
