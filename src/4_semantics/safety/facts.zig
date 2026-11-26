@@ -845,6 +845,16 @@ pub fn remapValueRoots(allocator: std.mem.Allocator, value: ValueFacts, mapping:
     return (try replaceValueRootsIfChanged(allocator, value, .{ .sources = &.{}, .destinations = .{ .map = mapping } })) orelse value;
 }
 
+/// Summarize dependencies whose mapped source and destination are both
+/// permanently retired. Retirement marks cannot establish a witness here.
+pub fn summarizeExpiredDependencies(allocator: std.mem.Allocator, value: ValueFacts, mapping: *const std.AutoHashMap(ValidityRootId, ValidityRootId)) !ValueFacts {
+    return (try replaceValueRootsIfChanged(allocator, value, .{
+        .sources = &.{},
+        .destinations = .{ .map = mapping },
+        .expired_dependencies = true,
+    })) orelse value;
+}
+
 /// Rebase a verified current owner alternative. Conditional witnesses can
 /// follow the owner only when that exact observation is valid at the join.
 pub fn rebaseLoopOwnerRoots(allocator: std.mem.Allocator, value: ValueFacts, sources: []const ValidityRootId, destination: ValidityRootId, tracker: *const Tracker) !ValueFacts {
@@ -857,6 +867,7 @@ pub fn rebaseLoopOwnerRoots(allocator: std.mem.Allocator, value: ValueFacts, sou
 
 const RootReplacement = struct {
     owner_tracker: ?*const Tracker = null,
+    expired_dependencies: bool = false,
     sources: []const ValidityRootId,
     destinations: union(enum) {
         shared: ValidityRootId,
@@ -874,6 +885,7 @@ const RootReplacement = struct {
         // Conditional witnesses require the tracker from the owner join.
         const target = self.apply(observation.root);
         if (target == observation.root) return observation;
+        if (self.expired_dependencies) return .{ .root = target };
         if (observation.retirement_mark != 0) {
             const tracker = self.owner_tracker orelse return observation;
             if (!tracker.dependencyIsAlive(observation)) return observation;

@@ -10613,9 +10613,9 @@ pub const SafetyChecker = struct {
             try mapping.put(id, expired);
         }
         if (mapping.count() == 0) return;
-        for (state.places.items) |*place| place.value = try facts.remapValueRoots(self.allocator, place.value, &mapping);
-        for (state.symbolic_values.items) |*stored| stored.value = try facts.remapValueRoots(self.allocator, stored.value, &mapping);
-        for (state.reference_writes.items) |*stored| stored.value = try facts.remapValueRoots(self.allocator, stored.value, &mapping);
+        for (state.places.items) |*place| place.value = try facts.summarizeExpiredDependencies(self.allocator, place.value, &mapping);
+        for (state.symbolic_values.items) |*stored| stored.value = try facts.summarizeExpiredDependencies(self.allocator, stored.value, &mapping);
+        for (state.reference_writes.items) |*stored| stored.value = try facts.summarizeExpiredDependencies(self.allocator, stored.value, &mapping);
         var kept: usize = 0;
         for (state.lexical_storage_generations.items) |id| {
             if (mapping.contains(id)) continue;
@@ -11391,7 +11391,8 @@ fn visitDirectLoopObligations(state: *const SafetyChecker.FunctionState, retaine
 }
 
 // Structural rebasing leaves conditional witnesses and opaque metadata
-// untouched. A guarded snapshot is also outside that substitution.
+// untouched. Expiry can fold the mark of a dead observation. Guarded
+// snapshots are outside both substitutions.
 const LoopRootSubstitution = enum { owner_rebase, observation_only };
 
 fn loopObservationHasProtectedUses(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId, substitution: LoopRootSubstitution) !bool {
@@ -11402,8 +11403,9 @@ fn loopObservationHasProtectedUses(state: *const SafetyChecker.FunctionState, ro
         pub fn visit(self: @This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
             if (self.substitution == .observation_only and (value.intrinsic_backing_owner == self.root or
                 value.owned_backing == self.root or containsRoot(value.owned_roots, self.root))) return true;
-            for (value.dependencies) |dependency|
+            if (self.substitution != .observation_only) for (value.dependencies) |dependency| {
                 if (dependency.root == self.root and dependency.retirement_mark != 0) return true;
+            };
             for (value.opaque_provenance) |provenance|
                 if (provenance.generation == self.root) return true;
             for (value.generation_outcomes) |outcome| {
@@ -11530,7 +11532,8 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
         state.tracker.end(root);
     }
     const storage: facts.Place = .{ .root = @enumFromInt(0) };
-    try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first }, .{ .root = second }, .{ .root = other } } });
+    const retired_mark = state.tracker.roots.items[@intFromEnum(first)].retirement_mark;
+    try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first, .retirement_mark = retired_mark }, .{ .root = second }, .{ .root = other } } });
     try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{}, .owner_roots = &.{opaque_owner} });
     try checker.summarizeExpiredObservations(&context, &state);
     try std.testing.expectEqual(@as(usize, 2), namespace.producers.count());
@@ -11538,8 +11541,10 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     const value = state.getPlace(storage).?.value;
     try std.testing.expectEqual(@as(usize, 2), value.dependencies.len);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(value));
-    for (value.dependencies) |dependency|
+    for (value.dependencies) |dependency| {
+        try std.testing.expectEqual(@as(u32, 0), dependency.retirement_mark);
         try std.testing.expect(state.tracker.roots.items[@intFromEnum(dependency.root)].owned_resource);
+    }
     try std.testing.expect(state.tracker.roots.items[@intFromEnum(opaque_owner)].present);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{opaque_owner}, state.opaque_storages.items[0].owner_roots);
 }
