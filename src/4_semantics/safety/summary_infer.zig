@@ -2771,36 +2771,72 @@ pub const Infer = struct {
         try self.infer_capability_node(function, condition, flow, exits);
         if (!flow.reachable) return;
 
-        var transfers: LoopTransfersFor(CapabilityFlow) = .{};
-        defer transfers.deinit();
         const previous_loop = self.loop_capability_effects;
-        self.loop_capability_effects = &transfers;
         defer self.loop_capability_effects = previous_loop;
+        var header = try flow.clone(self.allocator);
+        defer header.deinit();
+        var broken: ?CapabilityFlow = null;
+        defer if (broken) |*exit| exit.deinit();
+        const budget = 64 +| header.bindings.count();
+        for (0..budget) |_| {
+            var transfers: LoopTransfersFor(CapabilityFlow) = .{};
+            defer transfers.deinit();
+            self.loop_capability_effects = &transfers;
+            defer self.loop_capability_effects = previous_loop;
 
-        var backedge = try flow.clone(self.allocator);
-        defer backedge.deinit();
-        try self.infer_capability_block(function, body, &backedge, exits);
-        if (transfers.continue_flow) |*continued|
-            try self.join_capability_fallthrough(&backedge, &backedge, continued);
-        if (backedge.reachable) if (increment) |advance|
-            try self.infer_capability_node(function, advance, &backedge, exits);
-        if (backedge.reachable) {
-            // Block results can reuse a call within one evaluation. Only the
-            // calls first evaluated by this condition run again on the edge.
-            for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
-            try self.infer_capability_node(function, condition, &backedge, exits);
-        }
-        if (backedge.reachable) {
-            for (backedge.counts.items) |*count| {
-                const prior = for (flow.counts.items) |entry| {
-                    if (self.capability_source_equal(count.source, entry.source)) break entry.maximum;
-                } else 0;
-                if (count.maximum > prior) count.maximum = 2;
+            var backedge = try header.clone(self.allocator);
+            defer backedge.deinit();
+            // Calls evaluated before the loop stay cached. Calls from a
+            // previous iteration do not suppress a fresh body or condition.
+            backedge.calls.clearRetainingCapacity();
+            for (flow.calls.keys()) |call| try backedge.calls.put(self.allocator, call, {});
+            try self.infer_capability_block(function, body, &backedge, exits);
+            if (transfers.break_flow) |*exit| try self.join_capability_alternative(exit, &broken);
+            if (transfers.continue_flow) |*continued|
+                try self.join_capability_fallthrough(&backedge, &backedge, continued);
+            if (backedge.reachable) if (increment) |advance|
+                try self.infer_capability_node(function, advance, &backedge, exits);
+            if (backedge.reachable) {
+                for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
+                try self.infer_capability_node(function, condition, &backedge, exits);
             }
-            try self.join_capability_flows(flow, flow, &backedge);
+            if (!backedge.reachable) break;
+
+            var next = CapabilityFlow.init(self.allocator);
+            defer next.deinit();
+            try self.join_capability_flows(&next, flow, &backedge);
+            if (self.capabilityLoopStateEqual(&header, &next)) {
+                std.mem.swap(CapabilityFlow, &header, &next);
+                break;
+            }
+            std.mem.swap(CapabilityFlow, &header, &next);
+        } else return error.CapabilityLoopDidNotConverge;
+
+        if (broken) |*exit| try self.join_capability_flows(&header, &header, exit);
+        std.mem.swap(CapabilityFlow, flow, &header);
+    }
+
+    fn capabilityLoopStateEqual(self: *Infer, left: *const CapabilityFlow, right: *const CapabilityFlow) bool {
+        if (left.counts.items.len != right.counts.items.len or left.conflicts.items.len != right.conflicts.items.len or
+            left.bindings.count() != right.bindings.count() or left.addresses.count() != right.addresses.count()) return false;
+        for (left.counts.items, right.counts.items) |a, b| {
+            if (!self.capability_source_equal(a.source, b.source) or a.minimum != b.minimum or
+                a.maximum != b.maximum or a.requires_authorization != b.requires_authorization) return false;
         }
-        if (transfers.break_flow) |*broken|
-            try self.join_capability_flows(flow, flow, broken);
+        for (left.conflicts.items, right.conflicts.items) |a, b| {
+            if (!self.capability_source_equal(a.first, b.first) or !self.capability_source_equal(a.second, b.second)) return false;
+        }
+        var bindings = left.bindings.iterator();
+        while (bindings.next()) |entry| {
+            const other = right.bindings.get(entry.key_ptr.*) orelse return false;
+            if (entry.value_ptr.* != other and !summaries.valueEffectEql(entry.value_ptr.*.*, other.*)) return false;
+        }
+        var addresses = left.addresses.iterator();
+        while (addresses.next()) |entry| {
+            const other = right.addresses.get(entry.key_ptr.*) orelse return false;
+            if (!std.mem.eql(graph_mod.GlobalNodeId, entry.value_ptr.*, other)) return false;
+        }
+        return true;
     }
 
     fn infer_capability_node(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
