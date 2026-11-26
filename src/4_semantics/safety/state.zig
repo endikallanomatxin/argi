@@ -1015,10 +1015,19 @@ pub const State = struct {
         const namespace = self.tracker.namespace orelse return null;
         const index = namespace.projectionIndex(identity) orelse return null;
         const projected = namespace.projected_storage.items[index];
-        const parent = self.symbolicPointee(projected.parent) orelse self.initialProjectedPointee(projected.parent) orelse return null;
-        if (parent.generation == projected.parent_generation and parent.initializedness == .initialized)
-            return .{ .identity = identity, .ty = projected.ty, .initializedness = .initialized, .backing = projected.backing, .generation = projected.generation };
-        return null;
+        if (self.symbolicPointee(projected.parent)) |parent| {
+            if (parent.generation != projected.parent_generation or parent.initializedness != .initialized or
+                !self.tracker.isAlive(projected.parent_generation)) return null;
+        } else {
+            const parent = self.initialProjectedPointee(projected.parent) orelse return null;
+            if (parent.generation != projected.parent_generation) return null;
+        }
+        for ([_]facts.ValidityRootId{ projected.backing, projected.generation }) |root| {
+            const ordinal = @intFromEnum(root);
+            const roots = self.tracker.roots.items;
+            if (ordinal < roots.len and roots[ordinal].present and !self.tracker.isAlive(root)) return null;
+        }
+        return .{ .identity = identity, .ty = projected.ty, .initializedness = .initialized, .backing = projected.backing, .generation = projected.generation };
     }
 
     pub fn symbolicVariant(self: *const State, identity: facts.SymbolicPointeeId) ?u32 {
@@ -1864,4 +1873,21 @@ test "loop execution equality preserves consumed output access evidence" {
     try absent.executions.append(.{ .id = id, .loans = &.{} });
     try std.testing.expect(!absent.samePendingExecutions(&completed));
     try std.testing.expect(!completed.samePendingExecutions(&absent));
+}
+
+test "lazy symbolic projections require a live parent observation" {
+    const a = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = State.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const parent = try state.establishSymbolicInput(@enumFromInt(0), null);
+    var sibling = try state.clone(a);
+    defer sibling.deinit();
+    const field = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    try std.testing.expect(sibling.initialProjectedPointee(field.identity) != null);
+
+    sibling.tracker.end(parent.generation.?);
+    try std.testing.expect(sibling.initialProjectedPointee(field.identity) == null);
 }
