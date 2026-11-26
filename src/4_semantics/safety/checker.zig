@@ -3018,28 +3018,26 @@ pub const SafetyChecker = struct {
             for (projections) |projection| place = try self.project(place, projection);
             const stored = self.valueAtPlace(state, place) orelse continue;
             const value = try self.reconstructPlaceValue(state, place, stored);
-            try self.appendAllocationDependencies(value, dependencies, include_borrowed);
+            try appendAllocationDependencies(value, dependencies, include_borrowed);
         }
         for (pointer.symbolic_pointees) |identity| {
             const stored = try self.symbolicValueAt(state, identity) orelse continue;
             const contents = try self.reconstructSymbolicValue(state, identity, stored.value);
-            try self.appendAllocationDependencies(try self.projectValueFacts(contents, projections), dependencies, include_borrowed);
+            try appendAllocationDependencies(try self.projectValueFacts(contents, projections), dependencies, include_borrowed);
         }
     }
 
-    fn appendAllocationDependencies(self: *SafetyChecker, value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
+    fn appendAllocationDependencies(value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
         for (value.owned_roots) |root| {
-            const observed = for (value.dependencies) |dependency| {
-                if (dependency.root == root) break dependency;
-            } else facts.ValidityDependency{ .root = root };
-            try appendDependencyFact(dependencies, observed);
+            var observed = false;
+            for (value.dependencies) |dependency| {
+                if (dependency.root != root) continue;
+                try appendDependencyFact(dependencies, dependency);
+                observed = true;
+            }
+            if (!observed) try appendDependencyFact(dependencies, .{ .root = root });
         }
-        if (include_borrowed) {
-            var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            defer backing.deinit();
-            try collectDependencyRoots(value, &backing);
-            for (backing.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
-        }
+        if (include_borrowed) try collectValidityDependencies(value, dependencies);
     }
 
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
@@ -12002,6 +12000,28 @@ test "loop backing owner projection requires all incoming roots" {
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(owner));
     state.getPlace(nested).?.value.owned_roots = &roots;
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(nested));
+}
+
+test "allocation capture preserves every distinct retirement observation" {
+    const allocator = std.testing.allocator;
+    var captured = std.array_list.Managed(facts.ValidityDependency).init(allocator);
+    defer captured.deinit();
+    const root: facts.ValidityRootId = @enumFromInt(0);
+    const borrowed_root: facts.ValidityRootId = @enumFromInt(1);
+    const owned = [_]facts.ValidityDependency{
+        .{ .root = root, .retirement_mark = 2 },
+        .{ .root = root, .retirement_mark = 3 },
+    };
+    const borrowed: facts.ValidityDependency = .{ .root = borrowed_root, .retirement_mark = 4 };
+    const value: facts.ValueFacts = .{
+        .owned_roots = &.{root},
+        .dependencies = &owned,
+        .fields = &.{.{ .index = 0, .value = &.{ .dependencies = &.{borrowed} } }},
+    };
+    try SafetyChecker.appendAllocationDependencies(value, &captured, false);
+    try std.testing.expectEqualSlices(facts.ValidityDependency, &owned, captured.items);
+    try SafetyChecker.appendAllocationDependencies(value, &captured, true);
+    try std.testing.expectEqualSlices(facts.ValidityDependency, &(owned ++ .{borrowed}), captured.items);
 }
 
 test "joined dependency marks detect retirement on a single later branch" {
