@@ -526,6 +526,24 @@ twelve-slot stale-reference case (fixture 418X). Loops that mint
 identities within the original budget still use the prior approximation
 and need a sound generalization of generation widening.
 
+A repeated DynamicArray push through a mutable input exposed another
+constraint on symbolic generation reuse. In the reduced bridge trace,
+the backing root 0 remains live. The push summary ends observation 1
+and renews the argument to 23. Joining with loop entry issues observation
+28, and the next join issues 47. Widening 47 back to 28 also makes
+the projected-storage cache find children interned under the previous
+incarnation of 28. Their uncertain initializedness prevents the next
+possible replacement from renewing its argument. The backedge then has
+an ended observation 28, and the join retains both stale alternatives
+instead of creating a current generation.
+
+Keep generations that have named projections out of this reuse path.
+Reusing those identities efficiently requires transporting the current
+projected facts and separating them from historical child observations.
+The existing generation budget still bounds this case. Collection
+fixture 183 runs both growth and reserved-capacity loops. Fixture 184X
+requires rejection at the historical view read after the loop.
+
 Three alternating Debug builds per revision, with one frontend worker
 and the frontend cache disabled, measured the fixed-identity controls:
 

@@ -10439,7 +10439,7 @@ pub const SafetyChecker = struct {
     }
 
     fn widenLoopSymbolicObservations(self: *SafetyChecker, context: *LoopJoinContext, joined: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
-        for (joined.symbolic_pointees.items) |*pointee| {
+        pointees: for (joined.symbolic_pointees.items) |*pointee| {
             if (pointee.initializedness != .initialized) continue;
             const current = pointee.generation orelse continue;
             if (!joined.tracker.isAlive(current)) continue;
@@ -10463,6 +10463,14 @@ pub const SafetyChecker = struct {
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
             if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
+            // Projection identities are interned by the parent's generation.
+            // Recycling that generation would make a fresh parent find old
+            // child state, including partial initialization and retired roots.
+            if (joined.tracker.namespace) |namespace| {
+                for (namespace.projected_storage.items) |projection| {
+                    if (projection.parent_generation == canonical) continue :pointees;
+                }
+            }
             try joined.tracker.materialize(canonical);
             var replacement = joined.tracker.roots.items[@intFromEnum(current)];
             replacement.id = canonical;
