@@ -5516,8 +5516,11 @@ pub const SafetyChecker = struct {
             const target = post_targets[post_index] orelse {
                 if (post_state.initializedness == .initialized and post_state.initialization != .preserved) {
                     if (post_values[post_index]) |value| {
-                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access|
-                            try self.storeSymbolicValue(state, access, value, post_state.initialization == .definite);
+                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
+                            const definite = post_state.initialization == .definite;
+                            if (definite and post_state.ends_previous_roots and !try self.endReplacedSymbolicOwners(source, state, access)) continue;
+                            try self.storeSymbolicValue(state, access, value, definite);
+                        }
                     }
                 }
                 if (post_state.ends_previous_roots) {
@@ -5633,6 +5636,17 @@ pub const SafetyChecker = struct {
             try state.setPlace(slot, .initialized, refreshed);
         }
         try self.completePostCaptures(source, state, captures.items);
+    }
+
+    fn endReplacedSymbolicOwners(self: *SafetyChecker, source: primitives.SourceRef, state: *FunctionState, access: facts.ValueFacts) !bool {
+        const identity = exactSymbolicTarget(access) orelse return true;
+        if (access.opaque_provenance.len != 0 or state.symbolicStorageHasDynamicIndex(identity)) return true;
+        const previous = try self.symbolicValueAt(state, identity);
+        const value = try self.reconstructSymbolicValue(state, identity, if (previous) |stored| stored.value else .{});
+        var owners = std.array_list.Managed(facts.ValidityRootId).init(self.state_allocator);
+        defer owners.deinit();
+        try collectOwnedRoots(value, &owners);
+        return self.endRoots(source, state, owners.items);
     }
 
     fn completePostCaptures(
@@ -15102,6 +15116,31 @@ test "symbolic summary destinations never reevaluate their argument syntax" {
     try std.testing.expectEqual(value_state.Initializedness.initialized, state.initializednessAtPlace(.{ .root = @enumFromInt(0) }));
     try std.testing.expect(state.tracker.dependenciesAreAlive(value));
     try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+}
+
+test "symbolic replacement retires owner roots without retiring backing or borrowed dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const observation = try state.tracker.establish(.fresh);
+    const owner = try state.tracker.establish(.fresh);
+    const borrowed = try state.tracker.establish(.fresh);
+    const identity: facts.SymbolicPointeeId = @enumFromInt(0);
+    try state.symbolic_pointees.append(.{ .identity = identity, .initializedness = .initialized, .backing = backing, .generation = observation });
+    try state.symbolic_values.append(.{ .identity = identity, .value = .{
+        .owned_roots = &.{owner},
+        .dependencies = &.{.{ .root = borrowed }},
+    } });
+    const access: facts.ValueFacts = .{ .symbolic_pointees = &.{identity}, .dependencies = &.{ .{ .root = backing }, .{ .root = observation } } };
+    try std.testing.expect(try checker.endReplacedSymbolicOwners(.{ .file_index = 0, .offset = 0 }, &state, access));
+    try std.testing.expect(!state.tracker.isAlive(owner));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(access));
+    try std.testing.expect(state.tracker.isAlive(borrowed));
 }
 
 test "symbolic stored references survive snapshots and joins without inventing exact targets" {

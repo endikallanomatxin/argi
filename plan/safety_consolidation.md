@@ -799,6 +799,15 @@ its own observation in either predecessor, along with its recorded
 associations. The growing set of possible owners in the current
 aggregate still needs a multiplicity abstraction.
 
+The push summary publishes both a field-zero post-value and an
+aggregate post-value with possible initialization, root retirement,
+and generation refresh. The aggregate recipe produces a new owner.
+The field recipe includes prior owners as alternatives. A weak update
+must preserve owners from the path that keeps the old allocation.
+Definite replacements of exact symbolic storage retire the previous
+value's owner roots before storing the new value. They leave the
+physical backing and the old value's borrowed dependencies separate.
+
 Compute loop headers by joining entry with the abstract backedge.
 Compare complete states in the same partition namespace, including
 storage contents and deferred effects. Accept when the backedge is
