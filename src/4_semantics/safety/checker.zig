@@ -3188,6 +3188,7 @@ pub const SafetyChecker = struct {
         }
         var children = value.structuralChildren();
         while (children.next()) |child| try collectPossibleExecutionReceipts(child.*, receipts);
+        for (value.guarded_values) |guard| try collectPossibleExecutionReceipts(guard.value.*, receipts);
     }
 
     fn collectUniqueExecutionReceipt(value: facts.ValueFacts, selected: *?facts.ExecutionId) bool {
@@ -6679,6 +6680,9 @@ pub const SafetyChecker = struct {
         try collectPossibleExecutionReceipts(parent, &receipts);
         result.execution_receipts = try receipts.toOwnedSlice();
         result.execution_receipt_incomplete = parent.execution_receipt_incomplete or result.execution_receipts.len != 0;
+        // Guards describe the parent. They cannot refine an unresolved child,
+        // but the receipts they carry remain obligations.
+        result.guarded_values = &.{};
         return result;
     }
 
@@ -16897,6 +16901,41 @@ test "dynamic projection requires a known extent for complete element evidence" 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
     try std.testing.expect(!covered.reference_target_incomplete);
+}
+
+test "uncovered projection retains nested guarded receipts as obligations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+
+    const receipt = try state.establishExecution(&.{});
+    const guarded_value: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
+    const guard: facts.GuardedValueFacts = .{
+        .call = 0,
+        .conditions = .{},
+        .entry_facts = .{},
+        .value = &guarded_value,
+    };
+    const child: facts.ValueFacts = .{ .guarded_values = &.{guard} };
+    const parent_receipt = try state.establishExecution(&.{});
+    var parent_guard = guard;
+    const parent_guarded: facts.ValueFacts = .{ .execution_receipts = &.{parent_receipt} };
+    parent_guard.value = &parent_guarded;
+    const parent: facts.ValueFacts = .{
+        .fields = &.{.{ .index = 0, .value = &child }},
+        .guarded_values = &.{parent_guard},
+    };
+    const projected = try checker.projectValueFacts(parent, &.{.{ .field = 1 }});
+    try std.testing.expect(SafetyChecker.hasPendingExecution(projected, &state));
+    try std.testing.expectEqualSlices(facts.ExecutionId, &.{ receipt, parent_receipt }, projected.execution_receipts);
+    try std.testing.expect(projected.execution_receipt_incomplete);
+    try std.testing.expectEqual(@as(usize, 0), projected.guarded_values.len);
+    checker.completeExecutionReceipts(projected, &state);
+    try std.testing.expect(state.executionPending(receipt));
 }
 
 test "joining an absent receipt retains its obligation without certifying completion" {
