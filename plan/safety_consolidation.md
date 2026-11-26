@@ -788,6 +788,13 @@ outstanding obligations. Opaque contents use the same representation for
 contained observations and owner associations. Unknown traversal loses
 precision in the target and retains possible hidden effects.
 
+The tracker distinguishes singleton roots from roots representing
+multiple instances. A history root cannot establish a current
+observation, be revived by an outcome, or establish a transferred
+owner. Retiring one member preserves possible liveness of the others
+and does not advance a history-specific retirement counter. The
+expired lexical observation summary already uses this representation.
+
 In the reduced bridge trace, the destination's symbolic identity 0
 keeps backing 0 while the first two joined observations are 26 and 39.
 The second transition creates six more projected identities and an

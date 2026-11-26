@@ -16,6 +16,9 @@ pub const ValidityRoot = struct {
     present: bool = true,
     state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
+    /// A history root can represent several instances on the same path.
+    /// Its identity alone authenticates neither an observation nor cleanup.
+    summarized_instances: bool = false,
     /// One unresolved call may refine this generation. Zero means no proof;
     /// joins and independent calls erase the proof rather than combine guards.
     outcome_guard: u64 = 0,

@@ -7871,7 +7871,7 @@ pub const SafetyChecker = struct {
             const index = @intFromEnum(root);
             if (index >= state.tracker.roots.items.len) return error.InvalidTransferredBacking;
             const previous = state.tracker.roots.items[index];
-            if (!previous.present or !previous.owned_resource or previous.state != .dead) return error.InvalidTransferredBacking;
+            if (!previous.present or !previous.owned_resource or previous.summarized_instances or previous.state != .dead) return error.InvalidTransferredBacking;
         }
         var replacements = std.AutoHashMap(facts.ValidityRootId, facts.ValidityRootId).init(self.allocator);
         defer replacements.deinit();
@@ -8412,7 +8412,7 @@ pub const SafetyChecker = struct {
             const current = entry.generation orelse return false;
             if (!state.tracker.isAlive(backing)) return false;
             const root = &state.tracker.roots.items[@intFromEnum(current)];
-            if (root.state != .alive and root.state != .maybe_alive) return false;
+            if (root.summarized_instances or (root.state != .alive and root.state != .maybe_alive)) return false;
             root.state = .alive;
             root.outcome_guard = 0;
             entry.initializedness = .initialized;
@@ -10038,6 +10038,8 @@ pub const SafetyChecker = struct {
                 .id = id,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
+                .summarized_instances = (left_present and left.tracker.roots.items[index].summarized_instances) or
+                    (right_present and right.tracker.roots.items[index].summarized_instances),
                 .retirement_mark = @max(
                     if (left_present) left.tracker.roots.items[index].retirement_mark else 1,
                     if (right_present) right.tracker.roots.items[index].retirement_mark else 1,
@@ -10427,6 +10429,10 @@ pub const SafetyChecker = struct {
 
             var safe = true;
             for (alternatives[0..alternative_count]) |root| {
+                if (joined.tracker.roots.items[@intFromEnum(root)].summarized_instances) {
+                    safe = false;
+                    break;
+                }
                 // Loans and opaque storage keep the original generation.
                 // Rebinding the owner would hide their retirement obligations.
                 if (try rootHasExternalLoopObligation(joined, root)) {
@@ -10566,7 +10572,7 @@ pub const SafetyChecker = struct {
         if (mapping.count() == 0) return;
         const expired = context.expired_lexical_observation.?;
         try state.tracker.materialize(expired);
-        state.tracker.roots.items[@intFromEnum(expired)] = .{ .id = expired, .state = .dead, .retirement_mark = facts.Tracker.untracked_retirement };
+        state.tracker.roots.items[@intFromEnum(expired)] = .{ .id = expired, .state = .dead, .summarized_instances = true, .retirement_mark = facts.Tracker.untracked_retirement };
         for (state.places.items) |*place| place.value = try facts.remapValueRoots(self.allocator, place.value, &mapping);
         for (state.symbolic_values.items) |*stored| stored.value = try facts.remapValueRoots(self.allocator, stored.value, &mapping);
         for (state.reference_writes.items) |*stored| stored.value = try facts.remapValueRoots(self.allocator, stored.value, &mapping);
@@ -10826,7 +10832,7 @@ pub const SafetyChecker = struct {
             }
             if (@intFromEnum(outcome.generation) >= state.tracker.roots.items.len) continue;
             const root = &state.tracker.roots.items[@intFromEnum(outcome.generation)];
-            if (root.state != .maybe_alive or root.outcome_guard != outcome.guard) continue;
+            if (root.summarized_instances or root.state != .maybe_alive or root.outcome_guard != outcome.guard) continue;
             const current = state.domainGenerationIsCurrent(outcome.storage, outcome.generation);
             root.outcome_guard = 0;
             if (!current) continue;
@@ -10837,7 +10843,7 @@ pub const SafetyChecker = struct {
                 }
                 if (@intFromEnum(relocation.generation) >= state.tracker.roots.items.len) continue;
                 const destination_root = &state.tracker.roots.items[@intFromEnum(relocation.generation)];
-                if (destination_root.state != .maybe_alive or destination_root.outcome_guard != outcome.guard or
+                if (destination_root.summarized_instances or destination_root.state != .maybe_alive or destination_root.outcome_guard != outcome.guard or
                     state.initializednessAtPlace(outcome.storage.place) != .maybe_initialized or
                     state.initializednessAtPlace(relocation.destination) != .maybe_initialized) continue;
                 var destination_current = false;
@@ -10876,7 +10882,7 @@ pub const SafetyChecker = struct {
                     root.state = .alive;
                     for (outcome.owned_roots) |owned| {
                         const entry = &state.tracker.roots.items[@intFromEnum(owned)];
-                        if (entry.state == .maybe_alive and entry.outcome_guard == outcome.guard) {
+                        if (!entry.summarized_instances and entry.state == .maybe_alive and entry.outcome_guard == outcome.guard) {
                             entry.state = .alive;
                             entry.outcome_guard = 0;
                         }
@@ -10900,7 +10906,7 @@ pub const SafetyChecker = struct {
     fn activate_conditional_owner_roots(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) anyerror!void {
         for (value.owned_roots) |root| {
             const entry = &state.tracker.roots.items[@intFromEnum(root)];
-            if (entry.state == .conditional) entry.state = .alive;
+            if (entry.state == .conditional and !entry.summarized_instances) entry.state = .alive;
         }
         for (value.fields) |field| try self.activate_conditional_owner_roots(state, field.value.*);
         // Knowing an outer tag does not establish an inner choice's owner.
@@ -11163,7 +11169,7 @@ fn valueHasDeadExplicitDependencyForUse(value: facts.ValueFacts, state: *const S
         // A choice can carry an owner that exists only on its success branch.
         // Inspecting the choice does not use that resource before narrowing.
         // External loans have no ownership envelope and remain checked.
-        if (root.owned_resource and (root.state == .conditional or root.state == .maybe_alive) and valueContainsOwnedRoot(value, dependency.root)) continue;
+        if (root.owned_resource and !root.summarized_instances and (root.state == .conditional or root.state == .maybe_alive) and valueContainsOwnedRoot(value, dependency.root)) continue;
         return true;
     };
     for (value.fields) |field| if (valueHasDeadExplicitDependency(field.value.*, state)) return true;
@@ -11269,7 +11275,7 @@ fn valueDependsOnDeadRootWithOwners(
         // nested fields may depend on a root whose owned_roots fact is stored
         // on an ancestor aggregate. Borrowed dependencies have no such proof.
         if ((root.state == .conditional or (use == .escape and root.state == .maybe_alive)) and
-            root.owned_resource and valueContainsOwnedRoot(owners, dependency.root)) continue;
+            root.owned_resource and !root.summarized_instances and valueContainsOwnedRoot(owners, dependency.root)) continue;
         return true;
     }
     for (value.fields) |field|
@@ -11547,7 +11553,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (!found) return false;
     }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard or
+        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.summarized_instances != b.summarized_instances or a.outcome_guard != b.outcome_guard or
             (a.present and a.retirement_mark != b.retirement_mark)) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;

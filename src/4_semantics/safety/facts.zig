@@ -594,6 +594,12 @@ pub const Tracker = struct {
 
     pub fn end(self: *Tracker, id: ValidityRootId) void {
         const root = &self.roots.items[@intFromEnum(id)];
+        if (root.summarized_instances) {
+            if (root.state != .dead) root.state = .maybe_alive;
+            root.retirement_mark = untracked_retirement;
+            root.outcome_guard = 0;
+            return;
+        }
         if (root.state != .dead) self.recordRetirement(root);
         root.state = .dead;
         root.outcome_guard = 0;
@@ -604,6 +610,10 @@ pub const Tracker = struct {
     pub fn deferRetirement(self: *Tracker, id: ValidityRootId, guard: u64) bool {
         std.debug.assert(guard != 0);
         const root = &self.roots.items[@intFromEnum(id)];
+        if (root.summarized_instances) {
+            self.end(id);
+            return false;
+        }
         if (root.state == .alive) {
             self.recordRetirement(root);
             root.state = .maybe_alive;
@@ -617,7 +627,8 @@ pub const Tracker = struct {
     }
 
     pub fn isAlive(self: *const Tracker, id: ValidityRootId) bool {
-        return self.roots.items[@intFromEnum(id)].state == .alive;
+        const root = self.roots.items[@intFromEnum(id)];
+        return !root.summarized_instances and root.state == .alive;
     }
 
     pub fn dependenciesAreAlive(self: *const Tracker, facts: ValueFacts) bool {
@@ -627,6 +638,7 @@ pub const Tracker = struct {
 
     pub fn dependencyIsAlive(self: *const Tracker, dependency: ValidityDependency) bool {
         const root = self.roots.items[@intFromEnum(dependency.root)];
+        if (root.summarized_instances) return false;
         if (root.state == .alive) return true;
         return root.state == .maybe_alive and self.namespace != null and
             dependency.retirement_mark != 0 and dependency.retirement_mark != untracked_retirement and
@@ -669,6 +681,25 @@ test "indexed safety facts key places by GlobalBindingId" {
     Tracker.moveValue(&source, &destination);
     try std.testing.expectEqual(binding, destination.storage.root);
     try std.testing.expectEqual(root, destination.value.owned_roots[0]);
+}
+
+test "history roots cannot authorize a live dependency or retire every instance" {
+    var namespace: Tracker.RootNamespace = .{};
+    defer namespace.deinit(std.testing.allocator);
+    var tracker = Tracker.init(std.testing.allocator);
+    defer tracker.deinit();
+    tracker.namespace = &namespace;
+    const id = try tracker.establish(.fresh);
+    tracker.roots.items[@intFromEnum(id)].summarized_instances = true;
+    const dependency: ValidityDependency = .{ .root = id, .retirement_mark = namespace.retirement_mark };
+    try std.testing.expect(!tracker.dependencyIsAlive(dependency));
+    tracker.end(id);
+    try std.testing.expectEqual(.maybe_alive, tracker.roots.items[@intFromEnum(id)].state);
+    try std.testing.expect(!tracker.deferRetirement(id, 1));
+    try std.testing.expectEqual(Tracker.untracked_retirement, tracker.roots.items[@intFromEnum(id)].retirement_mark);
+    try std.testing.expectEqual(@as(u32, 0), tracker.roots.items[@intFromEnum(id)].outcome_guard);
+    try std.testing.expect(!tracker.dependencyIsAlive(dependency));
+    try std.testing.expect(!tracker.isAlive(id));
 }
 
 test "scalar opaque reads discard container lifetime facts" {
