@@ -143,18 +143,18 @@ pub const SafetyChecker = struct {
 
     const LoopJoinContext = struct {
         exits: ?*const FunctionState = null,
-        vacant_observations: std.array_list.Managed(LoopRootPhi),
+        lexical_observations: std.array_list.Managed(LoopRootPhi),
         roots: std.array_list.Managed(LoopRootPhi),
         symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
 
         fn init(allocator: std.mem.Allocator) LoopJoinContext {
-            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator), .vacant_observations = .init(allocator) };
+            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator), .lexical_observations = .init(allocator) };
         }
 
         fn deinit(self: *LoopJoinContext) void {
             self.roots.deinit();
             self.symbolic.deinit();
-            self.vacant_observations.deinit();
+            self.lexical_observations.deinit();
         }
     };
 
@@ -10218,7 +10218,7 @@ pub const SafetyChecker = struct {
             // facts out of the header while protecting their identities.
             join_context.exits = if (exits) |*exit_state| exit_state else null;
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
-            try canonicalizeDeferredLexicalObservations(&join_context, &next);
+            try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len);
             if (statesEqual(&current, &next)) {
@@ -10483,39 +10483,33 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn canonicalizeDeferredLexicalObservations(context: *LoopJoinContext, state: *FunctionState) !void {
+    fn canonicalizeUnobservedLexicalGenerations(context: *LoopJoinContext, state: *FunctionState) !void {
         const namespace = state.tracker.namespace orelse return;
-        const deferred = &context.vacant_observations;
+        const deferred = &context.lexical_observations;
         slots: for (state.storage_generations.items) |*entry| {
-            if (!entry.needs_current_generation or state.initializednessAtPlace(entry.storage) != .initialized) continue;
+            if (state.initializednessAtPlace(entry.storage) != .initialized) continue;
             const old = state.tracker.roots.items[@intFromEnum(entry.generation)];
-            if (old.owned_resource or old.outcome_guard != 0 or old.state == .alive) continue;
-            for (namespace.initial_storage.items) |initial| {
-                if (initial.root == old.id) continue :slots;
-            }
-            for (namespace.projected_storage.items) |projection| {
-                if (projection.parent_generation == old.id or projection.generation == old.id or projection.backing == old.id) continue :slots;
-            }
-            // The slot will lazily issue a new observation. Its placeholder
-            // may be renamed only if no other fact uses that incarnation.
+            if (old.owned_resource or old.outcome_guard != 0 or (old.state != .alive and !entry.needs_current_generation)) continue;
+            if (namespaceNamesRoot(namespace, old.id)) continue;
+            // Rename an incarnation only when its lexical slot is its sole
+            // remaining use. Preserve both current and deferred slots.
             if (try visitLoopRoots(state, .{ .contains = old.id }, entry)) continue;
-            entry.generation = try deferredLexicalObservation(deferred, state, entry.storage);
+            const root = for (deferred.items) |candidate| {
+                if (!candidate.storage.eql(entry.storage)) continue;
+                if (namespaceNamesRoot(namespace, candidate.root)) continue :slots;
+                if (try visitLoopRoots(state, .{ .contains = candidate.root }, entry)) continue :slots;
+                if (context.exits) |exits| if (try rootRetainedAcrossLoop(exits, candidate.root)) continue :slots;
+                try state.tracker.materialize(candidate.root);
+                break candidate.root;
+            } else new: {
+                try deferred.ensureUnusedCapacity(1);
+                const root = try state.tracker.establish(.fresh);
+                deferred.appendAssumeCapacity(.{ .storage = entry.storage, .root = root });
+                break :new root;
+            };
+            state.tracker.roots.items[@intFromEnum(root)] = .{ .id = root, .state = if (entry.needs_current_generation) .dead else .alive };
+            entry.generation = root;
         }
-    }
-
-    fn deferredLexicalObservation(deferred: *std.array_list.Managed(LoopRootPhi), state: *FunctionState, storage: facts.Place) !facts.ValidityRootId {
-        for (deferred.items) |entry| if (entry.storage.eql(storage)) {
-            try state.tracker.materialize(entry.root);
-            state.tracker.roots.items[@intFromEnum(entry.root)].state = .dead;
-            return entry.root;
-        };
-        // This identity is private to a deferred initialized slot and never
-        // returned by storageGeneration until a new incarnation is issued.
-        try deferred.ensureUnusedCapacity(1);
-        const root = try state.tracker.establish(.fresh);
-        state.tracker.roots.items[@intFromEnum(root)].state = .dead;
-        deferred.appendAssumeCapacity(.{ .storage = storage, .root = root });
-        return root;
     }
 
     fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize) !void {
@@ -11321,6 +11315,14 @@ fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root
         if (execution.output.accessEvidence()) |output| {
             if (try SafetyChecker.visitValueFactGraph(output.*, &guards, retained)) return true;
         }
+    }
+    return false;
+}
+
+fn namespaceNamesRoot(namespace: *const facts.Tracker.RootNamespace, root: facts.ValidityRootId) bool {
+    for (namespace.initial_storage.items) |initial| if (initial.root == root) return true;
+    for (namespace.projected_storage.items) |projection| {
+        if (projection.parent_generation == root or projection.generation == root or projection.backing == root) return true;
     }
     return false;
 }
@@ -12453,11 +12455,11 @@ test "deferred lexical observations retain their historical witnesses" {
     try state.setPlace(slot, .initialized, .{});
     try state.setPlace(alias, .initialized, .{ .dependencies = &.{.{ .root = old }} });
     try state.storage_generations.append(.{ .storage = slot, .generation = old, .needs_current_generation = true });
-    try SafetyChecker.canonicalizeDeferredLexicalObservations(&context, &state);
+    try SafetyChecker.canonicalizeUnobservedLexicalGenerations(&context, &state);
     try std.testing.expectEqual(old, state.storage_generations.items[0].generation);
 
     try state.setPlace(alias, .initialized, .{});
-    try SafetyChecker.canonicalizeDeferredLexicalObservations(&context, &state);
+    try SafetyChecker.canonicalizeUnobservedLexicalGenerations(&context, &state);
     const deferred_root = state.storage_generations.items[0].generation;
     try std.testing.expect(old != deferred_root);
     try std.testing.expect(!state.tracker.isAlive(deferred_root));
