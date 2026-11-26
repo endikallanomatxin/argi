@@ -9016,27 +9016,34 @@ pub const SafetyChecker = struct {
     fn joinSymbolicStoredValue(self: *SafetyChecker, stored: SymbolicStoredValue, other: ?SymbolicStoredValue) !SymbolicStoredValue {
         const definite = stored.definite and other != null and other.?.definite;
         var value = try self.joinObservedSymbolicValues(stored.value, if (other) |known| known.value else .{}, null, null, &.{});
-        if (!definite) value = try self.withoutExactSymbolicReferences(value);
+        if (!definite) value = try self.weakenStoredReferenceCoverage(value);
         return .{ .identity = stored.identity, .value = value, .definite = definite };
     }
 
-    fn withoutExactSymbolicReferences(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
+    fn weakenStoredReferenceCoverage(self: *SafetyChecker, original: facts.ValueFacts) anyerror!facts.ValueFacts {
         var value = original;
+        if (original.referenced_place) |place| {
+            var targets = std.array_list.Managed(facts.Place).init(self.allocator);
+            try targets.appendSlice(original.mutation_places);
+            try appendPlaceFact(&targets, place);
+            value.mutation_places = try targets.toOwnedSlice();
+        }
         value.referenced_place = null;
         value.reference_target_incomplete = true;
-        value.symbolic_pointees = &.{};
+        value.reference_coverage_complete = false;
+        value.lexical_frame = null;
         value.domains = &.{};
         const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
         for (fields) |*field| {
             const child = try self.allocator.create(facts.ValueFacts);
-            child.* = try self.withoutExactSymbolicReferences(field.value.*);
+            child.* = try self.weakenStoredReferenceCoverage(field.value.*);
             field.value = child;
         }
         value.fields = fields;
         const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
         for (variants) |*variant| {
             const child = try self.allocator.create(facts.ValueFacts);
-            child.* = try self.withoutExactSymbolicReferences(variant.value.*);
+            child.* = try self.weakenStoredReferenceCoverage(variant.value.*);
             variant.value = child;
         }
         value.variants = variants;
@@ -15283,7 +15290,10 @@ test "symbolic stored references survive snapshots and joins without inventing e
     try checker.joinState(&joined, &state, &changed);
     const uncertain = (try checker.symbolicValueAt(&joined, @enumFromInt(0))).?;
     try std.testing.expect(!uncertain.definite);
-    try std.testing.expectEqual(@as(usize, 0), uncertain.value.symbolic_pointees.len);
+    try std.testing.expectEqualSlices(facts.SymbolicPointeeId, first_value.symbolic_pointees, uncertain.value.symbolic_pointees);
+    try std.testing.expect(uncertain.value.reference_target_incomplete);
+    try std.testing.expect(!uncertain.value.hasCompleteReferenceCoverage());
+    try std.testing.expectEqual(null, exactSymbolicTarget(uncertain.value));
     try std.testing.expect(valueDependsOnRoot(uncertain.value, first));
     try checker.joinState(&joined, &state, &state);
     try std.testing.expect(statesEqual(&joined, &state));
