@@ -623,9 +623,7 @@ pub const Tracker = struct {
     pub fn end(self: *Tracker, id: ValidityRootId) void {
         const root = &self.roots.items[@intFromEnum(id)];
         if (root.summarized_instances) {
-            if (root.state != .dead) root.state = .maybe_alive;
-            root.retirement_mark = untracked_retirement;
-            root.outcome_guard = 0;
+            self.markPossiblyRetired(id);
             return;
         }
         if (root.state != .dead) self.recordRetirement(root);
@@ -639,7 +637,11 @@ pub const Tracker = struct {
         if (root.state == .dead) return;
         root.state = .maybe_alive;
         root.outcome_guard = 0;
-        self.recordRetirement(root);
+        if (root.summarized_instances) {
+            // No witness can distinguish retirements of members of this
+            // partition. Keep repeated possible retirements idempotent.
+            root.retirement_mark = untracked_retirement;
+        } else self.recordRetirement(root);
     }
 
     /// Register a possible retirement whose result can still refine this root.
@@ -737,6 +739,10 @@ test "history roots cannot authorize a live dependency or retire every instance"
     try std.testing.expectEqual(@as(u32, 0), tracker.roots.items[@intFromEnum(id)].outcome_guard);
     try std.testing.expect(!tracker.dependencyIsAlive(dependency));
     try std.testing.expect(!tracker.isAlive(id));
+    const counter = namespace.retirement_mark;
+    tracker.markPossiblyRetired(id);
+    try std.testing.expectEqual(counter, namespace.retirement_mark);
+    try std.testing.expectEqual(Tracker.untracked_retirement, tracker.roots.items[@intFromEnum(id)].retirement_mark);
 }
 
 test "scalar opaque reads discard container lifetime facts" {
