@@ -442,6 +442,17 @@ Use the existing stale-alias, opaque-retention, and disjoint-loan controls
 alongside growth loops. Add a loop whose observable effect needs more than
 eight steps to propagate before replacing the cutoff.
 
+A concrete probe uses two lexical resources and twelve reference slots
+initialized to the first resource. Each iteration copies the references
+from high indices to low indices in assignment order (slot 11 receives
+slot 10 first) and then assigns a reference to the second resource to slot
+0. After twelve iterations, destroying the second resource and
+dereferencing slot 11 is accepted by the current checker. A four-step
+version is rejected at the final dereference. A twelve-step control that
+only assigns references to the first resource compiles. The long probe
+uses fixed identities with no acquisitions or allocation in the loop, so
+it isolates propagation depth from generation widening.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old
