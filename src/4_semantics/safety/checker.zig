@@ -10298,6 +10298,7 @@ pub const SafetyChecker = struct {
             try self.trimDefaultSymbolicProjections(&next, &entry, join_context.exits);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
+            try self.trimCompletedLoopExecutions(&next, &entry, join_context.exits);
             try forgetUnobservedRetirementMarks(&next, &entry, join_context.exits);
             if (compareLoopStates(&current, &next, .covers)) {
                 // Publish the header that covered the transfer, including
@@ -10696,6 +10697,40 @@ pub const SafetyChecker = struct {
             kept += 1;
         }
         state.symbolic_pointees.shrinkRetainingCapacity(kept);
+    }
+
+    fn trimCompletedLoopExecutions(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
+        if (state.tracker.namespace == null or state.executions.items.len == entry.executions.items.len) return;
+        const Retained = struct {
+            ids: std.AutoHashMap(facts.ExecutionId, void),
+
+            pub fn visit(visitor: *@This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+                for (value.execution_receipts) |id| try visitor.ids.put(id, {});
+                for (value.completed_executions) |id| try visitor.ids.put(id, {});
+                if (value.task_output_claim) |id| try visitor.ids.put(id, {});
+                if (value.task_output_execution) |id| try visitor.ids.put(id, {});
+                return false;
+            }
+        };
+        var retained: Retained = .{ .ids = .init(self.state_allocator) };
+        defer retained.ids.deinit();
+        for (entry.executions.items) |execution| try retained.ids.put(execution.id, {});
+        if (exits) |exit| {
+            for (exit.executions.items) |execution| try retained.ids.put(execution.id, {});
+            _ = try visitLoopStateValues(exit, &retained);
+        }
+        if (self.active_fresh_executions) |active| {
+            var ids = active.valueIterator();
+            while (ids.next()) |id| try retained.ids.put(id.*, {});
+        }
+        _ = try visitLoopStateValues(state, &retained);
+        var kept: usize = 0;
+        for (state.executions.items) |execution| {
+            if (!execution.pending and execution.output.accessEvidence() == null and !retained.ids.contains(execution.id)) continue;
+            state.executions.items[kept] = execution;
+            kept += 1;
+        }
+        state.executions.shrinkRetainingCapacity(kept);
     }
 
     fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize, exits: ?*const FunctionState) !void {
@@ -11613,6 +11648,33 @@ fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, entry: *
 
 fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
     return visitLoopRoots(state, .{ .contains = root }, null);
+}
+
+test "loop execution reduction retains observed and exit receipts" {
+    const allocator = std.testing.allocator;
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var header = try entry.clone(allocator);
+    defer header.deinit();
+    const dropped = try header.establishExecution(&.{});
+    const observed = try header.establishExecution(&.{});
+    const exits = try header.establishExecution(&.{});
+    var exit = try header.clone(allocator);
+    defer exit.deinit();
+    exit.executions.items[0] = exit.executions.items[2];
+    exit.executions.shrinkRetainingCapacity(1);
+    for ([_]facts.ExecutionId{ dropped, observed, exits }) |id| header.completeExecution(id);
+    try header.setPlace(.{ .root = @enumFromInt(0) }, .initialized, .{ .execution_receipts = &.{observed} });
+    try checker.trimCompletedLoopExecutions(&header, &entry, &exit);
+    try std.testing.expectEqual(null, header.executionState(dropped));
+    try std.testing.expect(header.executionState(observed) != null);
+    try std.testing.expect(header.executionState(exits) != null);
+    try std.testing.expect(@intFromEnum(try header.establishExecution(&.{})) > @intFromEnum(exits));
 }
 
 test "loop projection reduction preserves retained domains and lazily restores default rows" {
