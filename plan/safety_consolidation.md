@@ -450,6 +450,13 @@ Each abstract transfer contributes break states to an exit accumulator.
 Its observations stay out of the header and constrain generation-name
 reuse while the solver advances. This preserves effects seen on earlier
 exits when a later header has widened its observations.
+
+Execution-state equality compares loans, output custody, and retained
+access evidence in receipt order. A consumed result can still carry
+evidence used to check effects through the receipt. A pending receipt
+with no attached output can still accept custody, unlike one whose
+output has already been reserved. Completed entries with neither
+custody nor evidence are irrelevant to this comparison.
 Fixture 417X exercises a condition that observes an old alias after a
 continue, even though the resource slot has already been reinitialized.
 

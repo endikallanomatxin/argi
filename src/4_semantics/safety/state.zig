@@ -242,39 +242,31 @@ pub const State = struct {
         try self.executions.appendSlice(right[j..]);
     }
 
-    /// Completed tasks with retained outputs still carry live custody.
-    pub fn sameExecutionOutputs(self: *const State, other: *const State) bool {
+    /// Pending loans and output access evidence can both affect the next
+    /// transfer. A completed entry without either can be ignored.
+    pub fn samePendingExecutions(self: *const State, other: *const State) bool {
+        var other_entries = other.executions.items;
         for (self.executions.items) |execution| {
-            if (execution.output == .unavailable) continue;
-            const opposite = other.executionState(execution.id) orelse {
-                if (execution.output == .retained) return false;
+            while (other_entries.len != 0 and @intFromEnum(other_entries[0].id) < @intFromEnum(execution.id)) {
+                if (other_entries[0].pending or other_entries[0].output.accessEvidence() != null) return false;
+                other_entries = other_entries[1..];
+            }
+            if (other_entries.len == 0 or other_entries[0].id != execution.id) {
+                if (execution.pending or execution.output.accessEvidence() != null) return false;
                 continue;
-            };
+            }
+
+            const opposite = other_entries[0];
+            other_entries = other_entries[1..];
+            if (execution.pending != opposite.pending) return false;
             if (execution.output.accessEvidence() != opposite.output.accessEvidence()) return false;
             if ((execution.output == .retained) != (opposite.output == .retained)) return false;
+            // Unavailable pending output can still accept custody. A consumed
+            // output cannot, even after its access evidence has been lost.
+            if (execution.pending and @as(std.meta.Tag(facts.ExecutionState.Output), execution.output) !=
+                @as(std.meta.Tag(facts.ExecutionState.Output), opposite.output)) return false;
         }
-        for (other.executions.items) |execution| {
-            if (execution.output == .unavailable) continue;
-            const opposite = self.executionState(execution.id) orelse {
-                if (execution.output == .retained) return false;
-                continue;
-            };
-            if (opposite.output == .unavailable and execution.output.accessEvidence() != null) return false;
-        }
-        return true;
-    }
-
-    /// Compare pending loans and any change in a common receipt’s output evidence.
-    pub fn samePendingExecutions(self: *const State, other: *const State) bool {
-        if (!self.sameExecutionOutputs(other)) return false;
-        var remaining = other.executions.items;
-        for (self.executions.items) |execution| {
-            if (!execution.pending) continue;
-            while (remaining.len != 0 and !remaining[0].pending) remaining = remaining[1..];
-            if (remaining.len == 0 or execution.id != remaining[0].id) return false;
-            remaining = remaining[1..];
-        }
-        for (remaining) |execution| if (execution.pending) return false;
+        for (other_entries) |entry| if (entry.pending or entry.output.accessEvidence() != null) return false;
         return true;
     }
 
@@ -1821,4 +1813,28 @@ test "joining an already claimed execution output does not restore custody" {
         try joined.joinExecutions(if (reverse) right.executions.items else left.executions.items, if (reverse) left.executions.items else right.executions.items);
         try std.testing.expect(joined.consumeExecutionOutput(id) == null);
     }
+}
+
+test "loop execution equality preserves consumed output access evidence" {
+    const allocator = std.testing.allocator;
+    var absent = State.init(allocator);
+    defer absent.deinit();
+    var completed = State.init(allocator);
+    defer completed.deinit();
+    const id = try completed.establishExecution(&.{});
+    try std.testing.expect(completed.retainExecutionOutput(id, &facts.empty_value_facts));
+    completed.completeExecution(id);
+    try std.testing.expect(completed.consumeExecutionOutput(id) != null);
+
+    try std.testing.expect(!absent.samePendingExecutions(&completed));
+    try std.testing.expect(!completed.samePendingExecutions(&absent));
+
+    completed.executions.items[0].output = .{ .consumed = null };
+    try std.testing.expect(absent.samePendingExecutions(&completed));
+    try std.testing.expect(completed.samePendingExecutions(&absent));
+
+    completed.executions.items[0].pending = true;
+    try absent.executions.append(.{ .id = id, .loans = &.{} });
+    try std.testing.expect(!absent.samePendingExecutions(&completed));
+    try std.testing.expect(!completed.samePendingExecutions(&absent));
 }
