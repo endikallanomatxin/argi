@@ -491,6 +491,12 @@ storage or its retained contents. Use fixture 259 to measure
 observation-only normalization and fixture 183 to measure the
 simultaneous storage and observation transfer.
 
+At ea2f7e31e the Debug loop filter passed 40 fixtures and failed
+seven. The owner join recovered passing growth and fresh-observation
+cases and the expected stale-alias diagnostic. The remaining failures
+include both mixed propagation probes, symbolic DynamicArray growth,
+lexical escapes and the two text growth controls.
+
 Compare checker
 time, peak memory, abstract loop iterations, and retained facts on the same
 input while scaling the number of owners, loan receipts, and wrapper calls.

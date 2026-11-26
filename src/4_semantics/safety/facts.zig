@@ -514,7 +514,7 @@ pub const Tracker = struct {
         if (!self.roots.items[index].present) self.roots.items[index] = .{ .id = id };
     }
 
-    const untracked_retirement = std.math.maxInt(u32);
+    pub const untracked_retirement = std.math.maxInt(u32);
 
     fn recordRetirement(self: *Tracker, root: *ValidityRoot) void {
         const namespace = self.namespace orelse {

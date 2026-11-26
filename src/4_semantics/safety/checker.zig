@@ -11338,7 +11338,16 @@ fn retainMaterializedLoopSeed(state: *const SafetyChecker.FunctionState, retaine
 // An unowned, unguarded generation without a marked witness has only
 // its liveness state left. The namespace counter still advances, so
 // later retirements always invalidate witnesses created after this join.
+fn hasAbstractableRetirementMark(root: facts.ValidityRoot) bool {
+    return root.state == .maybe_alive and !root.owned_resource and root.outcome_guard == 0 and
+        root.retirement_mark != facts.Tracker.untracked_retirement;
+}
+
 fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, exits: ?*const SafetyChecker.FunctionState) !void {
+    for (state.tracker.roots.items) |root| {
+        if (hasAbstractableRetirementMark(root)) break;
+    } else return;
+
     const Witnesses = struct {
         roots: std.AutoHashMap(facts.ValidityRootId, void),
 
@@ -11354,8 +11363,8 @@ fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, exits: ?
     _ = try visitLoopStateValues(state, &witnesses);
     if (exits) |exit_state| _ = try visitLoopStateValues(exit_state, &witnesses);
     for (state.tracker.roots.items) |*root| {
-        if (root.state != .maybe_alive or root.owned_resource or root.outcome_guard != 0 or witnesses.roots.contains(root.id)) continue;
-        root.retirement_mark = std.math.maxInt(u32);
+        if (!hasAbstractableRetirementMark(root.*) or witnesses.roots.contains(root.id)) continue;
+        root.retirement_mark = facts.Tracker.untracked_retirement;
     }
 }
 
