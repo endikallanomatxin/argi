@@ -6080,12 +6080,20 @@ pub const SafetyChecker = struct {
         }
         result.owned_roots = try owned.toOwnedSlice();
 
-        for (effect.input_storage_capabilities) |path| {
-            const input = (try self.load_summary_input_value(path, arguments, state)).scalarOpaqueRead();
-            result = try self.mergeValueFacts(result, input);
-        }
         var origins = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
+        var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
         try origins.appendSlice(result.acquisition_origins);
+        try capabilities.appendSlice(result.storage_capabilities);
+        for (effect.input_storage_capabilities) |path| {
+            const input = try self.load_summary_input_value(path, arguments, state);
+            // This recipe selects acquisition evidence. Execution receipts
+            // and completion proofs have independent summary recipes.
+            result.integer_address = result.integer_address or input.integer_address;
+            result.foreign_storage = result.foreign_storage or input.foreign_storage;
+            result.storage_capability_incomplete = result.storage_capability_incomplete or input.storage_capability_incomplete;
+            for (input.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
+            for (input.storage_capabilities) |capability| try appendCapabilityFact(&capabilities, capability);
+        }
         for (effect.input_acquisition_origins) |path| {
             const input = try self.load_summary_input_value(path, arguments, state);
             for (input.acquisition_origins) |origin| try appendCapabilityFact(&origins, origin);
@@ -6094,8 +6102,6 @@ pub const SafetyChecker = struct {
         for (effect.fresh_acquisition_origins) |fresh|
             try appendCapabilityFact(&origins, try self.instantiateFreshOrigin(fresh, state, fresh_capabilities));
         result.acquisition_origins = try origins.toOwnedSlice();
-        var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator);
-        for (result.storage_capabilities) |capability| try appendCapabilityFact(&capabilities, capability);
         for (effect.fresh_storage_capabilities) |fresh|
             try appendCapabilityFact(&capabilities, try self.instantiateFreshCapability(fresh, state, fresh_capabilities));
         result.storage_capabilities = try capabilities.toOwnedSlice();
@@ -16935,6 +16941,35 @@ test "uncovered projection retains nested guarded receipts as obligations" {
     try std.testing.expect(projected.execution_receipt_incomplete);
     try std.testing.expectEqual(@as(usize, 0), projected.guarded_values.len);
     checker.completeExecutionReceipts(projected, &state);
+    try std.testing.expect(state.executionPending(receipt));
+}
+
+test "storage capability recipes preserve only acquisition evidence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+
+    const receipt = try state.establishExecution(&.{});
+    const capability = try state.establishCapability();
+    const input: facts.ValueFacts = .{
+        .execution_receipts = &.{receipt},
+        .execution_receipt_incomplete = true,
+        .storage_capabilities = &.{capability},
+        .acquisition_origins = &.{capability},
+        .storage_capability_incomplete = true,
+    };
+    const result = try checker.instantiateOutput(.{
+        .input_storage_capabilities = &.{.{ .input_index = 0 }},
+    }, &.{input}, &state);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{capability}, result.storage_capabilities);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{capability}, result.acquisition_origins);
+    try std.testing.expect(result.storage_capability_incomplete);
+    try std.testing.expect(!result.execution_receipt_incomplete);
+    try std.testing.expect(!SafetyChecker.hasPendingExecution(result, &state));
     try std.testing.expect(state.executionPending(receipt));
 }
 

@@ -9191,8 +9191,13 @@ pub const Infer = struct {
 
     fn overlay_capability_outputs(self: *Infer, destination: facts.ValueEffect, origin: facts.ValueEffect, ty: graph_mod.GlobalTypeId) anyerror!facts.ValueEffect {
         var result = destination;
-        if (self.graph.semanticType(ty) == .builtin) {
+        const semantic = self.graph.semanticType(ty);
+        if (semantic == .builtin) {
             const storage = try self.scalar_storage_effect(origin);
+            // Expanding a receipt's representation can create paths to its
+            // scalar fields. Plain scalar contents do not carry the receipt.
+            if (semantic.builtin != .Any and semantic.builtin != .Type and !types.hasDestructor(self.graph, ty))
+                result.input_execution_receipts = &.{};
             result.input_storage_capabilities = storage.input_storage_capabilities;
             result.storage_capability_incomplete = storage.storage_capability_incomplete;
             result.input_storage_authorizations = storage.input_storage_authorizations;
