@@ -141,32 +141,6 @@ pub const SafetyChecker = struct {
         root: facts.ValidityRootId,
     };
 
-    const LoopIdentityFrontier = struct {
-        roots: usize,
-        symbolic: usize,
-        capabilities: usize,
-        executions: usize,
-
-        fn capture(state: *const FunctionState) LoopIdentityFrontier {
-            if (state.tracker.namespace) |namespace| return .{
-                .roots = namespace.next_id,
-                .symbolic = namespace.next_symbolic_id,
-                .capabilities = namespace.next_capability_id,
-                .executions = namespace.next_execution_id,
-            };
-            return .{
-                .roots = state.tracker.roots.items.len,
-                .symbolic = state.symbolic_pointees.items.len,
-                .capabilities = state.storage_capabilities.items.len,
-                .executions = state.executions.items.len,
-            };
-        }
-
-        fn eql(self: LoopIdentityFrontier, other: LoopIdentityFrontier) bool {
-            return std.meta.eql(self, other);
-        }
-    };
-
     const LoopJoinContext = struct {
         exits: ?*const FunctionState = null,
         roots: std.array_list.Managed(LoopRootPhi),
@@ -10210,14 +10184,12 @@ pub const SafetyChecker = struct {
         var join_context = LoopJoinContext.init(self.allocator);
         defer join_context.deinit();
 
-        const initial_identities = LoopIdentityFrontier.capture(&entry);
-        const generation_budget = 8;
-        // Stable identities can still propagate through a chain of slots.
-        // This bounds solver work; equality alone certifies convergence.
-        const propagation_budget = @max(generation_budget, entry.places.items.len +| 1);
+        // This limit bounds work. Only a stable header can certify the
+        // loop; exhausting the limit reports an unproved backedge.
+        const propagation_budget = @max(8, entry.places.items.len +| 1);
         var exits: ?FunctionState = null;
         defer if (exits) |*exit_state| exit_state.deinit();
-        for (0..propagation_budget) |step| {
+        for (0..propagation_budget) |_| {
             var iteration = try self.cloneState(&current);
             defer iteration.deinit();
             var transfers: LoopTransfers = .{};
@@ -10245,13 +10217,7 @@ pub const SafetyChecker = struct {
             // facts out of the header while protecting their identities.
             join_context.exits = if (exits) |*exit_state| exit_state else null;
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
-            const converged = statesEqual(&current, &next);
-            // Fresh generations still use the legacy approximation. Do not
-            // let their creation stop propagation of entry observations.
-            const generation_cutoff = step + 1 >= generation_budget and
-                !initial_identities.eql(LoopIdentityFrontier.capture(&next)) and
-                loopEntryObservationsEqual(&current, &next, initial_identities.roots);
-            if (converged or generation_cutoff) {
+            if (statesEqual(&current, &next)) {
                 if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
                 try self.copyState(state, &next);
                 return;
@@ -11242,57 +11208,6 @@ fn findStorageEntry(entries: anytype, storage: facts.Place, hint: usize) ?usize 
     if (hint < entries.len and entries[hint].storage.eql(storage)) return hint;
     for (entries, 0..) |entry, index| if (entry.storage.eql(storage)) return index;
     return null;
-}
-
-/// Lexical destinations can propagate independently of the names assigned
-/// to their current observations.
-fn loopEntryObservationsEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState, root_limit: usize) bool {
-    for (left.places.items, 0..) |place, index| {
-        const other: facts.ValueFacts = if (findStorageEntry(right.places.items, place.storage, index)) |found|
-            right.places.items[found].value
-        else
-            .{};
-        if (!loopLexicalTargetsEqual(place.value, other) or
-            !loopEntryDependenciesCovered(place.value.dependencies, &left.tracker, other.dependencies, &right.tracker, root_limit) or
-            !loopEntryDependenciesCovered(other.dependencies, &right.tracker, place.value.dependencies, &left.tracker, root_limit)) return false;
-    }
-    for (right.places.items, 0..) |place, index| {
-        if (findStorageEntry(left.places.items, place.storage, index) != null) continue;
-        if (!loopLexicalTargetsEqual(place.value, .{})) return false;
-        for (place.value.dependencies) |dependency| {
-            if (@intFromEnum(dependency.root) < root_limit) return false;
-        }
-    }
-    return true;
-}
-
-fn loopLexicalTargetsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
-    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
-    if (left.referenced_place) |place| if (!place.eql(right.referenced_place.?)) return false;
-    if (left.mutation_places.len != right.mutation_places.len) return false;
-    for (left.mutation_places) |place| {
-        for (right.mutation_places) |other| {
-            if (place.eql(other)) break;
-        } else return false;
-    }
-    return true;
-}
-
-fn loopEntryDependenciesCovered(
-    dependencies: []const facts.ValidityDependency,
-    tracker: *const facts.Tracker,
-    other: []const facts.ValidityDependency,
-    other_tracker: *const facts.Tracker,
-    root_limit: usize,
-) bool {
-    for (dependencies) |dependency| {
-        if (@intFromEnum(dependency.root) >= root_limit) continue;
-        const live = tracker.dependencyIsAlive(dependency);
-        for (other) |candidate| {
-            if (candidate.root == dependency.root and other_tracker.dependencyIsAlive(candidate) == live) break;
-        } else return false;
-    }
-    return true;
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
