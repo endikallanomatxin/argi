@@ -10949,7 +10949,6 @@ fn valueHasDeadExplicitDependencyForUse(value: facts.ValueFacts, state: *const S
     if (value.explicit_dependency) for (value.dependencies) |dependency| {
         const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
         if (state.tracker.dependencyIsAlive(dependency)) continue;
-        if (dependency.retirement_mark != 0) return true;
         // Copying pointer bits does not access the resource. Dereference and
         // call preconditions check the complete loan before using it, while
         // non-resource anchors remain obligations of this value itself.
@@ -11044,7 +11043,6 @@ fn valueDependsOnDeadRootWithOwners(
     for (value.dependencies) |dependency| {
         const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
         if (state.tracker.dependencyIsAlive(dependency)) continue;
-        if (dependency.retirement_mark != 0) return true;
         // A resource that only exists on one choice branch can become
         // conditional/maybe-alive after joins. It is still safe to escape when
         // the escaping aggregate itself carries ownership of that exact root.

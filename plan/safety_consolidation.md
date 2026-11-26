@@ -171,6 +171,12 @@ growth and priority queue fixtures. Word count still loses validity at its
 loop header. Repeated joins and generation substitution need to preserve
 valid witnesses without changing what their physical roots denote.
 
+The retirement mark certifies access through an observation. It is not a
+precondition for carrying conditional cleanup custody in the owning value.
+Checking the mark before the existing custody rules rejected fallible map
+copies while forwarding their partially constructed owners. Access through
+an independent alias still requires current lifetime evidence.
+
 Prove the relationship between a current observation and its backing on each
 incoming path before joining the evidence. Merged owner-root membership alone
 is insufficient, since a joined value can retain roots from multiple paths
