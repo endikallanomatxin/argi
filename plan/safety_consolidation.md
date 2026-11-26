@@ -556,6 +556,24 @@ expected diagnostic. Keeping the twelfth-slot read and assigning only
 the live reference to the first slot compiles. A generation budget must
 never terminate propagation of a separate changing store fact.
 
+In a Debug experiment, requiring exact equality at the existing work
+budget rejected both the valid growth control and the mixed probe for
+non-convergence. In each control every backedge added 19 tracker slots,
+six symbolic pointee rows, three stored symbolic values after the first
+join, and one opaque domain. The lexical place count stayed fixed and
+the reference-write table stayed empty. The mixed probe still added
+the same rows on its twentieth transition. Trimming only the root array
+cannot make these states converge. The widening has to cover symbolic
+projections, their contents, and the opaque domain together, while
+checking propagation of the unaffected lexical slots independently.
+The straight-line control compiled with the same diagnostic build.
+
+The ReleaseSafe geometry kernel at 529374bc0 compiled and ran with
+one frontend worker and the frontend cache disabled. The build took
+2m28s and reached 2,185,996 KiB peak RSS. The earlier ReleaseSafe
+reference stopped in Safety at the bridge diagnostic, so its peak
+does not measure the cost of reaching code generation.
+
 Three alternating Debug builds per revision, with one frontend worker
 and the frontend cache disabled, measured the fixed-identity controls:
 
