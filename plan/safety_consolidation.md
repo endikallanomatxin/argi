@@ -476,7 +476,22 @@ Exhausting its work budget rejects an unsettled header. The strict
 Debug loop run passed 33 fixtures and failed 14. The failures include
 valid array growth and iterator loops, and negative fixtures that stop
 before their intended diagnostic. Use these as precision requirements
-for the bounded abstraction above. Compare checker
+for the bounded abstraction above.
+
+At c0a21ec3c an instrumented Debug run with one frontend worker
+distinguished two forms of growth. In fixture 259, tracker slots rose
+from 38 to 87 across eight transfers while the twelve symbolic rows
+and ten lexical places stayed fixed. No symbolic contents or opaque
+rows were present at that header. For fixture 183 the eighth header
+retained 118 tracker slots, 51 symbolic rows, 25 stored symbolic
+values and eight opaque rows. The last edge still added six symbolic
+rows, three stored values and an opaque row. Stable embedded backing
+reduces generation allocation but does not itself bound observed
+storage or its retained contents. Use fixture 259 to measure
+observation-only normalization and fixture 183 to measure the
+simultaneous storage and observation transfer.
+
+Compare checker
 time, peak memory, abstract loop iterations, and retained facts on the same
 input while scaling the number of owners, loan receipts, and wrapper calls.
 Use the existing stale-alias, opaque-retention, and disjoint-loan controls
