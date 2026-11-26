@@ -14,6 +14,7 @@ pub const SymbolicPointeeId = enum(u32) { _ };
 
 // Summary/effect vocabulary contains no graph pointers and is shared verbatim.
 pub const ValidityRootId = base.ValidityRootId;
+pub const RootProducerId = base.RootProducerId;
 pub const StorageCapabilityId = base.StorageCapabilityId;
 pub const ValidityRoot = base.ValidityRoot;
 pub const ValidityDependency = base.ValidityDependency;
@@ -429,6 +430,14 @@ pub const SymbolicStorageSelector = StorageSelector;
 pub const Tracker = struct {
     /// Cloned branch states share identities, never reuse another branch's ID.
     pub const RootNamespace = struct {
+        pub const ProducerSite = union(enum) {
+            call: graph.GlobalNodeId,
+            virtual_call: graph.GlobalVirtualCallId,
+        };
+        pub const Producer = struct {
+            site: ProducerSite,
+            effect: FreshEffectSource,
+        };
         /// Embedded projections follow physical storage across observations.
         /// Ordinary symbolic inputs may share a validity root without sharing
         /// a storage identity.
@@ -463,6 +472,7 @@ pub const Tracker = struct {
         // First observations persist across branches and loop iterations. A
         // repeated lexical binding never receives a later, stronger birth.
         lexical_allocations: std.AutoArrayHashMapUnmanaged(graph.GlobalBindingId, bool) = .empty,
+        producers: std.AutoArrayHashMapUnmanaged(Producer, void) = .empty,
         projected_storage: std.ArrayList(ProjectedStorage) = .empty,
         projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
         embedded_slots: std.AutoHashMapUnmanaged(EmbeddedSlot, ValidityRootId) = .empty,
@@ -471,6 +481,11 @@ pub const Tracker = struct {
         pub fn embeddedBase(self: *const RootNamespace, identity: SymbolicPointeeId) EmbeddedBase {
             const index = self.projectionIndex(identity) orelse return .{ .input = identity };
             return .{ .projected = self.projected_storage.items[index].backing };
+        }
+
+        pub fn internProducer(self: *RootNamespace, allocator: std.mem.Allocator, producer: Producer) !RootProducerId {
+            const entry = try self.producers.getOrPut(allocator, producer);
+            return @enumFromInt(entry.index);
         }
 
         pub fn observedProjection(self: *const RootNamespace, observation: ProjectionObservation) ?ProjectedStorage {
@@ -523,6 +538,8 @@ pub const Tracker = struct {
             var result = self.*;
             result.lexical_allocations = try self.lexical_allocations.clone(allocator);
             errdefer result.lexical_allocations.deinit(allocator);
+            result.producers = try self.producers.clone(allocator);
+            errdefer result.producers.deinit(allocator);
             result.initial_storage = try self.initial_storage.clone(allocator);
             errdefer result.initial_storage.deinit(allocator);
             result.projected_storage = try self.projected_storage.clone(allocator);
@@ -534,6 +551,7 @@ pub const Tracker = struct {
         }
         pub fn deinit(self: *RootNamespace, allocator: std.mem.Allocator) void {
             self.lexical_allocations.deinit(allocator);
+            self.producers.deinit(allocator);
             self.initial_storage.deinit(allocator);
             self.projected_storage.deinit(allocator);
             self.projection_observations.deinit(allocator);

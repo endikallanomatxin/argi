@@ -145,19 +145,21 @@ pub const SafetyChecker = struct {
         exits: ?*const FunctionState = null,
         expired_lexical_observation: ?facts.ValidityRootId = null,
         expired_resource_observation: ?facts.ValidityRootId = null,
+        expired_produced_resources: std.AutoHashMap(facts.RootProducerId, facts.ValidityRootId),
         first_loop_root: u32 = 0,
         lexical_observations: std.array_list.Managed(LoopRootPhi),
         roots: std.array_list.Managed(LoopRootPhi),
         symbolic: std.array_list.Managed(struct { identity: facts.SymbolicPointeeId, root: facts.ValidityRootId }),
 
         fn init(allocator: std.mem.Allocator) LoopJoinContext {
-            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator), .lexical_observations = .init(allocator) };
+            return .{ .roots = std.array_list.Managed(LoopRootPhi).init(allocator), .symbolic = .init(allocator), .lexical_observations = .init(allocator), .expired_produced_resources = .init(allocator) };
         }
 
         fn deinit(self: *LoopJoinContext) void {
             self.roots.deinit();
             self.symbolic.deinit();
             self.lexical_observations.deinit();
+            self.expired_produced_resources.deinit();
         }
     };
 
@@ -183,6 +185,7 @@ pub const SafetyChecker = struct {
     next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
     active_summary_call_source: ?primitives.SourceRef = null,
+    active_root_producer_site: ?facts.Tracker.RootNamespace.ProducerSite = null,
     active_fresh_executions: ?*std.AutoHashMap(facts.FreshEffectSource, facts.ExecutionId) = null,
     active_post_captures: ?*std.array_list.Managed(PostCapture) = null,
     active_entry_generations: []const state_mod.StorageGeneration = &.{},
@@ -2048,6 +2051,9 @@ pub const SafetyChecker = struct {
         const previous_source = self.active_summary_call_source;
         self.active_summary_call_source = source;
         defer self.active_summary_call_source = previous_source;
+        const previous_producer = self.active_root_producer_site;
+        self.active_root_producer_site = if (call_node) |node| .{ .call = node } else null;
+        defer self.active_root_producer_site = previous_producer;
         const engine = self.active_summaries orelse return null;
         const complete_summary = engine.summaryFor(callee) orelse return null;
         if (!try self.validateTransferRequirements(source, callee, complete_summary, argument_nodes, values, state)) return facts.ValueFacts{};
@@ -6659,9 +6665,16 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
     ) !facts.ValidityRootId {
-        _ = self;
         if (fresh.get(source)) |root| return root;
+        const producer = if (self.active_root_producer_site) |site|
+            if (state.tracker.namespace) |namespace|
+                try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = source })
+            else
+                null
+        else
+            null;
         const root = try state.tracker.establish(.fresh);
+        state.tracker.roots.items[@intFromEnum(root)].producer = producer;
         try fresh.put(source, root);
         return root;
     }
@@ -7879,8 +7892,11 @@ pub const SafetyChecker = struct {
         defer replacements.deinit();
         try replacements.ensureTotalCapacity(@intCast(roots.items.len));
         for (roots.items) |root| {
+            const producer = state.tracker.roots.items[@intFromEnum(root)].producer;
             const replacement = try state.tracker.establish(.fresh);
-            state.tracker.roots.items[@intFromEnum(replacement)].owned_resource = true;
+            const renewed = &state.tracker.roots.items[@intFromEnum(replacement)];
+            renewed.owned_resource = true;
+            renewed.producer = producer;
             replacements.putAssumeCapacityNoClobber(root, replacement);
         }
         return facts.remapValueRoots(self.allocator, value, &replacements);
@@ -8161,6 +8177,9 @@ pub const SafetyChecker = struct {
         const initialized = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, true);
         const outcomes = try self.callOutcomeCleanups(summary, argument_nodes, values, &candidate);
         try self.annotations.setVirtualCall(self.allocator, id, .{ .consumed_auto_deinits = consumed, .initialized_auto_deinits = initialized, .outcome_cleanups = outcomes });
+        const previous_producer = self.active_root_producer_site;
+        self.active_root_producer_site = .{ .virtual_call = id };
+        defer self.active_root_producer_site = previous_producer;
         const applied = self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate) catch |err| {
             if (err != error.MissingVirtualStorageDomain) return err;
             try self.report(input_node.source, "cannot establish captured access region identity: evidence is missing or an intermediate reference changed", .{});
@@ -10040,6 +10059,7 @@ pub const SafetyChecker = struct {
                 .id = id,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
+                .producer = if (left_present) left.tracker.roots.items[index].producer else right.tracker.roots.items[index].producer,
                 .summarized_instances = (left_present and left.tracker.roots.items[index].summarized_instances) or
                     (right_present and right.tracker.roots.items[index].summarized_instances),
                 .retirement_mark = @max(
@@ -10558,7 +10578,11 @@ pub const SafetyChecker = struct {
             const lexical = containsRoot(state.lexical_storage_generations.items, id);
             if (lexical == root.owned_resource) continue;
             const history = if (lexical) &context.expired_lexical_observation else &context.expired_resource_observation;
-            if (id == history.* or namespaceNamesRoot(namespace, id)) continue;
+            const existing = if (!lexical and root.producer != null)
+                context.expired_produced_resources.get(root.producer.?)
+            else
+                history.*;
+            if (id == existing or namespaceNamesRoot(namespace, id)) continue;
             if (context.exits) |exit| if (try rootRetainedAcrossLoop(exit, id)) continue;
             for (state.storage_generations.items) |storage| if (storage.generation == id) continue :roots;
             for (state.symbolic_pointees.items) |pointee| {
@@ -10569,9 +10593,12 @@ pub const SafetyChecker = struct {
             for (context.lexical_observations.items) |phi| if (phi.root == id) continue :roots;
             if (try rootHasExternalLoopObligation(state, id) or try loopObservationHasProtectedUses(state, id, .observation_only)) continue;
 
-            const expired = history.* orelse blk: {
+            const expired = existing orelse blk: {
                 const fresh = try state.tracker.establish(.fresh);
-                history.* = fresh;
+                if (!lexical and root.producer != null)
+                    try context.expired_produced_resources.put(root.producer.?, fresh)
+                else
+                    history.* = fresh;
                 break :blk fresh;
             };
             try state.tracker.materialize(expired);
@@ -10579,6 +10606,7 @@ pub const SafetyChecker = struct {
                 .id = expired,
                 .state = .dead,
                 .owned_resource = root.owned_resource,
+                .producer = root.producer,
                 .summarized_instances = true,
                 .retirement_mark = facts.Tracker.untracked_retirement,
             };
@@ -11487,22 +11515,31 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     defer context.deinit();
     var state = try entry.clone(allocator);
     defer state.deinit();
-    const first = try state.tracker.establish(.fresh);
-    const second = try state.tracker.establish(.fresh);
+    checker.active_root_producer_site = .{ .call = @enumFromInt(0) };
+    var fresh = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(allocator);
+    defer fresh.deinit();
+    const first = try checker.instantiateFreshRoot(0, &state, &fresh);
+    try std.testing.expectEqual(first, try checker.instantiateFreshRoot(0, &state, &fresh));
+    fresh.clearRetainingCapacity();
+    const second = try checker.instantiateFreshRoot(0, &state, &fresh);
+    const other = try checker.instantiateFreshRoot(1, &state, &fresh);
+    try std.testing.expect(first != second);
     const opaque_owner = try state.tracker.establish(.fresh);
-    for ([_]facts.ValidityRootId{ first, second, opaque_owner }) |root| {
+    for ([_]facts.ValidityRootId{ first, second, other, opaque_owner }) |root| {
         state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
         state.tracker.end(root);
     }
     const storage: facts.Place = .{ .root = @enumFromInt(0) };
-    try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first }, .{ .root = second } } });
+    try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first }, .{ .root = second }, .{ .root = other } } });
     try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{}, .owner_roots = &.{opaque_owner} });
     try checker.summarizeExpiredObservations(&context, &state);
-    const history = context.expired_resource_observation.?;
+    try std.testing.expectEqual(@as(usize, 2), namespace.producers.count());
+    try std.testing.expectEqual(@as(usize, 2), context.expired_produced_resources.count());
     const value = state.getPlace(storage).?.value;
-    try std.testing.expectEqualSlices(facts.ValidityDependency, &.{.{ .root = history }}, value.dependencies);
+    try std.testing.expectEqual(@as(usize, 2), value.dependencies.len);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(value));
-    try std.testing.expect(state.tracker.roots.items[@intFromEnum(history)].owned_resource);
+    for (value.dependencies) |dependency|
+        try std.testing.expect(state.tracker.roots.items[@intFromEnum(dependency.root)].owned_resource);
     try std.testing.expect(state.tracker.roots.items[@intFromEnum(opaque_owner)].present);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{opaque_owner}, state.opaque_storages.items[0].owner_roots);
 }
@@ -11602,7 +11639,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (!found) return false;
     }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.summarized_instances != b.summarized_instances or a.outcome_guard != b.outcome_guard or
+        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.summarized_instances != b.summarized_instances or a.producer != b.producer or a.outcome_guard != b.outcome_guard or
             (a.present and a.retirement_mark != b.retirement_mark)) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;

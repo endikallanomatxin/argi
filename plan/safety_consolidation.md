@@ -794,6 +794,12 @@ observation, be revived by an outcome, or establish a transferred
 owner. Retiring one member preserves possible liveness of the others
 and does not advance a history-specific retirement counter. The
 expired lexical observation summary already uses this representation.
+Fresh summary roots carry an interned producer keyed by the call site
+and the summary's fresh effect source. Repeated evaluations establish
+distinct root identities carrying the same producer. A checked custody
+transfer preserves that producer when it reissues the root. The loop
+header currently uses the partition for expired resource observations
+whose roots have no other retained obligations.
 
 In the reduced bridge trace, the destination's symbolic identity 0
 keeps backing 0 while the first two joined observations are 26 and 39.

@@ -3,6 +3,7 @@ const place = @import("place.zig");
 const value_state = @import("value_state.zig");
 
 pub const ValidityRootId = enum(u32) { _ };
+pub const RootProducerId = enum(u32) { _ };
 /// Acquisition authorization shared by known address aliases. Ordinary moves
 /// consume an AcquiredStorage binding, but an integer inspected before that
 /// move can remain in another binding or cross a summary boundary. Those
@@ -19,6 +20,8 @@ pub const ValidityRoot = struct {
     /// A history root can represent several instances on the same path.
     /// Its identity alone authenticates neither an observation nor cleanup.
     summarized_instances: bool = false,
+    /// Static origin only. Repeated executions still establish distinct roots.
+    producer: ?RootProducerId = null,
     /// One unresolved call may refine this generation. Zero means no proof;
     /// joins and independent calls erase the proof rather than combine guards.
     outcome_guard: u64 = 0,
