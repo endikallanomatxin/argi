@@ -820,6 +820,35 @@ its own observation in either predecessor, along with its recorded
 associations. The growing set of possible owners in the current
 aggregate still needs a multiplicity abstraction.
 
+A subsequent instrumented Debug build at `6aef84f2d` confirmed that the
+first transfer adds six materialized symbolic rows and each later transfer
+adds four. Each adds one opaque row. The newly added opaque rows have
+neither hidden dependencies nor a guard. Their owner sets grow from one
+to eight members over eight transfers. Row presence still affects
+provenance lookup, so an empty hidden-dependency set cannot justify
+dropping the row.
+
+The abstraction therefore needs two keys for projected opaque storage.
+Use a stable domain key for possible aliasing and provenance recovery.
+Use a current observation key for exact lookup, retirement and guarded
+emptying. A historical observation can contribute a possible target via
+the domain key. It cannot authorize a strong update to the current
+observation. Keep historical owner associations and hidden dependencies
+with their historical domain partition. If an owner can also occur in
+the current value, represent that overlap as a may-relation. A definite
+emptying operation can remove the current row's obligations. It can
+remove obligations from the historical row only if it covers every
+represented instance.
+
+Test the transfer with two retained observations of one domain before
+testing the complete loop driver. Empty the current observation while a
+hidden dependency remains in an older observation. Then check that
+provenance recovery still finds the possible domain, the earlier
+observation cannot update the current row strongly, and ending the
+earlier dependency still diagnoses an escape. Run the same trace with an
+initially empty row to verify that domain membership survives aging
+independently of hidden contents.
+
 The push summary publishes both a field-zero post-value and an
 aggregate post-value with possible initialization, root retirement,
 and generation refresh. The aggregate recipe produces a new owner.
