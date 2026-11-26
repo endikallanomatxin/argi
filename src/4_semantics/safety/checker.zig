@@ -2976,7 +2976,7 @@ pub const SafetyChecker = struct {
     }
 
     fn admitExecution(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, inputs: facts.ValueFacts, state: *FunctionState, source: primitives.SourceRef, transfers_custody: bool) !facts.ValueFacts {
-        if (hasPendingExecution(inputs, state)) {
+        if (try hasPendingExecution(inputs, state)) {
             try self.report(source, "cannot send a pending execution through a task input", .{});
             return .{};
         }
@@ -3181,14 +3181,35 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn collectPossibleExecutionReceipts(value: facts.ValueFacts, receipts: *std.array_list.Managed(facts.ExecutionId)) !void {
-        for (value.execution_receipts) |id| {
-            if (std.mem.indexOfScalar(facts.ExecutionId, receipts.items, id) == null)
-                try receipts.append(id);
-        }
+    fn visitPossibleExecutionReceipts(
+        value: facts.ValueFacts,
+        guards: *std.AutoHashMap(*const facts.ValueFacts, void),
+        visitor: anytype,
+    ) std.mem.Allocator.Error!bool {
+        for (value.execution_receipts) |id| if (try visitor.visit(id)) return true;
         var children = value.structuralChildren();
-        while (children.next()) |child| try collectPossibleExecutionReceipts(child.*, receipts);
-        for (value.guarded_values) |guard| try collectPossibleExecutionReceipts(guard.value.*, receipts);
+        while (children.next()) |child| if (try visitPossibleExecutionReceipts(child.*, guards, visitor)) return true;
+        for (value.guarded_values) |guard| {
+            // Guarded snapshots can be shared or recursive.
+            if ((try guards.getOrPut(guard.value)).found_existing) continue;
+            if (try visitPossibleExecutionReceipts(guard.value.*, guards, visitor)) return true;
+        }
+        return false;
+    }
+
+    fn collectPossibleExecutionReceipts(value: facts.ValueFacts, receipts: *std.array_list.Managed(facts.ExecutionId)) !void {
+        const Collector = struct {
+            receipts: *std.array_list.Managed(facts.ExecutionId),
+
+            fn visit(self: @This(), id: facts.ExecutionId) !bool {
+                if (std.mem.indexOfScalar(facts.ExecutionId, self.receipts.items, id) == null)
+                    try self.receipts.append(id);
+                return false;
+            }
+        };
+        var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(receipts.allocator);
+        defer guards.deinit();
+        _ = try visitPossibleExecutionReceipts(value, &guards, Collector{ .receipts = receipts });
     }
 
     fn collectUniqueExecutionReceipt(value: facts.ValueFacts, selected: *?facts.ExecutionId) bool {
@@ -3213,12 +3234,17 @@ pub const SafetyChecker = struct {
         return false;
     }
 
-    fn hasPendingExecution(value: facts.ValueFacts, state: *const FunctionState) bool {
-        for (value.execution_receipts) |id| if (state.executionPending(id)) return true;
-        var children = value.structuralChildren();
-        while (children.next()) |child| if (hasPendingExecution(child.*, state)) return true;
-        for (value.guarded_values) |guard| if (hasPendingExecution(guard.value.*, state)) return true;
-        return false;
+    fn hasPendingExecution(value: facts.ValueFacts, state: *const FunctionState) !bool {
+        const Pending = struct {
+            state: *const FunctionState,
+
+            fn visit(self: @This(), id: facts.ExecutionId) error{}!bool {
+                return self.state.executionPending(id);
+            }
+        };
+        var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.tracker.allocator);
+        defer guards.deinit();
+        return visitPossibleExecutionReceipts(value, &guards, Pending{ .state = state });
     }
 
     fn symbolicInputPath(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?facts.InputPath {
@@ -3999,7 +4025,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         const operands = primitive_transfer.opaqueMoveOperands(primitive, values.len) orelse return;
-        if (hasPendingExecution(values[operands.owner], state)) {
+        if (try hasPendingExecution(values[operands.owner], state)) {
             try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
             return;
         }
@@ -5020,7 +5046,7 @@ pub const SafetyChecker = struct {
         }
         for (summary.input_post_states) |post| {
             if (post.opaque_ownership == .definite or post.opaque_ownership == .conditional) {
-                if (hasPendingExecution(try self.load_summary_input_value(post.target, arguments, state), state)) {
+                if (try hasPendingExecution(try self.load_summary_input_value(post.target, arguments, state), state)) {
                     try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
                     return false;
                 }
@@ -5273,7 +5299,7 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states) |post| {
             if (post.initializedness != .deinitialized and !post.ends_previous_roots) continue;
             const value = try self.load_summary_input_value(post.target, arguments, state);
-            if (hasPendingExecution(value, state)) {
+            if (try hasPendingExecution(value, state)) {
                 try self.report(source, "cannot abandon a pending execution before certified completion", .{});
             }
         }
@@ -5854,12 +5880,12 @@ pub const SafetyChecker = struct {
         // original retained values before their precise structure is erased.
         for (effect.input_dependencies) |dependency| {
             const value = try self.load_summary_input_value(dependency.path, arguments, state);
-            if (hasPendingExecution(value, state)) return true;
+            if (try hasPendingExecution(value, state)) return true;
         }
         for ([_][]const facts.InputPath{ effect.input_place_values, effect.input_execution_receipts, effect.input_receiver_values }) |paths| {
             for (paths) |path| {
                 const value = try self.load_summary_input_value(path, arguments, state);
-                if (hasPendingExecution(value, state)) return true;
+                if (try hasPendingExecution(value, state)) return true;
             }
         }
         for (effect.input_domains) |domain| {
@@ -5868,11 +5894,11 @@ pub const SafetyChecker = struct {
             const selected = try self.domainFacts(value, domain.domain_index, state);
             for (selected.symbolic_pointees) |identity| {
                 const stored = try self.loadSummaryStorageContents(state, .{ .symbolic = identity });
-                if (hasPendingExecution(stored, state)) return true;
+                if (try hasPendingExecution(stored, state)) return true;
             }
             for (try self.domainStorage(value, domain.domain_index, state)) |storage| {
                 const stored = try self.loadSummaryStorageContents(state, .{ .place = storage });
-                if (hasPendingExecution(stored, state)) return true;
+                if (try hasPendingExecution(stored, state)) return true;
             }
         }
         for (effect.domain_values) |domain| if (try self.opaqueEffectHasPendingExecution(domain.value.*, arguments, state)) return true;
@@ -7530,7 +7556,7 @@ pub const SafetyChecker = struct {
             else if (self.inferTransferredOpaqueDomain(state, pointer)) |domain|
                 try domains.append(domain);
         }
-        if (domains.items.len != 0 and hasPendingExecution(value, state)) {
+        if (domains.items.len != 0 and try hasPendingExecution(value, state)) {
             try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
             return;
         }
@@ -11394,11 +11420,11 @@ test "pending executions remain visible inside retained aggregates" {
         .fields = &.{.{ .index = 0, .value = &first_receipt }},
         .variants = &.{.{ .index = 1, .value = &second_receipt }},
     };
-    try std.testing.expect(SafetyChecker.hasPendingExecution(nested, &state));
+    try std.testing.expect(try SafetyChecker.hasPendingExecution(nested, &state));
     state.completeExecution(first);
-    try std.testing.expect(SafetyChecker.hasPendingExecution(nested, &state));
+    try std.testing.expect(try SafetyChecker.hasPendingExecution(nested, &state));
     state.completeExecution(second);
-    try std.testing.expect(!SafetyChecker.hasPendingExecution(nested, &state));
+    try std.testing.expect(!try SafetyChecker.hasPendingExecution(nested, &state));
 }
 
 test "opaque retention checks execution obligations behind receiver and domain effects" {
@@ -11452,7 +11478,7 @@ test "opaque execution preflight preserves source receipts before summary consum
     try checker.applySummaryEffects(source, summary, &.{}, &arguments, &state);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqual(value_state.Initializedness.initialized, state.initializednessAtPlace(slot));
-    try std.testing.expect(SafetyChecker.hasPendingExecution(checker.valueAtPlace(&state, slot).?, &state));
+    try std.testing.expect(try SafetyChecker.hasPendingExecution(checker.valueAtPlace(&state, slot).?, &state));
     state.completeExecution(id);
     try std.testing.expect(try checker.validateOpaqueExecutionRetention(source, summary, &arguments, &state));
 }
@@ -16900,7 +16926,7 @@ test "dynamic projection requires a known extent for complete element evidence" 
     const envelope: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
     const nested_receipt: facts.ValueFacts = .{ .fields = &.{.{ .index = 1, .value = &envelope }} };
     const missing_receipt = try checker.projectValueFacts(nested_receipt, &.{.{ .field = 0 }});
-    try std.testing.expect(SafetyChecker.hasPendingExecution(missing_receipt, &state));
+    try std.testing.expect(try SafetyChecker.hasPendingExecution(missing_receipt, &state));
     checker.completeExecutionReceipts(missing_receipt, &state);
     try std.testing.expect(state.executionPending(receipt));
 
@@ -16919,13 +16945,14 @@ test "uncovered projection retains nested guarded receipts as obligations" {
     defer state.deinit();
 
     const receipt = try state.establishExecution(&.{});
-    const guarded_value: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
+    var guarded_value: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
     const guard: facts.GuardedValueFacts = .{
         .call = 0,
         .conditions = .{},
         .entry_facts = .{},
         .value = &guarded_value,
     };
+    guarded_value.guarded_values = &.{guard};
     const child: facts.ValueFacts = .{ .guarded_values = &.{guard} };
     const parent_receipt = try state.establishExecution(&.{});
     var parent_guard = guard;
@@ -16936,12 +16963,15 @@ test "uncovered projection retains nested guarded receipts as obligations" {
         .guarded_values = &.{parent_guard},
     };
     const projected = try checker.projectValueFacts(parent, &.{.{ .field = 1 }});
-    try std.testing.expect(SafetyChecker.hasPendingExecution(projected, &state));
+    try std.testing.expect(try SafetyChecker.hasPendingExecution(projected, &state));
     try std.testing.expectEqualSlices(facts.ExecutionId, &.{ receipt, parent_receipt }, projected.execution_receipts);
     try std.testing.expect(projected.execution_receipt_incomplete);
     try std.testing.expectEqual(@as(usize, 0), projected.guarded_values.len);
     checker.completeExecutionReceipts(projected, &state);
     try std.testing.expect(state.executionPending(receipt));
+    state.completeExecution(receipt);
+    state.completeExecution(parent_receipt);
+    try std.testing.expect(!try SafetyChecker.hasPendingExecution(parent, &state));
 }
 
 test "storage capability recipes preserve only acquisition evidence" {
@@ -16969,7 +16999,7 @@ test "storage capability recipes preserve only acquisition evidence" {
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{capability}, result.acquisition_origins);
     try std.testing.expect(result.storage_capability_incomplete);
     try std.testing.expect(!result.execution_receipt_incomplete);
-    try std.testing.expect(!SafetyChecker.hasPendingExecution(result, &state));
+    try std.testing.expect(!try SafetyChecker.hasPendingExecution(result, &state));
     try std.testing.expect(state.executionPending(receipt));
 }
 
@@ -16985,7 +17015,7 @@ test "joining an absent receipt retains its obligation without certifying comple
     const present: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
     for ([_][2]facts.ValueFacts{ .{ present, .{} }, .{ .{}, present } }) |alternatives| {
         const joined = try checker.joinObservedSymbolicValues(alternatives[0], alternatives[1], null, null, &.{});
-        try std.testing.expect(SafetyChecker.hasPendingExecution(joined, &state));
+        try std.testing.expect(try SafetyChecker.hasPendingExecution(joined, &state));
         checker.completeExecutionReceipts(joined, &state);
         try std.testing.expect(state.executionPending(receipt));
     }
