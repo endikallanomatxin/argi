@@ -19,10 +19,14 @@ pub const ValidityRoot = struct {
     /// One unresolved call may refine this generation. Zero means no proof;
     /// joins and independent calls erase the proof rather than combine guards.
     outcome_guard: u64 = 0,
+    /// Latest possible retirement in this proof's shared namespace.
+    retirement_mark: u32 = 1,
 };
 
 pub const ValidityDependency = struct {
     root: ValidityRootId,
+    /// A nonzero mark requires a proof on every path selecting this root.
+    retirement_mark: u32 = 0,
 };
 
 pub const ValidityRootEstablishment = union(enum) {

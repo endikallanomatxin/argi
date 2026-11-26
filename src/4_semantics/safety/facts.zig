@@ -426,6 +426,7 @@ pub const Tracker = struct {
         next_symbolic_id: u32 = 0,
         next_capability_id: u32 = 0,
         next_execution_id: u32 = 0,
+        retirement_mark: u32 = 1,
         // First observations persist across branches and loop iterations. A
         // repeated lexical binding never receives a later, stronger birth.
         lexical_allocations: std.AutoArrayHashMapUnmanaged(graph.GlobalBindingId, bool) = .empty,
@@ -498,8 +499,20 @@ pub const Tracker = struct {
         if (!self.roots.items[index].present) self.roots.items[index] = .{ .id = id };
     }
 
+    const untracked_retirement = std.math.maxInt(u32);
+
+    fn recordRetirement(self: *Tracker, root: *ValidityRoot) void {
+        const namespace = self.namespace orelse {
+            root.retirement_mark = untracked_retirement;
+            return;
+        };
+        namespace.retirement_mark +|= 1;
+        root.retirement_mark = namespace.retirement_mark;
+    }
+
     pub fn end(self: *Tracker, id: ValidityRootId) void {
         const root = &self.roots.items[@intFromEnum(id)];
+        if (root.state != .dead) self.recordRetirement(root);
         root.state = .dead;
         root.outcome_guard = 0;
     }
@@ -510,10 +523,12 @@ pub const Tracker = struct {
         std.debug.assert(guard != 0);
         const root = &self.roots.items[@intFromEnum(id)];
         if (root.state == .alive) {
+            self.recordRetirement(root);
             root.state = .maybe_alive;
             root.outcome_guard = guard;
         } else if (root.outcome_guard != guard) {
             // Neither outcome can resolve uncertainty introduced by the other.
+            if (root.state != .dead) self.recordRetirement(root);
             root.outcome_guard = 0;
         }
         return root.state == .maybe_alive and root.outcome_guard == guard;
@@ -524,8 +539,16 @@ pub const Tracker = struct {
     }
 
     pub fn dependenciesAreAlive(self: *const Tracker, facts: ValueFacts) bool {
-        for (facts.dependencies) |dependency| if (!self.isAlive(dependency.root)) return false;
+        for (facts.dependencies) |dependency| if (!self.dependencyIsAlive(dependency)) return false;
         return true;
+    }
+
+    pub fn dependencyIsAlive(self: *const Tracker, dependency: ValidityDependency) bool {
+        const root = self.roots.items[@intFromEnum(dependency.root)];
+        if (root.state == .alive) return true;
+        return root.state == .maybe_alive and self.namespace != null and
+            dependency.retirement_mark != 0 and dependency.retirement_mark != untracked_retirement and
+            root.retirement_mark == dependency.retirement_mark;
     }
 
     pub fn moveValue(source: *PlaceFacts, destination: *PlaceFacts) void {
@@ -715,10 +738,12 @@ fn replaceValueRootsIfChanged(
         if (dependency.root == replacement.apply(dependency.root)) continue;
         var dependencies: std.ArrayList(ValidityDependency) = .empty;
         for (value.dependencies) |entry| {
-            const root = replacement.apply(entry.root);
+            // A generation substitution alone cannot certify which
+            // retirement events a conditional observation has survived.
+            const remapped: ValidityDependency = if (entry.retirement_mark != 0) entry else .{ .root = replacement.apply(entry.root) };
             for (dependencies.items) |existing| {
-                if (existing.root == root) break;
-            } else try dependencies.append(allocator, .{ .root = root });
+                if (std.meta.eql(existing, remapped)) break;
+            } else try dependencies.append(allocator, remapped);
         }
         result.dependencies = try dependencies.toOwnedSlice(allocator);
         changed = true;

@@ -161,6 +161,16 @@ control-flow join combines their effects. The loop fixed point will need to
 compare the surviving observations and their obligations, since requiring
 fresh event numbers to repeat would prevent convergence.
 
+The checker now records the latest possible retirement in the shared proof
+namespace. For a root owned and live on one predecessor and absent from the
+other value, a dependency on the current owner records the joined mark. The
+input-owned-roots summary recipe copies that dependency into a new observation.
+Ordinary aliases retain their original dependencies. Collection fixtures 178X
+and 179 exercise this contrast. The mechanism also recovers the geometric
+growth and priority queue fixtures. Word count still loses validity at its
+loop header. Repeated joins and generation substitution need to preserve
+valid witnesses without changing what their physical roots denote.
+
 Prove the relationship between a current observation and its backing on each
 incoming path before joining the evidence. Merged owner-root membership alone
 is insufficient, since a joined value can retain roots from multiple paths

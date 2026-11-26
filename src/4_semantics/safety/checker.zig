@@ -3028,7 +3028,12 @@ pub const SafetyChecker = struct {
     }
 
     fn appendAllocationDependencies(self: *SafetyChecker, value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
-        for (value.owned_roots) |root| try appendDependencyFact(dependencies, .{ .root = root });
+        for (value.owned_roots) |root| {
+            const observed = for (value.dependencies) |dependency| {
+                if (dependency.root == root) break dependency;
+            } else facts.ValidityDependency{ .root = root };
+            try appendDependencyFact(dependencies, observed);
+        }
         if (include_borrowed) {
             var backing = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer backing.deinit();
@@ -4791,6 +4796,7 @@ pub const SafetyChecker = struct {
             const root = try state.domainGeneration(storage);
             const entry = &state.tracker.roots.items[@intFromEnum(root)];
             if (entry.state != .alive) {
+                _ = state.tracker.deferRetirement(root, guard);
                 entry.outcome_guard = 0;
                 continue;
             }
@@ -7111,10 +7117,7 @@ pub const SafetyChecker = struct {
                 !valueDependsOnRoot(old_children, dependency.root))
                 try appendDependencyFact(&dependencies, dependency);
         }
-        var child_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        defer child_dependencies.deinit();
-        try collectDependencyRoots(new_children, &child_dependencies);
-        for (child_dependencies.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+        try collectValidityDependencies(new_children, &dependencies);
         result.owned_roots = try owned.toOwnedSlice();
         result.dependencies = try dependencies.toOwnedSlice();
         return result;
@@ -9897,7 +9900,33 @@ pub const SafetyChecker = struct {
             result = try self.replaceProjectedValue(result, projection, payload);
             projected = true;
         }
-        return if (projected) self.refreshProjectedValueRoots(merged, result) else result;
+        if (projected) result = try self.refreshProjectedValueRoots(merged, result);
+        if (left_state != null and right_state != null and left_state.?.tracker.namespace != null) {
+            // Compare the incoming values before using their merged ownership.
+            // A root can be conditionally valid only if its non-owning
+            // predecessor carries no observation of it.
+            var updated: ?[]facts.ValidityDependency = null;
+            for (result.dependencies, 0..) |dependency, index| {
+                const root = dependency.root;
+                if (!containsRoot(result.owned_roots, root)) continue;
+                const a = left_state.?.tracker.roots.items;
+                const b = right_state.?.tracker.roots.items;
+                const i = @intFromEnum(root);
+                const a_live = i < a.len and a[i].state == .alive;
+                const b_live = i < b.len and b[i].state == .alive;
+                if (a_live == b_live) continue;
+                const owner = if (a_live) left else right;
+                const other = if (a_live) right else left;
+                const tracker = if (a_live) &left_state.?.tracker else &right_state.?.tracker;
+                if (!containsRoot(owner.owned_roots, root) or !validObservationsOfRoot(owner, root, tracker) or
+                    valueDependsOnRoot(other, root) or containsRoot(other.owned_roots, root)) continue;
+                const mark = @max(if (i < a.len) a[i].retirement_mark else 1, if (i < b.len) b[i].retirement_mark else 1);
+                if (updated == null) updated = try self.allocator.dupe(facts.ValidityDependency, result.dependencies);
+                updated.?[index].retirement_mark = mark;
+            }
+            if (updated) |dependencies| result.dependencies = dependencies;
+        }
+        return result;
     }
 
     fn joinState(self: *SafetyChecker, destination: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
@@ -9935,6 +9964,10 @@ pub const SafetyChecker = struct {
                 .present = left_present or right_present,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
+                .retirement_mark = @max(
+                    if (left_present) left.tracker.roots.items[index].retirement_mark else 1,
+                    if (right_present) right.tracker.roots.items[index].retirement_mark else 1,
+                ),
                 .outcome_guard = if (left_present and right_present and
                     left.tracker.roots.items[index].outcome_guard == right.tracker.roots.items[index].outcome_guard)
                     left.tracker.roots.items[index].outcome_guard
@@ -10823,7 +10856,7 @@ pub const SafetyChecker = struct {
 };
 
 fn appendDependencyFact(list: *std.array_list.Managed(facts.ValidityDependency), dependency: facts.ValidityDependency) !void {
-    for (list.items) |existing| if (existing.root == dependency.root) return;
+    for (list.items) |existing| if (std.meta.eql(existing, dependency)) return;
     try list.append(dependency);
 }
 
@@ -10915,7 +10948,8 @@ fn valueHasDeadExplicitDependency(value: facts.ValueFacts, state: *const SafetyC
 fn valueHasDeadExplicitDependencyForUse(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState, pointer_identity: bool) bool {
     if (value.explicit_dependency) for (value.dependencies) |dependency| {
         const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
-        if (root.state == .alive) continue;
+        if (state.tracker.dependencyIsAlive(dependency)) continue;
+        if (dependency.retirement_mark != 0) return true;
         // Copying pointer bits does not access the resource. Dereference and
         // call preconditions check the complete loan before using it, while
         // non-resource anchors remain obligations of this value itself.
@@ -10962,6 +10996,20 @@ fn loopRootPhiStorage(context: *const SafetyChecker.LoopJoinContext, root: facts
     return null;
 }
 
+fn validObservationsOfRoot(value: facts.ValueFacts, root: facts.ValidityRootId, tracker: *const facts.Tracker) bool {
+    for (value.dependencies) |dependency|
+        if (dependency.root == root and !tracker.dependencyIsAlive(dependency)) return false;
+    var children = value.structuralChildren();
+    while (children.next()) |child| if (!validObservationsOfRoot(child.*, root, tracker)) return false;
+    return true;
+}
+
+fn collectValidityDependencies(value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency)) !void {
+    for (value.dependencies) |dependency| try appendDependencyFact(dependencies, dependency);
+    var children = value.structuralChildren();
+    while (children.next()) |child| try collectValidityDependencies(child.*, dependencies);
+}
+
 fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
     for (value.dependencies) |dependency| try appendRootFact(roots, dependency.root);
     var children = value.structuralChildren();
@@ -10995,7 +11043,8 @@ fn valueDependsOnDeadRootWithOwners(
 ) bool {
     for (value.dependencies) |dependency| {
         const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
-        if (root.state == .alive) continue;
+        if (state.tracker.dependencyIsAlive(dependency)) continue;
+        if (dependency.retirement_mark != 0) return true;
         // A resource that only exists on one choice branch can become
         // conditional/maybe-alive after joins. It is still safe to escape when
         // the escaping aggregate itself carries ownership of that exact root.
@@ -11110,7 +11159,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (!found) return false;
     }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
+        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard or
+            (a.owned_resource and a.retirement_mark != b.retirement_mark)) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|
@@ -11213,7 +11263,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     for (left.guarded_values, right.guarded_values) |a, b| if (!a.eql(b)) return false;
     if (!std.mem.eql(facts.ExecutionId, left.completed_executions, right.completed_executions)) return false;
     for (left.generation_outcomes, right.generation_outcomes) |a, b| if (!a.eql(b)) return false;
-    for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
+    for (left.dependencies, right.dependencies) |a, b| if (!std.meta.eql(a, b)) return false;
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
@@ -11947,6 +11997,39 @@ test "loop backing owner projection requires all incoming roots" {
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(owner));
     state.getPlace(nested).?.value.owned_roots = &roots;
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(nested));
+}
+
+test "joined dependency marks detect retirement on a single later branch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var left = SafetyChecker.FunctionState.init(a);
+    defer left.deinit();
+    left.tracker.namespace = &namespace;
+    const physical = try left.tracker.establish(.fresh);
+    var right = try left.clone(a);
+    defer right.deinit();
+    right.tracker.end(physical);
+
+    var joined = SafetyChecker.FunctionState.init(a);
+    defer joined.deinit();
+    try checker.joinState(&joined, &left, &right);
+    const observation: facts.ValidityDependency = .{
+        .root = physical,
+        .retirement_mark = joined.tracker.roots.items[@intFromEnum(physical)].retirement_mark,
+    };
+    try std.testing.expect(joined.tracker.dependencyIsAlive(observation));
+    try std.testing.expect(!joined.tracker.dependencyIsAlive(.{ .root = physical }));
+
+    var later = try joined.clone(a);
+    defer later.deinit();
+    later.tracker.end(physical);
+    try checker.joinState(&joined, &joined, &later);
+    try std.testing.expect(!joined.tracker.dependencyIsAlive(observation));
 }
 
 test "joined projections observe a fresh lexical generation after replacement" {
