@@ -10217,7 +10217,7 @@ pub const SafetyChecker = struct {
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
-            try forgetUnobservedRetirementMarks(&next, join_context.exits);
+            try forgetUnobservedRetirementMarks(&next, &entry, join_context.exits);
             if (statesEqual(&current, &next)) {
                 if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
                 try self.copyState(state, &next);
@@ -11339,11 +11339,11 @@ fn retainMaterializedLoopSeed(state: *const SafetyChecker.FunctionState, retaine
 // its liveness state left. The namespace counter still advances, so
 // later retirements always invalidate witnesses created after this join.
 fn hasAbstractableRetirementMark(root: facts.ValidityRoot) bool {
-    return root.state == .maybe_alive and !root.owned_resource and root.outcome_guard == 0 and
+    return root.present and root.state != .alive and !root.owned_resource and root.outcome_guard == 0 and
         root.retirement_mark != facts.Tracker.untracked_retirement;
 }
 
-fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, exits: ?*const SafetyChecker.FunctionState) !void {
+fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, entry: *const SafetyChecker.FunctionState, exits: ?*const SafetyChecker.FunctionState) !void {
     for (state.tracker.roots.items) |root| {
         if (hasAbstractableRetirementMark(root)) break;
     } else return;
@@ -11361,6 +11361,7 @@ fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, exits: ?
     var witnesses: Witnesses = .{ .roots = .init(state.places.allocator) };
     defer witnesses.roots.deinit();
     _ = try visitLoopStateValues(state, &witnesses);
+    _ = try visitLoopStateValues(entry, &witnesses);
     if (exits) |exit_state| _ = try visitLoopStateValues(exit_state, &witnesses);
     for (state.tracker.roots.items) |*root| {
         if (!hasAbstractableRetirementMark(root.*) or witnesses.roots.contains(root.id)) continue;
@@ -11370,6 +11371,28 @@ fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, exits: ?
 
 fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
     return visitLoopRoots(state, .{ .contains = root }, null);
+}
+
+test "loop retirement reduction protects entry witnesses and forgets unused dead marks" {
+    const allocator = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    const observed = try entry.tracker.establish(.fresh);
+    const unobserved = try entry.tracker.establish(.fresh);
+    entry.tracker.end(observed);
+    entry.tracker.end(unobserved);
+    const mark = entry.tracker.roots.items[@intFromEnum(observed)].retirement_mark;
+    const dependency: facts.ValidityDependency = .{ .root = observed, .retirement_mark = mark };
+    var header = try entry.clone(allocator);
+    defer header.deinit();
+    try entry.places.append(.{ .storage = .{ .root = @enumFromInt(0) }, .value = .{ .dependencies = &.{dependency} } });
+    try forgetUnobservedRetirementMarks(&header, &entry, null);
+    try std.testing.expectEqual(mark, header.tracker.roots.items[@intFromEnum(observed)].retirement_mark);
+    try std.testing.expectEqual(facts.Tracker.untracked_retirement, header.tracker.roots.items[@intFromEnum(unobserved)].retirement_mark);
+    try std.testing.expect(!header.tracker.dependencyIsAlive(dependency));
 }
 
 fn visitLoopRoots(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, excluded: ?*const SafetyChecker.StorageGeneration) !bool {
