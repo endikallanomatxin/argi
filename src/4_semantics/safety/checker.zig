@@ -10513,16 +10513,12 @@ pub const SafetyChecker = struct {
     }
 
     fn widenLoopSymbolicObservations(self: *SafetyChecker, context: *LoopJoinContext, joined: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
-        pointees: for (joined.symbolic_pointees.items) |*pointee| {
+        for (joined.symbolic_pointees.items, 0..) |*pointee, index| {
             if (pointee.initializedness != .initialized) continue;
             const current = pointee.generation orelse continue;
             if (!joined.tracker.isAlive(current)) continue;
-            const a = for (left.symbolic_pointees.items) |entry| {
-                if (entry.identity == pointee.identity) break entry.generation;
-            } else null;
-            const b = for (right.symbolic_pointees.items) |entry| {
-                if (entry.identity == pointee.identity) break entry.generation;
-            } else null;
+            const a = if (left.symbolicPointeeAt(pointee.identity, index)) |entry| entry.generation else null;
+            const b = if (right.symbolicPointeeAt(pointee.identity, index)) |entry| entry.generation else null;
             if (a == null or b == null or a == b or current == a or current == b) continue;
             var existing: ?facts.ValidityRootId = null;
             for (context.symbolic.items) |entry| if (entry.identity == pointee.identity) {
@@ -10540,10 +10536,11 @@ pub const SafetyChecker = struct {
             if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
             if (try loopObservationHasProtectedUses(joined, current, .owner_rebase)) continue;
             // Projection identities are interned by the parent's generation.
-            // Recycling that generation would make a fresh parent find old
-            // child state, including partial initialization and retired roots.
+            // Recycling would make a fresh parent find old child state.
+            // Renaming a parent also requires transporting its current
+            // projections, which this substitution cannot do.
             if (joined.tracker.namespace) |namespace| {
-                if (namespace.hasProjectionFrom(canonical)) continue :pointees;
+                if (namespace.hasProjectionFrom(canonical) or namespace.hasProjectionFrom(current)) continue;
             }
             try joined.tracker.materialize(canonical);
             var replacement = joined.tracker.roots.items[@intFromEnum(current)];
@@ -15759,6 +15756,13 @@ test "loop symbolic observations canonicalize only without retained historical a
     try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
     try std.testing.expectEqual(guarded_current, next.symbolic_pointees.items[0].generation.?);
     try std.testing.expect(next.tracker.dependenciesAreAlive(snapshot));
+
+    try checker.joinState(&next, &left, &repeated);
+    const projected_current = next.symbolic_pointees.items[0];
+    const child = (try next.projectSymbolicStorage(projected_current, .{ .field = 0 }, null)).?;
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(projected_current.generation, next.symbolic_pointees.items[0].generation);
+    try std.testing.expectEqual(child, (try next.projectSymbolicStorage(next.symbolic_pointees.items[0], .{ .field = 0 }, null)).?);
 
     // A historical copy deliberately retains the old canonical root.
     const historical = observed;
