@@ -441,6 +441,21 @@ pub const Tracker = struct {
         }) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
+        /// Projections are appended in identity allocation order. Ordinary
+        /// symbolic inputs can occupy gaps in the projection table.
+        pub fn projectionIndex(self: *const RootNamespace, identity: SymbolicPointeeId) ?usize {
+            var start: usize = 0;
+            var limit = self.projected_storage.items.len;
+            const wanted = @intFromEnum(identity);
+            while (start < limit) {
+                const middle = start + (limit - start) / 2;
+                const candidate = @intFromEnum(self.projected_storage.items[middle].identity);
+                if (candidate == wanted) return middle;
+                if (candidate < wanted) start = middle + 1 else limit = middle;
+            }
+            return null;
+        }
+
         /// Independent session candidates copy allocation state; branches of
         /// one proof still share it. Immutable Place paths retain their arena.
         pub fn clone(self: *const RootNamespace, allocator: std.mem.Allocator) !RootNamespace {

@@ -923,21 +923,18 @@ pub const State = struct {
         if (identity == container) return true;
         const namespace = self.tracker.namespace orelse return false;
         while (true) {
-            identity = for (namespace.projected_storage.items) |entry| {
-                if (entry.identity == identity) {
-                    if (!entry.selector.embedded()) return false;
-                    break entry.parent;
-                }
-            } else return false;
+            const index = namespace.projectionIndex(identity) orelse return false;
+            const entry = namespace.projected_storage.items[index];
+            if (!entry.selector.embedded()) return false;
+            identity = entry.parent;
             if (identity == container) return true;
         }
     }
 
     fn symbolicProjectionIndex(self: *const State, identity: facts.SymbolicPointeeId) ?usize {
         const namespace = self.tracker.namespace orelse return null;
-        for (namespace.projected_storage.items, 0..) |entry, index|
-            if (entry.identity == identity and entry.selector.embedded()) return index;
-        return null;
+        const index = namespace.projectionIndex(identity) orelse return null;
+        return if (namespace.projected_storage.items[index].selector.embedded()) index else null;
     }
 
     fn symbolicStorageDepth(self: *const State, identity: facts.SymbolicPointeeId) usize {
@@ -955,9 +952,8 @@ pub const State = struct {
         const namespace = self.tracker.namespace orelse return false;
         var current = identity;
         while (true) {
-            const entry = for (namespace.projected_storage.items) |projected| {
-                if (projected.identity == current) break projected;
-            } else return false;
+            const index = namespace.projectionIndex(current) orelse return false;
+            const entry = namespace.projected_storage.items[index];
             // A stored reference loaded through a wildcard also represents
             // alternatives, even though the referent is not an embedded child.
             if (entry.selector == .projection and entry.selector.projection == .dynamic_index) return true;
@@ -998,14 +994,11 @@ pub const State = struct {
 
     pub fn initialProjectedPointee(self: *const State, identity: facts.SymbolicPointeeId) ?SymbolicPointeeState {
         const namespace = self.tracker.namespace orelse return null;
-        for (namespace.projected_storage.items) |projected| {
-            if (projected.identity != identity) continue;
-            const parent = for (self.symbolic_pointees.items) |entry| {
-                if (entry.identity == projected.parent) break entry;
-            } else self.initialProjectedPointee(projected.parent) orelse return null;
-            if (parent.generation == projected.parent_generation and parent.initializedness == .initialized)
-                return .{ .identity = identity, .ty = projected.ty, .initializedness = .initialized, .backing = projected.backing, .generation = projected.generation };
-        }
+        const index = namespace.projectionIndex(identity) orelse return null;
+        const projected = namespace.projected_storage.items[index];
+        const parent = self.symbolicPointee(projected.parent) orelse self.initialProjectedPointee(projected.parent) orelse return null;
+        if (parent.generation == projected.parent_generation and parent.initializedness == .initialized)
+            return .{ .identity = identity, .ty = projected.ty, .initializedness = .initialized, .backing = projected.backing, .generation = projected.generation };
         return null;
     }
 

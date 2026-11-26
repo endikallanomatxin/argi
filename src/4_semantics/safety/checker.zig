@@ -3302,20 +3302,18 @@ pub const SafetyChecker = struct {
             break;
         };
         const namespace = state.tracker.namespace orelse return null;
-        for (namespace.projected_storage.items) |projection| if (projection.identity == identity) {
-            const parent = try self.symbolicInputRoute(state, projection.parent) orelse return null;
-            return try parent.append(self.allocator, projection.selector);
-        };
-        return null;
+        const index = namespace.projectionIndex(identity) orelse return null;
+        const projection = namespace.projected_storage.items[index];
+        const parent = try self.symbolicInputRoute(state, projection.parent) orelse return null;
+        return try parent.append(self.allocator, projection.selector);
     }
 
     fn symbolicStorageComesFromInput(state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
         for (state.symbolic_pointees.items) |entry|
             if (entry.identity == identity and entry.input_path != null) return true;
         const namespace = state.tracker.namespace orelse return false;
-        for (namespace.projected_storage.items) |projection|
-            if (projection.identity == identity) return symbolicStorageComesFromInput(state, projection.parent);
-        return false;
+        const index = namespace.projectionIndex(identity) orelse return false;
+        return symbolicStorageComesFromInput(state, namespace.projected_storage.items[index].parent);
     }
 
     fn deferExecutionAliasConflict(self: *SafetyChecker, accessed: facts.SymbolicPointeeId, loaned: facts.SymbolicPointeeId, state: *const FunctionState) !bool {
@@ -4182,19 +4180,19 @@ pub const SafetyChecker = struct {
             .symbolic => |identity| {
                 for (state.symbolic_values.items) |entry| if (entry.identity == identity) return entry.value;
                 const namespace = state.tracker.namespace orelse return null;
-                for (namespace.projected_storage.items) |projection| if (projection.identity == identity and projection.selector.embedded()) {
-                    const parent = self.domainValue(state, .{ .symbolic = projection.parent }) orelse return null;
-                    return switch (projection.selector.projection) {
-                        .field, .static_index => |index| for (parent.fields) |field| {
-                            if (field.index == index) break field.value.*;
-                        } else null,
-                        .variant => |index| for (parent.variants) |variant| {
-                            if (variant.index == index) break variant.value.*;
-                        } else null,
-                        else => null,
-                    };
+                const projection_index = namespace.projectionIndex(identity) orelse return null;
+                const projection = namespace.projected_storage.items[projection_index];
+                if (!projection.selector.embedded()) return null;
+                const parent = self.domainValue(state, .{ .symbolic = projection.parent }) orelse return null;
+                return switch (projection.selector.projection) {
+                    .field, .static_index => |index| for (parent.fields) |field| {
+                        if (field.index == index) break field.value.*;
+                    } else null,
+                    .variant => |index| for (parent.variants) |variant| {
+                        if (variant.index == index) break variant.value.*;
+                    } else null,
+                    else => null,
                 };
-                return null;
             },
         }
     }
@@ -8912,16 +8910,13 @@ pub const SafetyChecker = struct {
     fn symbolicValueAt(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?SymbolicStoredValue {
         if (state.exactSymbolicValue(identity)) |stored| return stored;
         const namespace = state.tracker.namespace orelse return null;
-        for (namespace.projected_storage.items) |projected| {
-            if (projected.identity != identity) continue;
-            if (!projected.selector.embedded()) return null;
-            for (state.symbolic_pointees.items) |parent| {
-                if (parent.identity != projected.parent or parent.generation != projected.parent_generation) continue;
-                const stored = try self.symbolicValueAt(state, parent.identity) orelse return null;
-                return .{ .identity = identity, .value = try self.projectValueFacts(stored.value, &.{projected.selector.projection}), .definite = stored.definite };
-            }
-        }
-        return null;
+        const index = namespace.projectionIndex(identity) orelse return null;
+        const projected = namespace.projected_storage.items[index];
+        if (!projected.selector.embedded()) return null;
+        const parent = state.symbolicPointee(projected.parent) orelse return null;
+        if (parent.generation != projected.parent_generation) return null;
+        const stored = try self.symbolicValueAt(state, parent.identity) orelse return null;
+        return .{ .identity = identity, .value = try self.projectValueFacts(stored.value, &.{projected.selector.projection}), .definite = stored.definite };
     }
 
     fn reconstructSymbolicValue(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId, original: facts.ValueFacts) anyerror!facts.ValueFacts {
@@ -9759,16 +9754,11 @@ pub const SafetyChecker = struct {
         } else return false;
         if (entry.initializedness == .deinitialized or entry.initializedness == .moved) return false;
         const namespace = state.tracker.namespace orelse return true;
-        for (namespace.projected_storage.items) |projected| {
-            if (projected.identity != identity) continue;
-            for (state.symbolic_pointees.items) |parent| {
-                if (parent.identity != projected.parent) continue;
-                if (parent.generation != null and parent.generation != projected.parent_generation) return false;
-                return self.symbolicSlotMayBeAvailable(state, parent.identity);
-            }
-            return false;
-        }
-        return true;
+        const index = namespace.projectionIndex(identity) orelse return true;
+        const projected = namespace.projected_storage.items[index];
+        const parent = state.symbolicPointee(projected.parent) orelse return false;
+        if (parent.generation != null and parent.generation != projected.parent_generation) return false;
+        return self.symbolicSlotMayBeAvailable(state, parent.identity);
     }
 
     fn valueDependsOnLocalStorage(
