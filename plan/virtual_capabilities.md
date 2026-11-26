@@ -66,3 +66,25 @@ path and a certified handoff in addition to transferability evidence.
 Start implementation at the shared interface preparation path. The current
 unary receiver model can coexist while the new interface and its calls are
 validated, then bundled contracts can migrate through the new path.
+
+## Joint dispatch implementation order
+
+1. Extend the virtual method metadata to describe a residual argument or a
+   context field for every implementation input. Derive the mapping from
+   participant identity before specialization, then verify each selected
+   reference type against the implementation signature. Exercise reversed
+   context field order, interleaved residual inputs and participants with the
+   same reference type. Keep the direct unary reference representation.
+2. Use that mapping in the LLVM adapter and bytecode dispatch. Both consume
+   the same context and table descriptor. Load captured references for the
+   selected invocation and preserve their permissions. Exercise two methods
+   with different input orders through native and VM execution.
+3. Translate the public effects through the same mapping. Track the lifetime
+   and stability of the context slots independently of the captured referents.
+   Check retargeting, context expiry, output provenance and overlap with live
+   execution loans, including when two captures denote the same referent.
+   Keep valid joint construction behind the existing rejection until both
+   execution paths and safety checking share the complete mapping.
+4. Verify the two-pointer descriptor and compare emitted methods and generic
+   instantiation counts across ordinary and concurrent captures. Reuse the
+   existing reference-mode and context diagnostics as negative controls.
