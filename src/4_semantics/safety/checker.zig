@@ -10458,6 +10458,7 @@ pub const SafetyChecker = struct {
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
             if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
+            if (try loopObservationHasUnmappedUses(joined, current)) continue;
             // Projection identities are interned by the parent's generation.
             // Recycling that generation would make a fresh parent find old
             // child state, including partial initialization and retired roots.
@@ -11168,6 +11169,47 @@ fn visitExternalLoopRoots(state: *const SafetyChecker.FunctionState, retained: R
         }
         if (execution.output.accessEvidence()) |output| {
             if (try SafetyChecker.visitValueFactGraph(output.*, guards, retained)) return true;
+        }
+    }
+    return false;
+}
+
+// Structural rebasing leaves conditional witnesses and opaque metadata
+// untouched. A guarded snapshot is also outside that substitution.
+fn loopObservationHasUnmappedUses(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
+    const Visitor = struct {
+        root: facts.ValidityRootId,
+
+        pub fn visit(self: @This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+            for (value.dependencies) |dependency|
+                if (dependency.root == self.root and dependency.retirement_mark != 0) return true;
+            for (value.opaque_provenance) |provenance|
+                if (provenance.generation == self.root) return true;
+            for (value.generation_outcomes) |outcome| {
+                if (outcome.generation == self.root or containsRoot(outcome.owned_roots, self.root)) return true;
+                if (outcome.relocation) |relocation| if (relocation.generation == self.root) return true;
+            }
+            return false;
+        }
+    };
+    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
+    defer guards.deinit();
+    const visitor: Visitor = .{ .root = root };
+    const retained: RetainedRoot = .{ .contains = root };
+    inline for (.{ state.places.items, state.symbolic_values.items, state.reference_writes.items }) |entries| {
+        for (entries) |entry| {
+            if (try struct {
+                fn check(value: facts.ValueFacts, v: Visitor, r: RetainedRoot, visited: *std.AutoHashMap(*const facts.ValueFacts, void)) std.mem.Allocator.Error!bool {
+                    if (try v.visit(value)) return true;
+                    for (value.guarded_values) |guard| {
+                        if ((try visited.getOrPut(guard.value)).found_existing) continue;
+                        if (try SafetyChecker.visitValueFactGraph(guard.value.*, visited, r)) return true;
+                    }
+                    var children = value.structuralChildren();
+                    while (children.next()) |child| if (try check(child.*, v, r, visited)) return true;
+                    return false;
+                }
+            }.check(entry.value, visitor, retained, &guards)) return true;
         }
     }
     return false;
@@ -15066,6 +15108,16 @@ test "loop symbolic observations canonicalize only without retained historical a
     try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
     try std.testing.expectEqual(borrowed, next.symbolic_pointees.items[0].generation.?);
     try std.testing.expect(next.tracker.isAlive(borrowed));
+
+    try checker.joinState(&next, &left, &repeated);
+    const guarded_current = next.symbolic_pointees.items[0].generation.?;
+    const snapshot: facts.ValueFacts = .{ .dependencies = &.{.{ .root = guarded_current }} };
+    try next.setPlace(.{ .root = @enumFromInt(1) }, .initialized, .{
+        .guarded_values = &.{.{ .call = 1, .conditions = .{}, .entry_facts = .{}, .value = &snapshot }},
+    });
+    try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
+    try std.testing.expectEqual(guarded_current, next.symbolic_pointees.items[0].generation.?);
+    try std.testing.expect(next.tracker.dependenciesAreAlive(snapshot));
 
     // A historical copy deliberately retains the old canonical root.
     const historical = observed;
