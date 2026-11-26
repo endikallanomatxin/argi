@@ -1994,7 +1994,7 @@ pub const Infer = struct {
         return self.graph.node(self.graph.node_refs.items[block.nodes.start]).content == .abort_statement;
     }
 
-    fn applyLocalCallReplacements(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: graph_mod.GlobalFunctionId, input: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
+    fn applyLocalCallReplacements(self: *Infer, function_id: graph_mod.GlobalFunctionId, callee: graph_mod.GlobalFunctionId, input: graph_mod.GlobalNodeId, call_node: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
         const summary = self.engine.summaryFor(callee) orelse return;
         if (summary.input_post_states.len == 0) return;
         const arguments = self.structArguments(input) orelse return;
@@ -2017,7 +2017,8 @@ pub const Infer = struct {
             const targets = try self.localMutationCandidates(argument, 0);
             if (targets.len == 0) continue;
             const exact_targets = try self.localAddressTargets(argument);
-            const value = try self.substituteOutputInContext(post.value, null, &context);
+            const rebased = try self.rebaseFreshSources(post.value, call_node);
+            const value = try self.substituteOutputInContext(rebased, null, &context);
             for (targets) |target| {
                 var updated = value;
                 if (exact_targets.len != 1 or targets.len != 1 or post.initialization != .definite or post.initializedness != .initialized) {
@@ -2125,7 +2126,7 @@ pub const Infer = struct {
                     for (try self.localAddressTargets(arguments[1].value)) |target|
                         try self.storeSelectedValueEffect(function, target, &.{}, try self.withOwnershipTransfer(relocated), outputs, .locals_and_outputs);
                 };
-            } else try self.applyLocalCallReplacements(function, call.callee, call.input, outputs);
+            } else try self.applyLocalCallReplacements(function, call.callee, call.input, node, outputs);
         }
         return value;
     }
