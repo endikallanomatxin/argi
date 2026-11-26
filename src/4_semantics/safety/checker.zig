@@ -10302,6 +10302,7 @@ pub const SafetyChecker = struct {
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
             try self.trimCompletedLoopExecutions(&next, &entry, join_context.exits);
+            try forgetUnobservedOpaqueGuards(&next, &entry, join_context.exits);
             try forgetUnobservedRetirementMarks(&next, &entry, join_context.exits);
             if (compareLoopStates(&current, &next, .covers)) {
                 // Publish the header that covered the transfer, including
@@ -11705,6 +11706,31 @@ fn hasAbstractableRetirementMark(root: facts.ValidityRoot) bool {
         root.retirement_mark != facts.Tracker.untracked_retirement;
 }
 
+fn forgetUnobservedOpaqueGuards(state: *SafetyChecker.FunctionState, entry: *const SafetyChecker.FunctionState, exits: ?*const SafetyChecker.FunctionState) !void {
+    for (state.opaque_storages.items) |domain| {
+        if (domain.outcome_guard != 0) break;
+    } else return;
+
+    const Witnesses = struct {
+        guards: std.AutoHashMap(u64, void),
+
+        pub fn visit(visitor: *@This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+            for (value.generation_outcomes) |outcome| {
+                if (outcome.empties_opaque_storage) try visitor.guards.put(outcome.guard, {});
+            }
+            return false;
+        }
+    };
+    var witnesses: Witnesses = .{ .guards = .init(state.places.allocator) };
+    defer witnesses.guards.deinit();
+    _ = try visitLoopStateValues(state, &witnesses);
+    _ = try visitLoopStateValues(entry, &witnesses);
+    if (exits) |exit| _ = try visitLoopStateValues(exit, &witnesses);
+    for (state.opaque_storages.items) |*domain| {
+        if (!witnesses.guards.contains(domain.outcome_guard)) domain.outcome_guard = 0;
+    }
+}
+
 fn forgetUnobservedRetirementMarks(state: *SafetyChecker.FunctionState, entry: *const SafetyChecker.FunctionState, exits: ?*const SafetyChecker.FunctionState) !void {
     for (state.tracker.roots.items) |root| {
         if (hasAbstractableRetirementMark(root)) break;
@@ -11880,6 +11906,28 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     }
     try std.testing.expect(state.tracker.roots.items[@intFromEnum(opaque_owner)].present);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{opaque_owner}, state.opaque_storages.items[0].owner_roots);
+}
+
+test "loop opaque guard reduction preserves exit witnesses and hidden obligations" {
+    const allocator = std.testing.allocator;
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    var header = try entry.clone(allocator);
+    defer header.deinit();
+    var exit = try entry.clone(allocator);
+    defer exit.deinit();
+    const retained: facts.StorageIdentity = .{ .place = .{ .root = @enumFromInt(0) } };
+    const unobserved: facts.StorageIdentity = .{ .place = .{ .root = @enumFromInt(1) } };
+    const root = try header.tracker.establish(.fresh);
+    try header.opaque_storages.append(.{ .storage = retained, .hidden_dependencies = &.{root}, .outcome_guard = 1 });
+    try header.opaque_storages.append(.{ .storage = unobserved, .hidden_dependencies = &.{root}, .outcome_guard = 2 });
+    try exit.setPlace(retained.place, .initialized, .{
+        .generation_outcomes = &.{.{ .storage = retained, .generation = root, .guard = 1, .invalidates = false, .empties_opaque_storage = true }},
+    });
+    try forgetUnobservedOpaqueGuards(&header, &entry, &exit);
+    try std.testing.expectEqual(@as(u64, 1), header.opaque_storages.items[0].outcome_guard);
+    try std.testing.expectEqual(@as(u64, 0), header.opaque_storages.items[1].outcome_guard);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{root}, header.opaque_storages.items[1].hidden_dependencies);
 }
 
 test "loop retirement reduction protects entry witnesses and forgets unused dead marks" {
