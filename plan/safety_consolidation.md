@@ -456,6 +456,12 @@ on a later iteration. Fixtures 142X and 286 exercise the same aliased
 call with repeated execution and with a break, respectively. The summary
 still approximates repeated effects from one abstract backedge.
 
+Storage capability summaries share that separation of loop transfers.
+Only effects that reach another iteration contribute to repetition
+bounds. Continue paths run the increment before counts widen. A
+capability consumed exclusively on a break contributes to the loop exit
+with its finite count, as fixture 419 verifies.
+
 A concrete probe uses two lexical resources and twelve reference slots
 initialized to the first resource. Each iteration copies the references
 from high indices to low indices in assignment order (slot 11 receives

@@ -99,7 +99,8 @@ pub const Infer = struct {
     body_output_alternatives: std.AutoHashMapUnmanaged(graph_mod.GlobalFunctionId, []const BodyOutputAlternative) = .empty,
     collecting_capture_sources: bool = false,
     suppressed_observation: ?graph_mod.GlobalNodeId = null,
-    loop_post_effects: ?*LoopPostTransfers = null,
+    loop_post_effects: ?*LoopTransfersFor(InputPostStateFlow) = null,
+    loop_capability_effects: ?*LoopTransfersFor(CapabilityFlow) = null,
     replacement_storage: ?struct { cleanup: graph_mod.GlobalAutoDeinitId, write: graph_mod.GlobalNodeId, targets: []const facts.InputPath, reference_slots: []const facts.InputPath } = null,
 
     const ForwardOrigin = struct {
@@ -1254,7 +1255,7 @@ pub const Infer = struct {
         defer if (capability_exits) |*exit| exit.deinit();
         try self.infer_capability_block(function_id, function.body.?, &capability_flow, &capability_exits);
         // With no earlier exit, the fallthrough already is the final flow.
-        if (capability_flow.reachable and capability_exits != null) try self.record_capability_exit(&capability_flow, &capability_exits);
+        if (capability_flow.reachable and capability_exits != null) try self.join_capability_alternative(&capability_flow, &capability_exits);
         profile.accumulate(self.profile_io, start, &self.capability_flow_ns);
         const counts = if (capability_exits) |exit| exit.counts.items else capability_flow.counts.items;
         var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
@@ -2336,7 +2337,6 @@ pub const Infer = struct {
         calls: std.AutoHashMap(graph_mod.GlobalNodeId, void),
         bindings: std.AutoHashMap(graph_mod.GlobalBindingId, *const facts.ValueEffect),
         reachable: bool = true,
-        breaks_loop: bool = false,
 
         fn init(allocator: std.mem.Allocator) CapabilityFlow {
             return .{ .conflicts = .init(allocator), .counts = .init(allocator), .bindings = .init(allocator), .calls = .init(allocator), .addresses = .init(allocator) };
@@ -2357,7 +2357,6 @@ pub const Infer = struct {
             result.calls = try self.calls.cloneWithAllocator(allocator);
             result.addresses = try self.addresses.cloneWithAllocator(allocator);
             result.reachable = self.reachable;
-            result.breaks_loop = self.breaks_loop;
             return result;
         }
     };
@@ -2443,7 +2442,6 @@ pub const Infer = struct {
         calls = right.calls.keyIterator();
         while (calls.next()) |call| try joined.calls.put(call.*, {});
         joined.reachable = left.reachable or right.reachable;
-        joined.breaks_loop = left.breaks_loop and right.breaks_loop;
         output.deinit();
         output.* = joined;
     }
@@ -2707,7 +2705,7 @@ pub const Infer = struct {
         };
     }
 
-    fn record_capability_exit(self: *Infer, flow: *const CapabilityFlow, exits: *?CapabilityFlow) !void {
+    fn join_capability_alternative(self: *Infer, flow: *const CapabilityFlow, exits: *?CapabilityFlow) !void {
         if (exits.*) |*previous| try self.join_capability_flows(previous, previous, flow) else exits.* = try flow.clone(self.allocator);
     }
 
@@ -2761,6 +2759,46 @@ pub const Infer = struct {
         try self.apply_capability_flow(flow, &incoming);
     }
 
+    fn inferLoopCapabilities(
+        self: *Infer,
+        function: graph_mod.GlobalFunctionId,
+        condition: graph_mod.GlobalNodeId,
+        body: graph_mod.GlobalBlockId,
+        increment: ?graph_mod.GlobalNodeId,
+        flow: *CapabilityFlow,
+        exits: *?CapabilityFlow,
+    ) anyerror!void {
+        if (!flow.reachable) return;
+        const before_loop = try self.allocator.dupe(CapabilityCount, flow.counts.items);
+        defer self.allocator.free(before_loop);
+        try self.infer_capability_node(function, condition, flow, exits);
+
+        var transfers: LoopTransfersFor(CapabilityFlow) = .{};
+        defer transfers.deinit();
+        const previous_loop = self.loop_capability_effects;
+        self.loop_capability_effects = &transfers;
+        defer self.loop_capability_effects = previous_loop;
+
+        var backedge = try flow.clone(self.allocator);
+        defer backedge.deinit();
+        try self.infer_capability_block(function, body, &backedge, exits);
+        if (transfers.continue_flow) |*continued|
+            try self.join_capability_fallthrough(&backedge, &backedge, continued);
+        if (backedge.reachable) if (increment) |advance|
+            try self.infer_capability_node(function, advance, &backedge, exits);
+        if (backedge.reachable) {
+            for (backedge.counts.items) |*count| {
+                const prior = for (before_loop) |entry| {
+                    if (self.capability_source_equal(count.source, entry.source)) break entry.maximum;
+                } else 0;
+                if (count.maximum > prior) count.maximum = 2;
+            }
+            try self.join_capability_flows(flow, flow, &backedge);
+        }
+        if (transfers.break_flow) |*broken|
+            try self.join_capability_flows(flow, flow, broken);
+    }
+
     fn infer_capability_node(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
         const content = self.graph.node(node).content;
         if (content == .function_call or content == .virtual_call) {
@@ -2805,41 +2843,10 @@ pub const Infer = struct {
                 if (branch.else_block) |block| try self.infer_capability_block(function, block, &right, exits);
                 try self.join_capability_fallthrough(flow, &left, &right);
             },
-            .while_statement => |loop| {
-                const before_loop = try self.allocator.dupe(CapabilityCount, flow.counts.items);
-                defer self.allocator.free(before_loop);
-                try self.infer_capability_node(function, loop.condition, flow, exits);
-                var body = try flow.clone(self.allocator);
-                defer body.deinit();
-                try self.infer_capability_block(function, loop.body, &body, exits);
-                if (!body.breaks_loop) for (body.counts.items) |*count| {
-                    var before: u2 = 0;
-                    for (before_loop) |prior| if (self.capability_source_equal(count.source, prior.source)) {
-                        before = prior.maximum;
-                        break;
-                    };
-                    if (count.maximum > before) count.maximum = 2;
-                };
-                try self.join_capability_flows(flow, flow, &body);
-            },
+            .while_statement => |loop| try self.inferLoopCapabilities(function, loop.condition, loop.body, null, flow, exits),
             .for_statement => |loop| {
                 if (loop.init) |value| try self.infer_capability_node(function, value, flow, exits);
-                const before_loop = try self.allocator.dupe(CapabilityCount, flow.counts.items);
-                defer self.allocator.free(before_loop);
-                try self.infer_capability_node(function, loop.condition, flow, exits);
-                var body = try flow.clone(self.allocator);
-                defer body.deinit();
-                try self.infer_capability_block(function, loop.body, &body, exits);
-                if (body.reachable) if (loop.increment) |value| try self.infer_capability_node(function, value, &body, exits);
-                if (!body.breaks_loop) for (body.counts.items) |*count| {
-                    var before: u2 = 0;
-                    for (before_loop) |prior| if (self.capability_source_equal(count.source, prior.source)) {
-                        before = prior.maximum;
-                        break;
-                    };
-                    if (count.maximum > before) count.maximum = 2;
-                };
-                try self.join_capability_flows(flow, flow, &body);
+                try self.inferLoopCapabilities(function, loop.condition, loop.body, loop.increment, flow, exits);
             },
             .choice_literal => |literal| {
                 if (literal.payload) |value| try self.infer_capability_node(function, value, flow, exits);
@@ -2950,7 +2957,7 @@ pub const Infer = struct {
                 var failed = try flow.clone(self.allocator);
                 defer failed.deinit();
                 for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, &failed, exits);
-                try self.record_capability_exit(&failed, exits);
+                try self.join_capability_alternative(&failed, exits);
             },
             .auto_deinit_binding => |id| {
                 if (self.cleanup) |active| if (!active.roots.contains(id)) return;
@@ -2960,19 +2967,19 @@ pub const Infer = struct {
             .return_statement => |ret| {
                 if (ret.expression) |value| try self.infer_capability_node(function, value, flow, exits);
                 for (self.graph.node_refs.items[ret.cleanup.start..][0..ret.cleanup.len]) |value| try self.infer_capability_node(function, value, flow, exits);
-                try self.record_capability_exit(flow, exits);
+                try self.join_capability_alternative(flow, exits);
                 flow.reachable = false;
-                flow.breaks_loop = true;
             },
-            .break_statement => {
+            .break_statement, .continue_statement => {
+                if (self.loop_capability_effects) |transfers| {
+                    const destination = if (content == .break_statement) &transfers.break_flow else &transfers.continue_flow;
+                    try self.join_capability_alternative(flow, destination);
+                }
                 flow.reachable = false;
-                flow.breaks_loop = true;
             },
-            .continue_statement => flow.reachable = false,
             .abort_statement => {
-                try self.record_capability_exit(flow, exits);
+                try self.join_capability_alternative(flow, exits);
                 flow.reachable = false;
-                flow.breaks_loop = true;
             },
             .code_block, .value_sequence, .replacement => |block| try self.infer_capability_block(function, block, flow, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.infer_capability_node(function, value, flow, exits),
@@ -3138,15 +3145,17 @@ pub const Infer = struct {
         }
     };
 
-    const LoopPostTransfers = struct {
-        break_flow: ?InputPostStateFlow = null,
-        continue_flow: ?InputPostStateFlow = null,
+    fn LoopTransfersFor(comptime Flow: type) type {
+        return struct {
+            break_flow: ?Flow = null,
+            continue_flow: ?Flow = null,
 
-        fn deinit(self: *LoopPostTransfers) void {
-            if (self.break_flow) |*flow| flow.deinit();
-            if (self.continue_flow) |*flow| flow.deinit();
-        }
-    };
+            fn deinit(self: *@This()) void {
+                if (self.break_flow) |*flow| flow.deinit();
+                if (self.continue_flow) |*flow| flow.deinit();
+            }
+        };
+    }
 
     const OpaqueEmptyState = struct {
         emptied: std.array_list.Managed(facts.InputPath),
@@ -3404,7 +3413,7 @@ pub const Infer = struct {
         try self.inferInputPostStatesNode(function, condition, flow, exits);
         flow.collapse();
 
-        var transfers: LoopPostTransfers = .{};
+        var transfers: LoopTransfersFor(InputPostStateFlow) = .{};
         defer transfers.deinit();
         const previous_loop = self.loop_post_effects;
         self.loop_post_effects = &transfers;
