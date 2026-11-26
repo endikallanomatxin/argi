@@ -1994,7 +1994,7 @@ pub const SafetyChecker = struct {
 
         if (callee.flags.has_foreign_capability) {
             const summary = (self.active_summaries orelse return error.MissingSafetySummary).summaryFor(call.callee) orelse return error.MissingSafetySummary;
-            if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, state)) return .{};
+            if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, state, null)) return .{};
         }
 
         if (callee.safety_primitive != .none) {
@@ -2073,7 +2073,7 @@ pub const SafetyChecker = struct {
             self.active_entry_generations = try self.allocator.dupe(state_mod.StorageGeneration, state.storage_generations.items);
             self.active_entry_symbolic = try self.allocator.dupe(state_mod.SymbolicPointeeState, state.symbolic_pointees.items);
         }
-        if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
+        if (!try self.validateSummaryRequiredLive(source, summary, values, state, null)) return facts.ValueFacts{};
         if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
         if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
         const prepared = try self.prepareGeneralValueGuards(summary, values, state);
@@ -4271,6 +4271,7 @@ pub const SafetyChecker = struct {
         summary: facts.SafetySummary,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
+        cleanup_receiver: ?u32,
     ) !bool {
         const before = self.diagnostics.list.items.len;
         _ = try self.validateSummaryRequiredOpaque(source, summary, arguments, state);
@@ -4311,7 +4312,17 @@ pub const SafetyChecker = struct {
                 // allocation metadata alone does not carry that obligation.
                 if (self.valueAtPlace(state, storage)) |stored| {
                     try self.requireMappedOpaqueContentsLive(source, stored, state);
-                    if (stored.domains.len != 0 or stored.virtual_no_access.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
+                    if (stored.domains.len != 0 or stored.virtual_no_access.len != 0) {
+                        const receiver = try self.refineGeneralValue(stored, state);
+                        // Selected cleanup carries custody of its initialized
+                        // receiver. External anchors remain lifetime obligations.
+                        const live = if (cleanup_receiver == path.input_index and path.projections.len == 0)
+                            !valueDependsOnDeadRoot(receiver, state)
+                        else
+                            state.tracker.dependenciesAreAlive(receiver);
+                        if (!live)
+                            try self.report(source, "reference depends on a root that has ended", .{});
+                    }
                     for (stored.domains) |domain| for (domain.required_reads) |required| switch (required) {
                         .place => |target| {
                             try self.requirePlaceInitialized(@enumFromInt(0), source, target, state.initializednessAtPlace(target), state);
@@ -8119,7 +8130,7 @@ pub const SafetyChecker = struct {
                 if (self.diagnostics.list.items.len != before) return facts.ValueFacts{};
             };
         }
-        if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
+        if (!try self.validateSummaryRequiredLive(source, summary, values, state, null)) return facts.ValueFacts{};
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer call_capabilities.deinit();
         const previous_capabilities = self.active_fresh_capabilities;
@@ -8606,7 +8617,7 @@ pub const SafetyChecker = struct {
 
         if (self.active_summaries) |engine| {
             if (engine.summaryFor(deinit_fn)) |summary| {
-                if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, &candidate)) return;
+                if (!try self.validateSummaryRequiredLive(input_node.source, summary, values, &candidate, self_field_index)) return;
                 try self.applySummaryEffects(input_node.source, summary, argument_ids, values, &candidate);
             } else {
                 try self.evaluateResolvedDeinitBody(deinit_fn, values, &candidate);
