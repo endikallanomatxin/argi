@@ -544,6 +544,18 @@ The existing generation budget still bounds this case. Collection
 fixture 183 runs both growth and reserved-capacity loops. Fixture 184X
 requires rejection at the historical view read after the loop.
 
+The [mixed-generation propagation probe](examples/loop_generation_propagation/main.rg)
+extends fixture 418X with an independent DynamicArray push on the backedge.
+At 529374bc0 the probe compiles even though the twelfth slot can hold
+the retired reference. The reserve of twelve elements rules out runtime
+allocation as the cause. Abstract push still creates a new observation,
+triggering the eight-transition cutoff and stopping propagation of the
+unrelated reference chain. The original 418X still rejects the final
+read. Reading the fourth slot in the mixed probe still yields the
+expected diagnostic. Keeping the twelfth-slot read and assigning only
+the live reference to the first slot compiles. A generation budget must
+never terminate propagation of a separate changing store fact.
+
 Three alternating Debug builds per revision, with one frontend worker
 and the frontend cache disabled, measured the fixed-identity controls:
 
