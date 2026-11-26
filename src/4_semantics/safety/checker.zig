@@ -10839,6 +10839,10 @@ pub const SafetyChecker = struct {
     ) bool {
         if (materialized.tracker.namespace) |namespace| for (namespace.projected_storage.items) |entry| {
             if (entry.generation != root and entry.backing != root) continue;
+            // A materialized row overrides the namespace seed. In
+            // particular, a refreshed row cannot establish the original
+            // observation merely because its parent remains current.
+            if (other.symbolicPointee(entry.identity) != null) continue;
             if (other.initialProjectedPointee(entry.identity) != null) return true;
         };
         var storage: ?facts.Place = null;
@@ -11899,6 +11903,26 @@ test "opaque projection joins retain historical owner associations without inher
     try checker.joinOpaqueStorageRow(&state, .{ .storage = .{ .symbolic = current.identity }, .hidden_dependencies = &.{} }, null, &.{});
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{old_owner}, state.opaque_storages.items[0].owner_roots);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{new_owner}, state.opaque_storages.items[1].owner_roots);
+}
+
+test "loop joins do not infer a lazy generation from a refreshed symbolic row" {
+    const allocator = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    left.tracker.namespace = &namespace;
+    const parent = try left.establishSymbolicInput(@enumFromInt(0), null);
+    var right = try left.clone(allocator);
+    defer right.deinit();
+    const old = (try left.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    try std.testing.expect(checker.storageGenerationWasOnlyMaterializedIn(old.generation, &left, &right));
+    var refreshed = right.initialProjectedPointee(old.identity).?;
+    refreshed.generation = try right.tracker.establish(.fresh);
+    try right.symbolic_pointees.append(refreshed);
+    try std.testing.expect(!checker.storageGenerationWasOnlyMaterializedIn(old.generation, &left, &right));
 }
 
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
