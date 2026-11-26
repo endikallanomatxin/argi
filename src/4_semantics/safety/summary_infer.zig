@@ -3984,9 +3984,13 @@ pub const Infer = struct {
                 );
                 continue;
             }
+            const post_value = if (capture_call) |call|
+                try self.rebaseFreshSources(post_state.value, call)
+            else
+                post_state.value;
             const substituted = try self.substituteOutputWithOverride(
                 function_id,
-                post_state.value,
+                post_value,
                 arguments,
                 override,
             );
