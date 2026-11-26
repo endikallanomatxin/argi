@@ -606,6 +606,27 @@ pub const State = struct {
         if (existing) |entry| entry.* = next else self.opaque_storages.appendAssumeCapacity(next);
     }
 
+    /// Publish one joined domain. The predecessor slices are immutable and
+    /// already deduplicated. Current owners come from the joined value.
+    pub fn appendJoinedOpaqueStorage(self: *State, first: OpaqueStorage, second: ?OpaqueStorage, current_owners: []const facts.ValidityRootId) !void {
+        try self.opaque_storages.ensureUnusedCapacity(1);
+        const a = self.tracker.allocator;
+        const hidden = try unionRoots(a, first.hidden_dependencies, if (second) |row| row.hidden_dependencies else &.{});
+        errdefer if (hidden.ptr != first.hidden_dependencies.ptr) a.free(hidden);
+        const owners = try unionRoots(a, first.owner_roots, if (second) |row| row.owner_roots else &.{});
+        const combined = unionRoots(a, owners, current_owners) catch |err| {
+            if (owners.ptr != first.owner_roots.ptr) a.free(owners);
+            return err;
+        };
+        if (owners.ptr != first.owner_roots.ptr and owners.ptr != combined.ptr) a.free(owners);
+        self.opaque_storages.appendAssumeCapacity(.{
+            .storage = first.storage,
+            .hidden_dependencies = hidden,
+            .owner_roots = combined,
+            .outcome_guard = if (second) |row| if (row.outcome_guard == first.outcome_guard) first.outcome_guard else 0 else 0,
+        });
+    }
+
     pub fn mergeOpaqueOwnerRoots(self: *State, storage: facts.StorageIdentity, roots: []const facts.ValidityRootId) !void {
         if (roots.len == 0) return;
         for (self.opaque_storages.items) |*entry| {

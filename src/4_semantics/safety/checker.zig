@@ -7473,6 +7473,13 @@ pub const SafetyChecker = struct {
         try state.mergeOpaqueStorage(storage, dependencies, owners.items);
     }
 
+    fn joinOpaqueStorageRow(self: *SafetyChecker, state: *FunctionState, first: OpaqueStorage, second: ?OpaqueStorage) !void {
+        var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer owners.deinit();
+        if (self.domainValue(state, first.storage)) |value| try collectOwnedRoots(value, &owners);
+        try state.appendJoinedOpaqueStorage(first, second, owners.items);
+    }
+
     fn collectOpaqueHiddenDependencies(
         value: facts.ValueFacts,
         hidden: *std.array_list.Managed(facts.ValidityRootId),
@@ -10115,23 +10122,16 @@ pub const SafetyChecker = struct {
 
         try joined.joinExecutions(left.executions.items, right.executions.items);
 
-        for (left.opaque_storages.items) |opaque_storage| {
-            try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-            try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
+        for (left.opaque_storages.items, 0..) |row, index| {
+            const other = if (findOpaqueStorageEntry(right.opaque_storages.items, row.storage, index)) |found|
+                right.opaque_storages.items[found]
+            else
+                null;
+            try self.joinOpaqueStorageRow(&joined, row, other);
         }
-        for (right.opaque_storages.items) |opaque_storage| {
-            try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-            try joined.mergeOpaqueOwnerRoots(opaque_storage.storage, opaque_storage.owner_roots);
-        }
-
-        for (joined.opaque_storages.items) |*domain| {
-            for (left.opaque_storages.items) |a| if (a.storage.eql(domain.storage)) {
-                for (right.opaque_storages.items) |b| if (b.storage.eql(domain.storage) and a.outcome_guard == b.outcome_guard) {
-                    domain.outcome_guard = a.outcome_guard;
-                    break;
-                };
-                break;
-            };
+        for (right.opaque_storages.items, 0..) |row, index| {
+            if (findOpaqueStorageEntry(left.opaque_storages.items, row.storage, index) != null) continue;
+            try self.joinOpaqueStorageRow(&joined, row, null);
         }
 
         for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
@@ -11355,6 +11355,12 @@ fn findStorageEntry(entries: anytype, storage: facts.Place, hint: usize) ?usize 
     return null;
 }
 
+fn findOpaqueStorageEntry(entries: []const SafetyChecker.OpaqueStorage, storage: facts.StorageIdentity, hint: usize) ?usize {
+    if (hint < entries.len and entries[hint].storage.eql(storage)) return hint;
+    for (entries, 0..) |entry, index| if (entry.storage.eql(storage)) return index;
+    return null;
+}
+
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
     const left_stores = @import("state.zig").ReferenceStores{ .fact_allocator = left.tracker.allocator, .definitions = left.reference_writes };
     const right_stores = @import("state.zig").ReferenceStores{ .fact_allocator = right.tracker.allocator, .definitions = right.reference_writes };
@@ -11421,13 +11427,9 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         const other = right.storage_generations.items[right_index];
         if (entry.generation != other.generation or entry.needs_current_generation != other.needs_current_generation) return false;
     }
-    for (left.opaque_storages.items) |opaque_storage| {
-        var matching: ?SafetyChecker.OpaqueStorage = null;
-        for (right.opaque_storages.items) |other| if (opaque_storage.storage.eql(other.storage)) {
-            matching = other;
-            break;
-        };
-        const other = matching orelse return false;
+    for (left.opaque_storages.items, 0..) |opaque_storage, index| {
+        const match = findOpaqueStorageEntry(right.opaque_storages.items, opaque_storage.storage, index) orelse return false;
+        const other = right.opaque_storages.items[match];
         if (opaque_storage.outcome_guard != other.outcome_guard) return false;
         if (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
         for (opaque_storage.hidden_dependencies) |dependency|
