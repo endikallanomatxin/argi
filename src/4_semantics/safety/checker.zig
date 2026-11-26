@@ -5455,6 +5455,7 @@ pub const SafetyChecker = struct {
                 &fresh_roots,
                 self.active_fresh_capabilities orelse &fresh_capabilities,
                 &.{},
+                .unconditional,
             );
         }
         self.active_post_captures = previous_captures;
@@ -6062,12 +6063,12 @@ pub const SafetyChecker = struct {
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer fresh_capabilities.deinit();
-        if (outputs.len == 1) return self.instantiateOutputWithFresh(outputs[0], arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, entries);
+        if (outputs.len == 1) return self.instantiateOutputWithFresh(outputs[0], arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, entries, .unconditional);
         const fields = try self.allocator.alloc(facts.FieldFacts, outputs.len);
         var aggregate: facts.ValueFacts = .{};
         for (outputs, 0..) |effect, index| {
             const value = try self.allocator.create(facts.ValueFacts);
-            value.* = try self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, entries);
+            value.* = try self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, entries, .unconditional);
             fields[index] = .{ .index = @intCast(index), .value = value };
             aggregate = try self.mergeValueFacts(aggregate, value.*);
         }
@@ -6085,8 +6086,10 @@ pub const SafetyChecker = struct {
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer fresh_capabilities.deinit();
-        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, &.{});
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, self.active_fresh_capabilities orelse &fresh_capabilities, &.{}, .unconditional);
     }
+
+    const AcquisitionPresence = enum { unconditional, variant };
 
     fn instantiateOutputWithFresh(
         self: *SafetyChecker,
@@ -6096,6 +6099,7 @@ pub const SafetyChecker = struct {
         fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
         fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
         entries: []const EntryPlaceValue,
+        acquisition_presence: AcquisitionPresence,
     ) !facts.ValueFacts {
         var deferred_claim: ?facts.ExecutionId = null;
         if (effect.task_output) |selection| if (selection.projection.len == 0) {
@@ -6127,7 +6131,7 @@ pub const SafetyChecker = struct {
             // The submitted value, rather than its layout, decides admission.
             const existing = if (self.active_fresh_executions) |map| map.get(fresh.source) else null;
             const maybe_id: ?facts.ExecutionId = existing orelse blk: {
-                const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries);
+                const inputs = try self.instantiateOutputWithFresh(fresh.inputs.*, arguments, state, fresh_roots, fresh_capabilities, entries, acquisition_presence);
                 const receipt = try self.admitExecution(@enumFromInt(fresh.input_type), inputs, state, self.active_summary_call_source orelse capture_source, fresh.transfers_custody);
                 if (receipt.execution_receipts.len == 0) break :blk null;
                 const new_id = receipt.execution_receipts[0];
@@ -6201,10 +6205,10 @@ pub const SafetyChecker = struct {
             try appendCapabilityFact(&origins, try self.instantiateFreshOrigin(fresh, state, fresh_capabilities));
         result.acquisition_origins = try origins.toOwnedSlice();
         for (effect.fresh_storage_capabilities) |fresh|
-            try appendCapabilityFact(&capabilities, try self.instantiateFreshCapability(fresh, state, fresh_capabilities));
+            try appendCapabilityFact(&capabilities, try self.instantiateFreshCapability(fresh, state, fresh_capabilities, acquisition_presence));
         result.storage_capabilities = try capabilities.toOwnedSlice();
         for (effect.unavailable_fresh_storage) |entry| {
-            const capability = try self.instantiateFreshCapability(entry.source, state, fresh_capabilities);
+            const capability = try self.instantiateFreshCapability(entry.source, state, fresh_capabilities, acquisition_presence);
             state.consumeCapability(capability, !entry.maybe_consumed);
         }
 
@@ -6393,7 +6397,7 @@ pub const SafetyChecker = struct {
         if (effect.fields_are_updates) {
             const previous = result;
             for (effect.fields) |field| {
-                const value = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities, entries);
+                const value = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities, entries, acquisition_presence);
                 result = try self.replaceProjectedValue(result, .{ .field = field.index }, value);
             }
             result = try self.refreshProjectedValueRoots(previous, result);
@@ -6420,7 +6424,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities, entries);
+                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities, entries, acquisition_presence);
                 fields[index] = .{ .index = field.index, .value = value };
                 result = try self.mergeValueFacts(result, value.*);
             }
@@ -6446,9 +6450,8 @@ pub const SafetyChecker = struct {
             const variants = try self.allocator.alloc(facts.VariantFacts, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const first_root = state.tracker.roots.items.len;
-                const first_capability = state.storage_capabilities.items.len;
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities, entries);
+                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities, entries, .variant);
                 for (state.tracker.roots.items[first_root..]) |*root| {
                     // Input storage generations can be materialized lazily
                     // while instantiating a choice payload. Their lifetime
@@ -6466,9 +6469,6 @@ pub const SafetyChecker = struct {
                     };
                     if (!input_storage and root.state == .alive) root.state = .conditional;
                 }
-                for (state.storage_capabilities.items[first_capability..]) |*capability| if (capability.* == .available) {
-                    capability.* = .conditional;
-                };
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
@@ -6710,12 +6710,16 @@ pub const SafetyChecker = struct {
         source: facts.FreshEffectSource,
         state: *FunctionState,
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
+        presence: AcquisitionPresence,
     ) !facts.StorageCapabilityId {
         const identity = try self.instantiateFreshOrigin(source, state, fresh);
         // Only an actual acquisition effect creates permission. Retained origin
         // metadata neither grants it nor changes an already consumed state.
         if (state.capabilityState(identity) == .absent)
-            state.storage_capabilities.items[@intFromEnum(identity)] = .available;
+            state.storage_capabilities.items[@intFromEnum(identity)] = switch (presence) {
+                .unconditional => .available,
+                .variant => .conditional,
+            };
         return identity;
     }
 
@@ -16366,13 +16370,13 @@ test "Safety primitive and summary acquisitions stay distinct across concrete br
     var fresh = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(a);
     defer fresh.deinit();
     const effect: facts.FreshEffectSource = 17;
-    const second = try checker.instantiateFreshCapability(effect, &right, &fresh);
-    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &right, &fresh));
+    const second = try checker.instantiateFreshCapability(effect, &right, &fresh, .unconditional);
+    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &right, &fresh, .unconditional));
     try std.testing.expect(first.storage_capabilities[0] != second);
     try std.testing.expectEqual(.absent, left.capabilityState(second));
     try std.testing.expectEqual(second, try checker.instantiateFreshOrigin(effect, &left, &fresh));
     try std.testing.expectEqual(.absent, left.capabilityState(second));
-    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &left, &fresh));
+    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &left, &fresh, .unconditional));
     try std.testing.expectEqual(.available, left.capabilityState(second));
     left.consumeCapability(first.storage_capabilities[0], true);
     var joined = SafetyChecker.FunctionState.init(a);
@@ -16528,14 +16532,22 @@ test "fresh acquisition origin reservation does not grant or consume permission"
     defer identities.deinit();
     const origin = try checker.instantiateFreshOrigin(7, &state, &identities);
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.absent, state.capabilityState(origin));
-    try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities));
+    try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities, .unconditional));
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(origin));
     try std.testing.expectEqual(origin, try checker.instantiateFreshOrigin(7, &state, &identities));
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.available, state.capabilityState(origin));
     state.consumeCapability(origin, true);
     try std.testing.expectEqual(origin, try checker.instantiateFreshOrigin(7, &state, &identities));
-    try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities));
+    try std.testing.expectEqual(origin, try checker.instantiateFreshCapability(7, &state, &identities, .unconditional));
     try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.consumed, state.capabilityState(origin));
+    const variant_origin = try checker.instantiateFreshOrigin(8, &state, &identities);
+    checker.active_fresh_capabilities = &identities;
+    const payload: facts.ValueEffect = .{ .fresh_storage_capabilities = &.{8} };
+    const output = try checker.instantiateOutput(.{
+        .variants = &.{.{ .index = 1, .value = &payload }},
+    }, &.{}, &state);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{variant_origin}, output.variants[0].value.storage_capabilities);
+    try std.testing.expectEqual(SafetyChecker.StorageCapabilityState.conditional, state.capabilityState(variant_origin));
 }
 
 test "erased ownership and lifetime output guarantees do not manufacture acquisition origins" {
