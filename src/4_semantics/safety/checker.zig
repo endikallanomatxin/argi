@@ -10437,7 +10437,9 @@ pub const SafetyChecker = struct {
             // retains it. Never revive a root carried by an earlier alias.
             if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
             try joined.tracker.materialize(canonical);
-            joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
+            var replacement = joined.tracker.roots.items[@intFromEnum(current)];
+            replacement.id = canonical;
+            joined.tracker.roots.items[@intFromEnum(canonical)] = replacement;
             for (joined.places.items) |*place| place.value = try facts.replaceValueRoots(self.allocator, place.value, &.{current}, canonical);
             for (joined.symbolic_values.items) |*stored| stored.value = try facts.replaceValueRoots(self.allocator, stored.value, &.{current}, canonical);
             for (joined.reference_writes.items) |*stored| stored.value = try facts.replaceValueRoots(self.allocator, stored.value, &.{current}, canonical);
@@ -11220,7 +11222,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
         if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard or
-            (a.owned_resource and a.retirement_mark != b.retirement_mark)) return false;
+            (a.present and a.retirement_mark != b.retirement_mark)) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|
@@ -12130,8 +12132,9 @@ test "joined dependency marks detect retirement on a single later branch" {
     var later = try joined.clone(a);
     defer later.deinit();
     later.tracker.end(physical);
-    try checker.joinState(&joined, &joined, &later);
-    try std.testing.expect(!joined.tracker.dependencyIsAlive(observation));
+    try checker.joinState(&later, &joined, &later);
+    try std.testing.expect(!later.tracker.dependencyIsAlive(observation));
+    try std.testing.expect(!statesEqual(&joined, &later));
 }
 
 test "joined projections observe a fresh lexical generation after replacement" {

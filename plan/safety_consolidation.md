@@ -496,6 +496,14 @@ The same traversal supports point queries when deciding whether an
 existing root can be reused. Trimming discards an unreferenced suffix
 without reusing its identities or merging any observations.
 
+Exact loop state equality includes retirement marks on all present
+roots. A non-owning root can carry a conditional validity witness just
+as an owned root can. An exact comparison therefore cannot use ownership
+as a proxy for observation validity. When a proven unretained symbolic
+identity is reused as a canonical name, it receives the current
+generation's metadata. A root substitution leaves marked observations
+attached to their original retirement evidence.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old

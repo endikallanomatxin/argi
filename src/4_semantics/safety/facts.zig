@@ -713,6 +713,13 @@ const RootReplacement = struct {
             .map => |mapping| mapping.get(root) orelse root,
         };
     }
+
+    fn applyObservation(self: RootReplacement, observation: ValidityDependency) ValidityDependency {
+        // A generation substitution cannot certify which retirement events
+        // an existing conditional observation has survived.
+        if (observation.retirement_mark != 0) return observation;
+        return .{ .root = self.apply(observation.root) };
+    }
 };
 
 fn replaceValueRootsIfChanged(
@@ -735,12 +742,10 @@ fn replaceValueRootsIfChanged(
         }
     }
     for (value.dependencies) |dependency| {
-        if (dependency.root == replacement.apply(dependency.root)) continue;
+        if (std.meta.eql(dependency, replacement.applyObservation(dependency))) continue;
         var dependencies: std.ArrayList(ValidityDependency) = .empty;
         for (value.dependencies) |entry| {
-            // A generation substitution alone cannot certify which
-            // retirement events a conditional observation has survived.
-            const remapped: ValidityDependency = if (entry.retirement_mark != 0) entry else .{ .root = replacement.apply(entry.root) };
+            const remapped = replacement.applyObservation(entry);
             for (dependencies.items) |existing| {
                 if (std.meta.eql(existing, remapped)) break;
             } else try dependencies.append(allocator, remapped);
@@ -786,9 +791,14 @@ test "rebasing ownership preserves unrelated fact fragments" {
     const external: ValidityRootId = @enumFromInt(2);
     const internal: ValueFacts = .{ .owned_backing = old, .dependencies = &.{.{ .root = old }} };
     const unrelated: ValueFacts = .{ .dependencies = &.{.{ .root = external }} };
+    const historical: ValueFacts = .{ .dependencies = &.{.{ .root = old, .retirement_mark = 2 }} };
     const owner: ValueFacts = .{
         .owned_roots = &.{old},
-        .fields = &.{ .{ .index = 0, .value = &internal }, .{ .index = 1, .value = &unrelated } },
+        .fields = &.{
+            .{ .index = 0, .value = &internal },
+            .{ .index = 1, .value = &unrelated },
+            .{ .index = 2, .value = &historical },
+        },
     };
     const result = try replaceValueRoots(arena.allocator(), owner, &.{old}, renewed);
     try std.testing.expectEqual(renewed, result.owned_roots[0]);
@@ -796,6 +806,7 @@ test "rebasing ownership preserves unrelated fact fragments" {
     try std.testing.expectEqual(renewed, result.fields[0].value.referenceCopy().owned_backing.?);
     try std.testing.expect(result.fields[0].value.derivedReference().owned_backing == null);
     try std.testing.expectEqual(&unrelated, result.fields[1].value);
+    try std.testing.expectEqual(&historical, result.fields[2].value);
     try std.testing.expectEqual(old, internal.dependencies[0].root);
     const unchanged = try replaceValueRoots(arena.allocator(), result, &.{old}, renewed);
     try std.testing.expectEqual(result.fields.ptr, unchanged.fields.ptr);
