@@ -10559,7 +10559,12 @@ pub const SafetyChecker = struct {
             }
         }
         if (limit == state.tracker.roots.items.len) return;
-        _ = try visitLoopRoots(state, retained, null);
+        if (try visitLoopRoots(state, retained, null)) return;
+        // The eventual exit join can still observe a generation that is
+        // absent from every value on the backedge.
+        if (context.exits) |exits| {
+            if (try visitLoopRoots(exits, retained, null)) return;
+        }
         if (limit >= state.tracker.roots.items.len) return;
 
         var kept: usize = 0;
@@ -12531,6 +12536,27 @@ test "loop root trimming preserves retired lazy lexical seeds" {
     try std.testing.expect(renewed != initial);
     try std.testing.expect(!state.tracker.isAlive(initial));
     try std.testing.expect(state.tracker.isAlive(renewed));
+}
+
+test "loop root trimming preserves retirement observed on a break" {
+    const a = std.testing.allocator;
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var header = SafetyChecker.FunctionState.init(a);
+    defer header.deinit();
+    const root = try header.tracker.establish(.fresh);
+    var exit = try header.clone(a);
+    defer exit.deinit();
+    try exit.setPlace(.{ .root = @enumFromInt(0) }, .initialized, .{ .dependencies = &.{.{ .root = root }} });
+    header.tracker.end(root);
+    _ = try header.tracker.establish(.fresh);
+
+    var context = SafetyChecker.LoopJoinContext.init(a);
+    defer context.deinit();
+    context.exits = &exit;
+    try checker.trimUnreferencedLoopRoots(&context, &header);
+    try std.testing.expectEqual(@as(usize, 1), header.tracker.roots.items.len);
+    try std.testing.expect(!header.tracker.isAlive(root));
 }
 
 test "loop root trimming follows guarded snapshots and retained task outputs" {
