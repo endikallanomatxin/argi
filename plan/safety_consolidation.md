@@ -140,6 +140,19 @@ lexical observation on demand removes that generation from the failure. The
 two remaining generations identify different heap backings and still need a
 proof relating each backing to the owner on its incoming path.
 
+The incoming array facts each have one live owned root at the same structural
+allocation field. The concrete reference leaf has no intrinsic backing marker
+in either predecessor. Instead, summary instantiation reads the backing through
+an input-owned-roots recipe. That recipe currently flattens owned roots into
+ordinary validity dependencies. A proof based only on explicit reference
+markers would miss this path. The same rejection occurs with a C allocator in
+place of the page allocator.
+
+Collection fixture 178X uses the same branch structure and reads a reference
+obtained before the replacement. It must continue to reject when the new
+iterator in the reduced program is accepted. Both cases exercise the same
+conditional retirement, with the observation taken on opposite sides of it.
+
 Prove the relationship between a current observation and its backing on each
 incoming path before joining the evidence. Merged owner-root membership alone
 is insufficient, since a joined value can retain roots from multiple paths
