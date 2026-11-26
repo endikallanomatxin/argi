@@ -33,6 +33,13 @@ pub const ExecutionLoan = struct {
     mode: AccessMode,
     concurrent_reference: bool = false,
 
+    pub fn eql(self: ExecutionLoan, other: ExecutionLoan) bool {
+        if (self.mode != other.mode or self.concurrent_reference != other.concurrent_reference or self.symbolic != other.symbolic) return false;
+        if ((self.storage == null) != (other.storage == null)) return false;
+        if (self.storage) |storage| if (!storage.eql(other.storage.?)) return false;
+        return std.mem.eql(ValidityRootId, self.generations, other.generations);
+    }
+
     pub fn allowsOverlap(self: ExecutionLoan, other: AccessMode, other_concurrent: bool) bool {
         if (self.concurrent_reference or other_concurrent)
             return self.concurrent_reference and other_concurrent;

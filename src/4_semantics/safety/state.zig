@@ -259,6 +259,12 @@ pub const State = struct {
             const opposite = other_entries[0];
             other_entries = other_entries[1..];
             if (execution.pending != opposite.pending) return false;
+            if (execution.pending) {
+                if (execution.loans.len != opposite.loans.len) return false;
+                if (execution.loans.ptr != opposite.loans.ptr) {
+                    for (execution.loans, opposite.loans) |a, b| if (!a.eql(b)) return false;
+                }
+            }
             if (execution.output.accessEvidence() != opposite.output.accessEvidence()) return false;
             if ((execution.output == .retained) != (opposite.output == .retained)) return false;
             // Unavailable pending output can still accept custody. A consumed
@@ -1716,6 +1722,27 @@ test "pending execution equality ignores completed history and compares receipt 
     try std.testing.expect(!left.samePendingExecutions(&right));
     left.completeExecution(@enumFromInt(1));
     right.completeExecution(extra);
+    try std.testing.expect(left.samePendingExecutions(&right));
+}
+
+test "pending execution equality includes loan generations and access modes" {
+    const allocator = std.testing.allocator;
+    var left = State.init(allocator);
+    defer left.deinit();
+    var right = State.init(allocator);
+    defer right.deinit();
+    const original: facts.ExecutionLoan = .{ .mode = .write, .symbolic = @enumFromInt(3), .generations = &.{@enumFromInt(4)} };
+    var loans = [_]facts.ExecutionLoan{original};
+    const receipt = try left.establishExecution(&.{original});
+    try std.testing.expectEqual(receipt, try right.establishExecution(&loans));
+    try std.testing.expect(left.samePendingExecutions(&right));
+    loans[0].generations = &.{@enumFromInt(5)};
+    try std.testing.expect(!left.samePendingExecutions(&right));
+    loans[0] = original;
+    loans[0].mode = .read;
+    try std.testing.expect(!left.samePendingExecutions(&right));
+    left.completeExecution(receipt);
+    right.completeExecution(receipt);
     try std.testing.expect(left.samePendingExecutions(&right));
 }
 
