@@ -535,6 +535,15 @@ are expensive when information advances one slot per iteration. This
 control measures the cost of removing the propagation cutoff and
 provides a baseline for dependency-directed updates.
 
+Joins and equality checks now use the existing entry order to match
+storage in constant time when both predecessors retained that order.
+When entries have diverged, matching falls back to the full place
+identity, including projections. Ownership widening skips exact pairs
+with no owner roots. Three alternating Debug builds of the same
+128-slot control measured a GlobalSafety median of 275.35 ms before
+and 215.06 ms after this change. The loop still evaluates each
+iteration needed for convergence.
+
 Model a cell by physical allocation and extent, with a separate incarnation
 and initialization state. A reference value carries an access path and
 observed lifetime dependencies. The concrete store can retain an old

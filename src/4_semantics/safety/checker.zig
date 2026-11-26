@@ -10060,11 +10060,11 @@ pub const SafetyChecker = struct {
 
         try joined.joinCapabilities(left, right);
 
-        for (left.places.items) |left_place| {
+        for (left.places.items, 0..) |left_place, index| {
             var merged = left_place;
             // A projection written on only one path still has a value on the
             // other path: it inherits that path's nearest aggregate record.
-            const right_place = if (right.findPlace(left_place.storage)) |exact| exact.* else try self.inheritedPlaceFacts(right, left_place.storage);
+            const right_place = if (findStorageEntry(right.places.items, left_place.storage, index)) |exact| right.places.items[exact] else try self.inheritedPlaceFacts(right, left_place.storage);
             merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
             merged.moved_at = if (merged.initializedness == .moved)
                 if (left_place.initializedness == .moved) left_place.moved_at else right_place.moved_at
@@ -10074,8 +10074,8 @@ pub const SafetyChecker = struct {
 
             try joined.places.append(merged);
         }
-        for (right.places.items) |right_place| {
-            if (left.findPlace(right_place.storage) == null) {
+        for (right.places.items, 0..) |right_place, index| {
+            if (findStorageEntry(left.places.items, right_place.storage, index) == null) {
                 const left_place = try self.inheritedPlaceFacts(left, right_place.storage);
                 var merged = right_place;
                 merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
@@ -10092,19 +10092,16 @@ pub const SafetyChecker = struct {
         try joined.shared_regions.appendSlice(left.shared_regions.items);
         for (right.shared_regions.items) |region| try appendPlaceFact(&joined.shared_regions, region);
         try joined.storage_generations.appendSlice(left.storage_generations.items);
-        for (right.storage_generations.items) |candidate| {
-            var found = false;
-            for (joined.storage_generations.items) |*existing| {
-                if (existing.storage.eql(candidate.storage)) {
-                    existing.needs_current_generation = existing.needs_current_generation or candidate.needs_current_generation or
-                        (existing.generation != candidate.generation and
-                            left.initializednessAtPlace(candidate.storage) == .initialized and
-                            right.initializednessAtPlace(candidate.storage) == .initialized);
-                    found = true;
-                    break;
-                }
+        for (right.storage_generations.items, 0..) |candidate, index| {
+            if (findStorageEntry(joined.storage_generations.items, candidate.storage, index)) |existing_index| {
+                const existing = &joined.storage_generations.items[existing_index];
+                existing.needs_current_generation = existing.needs_current_generation or candidate.needs_current_generation or
+                    (existing.generation != candidate.generation and
+                        left.initializednessAtPlace(candidate.storage) == .initialized and
+                        right.initializednessAtPlace(candidate.storage) == .initialized);
+            } else {
+                try joined.storage_generations.append(candidate);
             }
-            if (!found) try joined.storage_generations.append(candidate);
         }
         for (joined.storage_generations.items) |*entry| {
             if (entry.needs_current_generation) continue;
@@ -10246,7 +10243,12 @@ pub const SafetyChecker = struct {
         right: *const FunctionState,
     ) !void {
         try self.widenLoopSymbolicObservations(context, joined, left, right);
-        for (joined.places.items) |*joined_place| {
+        for (joined.places.items, 0..) |*joined_place, place_index| {
+            const left_exact = findStorageEntry(left.places.items, joined_place.storage, place_index);
+            const right_exact = findStorageEntry(right.places.items, joined_place.storage, place_index);
+            if (left_exact != null and right_exact != null and
+                left.places.items[left_exact.?].value.owned_roots.len == 0 and
+                right.places.items[right_exact.?].value.owned_roots.len == 0) continue;
             if (left.initializednessAtPlace(joined_place.storage) != .initialized or
                 right.initializednessAtPlace(joined_place.storage) != .initialized) continue;
             const left_value = self.valueAtPlace(@constCast(left), joined_place.storage) orelse facts.ValueFacts{};
@@ -11196,6 +11198,14 @@ fn visitLoopRoots(state: *const SafetyChecker.FunctionState, retained: RetainedR
     return false;
 }
 
+// Clones and joins normally retain entry order. A hint only avoids
+// searching when the storage identity itself matches.
+fn findStorageEntry(entries: anytype, storage: facts.Place, hint: usize) ?usize {
+    if (hint < entries.len and entries[hint].storage.eql(storage)) return hint;
+    for (entries, 0..) |entry, index| if (entry.storage.eql(storage)) return index;
+    return null;
+}
+
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
     const left_stores = @import("state.zig").ReferenceStores{ .fact_allocator = left.tracker.allocator, .definitions = left.reference_writes };
     const right_stores = @import("state.zig").ReferenceStores{ .fact_allocator = right.tracker.allocator, .definitions = right.reference_writes };
@@ -11252,19 +11262,15 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|
         if (!containsRoot(right.lexical_storage_generations.items, root)) return false;
-    for (left.places.items) |left_place| {
-        const right_place = right.findPlace(left_place.storage) orelse return false;
+    for (left.places.items, 0..) |left_place, index| {
+        const right_index = findStorageEntry(right.places.items, left_place.storage, index) orelse return false;
+        const right_place = right.places.items[right_index];
         if (left_place.initializedness != right_place.initializedness or !std.meta.eql(left_place.moved_at, right_place.moved_at) or !valueFactsEqual(left_place.value, right_place.value)) return false;
     }
-    for (left.storage_generations.items) |entry| {
-        var found = false;
-        for (right.storage_generations.items) |other| if (entry.storage.eql(other.storage) and entry.generation == other.generation and
-            entry.needs_current_generation == other.needs_current_generation)
-        {
-            found = true;
-            break;
-        };
-        if (!found) return false;
+    for (left.storage_generations.items, 0..) |entry, index| {
+        const right_index = findStorageEntry(right.storage_generations.items, entry.storage, index) orelse return false;
+        const other = right.storage_generations.items[right_index];
+        if (entry.generation != other.generation or entry.needs_current_generation != other.needs_current_generation) return false;
     }
     for (left.opaque_storages.items) |opaque_storage| {
         var matching: ?SafetyChecker.OpaqueStorage = null;
@@ -12195,6 +12201,26 @@ test "joined projections observe a fresh lexical generation after replacement" {
     try checker.joinState(&joined, &entry, &replaced);
     try std.testing.expectEqual(historical, try joined.storageGeneration(place));
     try std.testing.expect(!joined.tracker.isAlive(historical));
+}
+
+test "loop state equality follows storage identity across reordered entries" {
+    const allocator = std.testing.allocator;
+    var left = SafetyChecker.FunctionState.init(allocator);
+    defer left.deinit();
+    const root: facts.Place = .{ .root = @enumFromInt(0) };
+    const field: facts.Place = .{ .root = root.root, .projections = &.{.{ .field = 0 }} };
+    try left.setPlace(root, .initialized, .{});
+    try left.setPlace(field, .moved, .{});
+    _ = try left.storageGeneration(root);
+    _ = try left.storageGeneration(field);
+
+    var right = try left.clone(allocator);
+    defer right.deinit();
+    std.mem.swap(facts.PlaceFacts, &right.places.items[0], &right.places.items[1]);
+    std.mem.swap(@TypeOf(right.storage_generations.items[0]), &right.storage_generations.items[0], &right.storage_generations.items[1]);
+    try std.testing.expect(statesEqual(&left, &right));
+    right.storage_generations.items[0].needs_current_generation = true;
+    try std.testing.expect(!statesEqual(&left, &right));
 }
 
 test "loop root trimming retains generations named by pending receipts" {
