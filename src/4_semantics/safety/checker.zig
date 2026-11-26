@@ -3181,18 +3181,18 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn visitPossibleExecutionReceipts(
+    fn visitValueFactGraph(
         value: facts.ValueFacts,
         guards: *std.AutoHashMap(*const facts.ValueFacts, void),
         visitor: anytype,
     ) std.mem.Allocator.Error!bool {
-        for (value.execution_receipts) |id| if (try visitor.visit(id)) return true;
+        if (try visitor.visit(value)) return true;
         var children = value.structuralChildren();
-        while (children.next()) |child| if (try visitPossibleExecutionReceipts(child.*, guards, visitor)) return true;
+        while (children.next()) |child| if (try visitValueFactGraph(child.*, guards, visitor)) return true;
         for (value.guarded_values) |guard| {
             // Guarded snapshots can be shared or recursive.
             if ((try guards.getOrPut(guard.value)).found_existing) continue;
-            if (try visitPossibleExecutionReceipts(guard.value.*, guards, visitor)) return true;
+            if (try visitValueFactGraph(guard.value.*, guards, visitor)) return true;
         }
         return false;
     }
@@ -3201,15 +3201,17 @@ pub const SafetyChecker = struct {
         const Collector = struct {
             receipts: *std.array_list.Managed(facts.ExecutionId),
 
-            fn visit(self: @This(), id: facts.ExecutionId) !bool {
-                if (std.mem.indexOfScalar(facts.ExecutionId, self.receipts.items, id) == null)
-                    try self.receipts.append(id);
+            fn visit(self: @This(), current: facts.ValueFacts) !bool {
+                for (current.execution_receipts) |id| {
+                    if (std.mem.indexOfScalar(facts.ExecutionId, self.receipts.items, id) == null)
+                        try self.receipts.append(id);
+                }
                 return false;
             }
         };
         var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(receipts.allocator);
         defer guards.deinit();
-        _ = try visitPossibleExecutionReceipts(value, &guards, Collector{ .receipts = receipts });
+        _ = try visitValueFactGraph(value, &guards, Collector{ .receipts = receipts });
     }
 
     fn collectUniqueExecutionReceipt(value: facts.ValueFacts, selected: *?facts.ExecutionId) bool {
@@ -3238,13 +3240,14 @@ pub const SafetyChecker = struct {
         const Pending = struct {
             state: *const FunctionState,
 
-            fn visit(self: @This(), id: facts.ExecutionId) error{}!bool {
-                return self.state.executionPending(id);
+            fn visit(self: @This(), current: facts.ValueFacts) error{}!bool {
+                for (current.execution_receipts) |id| if (self.state.executionPending(id)) return true;
+                return false;
             }
         };
         var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.tracker.allocator);
         defer guards.deinit();
-        return visitPossibleExecutionReceipts(value, &guards, Pending{ .state = state });
+        return visitValueFactGraph(value, &guards, Pending{ .state = state });
     }
 
     fn symbolicInputPath(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?facts.InputPath {
@@ -10327,7 +10330,7 @@ pub const SafetyChecker = struct {
             for (alternatives[0..alternative_count]) |root| {
                 // Loans and opaque storage keep the original generation.
                 // Rebinding the owner would hide their retirement obligations.
-                if (rootHasExternalLoopObligation(joined, root)) {
+                if (try rootHasExternalLoopObligation(joined, root)) {
                     safe = false;
                     break;
                 }
@@ -10353,7 +10356,7 @@ pub const SafetyChecker = struct {
                 related.value = try facts.replaceValueRoots(self.allocator, related.value, alternatives[0..alternative_count], phi);
             }
         }
-        self.trimUnreferencedLoopRoots(context, joined);
+        try self.trimUnreferencedLoopRoots(context, joined);
     }
 
     fn widenLoopSymbolicObservations(self: *SafetyChecker, context: *LoopJoinContext, joined: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
@@ -10380,7 +10383,7 @@ pub const SafetyChecker = struct {
             const canonical = existing.?;
             // Reusing an observation is legal only after no historical value
             // retains it. Never revive a root carried by an earlier alias.
-            if (rootRetainedAcrossLoop(joined, canonical) or rootHasExternalLoopObligation(joined, current)) continue;
+            if (try rootRetainedAcrossLoop(joined, canonical) or try rootHasExternalLoopObligation(joined, current)) continue;
             try joined.tracker.materialize(canonical);
             joined.tracker.roots.items[@intFromEnum(canonical)].state = .alive;
             for (joined.places.items) |*place| place.value = try facts.replaceValueRoots(self.allocator, place.value, &.{current}, canonical);
@@ -10391,7 +10394,7 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) void {
+    fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) !void {
         while (state.tracker.roots.items.len != 0) {
             const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
             var referenced = false;
@@ -10403,7 +10406,7 @@ pub const SafetyChecker = struct {
                 referenced = true;
                 break;
             };
-            if (!referenced) referenced = rootRetainedAcrossLoop(state, root);
+            if (!referenced) referenced = try rootRetainedAcrossLoop(state, root);
             if (referenced) return;
             var lexical_index: usize = 0;
             while (lexical_index < state.lexical_storage_generations.items.len) {
@@ -10448,7 +10451,7 @@ pub const SafetyChecker = struct {
             const live = index < state.tracker.roots.items.len and state.tracker.isAlive(entry.root);
             // Check retention before materializing an identity absent from
             // this branch. A retained observation must keep its old meaning.
-            if (!live and rootRetainedAcrossLoop(state, entry.root)) return null;
+            if (!live and try rootRetainedAcrossLoop(state, entry.root)) return null;
             try state.tracker.materialize(entry.root);
             state.tracker.roots.items[index].state = .alive;
             state.tracker.roots.items[index].owned_resource = true;
@@ -11016,41 +11019,48 @@ fn valueDependsOnDeadRootWithOwners(
     return false;
 }
 
-// Conditional facts can keep an observation even without a direct loan.
-// Guarded fact graphs are opaque here; conservatively retain their roots
-// rather than traverse potentially recursive snapshots during loop widening.
-fn retainsLoopObservation(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
-    // Guarded snapshots can form recursive fact graphs. Conservatively retain
-    // their observations rather than traversing or renewing hidden aliases.
-    if (value.guarded_values.len != 0 or containsRoot(value.owned_roots, root)) return true;
-    for (value.dependencies) |dependency| if (dependency.root == root) return true;
-    for (value.opaque_provenance) |provenance| if (provenance.generation == root) return true;
-    for (value.generation_outcomes) |outcome| {
-        if (outcome.generation == root or containsRoot(outcome.owned_roots, root)) return true;
-        if (outcome.relocation) |relocation| if (relocation.generation == root) return true;
-    }
-    for (value.fields) |field| if (retainsLoopObservation(field.value.*, root)) return true;
-    for (value.variants) |variant| if (retainsLoopObservation(variant.value.*, root)) return true;
-    return false;
-}
+const RetainedRoot = struct {
+    root: facts.ValidityRootId,
 
-fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
+    fn visit(self: @This(), value: facts.ValueFacts) error{}!bool {
+        const root = self.root;
+        if (value.intrinsic_backing_owner == root or value.owned_backing == root or containsRoot(value.owned_roots, root)) return true;
+        for (value.dependencies) |dependency| if (dependency.root == root) return true;
+        for (value.opaque_provenance) |provenance| if (provenance.generation == root) return true;
+        for (value.generation_outcomes) |outcome| {
+            if (outcome.generation == root or containsRoot(outcome.owned_roots, root)) return true;
+            if (outcome.relocation) |relocation| if (relocation.generation == root) return true;
+        }
+        return false;
+    }
+};
+
+fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
     if (SafetyChecker.pendingExecutionBorrowsRoot(state, root)) return true;
     for (state.opaque_storages.items) |storage|
         if (containsRoot(storage.hidden_dependencies, root) or containsRoot(storage.owner_roots, root)) return true;
+    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.tracker.allocator);
+    defer guards.deinit();
+    const retained = RetainedRoot{ .root = root };
+    for (state.executions.items) |execution| if (execution.output.accessEvidence()) |output| {
+        if (try SafetyChecker.visitValueFactGraph(output.*, &guards, retained)) return true;
+    };
     return false;
 }
 
-fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
-    if (rootHasExternalLoopObligation(state, root)) return true;
+fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
+    if (try rootHasExternalLoopObligation(state, root)) return true;
     for (state.symbolic_pointees.items) |pointee|
         if (pointee.backing == root or pointee.generation == root) return true;
+    var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.tracker.allocator);
+    defer guards.deinit();
+    const retained = RetainedRoot{ .root = root };
     for (state.places.items) |stored|
-        if (retainsLoopObservation(stored.value, root)) return true;
+        if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
     for (state.symbolic_values.items) |stored|
-        if (retainsLoopObservation(stored.value, root)) return true;
+        if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
     for (state.reference_writes.items) |stored|
-        if (retainsLoopObservation(stored.value, root)) return true;
+        if (try SafetyChecker.visitValueFactGraph(stored.value, &guards, retained)) return true;
     for (state.storage_generations.items) |storage_generation|
         if (storage_generation.generation == root) return true;
     return false;
@@ -11958,11 +11968,40 @@ test "loop root trimming retains generations named by pending receipts" {
     const root = try state.tracker.establish(.fresh);
     const receipt = try state.establishExecution(&.{.{ .generations = &.{root}, .mode = .write }});
 
-    checker.trimUnreferencedLoopRoots(&context, &state);
+    try checker.trimUnreferencedLoopRoots(&context, &state);
     try std.testing.expect(state.tracker.isAlive(root));
     state.completeExecution(receipt);
-    checker.trimUnreferencedLoopRoots(&context, &state);
+    try checker.trimUnreferencedLoopRoots(&context, &state);
     try std.testing.expectEqual(@as(usize, 0), state.tracker.roots.items.len);
+}
+
+test "loop root trimming follows guarded snapshots and retained task outputs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    var context = SafetyChecker.LoopJoinContext.init(a);
+    defer context.deinit();
+
+    const guarded_root = try state.tracker.establish(.fresh);
+    const output_root = try state.tracker.establish(.fresh);
+    _ = try state.tracker.establish(.fresh);
+    var snapshot: facts.ValueFacts = .{ .dependencies = &.{.{ .root = guarded_root }} };
+    snapshot.guarded_values = &.{.{ .call = 0, .conditions = .{}, .entry_facts = .{}, .value = &snapshot }};
+    try state.setPlace(.{ .root = @enumFromInt(0) }, .initialized, .{ .guarded_values = snapshot.guarded_values });
+
+    const receipt = try state.establishExecution(&.{});
+    const output: facts.ValueFacts = .{ .owned_roots = &.{output_root} };
+    try std.testing.expect(state.retainExecutionOutput(receipt, &output));
+    state.completeExecution(receipt);
+    state.tracker.end(output_root);
+    try checker.trimUnreferencedLoopRoots(&context, &state);
+    try std.testing.expectEqual(@as(usize, 2), state.tracker.roots.items.len);
+    try std.testing.expect(try rootRetainedAcrossLoop(&state, guarded_root));
+    try std.testing.expect(!state.tracker.isAlive(output_root));
 }
 
 test "loop root widening does not hide crossed stale dependencies" {
@@ -13963,7 +14002,7 @@ test "projected symbolic fields retain identity across branches without ending s
     var context = SafetyChecker.LoopJoinContext.init(allocator);
     defer context.deinit();
     const count = joined.tracker.roots.items.len;
-    checker.trimUnreferencedLoopRoots(&context, &joined);
+    try checker.trimUnreferencedLoopRoots(&context, &joined);
     try std.testing.expectEqual(count, joined.tracker.roots.items.len);
 }
 
@@ -14678,7 +14717,7 @@ test "loop symbolic observations canonicalize only without retained historical a
     defer next.deinit();
     try checker.joinState(&next, &left, &repeated);
     try checker.widenLoopSymbolicObservations(&context, &next, &left, &repeated);
-    checker.trimUnreferencedLoopRoots(&context, &next);
+    try checker.trimUnreferencedLoopRoots(&context, &next);
     try std.testing.expectEqual(canonical, next.symbolic_pointees.items[0].generation.?);
     try std.testing.expect(statesEqual(&stable_state, &next));
     try checker.joinState(&next, &left, &repeated);
