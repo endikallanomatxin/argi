@@ -5642,14 +5642,15 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn expandPostCaptureDependency(self: *SafetyChecker, root: facts.ValidityRootId, captures: []const PostCapture, visited: *std.array_list.Managed(facts.ValidityRootId), result: *std.array_list.Managed(facts.ValidityDependency)) anyerror!void {
+    fn expandPostCaptureDependency(self: *SafetyChecker, observation: facts.ValidityDependency, captures: []const PostCapture, visited: *std.array_list.Managed(facts.ValidityRootId), result: *std.array_list.Managed(facts.ValidityDependency)) anyerror!void {
+        const root = observation.root;
         for (captures) |capture| if (capture.placeholder == root) {
             if (std.mem.indexOfScalar(facts.ValidityRootId, visited.items, root) != null) return;
             try visited.append(root);
-            for (capture.dependencies) |dependency| try self.expandPostCaptureDependency(dependency.root, captures, visited, result);
+            for (capture.dependencies) |dependency| try self.expandPostCaptureDependency(dependency, captures, visited, result);
             return;
         };
-        try appendDependencyFact(result, .{ .root = root });
+        try appendDependencyFact(result, observation);
     }
 
     fn resolvePostCaptureValue(self: *SafetyChecker, value: facts.ValueFacts, captures: []const PostCapture) anyerror!facts.ValueFacts {
@@ -5657,7 +5658,7 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         var visited = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer visited.deinit();
-        for (value.dependencies) |dependency| try self.expandPostCaptureDependency(dependency.root, captures, &visited, &dependencies);
+        for (value.dependencies) |dependency| try self.expandPostCaptureDependency(dependency, captures, &visited, &dependencies);
         result.dependencies = try dependencies.toOwnedSlice();
         const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
         for (fields) |*field| {
@@ -12010,6 +12011,25 @@ test "loop backing owner projection requires all incoming roots" {
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(owner));
     state.getPlace(nested).?.value.owned_roots = &roots;
     try std.testing.expect(checker.loopPhiOwnerStorage(&state, owner, &roots).eql(nested));
+}
+
+test "post-call capture preserves retirement marks across placeholder expansion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var checker = SafetyChecker.init(arena.allocator(), undefined, undefined);
+    defer checker.deinit();
+    const first: facts.ValidityDependency = .{ .root = @enumFromInt(0), .retirement_mark = 5 };
+    const second: facts.ValidityDependency = .{ .root = @enumFromInt(0), .retirement_mark = 7 };
+    const placeholder: facts.ValidityDependency = .{ .root = @enumFromInt(1) };
+    const result = try checker.resolvePostCaptureValue(.{ .dependencies = &.{ first, placeholder } }, &.{.{
+        .placeholder = placeholder.root,
+        .storage = null,
+        .symbolic = null,
+        .entry_generation = null,
+        .input_index = 0,
+        .dependencies = &.{ second, placeholder },
+    }});
+    try std.testing.expectEqualSlices(facts.ValidityDependency, &.{ first, second }, result.dependencies);
 }
 
 test "allocation capture preserves every distinct retirement observation" {
