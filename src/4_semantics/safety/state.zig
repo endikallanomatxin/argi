@@ -706,6 +706,12 @@ pub const State = struct {
     fn observeSymbolicStorage(self: *State, parent: SymbolicPointeeState, selector: facts.SymbolicStorageSelector, child_type: ?graph_mod.GlobalTypeId) !?SymbolicObservation {
         const namespace = self.tracker.namespace orelse return null;
         const parent_generation = parent.generation orelse return null;
+        if (self.symbolicPointee(parent.identity)) |current| {
+            // A detached observation cannot create or materialize rows
+            // under its old key after the parent was renewed.
+            if (current.generation != parent_generation and
+                (@intFromEnum(parent_generation) >= self.tracker.roots.items.len or !self.tracker.isAlive(parent_generation))) return null;
+        }
         var identity: ?facts.SymbolicPointeeId = null;
         var initial: ?facts.ValidityRootId = null;
         var backing: ?facts.ValidityRootId = null;
@@ -2005,6 +2011,10 @@ test "lazy symbolic projections require a live parent observation" {
 
     sibling.tracker.end(parent.generation.?);
     try std.testing.expect(sibling.initialProjectedPointee(field.identity) == null);
+    sibling.symbolic_pointees.items[0].generation = try sibling.tracker.establish(.fresh);
+    try std.testing.expectEqual(null, try sibling.projectSymbolicStorage(parent, .{ .field = 0 }, null));
+    try std.testing.expectEqual(null, try sibling.projectSymbolicStorage(parent, .{ .field = 1 }, null));
+    try std.testing.expectEqual(@as(usize, 1), namespace.projected_storage.items.len);
 }
 
 test "embedded symbolic fields keep backing across parent replacement" {
