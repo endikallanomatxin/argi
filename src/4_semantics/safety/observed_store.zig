@@ -106,37 +106,45 @@ pub fn Stores(comptime Key: type, comptime Value: type) type {
         /// Summary sources cannot be strongly written: they may denote many
         /// cells. This operation changes content precision, never authority.
         pub fn summarizeObservation(self: *Self, source: Key, summary: Key, context: anytype) !void {
-            if (source.eql(summary)) return error.InvalidObservedStore;
-            const source_index = self.index(source) orelse return;
+            return self.summarizeObservations(&.{source}, summary, context);
+        }
+
+        /// Age all members of one partition together. The summary must
+        /// cover every source's targets before those observations are reused.
+        pub fn summarizeObservations(self: *Self, sources: []const Key, summary: Key, context: anytype) !void {
+            if (contains(sources, summary)) return error.InvalidObservedStore;
+            for (self.definitions.items) |definition| {
+                if (contains(sources, definition.target)) break;
+            } else return;
             if (self.index(summary)) |i| if (self.definitions.items[i].must_write) return error.InvalidObservedStore;
             var candidate = Self.init(self.fact_allocator, self.definitions.allocator);
             errdefer candidate.deinit();
-            try candidate.definitions.appendSlice(self.definitions.items);
-            try candidate.store(summary, self.definitions.items[source_index].value, false, context);
-            _ = candidate.definitions.orderedRemove(candidate.index(source).?);
-            for (candidate.definitions.items) |*definition| {
-                if (definition.target.eql(summary)) {
-                    definition.must_write = false;
-                    definition.summarized = true;
-                    definition.overwritten = &.{};
+            var summary_value: ?Value = null;
+            for (self.definitions.items) |definition| {
+                if (definition.target.eql(summary) or contains(sources, definition.target)) {
+                    summary_value = if (summary_value) |value| try context.join(value, definition.value) else definition.value;
                     continue;
                 }
+                var retained = definition;
                 // Neither an exact old source nor an old summary denotes the
                 // newly widened source. Their kill proofs cannot survive.
                 var count: usize = 0;
                 for (definition.overwritten) |key|
-                    if (!key.eql(source) and !key.eql(summary)) {
+                    if (!contains(sources, key) and !key.eql(summary)) {
                         count += 1;
                     };
-                if (count == definition.overwritten.len) continue;
-                const keys = try self.fact_allocator.alloc(Key, count);
-                var next: usize = 0;
-                for (definition.overwritten) |key| if (!key.eql(source) and !key.eql(summary)) {
-                    keys[next] = key;
-                    next += 1;
-                };
-                definition.overwritten = keys;
+                if (count != definition.overwritten.len) {
+                    const keys = try self.fact_allocator.alloc(Key, count);
+                    var next: usize = 0;
+                    for (definition.overwritten) |key| if (!contains(sources, key) and !key.eql(summary)) {
+                        keys[next] = key;
+                        next += 1;
+                    };
+                    retained.overwritten = keys;
+                }
+                try candidate.definitions.append(retained);
             }
+            try candidate.definitions.append(.{ .target = summary, .value = summary_value.?, .must_write = false, .summarized = true });
             self.definitions.deinit();
             self.definitions = candidate.definitions;
         }
@@ -578,6 +586,21 @@ test "observed store summarization is transactional on allocation failure" {
         break;
     }
     try std.testing.expect(success);
+}
+
+test "observed store ages a partition and drops only obsolete kill proofs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var store = Bits.init(arena.allocator(), std.testing.allocator);
+    defer store.deinit();
+    const context: BitContext = .{};
+    for (0..4) |index| try store.store(testKey(index), @as(u8, 1) << @intCast(index), true, context);
+    try store.summarizeObservations(&.{ testKey(0), testKey(1) }, testKey(4), context);
+    try std.testing.expectEqual(@as(usize, 3), store.definitions.items.len);
+    try std.testing.expectEqualDeep(&[_]TestKey{testKey(2)}, store.definitions.items[1].overwritten);
+    try std.testing.expect(store.definitions.items[2].summarized);
+    try std.testing.expectEqual(@as(u8, 3), store.definitions.items[2].value);
+    try std.testing.expectEqual(@as(u8, 11), try store.read(testKey(3), 0, context));
 }
 
 test "observed stores reject exact overwrites of summarized observations" {
