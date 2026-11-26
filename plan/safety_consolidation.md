@@ -544,7 +544,7 @@ The existing generation budget still bounds this case. Collection
 fixture 183 runs both growth and reserved-capacity loops. Fixture 184X
 requires rejection at the historical view read after the loop.
 
-The [mixed-generation propagation probe](examples/loop_generation_propagation/main.rg)
+The [mixed-generation propagation fixture](../tests/feature_tests/ownership/420X_loop_push_propagates_retired_reference/main.rg)
 extends fixture 418X with an independent DynamicArray push on the backedge.
 At 529374bc0 the probe compiles even though the twelfth slot can hold
 the retired reference. The reserve of twelve elements rules out runtime
@@ -555,6 +555,22 @@ read. Reading the fourth slot in the mixed probe still yields the
 expected diagnostic. Keeping the twelfth-slot read and assigning only
 the live reference to the first slot compiles. A generation budget must
 never terminate propagation of a separate changing store fact.
+
+The generation cutoff now waits for the lexical slots' dependencies on
+entry roots to stabilize. Fixture 420X requires the diagnostic at the
+twelfth-slot read. The check compares entry root identity and
+whether each witness remains valid in its own predecessor. The raw
+retirement mark can change even when a renewed observation remains
+valid, as in the UTF-8 copy-after-continue fixture. This gate addresses
+the demonstrated propagation loss. Changes confined to new roots,
+symbolic stores or opaque domains still need a checked widening.
+
+A follow-up replaces the assignment to the first slot with a replacement
+of the old owner followed by taking its address, and removes the saved
+entry reference. This variant still compiles. It creates the relevant
+observation inside the loop, outside the entry-root comparison. Preserve
+this distinction when extending the convergence check to current and
+historical observations of the same destination.
 
 In a Debug experiment, requiring exact equality at the existing work
 budget rejected both the valid growth control and the mixed probe for

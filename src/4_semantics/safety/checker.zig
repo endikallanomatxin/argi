@@ -10209,10 +10209,11 @@ pub const SafetyChecker = struct {
             try self.joinState(&next, &entry, &iteration);
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             const converged = statesEqual(&current, &next);
-            // Keep the existing generation widening for loops that mint
-            // identities in the first eight transitions.
-            const generation_cutoff = step + 1 == generation_budget and
-                !initial_identities.eql(LoopIdentityFrontier.capture(&next));
+            // Fresh generations still use the legacy approximation. Do not
+            // let their creation stop propagation of entry observations.
+            const generation_cutoff = step + 1 >= generation_budget and
+                !initial_identities.eql(LoopIdentityFrontier.capture(&next)) and
+                loopEntryObservationsEqual(&current, &next, initial_identities.roots);
             if (converged or generation_cutoff) {
                 if (transfers.break_state) |*break_state| try self.mergeLoopTransfer(&next, break_state);
                 try self.copyState(state, &next);
@@ -11202,6 +11203,44 @@ fn findStorageEntry(entries: anytype, storage: facts.Place, hint: usize) ?usize 
     if (hint < entries.len and entries[hint].storage.eql(storage)) return hint;
     for (entries, 0..) |entry, index| if (entry.storage.eql(storage)) return index;
     return null;
+}
+
+/// Compare the dependencies on pre-loop roots in each lexical slot. New
+/// incarnation names can keep changing after these independent facts settle.
+fn loopEntryObservationsEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState, root_limit: usize) bool {
+    for (left.places.items, 0..) |place, index| {
+        const other = if (findStorageEntry(right.places.items, place.storage, index)) |found|
+            right.places.items[found].value.dependencies
+        else
+            &.{};
+        if (!loopEntryDependenciesCovered(place.value.dependencies, &left.tracker, other, &right.tracker, root_limit) or
+            !loopEntryDependenciesCovered(other, &right.tracker, place.value.dependencies, &left.tracker, root_limit)) return false;
+    }
+    for (right.places.items, 0..) |place, index| {
+        for (place.value.dependencies) |dependency| {
+            if (@intFromEnum(dependency.root) >= root_limit) continue;
+            if (findStorageEntry(left.places.items, place.storage, index) == null) return false;
+            break;
+        }
+    }
+    return true;
+}
+
+fn loopEntryDependenciesCovered(
+    dependencies: []const facts.ValidityDependency,
+    tracker: *const facts.Tracker,
+    other: []const facts.ValidityDependency,
+    other_tracker: *const facts.Tracker,
+    root_limit: usize,
+) bool {
+    for (dependencies) |dependency| {
+        if (@intFromEnum(dependency.root) >= root_limit) continue;
+        const live = tracker.dependencyIsAlive(dependency);
+        for (other) |candidate| {
+            if (candidate.root == dependency.root and other_tracker.dependencyIsAlive(candidate) == live) break;
+        } else return false;
+    }
+    return true;
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
