@@ -9816,9 +9816,12 @@ pub const SafetyChecker = struct {
             merged.reference_target_incomplete = true;
             merged.referenced_place = null;
         }
-        if (merged.fields.len == 0 and merged.variants.len == 0 and
-            ((left.storage_capabilities.len == 0) != (right.storage_capabilities.len == 0)))
-            merged.storage_capability_incomplete = true;
+        if (merged.fields.len == 0 and merged.variants.len == 0) {
+            if ((left.storage_capabilities.len == 0) != (right.storage_capabilities.len == 0))
+                merged.storage_capability_incomplete = true;
+            if ((left.execution_receipts.len == 0) != (right.execution_receipts.len == 0))
+                merged.execution_receipt_incomplete = true;
+        }
         var result = merged;
         if (left.symbolic_pointees.len == 1 and right.symbolic_pointees.len == 1 and
             left.symbolic_pointees[0] == right.symbolic_pointees[0] and
@@ -16884,6 +16887,27 @@ test "dynamic projection requires a known extent for complete element evidence" 
     const covered = try checker.joinArrayElementFacts(array, 1);
     try std.testing.expectEqual(element.referenced_place, covered.referenced_place);
     try std.testing.expect(!covered.reference_target_incomplete);
+}
+
+test "joining an absent receipt retains its obligation without certifying completion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const receipt = try state.establishExecution(&.{});
+    const present: facts.ValueFacts = .{ .execution_receipts = &.{receipt} };
+    for ([_][2]facts.ValueFacts{ .{ present, .{} }, .{ .{}, present } }) |alternatives| {
+        const joined = try checker.joinObservedSymbolicValues(alternatives[0], alternatives[1], null, null, &.{});
+        try std.testing.expect(SafetyChecker.hasPendingExecution(joined, &state));
+        checker.completeExecutionReceipts(joined, &state);
+        try std.testing.expect(state.executionPending(receipt));
+    }
+    const covered = try checker.joinObservedSymbolicValues(present, present, null, null, &.{});
+    checker.completeExecutionReceipts(covered, &state);
+    try std.testing.expect(!state.executionPending(receipt));
 }
 
 test "an uncovered target cannot establish an execution loan" {
