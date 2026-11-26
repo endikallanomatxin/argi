@@ -3297,24 +3297,48 @@ pub const SafetyChecker = struct {
         return route.toInputPath(self.allocator);
     }
 
-    fn symbolicInputRoute(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) anyerror!?facts.InputRoute {
-        for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
-            if (entry.input_path) |path| return try facts.InputRoute.fromInputPath(self.allocator, path);
-            break;
-        };
-        const namespace = state.tracker.namespace orelse return null;
-        const index = namespace.projectionIndex(identity) orelse return null;
-        const projection = namespace.projected_storage.items[index];
-        const parent = try self.symbolicInputRoute(state, projection.parent) orelse return null;
-        return try parent.append(self.allocator, projection.selector);
+    const SymbolicInputAnchor = struct {
+        path: facts.InputPath,
+        depth: usize,
+    };
+
+    // Caller-relative roles keep the selector path independently of the
+    // generations that authenticated individual observations along it.
+    fn symbolicInputAnchor(state: *const FunctionState, identity: facts.SymbolicPointeeId) ?SymbolicInputAnchor {
+        var current = identity;
+        var depth: usize = 0;
+        while (true) : (depth += 1) {
+            if (state.symbolicPointee(current)) |entry|
+                if (entry.input_path) |path| return .{ .path = path, .depth = depth };
+            const namespace = state.tracker.namespace orelse return null;
+            const index = namespace.projectionIndex(current) orelse return null;
+            current = namespace.projected_storage.items[index].parent;
+        }
+    }
+
+    fn symbolicInputRoute(self: *SafetyChecker, state: *const FunctionState, identity: facts.SymbolicPointeeId) !?facts.InputRoute {
+        const anchor = symbolicInputAnchor(state, identity) orelse return null;
+        const prefix = anchor.path.projections;
+        const prefix_len = prefix.len + @intFromBool(anchor.path.storage_domain != null);
+        const selectors = try self.allocator.alloc(facts.SymbolicStorageSelector, prefix_len + anchor.depth);
+        for (prefix, 0..) |projection, index| selectors[index] = .{ .projection = projection };
+        if (anchor.path.storage_domain) |domain| selectors[prefix.len] = .{ .domain = domain };
+
+        var current = identity;
+        var offset = selectors.len;
+        while (offset > prefix_len) {
+            offset -= 1;
+            const namespace = state.tracker.namespace.?;
+            const index = namespace.projectionIndex(current).?;
+            const projection = namespace.projected_storage.items[index];
+            selectors[offset] = projection.selector;
+            current = projection.parent;
+        }
+        return .{ .input_index = anchor.path.input_index, .selectors = selectors };
     }
 
     fn symbolicStorageComesFromInput(state: *const FunctionState, identity: facts.SymbolicPointeeId) bool {
-        for (state.symbolic_pointees.items) |entry|
-            if (entry.identity == identity and entry.input_path != null) return true;
-        const namespace = state.tracker.namespace orelse return false;
-        const index = namespace.projectionIndex(identity) orelse return false;
-        return symbolicStorageComesFromInput(state, namespace.projected_storage.items[index].parent);
+        return symbolicInputAnchor(state, identity) != null;
     }
 
     fn deferExecutionAliasConflict(self: *SafetyChecker, accessed: facts.SymbolicPointeeId, loaned: facts.SymbolicPointeeId, state: *const FunctionState) !bool {
@@ -15808,6 +15832,14 @@ test "symbolic input routes cannot drop or overwrite an intermediate region" {
         try std.testing.expect(try checker.symbolicInputPath(&state, nested.identity) == null);
         try std.testing.expect(SafetyChecker.symbolicStorageComesFromInput(&state, nested.identity));
     }
+    var replaced = input;
+    replaced.generation = try state.tracker.establish(.fresh);
+    const current_field = (try state.projectSymbolicStorage(replaced, .{ .field = 3 }, null)).?;
+    try std.testing.expect(field.identity != current_field.identity);
+    try std.testing.expect(field.generation != current_field.generation);
+    const current_path = (try checker.symbolicInputPath(&state, current_field.identity)).?;
+    try std.testing.expect(field_path.eql(current_path));
+
     const local = try state.establishSymbolicInput(@enumFromInt(0), null);
     try std.testing.expect(!SafetyChecker.symbolicStorageComesFromInput(&state, local.identity));
 }
