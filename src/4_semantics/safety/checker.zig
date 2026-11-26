@@ -3018,16 +3018,31 @@ pub const SafetyChecker = struct {
             for (projections) |projection| place = try self.project(place, projection);
             const stored = self.valueAtPlace(state, place) orelse continue;
             const value = try self.reconstructPlaceValue(state, place, stored);
-            try appendAllocationDependencies(value, dependencies, include_borrowed);
+            try appendCapturedDependencies(value, dependencies, include_borrowed);
         }
         for (pointer.symbolic_pointees) |identity| {
             const stored = try self.symbolicValueAt(state, identity) orelse continue;
             const contents = try self.reconstructSymbolicValue(state, identity, stored.value);
-            try appendAllocationDependencies(try self.projectValueFacts(contents, projections), dependencies, include_borrowed);
+            try appendCapturedDependencies(try self.projectValueFacts(contents, projections), dependencies, include_borrowed);
         }
     }
 
-    fn appendAllocationDependencies(value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
+    fn appendCapturedDependencies(value: facts.ValueFacts, dependencies: *std.array_list.Managed(facts.ValidityDependency), include_borrowed: bool) !void {
+        if (include_borrowed) {
+            var observed = std.array_list.Managed(facts.ValidityDependency).init(dependencies.allocator);
+            defer observed.deinit();
+            try collectValidityDependencies(value, &observed);
+            for (observed.items) |dependency| try appendDependencyFact(dependencies, dependency);
+            var owned = std.array_list.Managed(facts.ValidityRootId).init(dependencies.allocator);
+            defer owned.deinit();
+            try collectOwnedRoots(value, &owned);
+            for (owned.items) |root| {
+                for (observed.items) |dependency| {
+                    if (dependency.root == root) break;
+                } else try appendDependencyFact(dependencies, .{ .root = root });
+            }
+            return;
+        }
         for (value.owned_roots) |root| {
             var observed = false;
             for (value.dependencies) |dependency| {
@@ -3037,7 +3052,6 @@ pub const SafetyChecker = struct {
             }
             if (!observed) try appendDependencyFact(dependencies, .{ .root = root });
         }
-        if (include_borrowed) try collectValidityDependencies(value, dependencies);
     }
 
     fn collectExecutionLoans(self: *SafetyChecker, ty: graph_mod.GlobalTypeId, value: facts.ValueFacts, state: *FunctionState, loans: *std.array_list.Managed(facts.ExecutionLoan), source: primitives.SourceRef) anyerror!void {
@@ -5645,11 +5659,8 @@ pub const SafetyChecker = struct {
             }
         }
         if (try self.symbolicValueAt(state, identity)) |stored| {
-            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            defer roots.deinit();
-            try collectDependencyRoots(try self.reconstructSymbolicValue(state, identity, stored.value), &roots);
-            try collectOwnedRoots(stored.value, &roots);
-            for (roots.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
+            const value = try self.reconstructSymbolicValue(state, identity, stored.value);
+            try appendCapturedDependencies(value, dependencies, true);
         }
     }
 
@@ -6147,11 +6158,7 @@ pub const SafetyChecker = struct {
                     if (self.valueAtPlace(state, storage)) |stored| receiver = stored;
                 }
             };
-            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            defer roots.deinit();
-            try collectDependencyRoots(receiver, &roots);
-            try collectOwnedRoots(receiver, &roots);
-            for (roots.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+            try appendCapturedDependencies(receiver, &dependencies, true);
             var visited = std.array_list.Managed(facts.Place).init(self.allocator);
             defer visited.deinit();
             if (receiver.referenced_place) |storage| if (self.domainStorageType(storage)) |ty| {
@@ -6180,11 +6187,7 @@ pub const SafetyChecker = struct {
                 }
                 if (self.valueAtPlace(state, storage)) |stored| {
                     const value = try self.reconstructPlaceValue(state, storage, stored);
-                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                    defer roots.deinit();
-                    try collectDependencyRoots(value, &roots);
-                    try collectOwnedRoots(value, &roots);
-                    for (roots.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+                    try appendCapturedDependencies(value, &dependencies, true);
                 }
             }
         }
@@ -6308,12 +6311,8 @@ pub const SafetyChecker = struct {
                 var borrowed = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                 try borrowed.appendSlice(input.dependencies);
                 if (input.referenced_place) |storage| if (self.valueAtPlace(state, storage)) |stored| {
-                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-                    defer roots.deinit();
                     const contents = try self.reconstructPlaceValue(state, storage, stored);
-                    try collectDependencyRoots(contents, &roots);
-                    try collectOwnedRoots(contents, &roots);
-                    for (roots.items) |root| try appendDependencyFact(&borrowed, .{ .root = root });
+                    try appendCapturedDependencies(contents, &borrowed, true);
                 };
                 input = .{ .explicit_dependency = input.explicit_dependency, .dependencies = try borrowed.toOwnedSlice() };
             } else if (!dependency.transfers_ownership) {
@@ -12054,15 +12053,16 @@ test "allocation capture preserves every distinct retirement observation" {
         .{ .root = root, .retirement_mark = 3 },
     };
     const borrowed: facts.ValidityDependency = .{ .root = borrowed_root, .retirement_mark = 4 };
+    const nested_owner: facts.ValidityRootId = @enumFromInt(2);
     const value: facts.ValueFacts = .{
         .owned_roots = &.{root},
         .dependencies = &owned,
-        .fields = &.{.{ .index = 0, .value = &.{ .dependencies = &.{borrowed} } }},
+        .fields = &.{.{ .index = 0, .value = &.{ .dependencies = &.{borrowed}, .owned_roots = &.{nested_owner} } }},
     };
-    try SafetyChecker.appendAllocationDependencies(value, &captured, false);
+    try SafetyChecker.appendCapturedDependencies(value, &captured, false);
     try std.testing.expectEqualSlices(facts.ValidityDependency, &owned, captured.items);
-    try SafetyChecker.appendAllocationDependencies(value, &captured, true);
-    try std.testing.expectEqualSlices(facts.ValidityDependency, &(owned ++ .{borrowed}), captured.items);
+    try SafetyChecker.appendCapturedDependencies(value, &captured, true);
+    try std.testing.expectEqualSlices(facts.ValidityDependency, &(owned ++ [_]facts.ValidityDependency{ borrowed, .{ .root = nested_owner } }), captured.items);
 }
 
 test "joined dependency marks detect retirement on a single later branch" {
