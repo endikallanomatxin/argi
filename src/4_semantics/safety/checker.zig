@@ -6696,7 +6696,10 @@ pub const SafetyChecker = struct {
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
     ) !facts.StorageCapabilityId {
         _ = self;
-        if (fresh.get(source)) |identity| return identity;
+        if (fresh.get(source)) |identity| {
+            try state.materializeCapabilityIdentity(identity);
+            return identity;
+        }
         const identity = try state.reserveCapabilityIdentity();
         try fresh.put(source, identity);
         return identity;
@@ -16366,6 +16369,11 @@ test "Safety primitive and summary acquisitions stay distinct across concrete br
     const second = try checker.instantiateFreshCapability(effect, &right, &fresh);
     try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &right, &fresh));
     try std.testing.expect(first.storage_capabilities[0] != second);
+    try std.testing.expectEqual(.absent, left.capabilityState(second));
+    try std.testing.expectEqual(second, try checker.instantiateFreshOrigin(effect, &left, &fresh));
+    try std.testing.expectEqual(.absent, left.capabilityState(second));
+    try std.testing.expectEqual(second, try checker.instantiateFreshCapability(effect, &left, &fresh));
+    try std.testing.expectEqual(.available, left.capabilityState(second));
     left.consumeCapability(first.storage_capabilities[0], true);
     var joined = SafetyChecker.FunctionState.init(a);
     defer joined.deinit();

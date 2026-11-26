@@ -337,11 +337,18 @@ pub const State = struct {
     pub fn reserveCapabilityIdentity(self: *State) !facts.StorageCapabilityId {
         const index = if (self.tracker.namespace) |namespace| namespace.next_capability_id else self.storage_capabilities.items.len;
         if (index >= std.math.maxInt(u32)) return error.SafetyCapabilityIdentityLimit;
+        const id: facts.StorageCapabilityId = @enumFromInt(index);
+        try self.materializeCapabilityIdentity(id);
+        if (self.tracker.namespace) |namespace| namespace.next_capability_id += 1;
+        return id;
+    }
+
+    /// Observe a shared origin on this path without granting permission.
+    pub fn materializeCapabilityIdentity(self: *State, id: facts.StorageCapabilityId) !void {
+        const index: usize = @intFromEnum(id);
         try self.storage_capabilities.ensureTotalCapacity(index + 1);
         while (self.storage_capabilities.items.len <= index)
             self.storage_capabilities.appendAssumeCapacity(.absent);
-        if (self.tracker.namespace) |namespace| namespace.next_capability_id += 1;
-        return @enumFromInt(index);
     }
 
     pub fn establishCapability(self: *State) !facts.StorageCapabilityId {
