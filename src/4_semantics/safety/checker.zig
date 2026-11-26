@@ -10028,14 +10028,10 @@ pub const SafetyChecker = struct {
 
         var generations: std.ArrayList(SymbolicGenerationJoin) = .empty;
         defer generations.deinit(self.allocator);
-        for (joined.symbolic_pointees.items) |*pointee| {
+        for (joined.symbolic_pointees.items, 0..) |*pointee, index| {
             if (pointee.generation != null or pointee.initializedness != .initialized or pointee.backing == null) continue;
-            const a = for (left.symbolic_pointees.items) |entry| {
-                if (entry.identity == pointee.identity) break entry;
-            } else continue;
-            const b = for (right.symbolic_pointees.items) |entry| {
-                if (entry.identity == pointee.identity) break entry;
-            } else continue;
+            const a = left.symbolicPointeeAt(pointee.identity, index) orelse continue;
+            const b = right.symbolicPointeeAt(pointee.identity, index) orelse continue;
             const left_generation = a.generation orelse continue;
             const right_generation = b.generation orelse continue;
             if (!left.tracker.isAlive(left_generation) or !right.tracker.isAlive(right_generation) or
@@ -11392,16 +11388,12 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_rejected.items.len != right.choice_rejected.items.len or
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
-    for (left.symbolic_pointees.items) |pointee| {
-        var found = false;
-        for (right.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
-            if (other.initializedness != pointee.initializedness or other.backing != pointee.backing or other.generation != pointee.generation) return false;
-            if ((other.input_path == null) != (pointee.input_path == null)) return false;
-            if (other.input_path) |path| if (!sameInputPath(path, pointee.input_path.?)) return false;
-            found = true;
-            break;
-        };
-        if (!found) return false;
+    for (left.symbolic_pointees.items, 0..) |pointee, index| {
+        const other = right.symbolicPointeeAt(pointee.identity, index) orelse return false;
+        if (other.ty != pointee.ty or other.initializedness != pointee.initializedness or
+            other.backing != pointee.backing or other.generation != pointee.generation) return false;
+        if ((other.input_path == null) != (pointee.input_path == null)) return false;
+        if (other.input_path) |path| if (!sameInputPath(path, pointee.input_path.?)) return false;
     }
     for (left.symbolic_values.items) |stored| {
         var found = false;

@@ -361,6 +361,12 @@ pub const State = struct {
         return null;
     }
 
+    pub fn symbolicPointeeAt(self: *const State, identity: facts.SymbolicPointeeId, hint: usize) ?SymbolicPointeeState {
+        const entries = self.symbolic_pointees.items;
+        if (hint < entries.len and entries[hint].identity == identity) return entries[hint];
+        return self.symbolicPointee(identity);
+    }
+
     pub fn setSymbolicInitializedness(self: *State, identity: facts.SymbolicPointeeId, initializedness: value_state.Initializedness) void {
         for (self.symbolic_pointees.items) |*entry| if (entry.identity == identity) {
             // Availability alone never renews a reference's observed incarnation.
@@ -405,10 +411,10 @@ pub const State = struct {
 
     pub fn joinSymbolicPointees(self: *State, left: *const State, right: *const State) !void {
         std.debug.assert(self.symbolic_pointees.items.len == 0);
-        for (left.symbolic_pointees.items) |entry|
-            try self.symbolic_pointees.append(entry.join(right.symbolicPointee(entry.identity) orelse right.initialProjectedPointee(entry.identity)));
-        for (right.symbolic_pointees.items) |entry| {
-            if (left.symbolicPointee(entry.identity) != null) continue;
+        for (left.symbolic_pointees.items, 0..) |entry, index|
+            try self.symbolic_pointees.append(entry.join(right.symbolicPointeeAt(entry.identity, index) orelse right.initialProjectedPointee(entry.identity)));
+        for (right.symbolic_pointees.items, 0..) |entry, index| {
+            if (left.symbolicPointeeAt(entry.identity, index) != null) continue;
             try self.symbolic_pointees.append(entry.join(left.initialProjectedPointee(entry.identity)));
         }
     }
