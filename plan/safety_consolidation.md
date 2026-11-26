@@ -421,21 +421,61 @@ that selection. Rebase fresh callee identities before substituting caller
 evidence. Cache only caller-relative recipes. A summary must never infer
 authority or custody solely from a dependency that survived substitution.
 
-The current loop driver compares concrete states, including raw retirement
-marks on owned roots, and publishes the last state after eight iterations.
-That bound alone does not prove the resulting state includes every backedge
-successor. A widening must preserve earlier observations and pending effects
-while abstracting fresh internal generations. Compare retained observation
-validity and obligation relationships, with any renaming consistent across
-owners, observations, opaque contents, and receipts. An iteration budget can
-trigger a conservative widening. Accept the result only after checking that
-it covers the next abstract backedge. Never treat a canonical current
-generation as evidence that a historical observation became valid again.
+The loop header must denote every permitted state at the next test.
+Use one abstraction for initial entry and repeated edges. Compute
+the body, continue transfers, increment, and next condition from that
+header. Accept only when the entry and abstract backedge are included
+in the header. Accumulate breaks separately and check the exit against
+the header and all break states. A work limit can reject an unproved
+loop but cannot establish inclusion.
 
-Migrate lifetime collection and summary selection first, then replace the
-loop cutoff with a checked widening. Keep the representation sparse over
-observed paths. Reuse canonical immutable slices where possible and avoid
-enumerating combinations of branches or array indices. Compare checker
+Represent storage sites and value observations separately. An entry
+identity remains exact. A repeated producer gets a bounded key from
+its site and the role selected by its checked summary, with a current
+instance and a summary of older instances. Reusing a key for a new
+current instance demotes the previous one everywhere it can be
+observed. This is a simultaneous state operation, including stored
+values, projected storage, opaque provenance, pending receipts and
+completed outputs. Demotion never updates a historical borrow to the
+new instance. A joined current instance can authorize a strong
+operation only where every alternative identifies the same role and
+carries the required authority. A summary instance supports weak
+updates and possible conflicts until stronger evidence is available.
+
+Key embedded symbolic storage by the parent storage role and selector.
+Track its parent observation separately. A projection observed through
+an ended parent remains historical even if another observation selects
+the same field. Lift only the current projected initializedness and
+contents into a joined current role, and preserve writes through
+possible aliases in the weak store. Use typed wildcard indices and
+finite caller-relative projection paths. If traversal loses a finite
+path, retain an unresolved footprint and its lifetime and custody
+requirements.
+
+Opaque domains keep may-retained dependencies per role and observation.
+Emptying a current domain can clear only that instance's contents.
+Overlapping historical domains retain the union of their requirements.
+Pending receipts remain distinct from observation and ownership
+identities. A join preserves possible pending authority restrictions
+and takes the common proof of completion. Custody can authorize
+destruction only with a definite current owner. Historical alternatives
+keep possible cleanup and retention obligations.
+
+Build the representation around ordered, immutable facts and compare
+the complete state relation. In particular, identity renaming alone
+does not equate a current singleton with a summary of older instances.
+Start by assigning bounded roles to embedded symbolic projections and
+their opaque contents together. Check transfer inclusion for a refresh
+with a retained historical alias, a pending loan, and opaque contents
+before enabling the representation for general function bodies.
+Reuse the entry-relative site and role keys when substituting summaries,
+so a summary does not publish solver-local IDs.
+
+The concrete loop driver still has a fallback after eight transitions
+for fresh identities. Its lexical propagation checks catch known
+counterexamples without certifying that the next edge is covered.
+Replace this fallback through the complete abstract representation
+above. Compare checker
 time, peak memory, abstract loop iterations, and retained facts on the same
 input while scaling the number of owners, loan receipts, and wrapper calls.
 Use the existing stale-alias, opaque-retention, and disjoint-loan controls
@@ -479,6 +519,13 @@ still applies within each evaluation. In fixture 422X the entry test
 uses a local allocation, while the body retargets the argument to a
 caller-owned acquisition. The repeated test must publish the effect
 on that caller input.
+
+Fixture 423X delays this retargeting by another iteration. Capability
+inference now joins the entry with the backedge until bindings, address
+alternatives, counts, and conflicts stabilize. Counts saturate at two.
+Break and return states accumulate separately and do not contribute to
+repetition. The work limit rejects an unsettled capability summary
+instead of publishing a partial transfer.
 
 A concrete probe uses two lexical resources and twelve reference slots
 initialized to the first resource. Each iteration copies the references
