@@ -10523,6 +10523,18 @@ pub const SafetyChecker = struct {
         const retained: RetainedRoot = .{ .highest = .{ .limit = &limit, .root_count = state.tracker.roots.items.len } };
         for (context.roots.items) |entry| _ = retained.record(entry.root);
         for (context.symbolic.items) |entry| _ = retained.record(entry.root);
+        if (state.tracker.namespace) |namespace| {
+            // Lazy materialization reads the namespace even when no explicit
+            // value refers to these roots. A retired seed is a tombstone,
+            // while an absent seed may be materialized as alive.
+            for (namespace.initial_storage.items) |initial| {
+                if (retainMaterializedLoopSeed(state, retained, initial.root)) return;
+            }
+            for (namespace.projected_storage.items) |projection| {
+                if (retainMaterializedLoopSeed(state, retained, projection.backing) or
+                    retainMaterializedLoopSeed(state, retained, projection.generation)) return;
+            }
+        }
         if (limit == state.tracker.roots.items.len) return;
         _ = try visitLoopRoots(state, retained, null);
         if (limit >= state.tracker.roots.items.len) return;
@@ -11257,6 +11269,11 @@ fn rootHasExternalLoopObligation(state: *const SafetyChecker.FunctionState, root
     var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(state.places.allocator);
     defer guards.deinit();
     return visitExternalLoopRoots(state, .{ .contains = root }, &guards);
+}
+
+fn retainMaterializedLoopSeed(state: *const SafetyChecker.FunctionState, retained: RetainedRoot, root: facts.ValidityRootId) bool {
+    const index = @intFromEnum(root);
+    return index < state.tracker.roots.items.len and state.tracker.roots.items[index].present and retained.record(root);
 }
 
 fn rootRetainedAcrossLoop(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) !bool {
@@ -12400,6 +12417,30 @@ test "deferred lexical observations retain their historical witnesses" {
     try std.testing.expect(renewed != deferred_root);
     try std.testing.expect(state.tracker.isAlive(renewed));
     try std.testing.expect(!state.tracker.isAlive(old));
+}
+
+test "loop root trimming preserves retired lazy lexical seeds" {
+    const a = std.testing.allocator;
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    var context = SafetyChecker.LoopJoinContext.init(a);
+    defer context.deinit();
+
+    const slot: facts.Place = .{ .root = @enumFromInt(0) };
+    const initial = try state.storageGeneration(slot);
+    try state.endLexicalStorage(slot.root);
+    _ = try state.tracker.establish(.fresh);
+    try checker.trimUnreferencedLoopRoots(&context, &state);
+    try std.testing.expectEqual(@as(usize, 1), state.tracker.roots.items.len);
+    const renewed = try state.storageGeneration(slot);
+    try std.testing.expect(renewed != initial);
+    try std.testing.expect(!state.tracker.isAlive(initial));
+    try std.testing.expect(state.tracker.isAlive(renewed));
 }
 
 test "loop root trimming follows guarded snapshots and retained task outputs" {
