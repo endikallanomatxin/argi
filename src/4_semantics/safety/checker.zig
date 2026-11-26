@@ -8878,20 +8878,18 @@ pub const SafetyChecker = struct {
     // Reading an input reference slot observes the pointer stored in it, not
     // a pointer to that slot. Intern that initial referent separately so copies
     // share its incarnation without granting ownership of the slot's parent.
-    fn readSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, ty: ?graph_mod.GlobalTypeId) !facts.ValueFacts {
-        if (pointer.symbolic_pointees.len != 1) return .{};
+    fn readSymbolicValue(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts, ty: ?graph_mod.GlobalTypeId) anyerror!facts.ValueFacts {
+        if (pointer.symbolic_pointees.len == 0) return .{};
         const identity = pointer.symbolic_pointees[0];
-        const stored = try self.symbolicValueAt(state, identity);
-        const value_type = ty orelse for (state.symbolic_pointees.items) |entry| {
-            if (entry.identity == identity) break entry.ty;
-        } else null;
+        const value_type = ty orelse self.symbolicCellType(state, identity);
         const plain_read = if (value_type) |value_ty|
             self.plainExecutionStorage(value_ty, 0) or
                 (!types.hasDestructor(self.graph, value_ty) and
                     (@import("../global/c_abi.zig").isRawPointer(self.graph, value_ty) or @import("../global/c_abi.zig").isFunctionPointer(self.graph, value_ty)))
         else
             false;
-        if (pointer.reference_target_incomplete and value_type != null and !plain_read) {
+        const incomplete = !pointer.hasCompleteReferenceCoverage() or pointer.mutation_places.len != 0 or pointer.referenced_place != null;
+        if (incomplete and value_type != null and !plain_read) {
             const source = if (self.call_stack.items.len != 0)
                 self.graph.declaration(self.graph.function(self.call_stack.getLast()).declaration).source
             else
@@ -8899,6 +8897,18 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot read resource or reference-bearing storage through an incomplete reference target set", .{});
             return .{};
         }
+        if (pointer.symbolic_pointees.len > 1) {
+            var result: ?facts.ValueFacts = null;
+            for (0..pointer.symbolic_pointees.len) |index| {
+                var single = pointer;
+                single.symbolic_pointees = pointer.symbolic_pointees[index..][0..1];
+                single.reference_target_incomplete = incomplete;
+                const value = try self.readSymbolicValue(state, single, value_type);
+                result = if (result) |previous| try self.joinObservedSymbolicValues(previous, value, null, null, &.{}) else value;
+            }
+            return result.?;
+        }
+        const stored = try self.symbolicValueAt(state, identity);
         if (stored == null and value_type != null and self.graph.semanticType(value_type.?) == .virtual) {
             const value = try self.symbolicVirtualValue(state, pointer, value_type.?);
             try state.setSymbolicValue(.{ .identity = identity, .value = value }, false, true);
@@ -8908,11 +8918,11 @@ pub const SafetyChecker = struct {
             (try self.projectSymbolicStorage(pointer, .dereference, state)) orelse facts.ValueFacts{}
         else
             try self.reconstructSymbolicValue(state, identity, if (stored) |known| known.value else .{});
-        const observed = if (pointer.reference_target_incomplete)
+        const observed = if (incomplete)
             try self.joinObservedSymbolicValues(value, .{}, null, null, &.{})
         else
             value;
-        if (!pointer.reference_target_incomplete and value_type != null and isPointer(self.graph, value_type.?))
+        if (!incomplete and value_type != null and isPointer(self.graph, value_type.?))
             return self.readReferenceStore(state, identity, observed);
         return observed;
     }
@@ -18095,6 +18105,18 @@ test "reading through an uncovered target does not select a known choice value" 
     partial.reference_target_incomplete = true;
     const unknown = try checker.readSymbolicValue(&state, partial, @enumFromInt(0));
     try std.testing.expect(unknown.known_choice_variant == null);
+    const other: facts.SymbolicPointeeId = @enumFromInt(1);
+    try state.setSymbolicValue(.{ .identity = other, .value = .{ .known_choice_variant = 0 } }, true, true);
+    const covered: facts.ValueFacts = .{ .symbolic_pointees = &.{ identity, other }, .reference_coverage_complete = true };
+    const common = try checker.readSymbolicValue(&state, covered, @enumFromInt(0));
+    try std.testing.expectEqual(@as(?u32, 0), common.known_choice_variant);
+    var uncovered = covered;
+    uncovered.reference_coverage_complete = false;
+    const partial_common = try checker.readSymbolicValue(&state, uncovered, @enumFromInt(0));
+    try std.testing.expectEqual(null, partial_common.known_choice_variant);
+    try state.setSymbolicValue(.{ .identity = other, .value = .{ .known_choice_variant = 1 } }, true, true);
+    const mixed = try checker.readSymbolicValue(&state, covered, @enumFromInt(0));
+    try std.testing.expectEqual(null, mixed.known_choice_variant);
 }
 
 test "incomplete candidates cannot consume a generation while unresolved storage uses its own protocol" {
