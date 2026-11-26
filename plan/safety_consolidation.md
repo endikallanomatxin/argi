@@ -832,6 +832,13 @@ monotone header sequence can grow only finitely often. A worklist over
 changed partitions can avoid replay where transfer dependencies are
 available.
 
+Choice refinements are definite evidence. A covering header may omit
+an incoming refinement, but every refinement it claims must also hold
+in the incoming state. Opaque rows still require exact comparison:
+hidden dependencies also participate in transferred-domain lookup.
+Before widening those rows by set inclusion, decouple that lookup from
+the may-dependency set so extra obligations cannot select a destination.
+
 Before replacing the current driver, test the abstraction with a fresh
 generation observed before replacement, two simultaneously live owners
 from one producer, and an old projection retained through an opaque

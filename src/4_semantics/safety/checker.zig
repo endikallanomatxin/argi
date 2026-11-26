@@ -11776,10 +11776,13 @@ fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const Saf
         left.symbolic_pointees.items.len != right.symbolic_pointees.items.len or
         left.symbolic_values.items.len != right.symbolic_values.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
-        left.opaque_storages.items.len != right.opaque_storages.items.len or
-        left.choice_active.items.len != right.choice_active.items.len or
-        left.choice_rejected.items.len != right.choice_rejected.items.len or
-        left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
+        left.opaque_storages.items.len != right.opaque_storages.items.len) return false;
+    // A refinement in the covering state must hold on the incoming path.
+    // Incoming paths may prove additional choices.
+    if (relation == .equal and
+        (left.choice_active.items.len != right.choice_active.items.len or
+            left.choice_rejected.items.len != right.choice_rejected.items.len or
+            left.choice_temporary_active.items.len != right.choice_temporary_active.items.len)) return false;
 
     for (left.symbolic_pointees.items, 0..) |pointee, index| {
         const other = right.symbolicPointeeAt(pointee.identity, index) orelse return false;
@@ -11863,6 +11866,23 @@ test "loop state coverage permits weak writes and still compares opaque obligati
     try std.testing.expect(compareLoopStates(&header, &successor, .covers));
     try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
     try successor.opaque_storages.append(.{ .storage = target, .hidden_dependencies = &.{} });
+    try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
+}
+
+test "loop state coverage requires every claimed choice refinement" {
+    const allocator = std.testing.allocator;
+    var header = SafetyChecker.FunctionState.init(allocator);
+    defer header.deinit();
+    var successor = SafetyChecker.FunctionState.init(allocator);
+    defer successor.deinit();
+    const storage: facts.Place = .{ .root = @enumFromInt(0) };
+    try successor.choice_active.append(.{ .storage = storage, .variant_index = 0 });
+    try successor.choice_rejected.append(.{ .storage = storage, .variant_index = 1 });
+    try successor.choice_temporary_active.append(.{ .expression = @enumFromInt(0), .variant_index = 0 });
+    try std.testing.expect(compareLoopStates(&header, &successor, .covers));
+    try std.testing.expect(!compareLoopStates(&successor, &header, .covers));
+    try std.testing.expect(!statesEqual(&header, &successor));
+    try header.choice_active.append(.{ .storage = storage, .variant_index = 1 });
     try std.testing.expect(!compareLoopStates(&header, &successor, .covers));
 }
 
