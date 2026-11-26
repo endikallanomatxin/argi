@@ -788,6 +788,17 @@ outstanding obligations. Opaque contents use the same representation for
 contained observations and owner associations. Unknown traversal loses
 precision in the target and retains possible hidden effects.
 
+In the reduced bridge trace, the destination's symbolic identity 0
+keeps backing 0 while the first two joined observations are 26 and 39.
+The second transition creates six more projected identities and an
+opaque row. The field-zero projections keep backing 10. Before
+generation-checked inheritance, the old opaque row for projection 7
+also picks up owner 29 from the joined aggregate, even though it was
+recorded under observation 23. The row now retains owners seen under
+its own observation in either predecessor, along with its recorded
+associations. The growing set of possible owners in the current
+aggregate still needs a multiplicity abstraction.
+
 Compute loop headers by joining entry with the abstract backedge.
 Compare complete states in the same partition namespace, including
 storage contents and deferred effects. Accept when the backedge is

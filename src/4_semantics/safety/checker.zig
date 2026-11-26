@@ -4184,6 +4184,10 @@ pub const SafetyChecker = struct {
                 const projection_index = namespace.projectionIndex(identity) orelse return null;
                 const projection = namespace.projected_storage.items[projection_index];
                 if (!projection.selector.embedded()) return null;
+                // An inherited value describes the current parent only.
+                // Historical owner associations remain in the opaque row.
+                const parent_storage = state.symbolicPointee(projection.parent) orelse state.initialProjectedPointee(projection.parent) orelse return null;
+                if (parent_storage.generation != projection.parent_generation) return null;
                 const parent = self.domainValue(state, .{ .symbolic = projection.parent }) orelse return null;
                 return switch (projection.selector.projection) {
                     .field, .static_index => |index| for (parent.fields) |field| {
@@ -7474,10 +7478,15 @@ pub const SafetyChecker = struct {
         try state.mergeOpaqueStorage(storage, dependencies, owners.items);
     }
 
-    fn joinOpaqueStorageRow(self: *SafetyChecker, state: *FunctionState, first: OpaqueStorage, second: ?OpaqueStorage) !void {
+    fn joinOpaqueStorageRow(self: *SafetyChecker, state: *FunctionState, first: OpaqueStorage, second: ?OpaqueStorage, predecessors: []const *const FunctionState) !void {
         var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer owners.deinit();
         if (self.domainValue(state, first.storage)) |value| try collectOwnedRoots(value, &owners);
+        if (first.storage == .symbolic) for (predecessors) |predecessor| {
+            // The join can replace the parent generation. Retain owners that
+            // were visible through this same observation on either incoming path.
+            if (self.domainValue(@constCast(predecessor), first.storage)) |value| try collectOwnedRoots(value, &owners);
+        };
         try state.appendJoinedOpaqueStorage(first, second, owners.items);
     }
 
@@ -10124,11 +10133,11 @@ pub const SafetyChecker = struct {
                 right.opaque_storages.items[found]
             else
                 null;
-            try self.joinOpaqueStorageRow(&joined, row, other);
+            try self.joinOpaqueStorageRow(&joined, row, other, &.{ left, right });
         }
         for (right.opaque_storages.items, 0..) |row, index| {
             if (findOpaqueStorageEntry(left.opaque_storages.items, row.storage, index) != null) continue;
-            try self.joinOpaqueStorageRow(&joined, row, null);
+            try self.joinOpaqueStorageRow(&joined, row, null, &.{ left, right });
         }
 
         for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
@@ -11629,6 +11638,32 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     return true;
+}
+
+test "opaque projection joins retain historical owner associations without inheriting another generation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(allocator);
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const parent = try state.establishSymbolicInput(@enumFromInt(0), null);
+    const old = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
+    const old_owner = try state.tracker.establish(.fresh);
+    const new_owner = try state.tracker.establish(.fresh);
+    state.symbolic_pointees.items[0].generation = try state.tracker.establish(.fresh);
+    const current = (try state.projectSymbolicStorage(state.symbolic_pointees.items[0], .{ .field = 0 }, null)).?;
+    const field: facts.ValueFacts = .{ .owned_roots = &.{new_owner} };
+    try state.symbolic_values.append(.{ .identity = parent.identity, .value = .{ .fields = &.{.{ .index = 0, .value = &field }} } });
+
+    try checker.joinOpaqueStorageRow(&state, .{ .storage = .{ .symbolic = old.identity }, .hidden_dependencies = &.{}, .owner_roots = &.{old_owner} }, null, &.{});
+    try checker.joinOpaqueStorageRow(&state, .{ .storage = .{ .symbolic = current.identity }, .hidden_dependencies = &.{} }, null, &.{});
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{old_owner}, state.opaque_storages.items[0].owner_roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{new_owner}, state.opaque_storages.items[1].owner_roots);
 }
 
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
