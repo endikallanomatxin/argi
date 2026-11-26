@@ -9007,8 +9007,10 @@ pub const SafetyChecker = struct {
                 if (parent.pointer) |pointer| if (try self.projectSymbolicReference(pointer, access.field_index, state)) |projected|
                     break :blk .{ .pointer = projected };
                 const aggregate = try self.readEvaluatedAccess(function, node.source, self.graph.node(access.value).ty, parent, state);
-                for (aggregate.fields) |field| if (field.index == access.field_index) break :blk .{ .value = field.value.* };
-                break :blk .{ .value = aggregate };
+                // The field contents and the observation authorizing the
+                // field's address are distinct, even in opaque backing.
+                for (aggregate.fields) |field| if (field.index == access.field_index) break :blk .{ .value = field.value.*, .pointer = parent.pointer };
+                break :blk .{ .value = aggregate, .pointer = parent.pointer };
             },
             .array_index => |access| blk: {
                 const pointer = try self.evaluateArrayStorage(function, node.source, access.array_ptr, state) orelse break :blk .{ .value = .{} };
@@ -9210,8 +9212,16 @@ pub const SafetyChecker = struct {
                     try appendRootFact(&state.lexical_storage_generations, generation);
             }
         } else {
-            for (opaque_provenance) |provenance|
-                try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
+            const parent_dependencies = if (captured) |access|
+                if (access.pointer) |pointer| pointer.dependencies else &.{}
+            else
+                &.{};
+            try dependencies.appendSlice(parent_dependencies);
+            for (opaque_provenance) |provenance| {
+                for (parent_dependencies) |dependency| {
+                    if (dependency.root == provenance.generation) break;
+                } else try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
+            }
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
