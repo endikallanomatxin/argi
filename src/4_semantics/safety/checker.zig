@@ -7643,8 +7643,8 @@ pub const SafetyChecker = struct {
         if (domains.items.len == 0) {
             if (try self.inferOpaqueDomain(state, pointer)) |domain|
                 try domains.append(domain)
-            else if (self.inferTransferredOpaqueDomain(state, pointer)) |domain|
-                try domains.append(domain);
+            else
+                try collectTransferredOpaqueDomains(state, pointer, &domains);
         }
         if (domains.items.len != 0 and try hasPendingExecution(value, state)) {
             try self.report(source, "cannot hide a pending execution in opaque storage without its completion protocol", .{});
@@ -7659,12 +7659,11 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn inferTransferredOpaqueDomain(
-        self: *SafetyChecker,
-        state: *FunctionState,
+    fn collectTransferredOpaqueDomains(
+        state: *const FunctionState,
         pointer: facts.ValueFacts,
-    ) ?StorageIdentity {
-        _ = self;
+        domains: *std.array_list.Managed(StorageIdentity),
+    ) !void {
         for (pointer.dependencies) |dependency| {
             var dependency_is_hidden = false;
             for (state.opaque_storages.items) |opaque_storage| {
@@ -7674,15 +7673,12 @@ pub const SafetyChecker = struct {
             }
             if (!dependency_is_hidden) continue;
 
-            var index = state.places.items.len;
-            while (index > 0) {
-                index -= 1;
-                const candidate = state.places.items[index];
+            for (state.places.items) |candidate| {
                 if (candidate.initializedness != .moved) continue;
-                if (valueContainsOwnedRoot(candidate.value, dependency.root)) return .{ .place = candidate.storage };
+                if (valueContainsOwnedRoot(candidate.value, dependency.root))
+                    try appendStorageIdentity(domains, .{ .place = candidate.storage });
             }
         }
-        return null;
     }
 
     fn opaqueWriteCreatesOwnershipCycle(
@@ -11938,6 +11934,25 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     return true;
+}
+
+test "opaque writes retain all transferred destination candidates" {
+    const allocator = std.testing.allocator;
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const owner: facts.ValidityRootId = @enumFromInt(0);
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    try state.places.append(.{ .storage = first, .initializedness = .moved, .value = .{ .owned_roots = &.{owner} } });
+    try state.places.append(.{ .storage = second, .initializedness = .moved, .value = .{ .owned_roots = &.{owner} } });
+    try state.opaque_storages.append(.{ .storage = .{ .symbolic = @enumFromInt(0) }, .hidden_dependencies = &.{owner} });
+    var domains = std.array_list.Managed(facts.StorageIdentity).init(allocator);
+    defer domains.deinit();
+    const pointer: facts.ValueFacts = .{ .dependencies = &.{.{ .root = owner }} };
+    try SafetyChecker.collectTransferredOpaqueDomains(&state, pointer, &domains);
+    try std.testing.expectEqual(@as(usize, 2), domains.items.len);
+    try std.testing.expect(domains.items[0].eql(.{ .place = first }));
+    try std.testing.expect(domains.items[1].eql(.{ .place = second }));
 }
 
 test "opaque projection joins retain historical owner associations without inheriting another generation" {
