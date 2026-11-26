@@ -5469,14 +5469,21 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
+            // The write, retirement and renewal in this postcondition
+            // refer to the same evaluated symbolic destination.
+            const symbolic_access = if (post_targets[post_index] == null or cleanupTransition(summary, post_state))
+                try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)
+            else
+                null;
             const symbolic_was_initialized = blk: {
                 if (post_state.initializedness != .initialized or post_state.initialization == .preserved or post_state.requires_available_destination) break :blk false;
-                const access = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state) orelse break :blk false;
+                const access = symbolic_access orelse break :blk false;
                 if (access.symbolic_pointees.len != 1) break :blk false;
                 break :blk self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
             };
             if (cleanupTransition(summary, post_state)) {
-                for (try self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments, state)) |identity| {
+                const identities = if (symbolic_access) |access| access.symbolic_pointees else &.{};
+                for (identities) |identity| {
                     state.setSymbolicInitializedness(identity, if (post_state.requires_available_destination) .maybe_initialized else post_state.initializedness);
                 }
             }
@@ -5524,7 +5531,7 @@ pub const SafetyChecker = struct {
             const target = post_targets[post_index] orelse {
                 if (post_state.initializedness == .initialized and post_state.initialization != .preserved) {
                     if (post_values[post_index]) |value| {
-                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
+                        if (symbolic_access) |access| {
                             const definite = post_state.initialization == .definite;
                             if (definite and post_state.ends_previous_roots and !try self.endReplacedSymbolicOwners(source, state, access)) continue;
                             try self.storeSymbolicValue(state, access, value, definite);
@@ -5532,8 +5539,7 @@ pub const SafetyChecker = struct {
                     }
                 }
                 if (post_state.ends_previous_roots) {
-                    const symbolic = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state);
-                    const handled = if (symbolic) |value| try self.endSymbolicGenerations(source, value, state) else false;
+                    const handled = if (symbolic_access) |value| try self.endSymbolicGenerations(source, value, state) else false;
                     // Opaque receipts retain backing and borrowed roots, not
                     // an exposed value generation that this fallback may end.
                     if (!handled and post_state.target.projections.len == 0 and arguments[index].opaque_provenance.len == 0) {
@@ -5546,7 +5552,7 @@ pub const SafetyChecker = struct {
                 if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
                     (post_state.initialization == .definite or (post_state.initialization == .possible and symbolic_was_initialized)))
                 {
-                    if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)) |access| {
+                    if (symbolic_access) |access| {
                         if (exactSymbolicTarget(access)) |identity| {
                             if (post_state.ends_previous_roots) state.setSymbolicInitializedness(identity, .deinitialized);
                             if (try state.renewSymbolicAccess(access)) |renewed| {
