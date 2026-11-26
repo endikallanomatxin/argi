@@ -10684,43 +10684,38 @@ pub const SafetyChecker = struct {
         try retained.recordState(entry, true);
         if (context.exits) |exit| try retained.recordState(exit, true);
 
-        var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
-        defer state.reference_writes = stores.definitions;
-        var index: usize = 0;
-        while (index < stores.definitions.items.len) {
-            const definition = stores.definitions.items[index];
-            if (definition.target != .symbolic or definition.summarized or retained.identities.contains(definition.target.symbolic)) {
-                index += 1;
-                continue;
-            }
-            const projection_index = namespace.projectionIndex(definition.target.symbolic) orelse {
-                index += 1;
-                continue;
-            };
+        var sources: std.AutoArrayHashMapUnmanaged(facts.ValidityRootId, std.ArrayList(StorageIdentity)) = .empty;
+        defer {
+            for (sources.values()) |*group| group.deinit(self.state_allocator);
+            sources.deinit(self.state_allocator);
+        }
+        for (state.reference_writes.items) |definition| {
+            if (definition.target != .symbolic or definition.summarized or retained.identities.contains(definition.target.symbolic)) continue;
+            const projection_index = namespace.projectionIndex(definition.target.symbolic) orelse continue;
             const projection = namespace.projected_storage.items[projection_index];
-            const row = state.symbolicPointee(definition.target.symbolic) orelse {
-                index += 1;
-                continue;
-            };
+            const row = state.symbolicPointee(definition.target.symbolic) orelse continue;
             // Retain exact coordinates for externally visible cells and
             // for non-embedded projections that can select another object.
             if (!projection.selector.embedded() or @intFromEnum(projection.parent_generation) < context.first_loop_root or
-                !try isDetachedLoopProjection(state, entry, context.exits, namespace, row))
-            {
-                index += 1;
-                continue;
-            }
-            const partition = try context.historical_reference_writes.getOrPut(projection.backing);
+                !try isDetachedLoopProjection(state, entry, context.exits, namespace, row)) continue;
+            const group = try sources.getOrPut(self.state_allocator, projection.backing);
+            if (!group.found_existing) group.value_ptr.* = .empty;
+            try group.value_ptr.append(self.state_allocator, definition.target);
+        }
+
+        var stores = state_mod.ReferenceStores{ .fact_allocator = self.allocator, .definitions = state.reference_writes };
+        defer state.reference_writes = stores.definitions;
+        for (sources.keys(), sources.values()) |backing, group| {
+            const partition = try context.historical_reference_writes.getOrPut(backing);
             if (!partition.found_existing) {
                 if (namespace.next_symbolic_id == std.math.maxInt(u32)) {
-                    _ = context.historical_reference_writes.remove(projection.backing);
+                    _ = context.historical_reference_writes.remove(backing);
                     return error.SafetySymbolicIdentityLimit;
                 }
                 partition.value_ptr.* = @enumFromInt(namespace.next_symbolic_id);
                 namespace.next_symbolic_id += 1;
             }
-            try stores.summarizeObservation(definition.target, .{ .symbolic = partition.value_ptr.* }, ReferenceStoreContext{ .checker = self });
-            state.reference_writes = stores.definitions;
+            try stores.summarizeObservations(group.items, .{ .symbolic = partition.value_ptr.* }, ReferenceStoreContext{ .checker = self });
         }
     }
 
@@ -11773,7 +11768,7 @@ test "loop reference writes keep detached payloads under one weak backing partit
     var context = SafetyChecker.LoopJoinContext.init(allocator);
     defer context.deinit();
     const dependency = try header.tracker.establish(.fresh);
-    for (0..2) |_| {
+    for (0..3) |turn| {
         const field = (try header.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
         try header.reference_writes.append(.{
             .target = .{ .symbolic = field.identity },
@@ -11783,6 +11778,7 @@ test "loop reference writes keep detached payloads under one weak backing partit
         header.tracker.end(parent.generation.?);
         parent.generation = try header.tracker.establish(.fresh);
         header.symbolic_pointees.items[0] = parent;
+        if (turn == 0) continue;
         try checker.summarizeDetachedLoopWrites(&context, &header, &entry);
         try std.testing.expectEqual(@as(usize, 1), header.reference_writes.items.len);
         try std.testing.expect(header.reference_writes.items[0].summarized);
