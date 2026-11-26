@@ -5954,12 +5954,12 @@ pub const SafetyChecker = struct {
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             const input = try self.projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
-            try self.collectOpaqueHiddenDependencies(state, input, hidden);
+            try collectOpaqueHiddenDependencies(input, hidden);
         }
         for (effect.input_place_values) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
             const input = try self.loadSummaryInputPlaceContents(input_path, arguments, state);
-            try self.collectOpaqueHiddenDependencies(state, input, hidden);
+            try collectOpaqueHiddenDependencies(input, hidden);
         }
         for (effect.opaque_generation_dependencies) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
@@ -6099,10 +6099,10 @@ pub const SafetyChecker = struct {
         for (effect.opaque_storage_dependencies) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
             const storage = try self.resolveSummaryOpaqueStoragePath(input_path, &.{}, arguments, state) orelse continue;
-            var returned_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            var returned_dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
             defer returned_dependencies.deinit();
             try self.collectReturnedStorageDependencies(state, storage, &returned_dependencies);
-            for (returned_dependencies.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+            for (returned_dependencies.items) |dependency| try appendDependencyFact(&dependencies, dependency);
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!opaque_storage.storage.eql(storage)) continue;
                 for (opaque_storage.hidden_dependencies) |dependency|
@@ -7452,25 +7452,38 @@ pub const SafetyChecker = struct {
     }
 
     fn collectOpaqueHiddenDependencies(
-        self: *SafetyChecker,
-        state: *FunctionState,
         value: facts.ValueFacts,
         hidden: *std.array_list.Managed(facts.ValidityRootId),
     ) !void {
-        for (value.dependencies) |dependency| try appendRootFact(hidden, dependency.root);
-        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
-        defer provenances.deinit();
-        try self.collectOpaqueProvenancesCarriedBy(state, value, &provenances);
-        for (provenances.items) |provenance| try appendRootFact(hidden, provenance.generation);
-        for (value.fields) |field| try self.collectOpaqueHiddenDependencies(state, field.value.*, hidden);
-        for (value.variants) |variant| try self.collectOpaqueHiddenDependencies(state, variant.value.*, hidden);
+        try collectOpaqueEvidence(value, hidden, false);
+    }
+
+    fn appendOpaqueEvidence(destination: anytype, dependency: facts.ValidityDependency) !void {
+        if (@TypeOf(destination.*) == std.array_list.Managed(facts.ValidityRootId)) {
+            try appendRootFact(destination, dependency.root);
+        } else {
+            try appendDependencyFact(destination, dependency);
+        }
+    }
+
+    fn collectOpaqueEvidence(value: facts.ValueFacts, destination: anytype, comptime include_owned: bool) !void {
+        if (include_owned) try appendCapturedDependencies(value, destination, false);
+        for (value.dependencies) |dependency| try appendOpaqueEvidence(destination, dependency);
+        // Inferred opaque provenance can only name roots already observed here.
+        for (value.opaque_provenance) |provenance| {
+            for (value.dependencies) |dependency| {
+                if (dependency.root == provenance.generation) break;
+            } else try appendOpaqueEvidence(destination, .{ .root = provenance.generation });
+        }
+        var children = value.structuralChildren();
+        while (children.next()) |child| try collectOpaqueEvidence(child.*, destination, include_owned);
     }
 
     fn collectReturnedStorageDependencies(
         self: *SafetyChecker,
         state: *FunctionState,
         storage: StorageIdentity,
-        hidden: *std.array_list.Managed(facts.ValidityRootId),
+        destination: anytype,
     ) !void {
         const initial = self.domainValue(state, storage) orelse facts.ValueFacts{};
         const stored = switch (storage) {
@@ -7481,23 +7494,24 @@ pub const SafetyChecker = struct {
         // ordinary dependencies until summaries can name returned domains.
         // Extraction must retain those roots, without retaining backing owners
         // or the lexical slot holding the storage.
-        var candidates = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        var candidates = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         defer candidates.deinit();
-        try self.collectOpaqueHiddenDependencies(state, stored, &candidates);
-        for (candidates.items) |root| {
+        try collectOpaqueEvidence(stored, &candidates, false);
+        for (candidates.items) |dependency| {
+            const root = dependency.root;
             if (valueContainsOwnedRoot(stored, root)) continue;
             var slot_generation = false;
             for (state.storage_generations.items) |entry| {
                 if (storage.isPrefixOf(.{ .place = entry.storage }) and entry.generation == root) slot_generation = true;
             }
-            if (!slot_generation) try appendRootFact(hidden, root);
+            if (!slot_generation) try appendOpaqueEvidence(destination, dependency);
         }
     }
 
     fn hideOpaqueDependencies(self: *SafetyChecker, state: *FunctionState, storage: StorageIdentity, value: facts.ValueFacts) !void {
         var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer hidden.deinit();
-        try self.collectOpaqueHiddenDependencies(state, value, &hidden);
+        try collectOpaqueHiddenDependencies(value, &hidden);
         // Moving ownership ends its old roots. Only those roots are internal
         // to the transfer; an already-ended external borrow remains a stale
         // dependency and must not disappear merely because it is not live.
@@ -9561,12 +9575,7 @@ pub const SafetyChecker = struct {
         try self.requireDescendantsInitialized(function, source, storage, state);
         try appendDependencyFact(dependencies, .{ .root = try state.storageGeneration(storage) });
         const value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
-        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        defer roots.deinit();
-        try collectDependencyRoots(value, &roots);
-        try collectOwnedRoots(value, &roots);
-        try self.collectOpaqueHiddenDependencies(state, value, &roots);
-        for (roots.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
+        try collectOpaqueEvidence(value, dependencies, true);
         if (self.graph.semanticType(ty) == .pointer) {
             if (value.referenced_place) |referent|
                 try self.captureContractStorage(function, source, state, referent, self.graph.semanticType(ty).pointer.child, dependencies, visited);
@@ -14643,11 +14652,22 @@ test "opaque extraction retains updated field dependencies" {
     const after = try state.tracker.establish(.fresh);
     const initial: facts.ValueFacts = .{ .dependencies = &.{.{ .root = before }} };
     try state.setPlace(record, .initialized, .{ .fields = &.{.{ .index = 0, .value = &initial }} });
-    try state.setPlace(field, .initialized, .{ .dependencies = &.{.{ .root = after }} });
-    var hidden = std.array_list.Managed(facts.ValidityRootId).init(a);
+    const observations = [_]facts.ValidityDependency{
+        .{ .root = after, .retirement_mark = 5 },
+        .{ .root = after, .retirement_mark = 7 },
+    };
+    try state.setPlace(field, .initialized, .{
+        .dependencies = &observations,
+        .opaque_provenance = &.{.{ .storage = .{ .place = field }, .generation = after }},
+    });
+    var hidden = std.array_list.Managed(facts.ValidityDependency).init(a);
     defer hidden.deinit();
     try checker.collectReturnedStorageDependencies(&state, .{ .place = record }, &hidden);
-    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{after}, hidden.items);
+    try std.testing.expectEqualSlices(facts.ValidityDependency, &observations, hidden.items);
+    var roots = std.array_list.Managed(facts.ValidityRootId).init(a);
+    defer roots.deinit();
+    try checker.collectReturnedStorageDependencies(&state, .{ .place = record }, &roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{after}, roots.items);
 }
 
 test "opaque summaries retain dependencies of values loaded from symbolic slots" {

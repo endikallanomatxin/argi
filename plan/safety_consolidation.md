@@ -394,6 +394,14 @@ checks, but publishing an observation needs a retained witness or an explicit
 loss of proof. Owner membership can justify a custody operation and cannot
 repair an independently captured alias.
 
+Opaque capture and extraction now traverse the same structural values and
+preserve distinct retirement witnesses even when they name the same root.
+Retention projects those witnesses to identities at the destination. Inferred
+opaque provenance already has an observation at that node, so collection can
+skip the scan of tracked storage and inspect only explicit provenance for
+additional generations. A provenance-only generation contributes a bare
+dependency, which requires unconditional liveness.
+
 Use the existing structural facts to share projection and collection rules.
 Separate combining facts from one value from joining alternative values.
 Combine retains obligations from both operands. Join unions obligations and
