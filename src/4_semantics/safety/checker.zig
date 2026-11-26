@@ -10220,6 +10220,7 @@ pub const SafetyChecker = struct {
             try self.widenLoopOwnedRoots(&join_context, &next, &entry, &iteration);
             try canonicalizeDeferredLexicalObservations(&join_context, &next);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
+            try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len);
             if (statesEqual(&current, &next)) {
                 if (exits) |*exit_state| try self.mergeLoopTransfer(&next, exit_state);
                 try self.copyState(state, &next);
@@ -10515,6 +10516,46 @@ pub const SafetyChecker = struct {
         state.tracker.roots.items[@intFromEnum(root)].state = .dead;
         deferred.appendAssumeCapacity(.{ .storage = storage, .root = root });
         return root;
+    }
+
+    fn trimLoopCapabilities(self: *SafetyChecker, state: *FunctionState, entry_count: usize) !void {
+        // Only a monotonic namespace can discard a row without allowing
+        // the next acquisition to reuse its identity.
+        if (state.tracker.namespace == null or state.storage_capabilities.items.len <= entry_count) return;
+        const Visitor = struct {
+            limit: usize,
+            capacity: usize,
+
+            pub fn visit(visitor: *@This(), value: facts.ValueFacts) std.mem.Allocator.Error!bool {
+                visitor.retain(value.storage_capabilities);
+                visitor.retain(value.acquisition_origins);
+                return visitor.limit == visitor.capacity;
+            }
+
+            fn retain(visitor: *@This(), ids: []const facts.StorageCapabilityId) void {
+                for (ids) |id| {
+                    const index = @intFromEnum(id);
+                    if (index < visitor.capacity) visitor.limit = @max(visitor.limit, @as(usize, index) + 1);
+                }
+            }
+        };
+        var visitor: Visitor = .{ .limit = entry_count, .capacity = state.storage_capabilities.items.len };
+        if (self.active_fresh_capabilities) |active| {
+            var ids = active.valueIterator();
+            while (ids.next()) |id| visitor.retain(&.{id.*});
+        }
+        if (visitor.limit == visitor.capacity) return;
+        var guards = std.AutoHashMap(*const facts.ValueFacts, void).init(self.state_allocator);
+        defer guards.deinit();
+        inline for (.{ state.places.items, state.symbolic_values.items, state.reference_writes.items }) |entries| {
+            for (entries) |entry| if (try visitValueFactGraph(entry.value, &guards, &visitor)) return;
+        }
+        for (state.executions.items) |execution| {
+            if (execution.output.accessEvidence()) |output| {
+                if (try visitValueFactGraph(output.*, &guards, &visitor)) return;
+            }
+        }
+        state.storage_capabilities.shrinkRetainingCapacity(visitor.limit);
     }
 
     fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) !void {
@@ -12417,6 +12458,30 @@ test "deferred lexical observations retain their historical witnesses" {
     try std.testing.expect(renewed != deferred_root);
     try std.testing.expect(state.tracker.isAlive(renewed));
     try std.testing.expect(!state.tracker.isAlive(old));
+}
+
+test "loop capability trimming preserves nested acquisition origins" {
+    const a = std.testing.allocator;
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+
+    const retained = try state.establishCapability();
+    const unused = try state.establishCapability();
+    const leaf: facts.ValueFacts = .{ .acquisition_origins = &.{retained} };
+    const output: facts.ValueFacts = .{ .fields = &.{.{ .index = 0, .value = &leaf }} };
+    const receipt = try state.establishExecution(&.{});
+    try std.testing.expect(state.retainExecutionOutput(receipt, &output));
+    state.completeExecution(receipt);
+    try checker.trimLoopCapabilities(&state, 0);
+    try std.testing.expectEqual(.available, state.capabilityState(retained));
+    try std.testing.expectEqual(.absent, state.capabilityState(unused));
+    const next = try state.establishCapability();
+    try std.testing.expect(@intFromEnum(next) > @intFromEnum(unused));
 }
 
 test "loop root trimming preserves retired lazy lexical seeds" {
