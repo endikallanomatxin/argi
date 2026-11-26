@@ -704,12 +704,21 @@ pub const State = struct {
             const next = namespace.next_symbolic_id;
             const following = try std.math.add(u32, next, 1);
             identity = @enumFromInt(next);
+            const parent_projection = if (selector.embedded()) namespace.projectionIndex(parent.identity) else null;
             for (namespace.projected_storage.items) |entry| {
                 // Embedded fields keep their physical backing when the same
                 // parent storage receives a new value. Loaded references and
                 // erased domains can instead select different storage.
+                if (!entry.selector.eql(selector)) continue;
                 const same_parent_storage = selector.embedded() and entry.parent == parent.identity;
-                if ((same_parent_storage or entry.parent_generation == parent_generation) and entry.selector.eql(selector)) {
+                const same_projected_backing = if (parent_projection) |parent_index|
+                    if (namespace.projectionIndex(entry.parent)) |other_index|
+                        namespace.projected_storage.items[parent_index].backing == namespace.projected_storage.items[other_index].backing
+                    else
+                        false
+                else
+                    false;
+                if (same_parent_storage or same_projected_backing or entry.parent_generation == parent_generation) {
                     backing = entry.backing;
                     break;
                 }
@@ -1906,12 +1915,16 @@ test "embedded symbolic fields keep backing across parent replacement" {
     var parent = try state.establishSymbolicInput(@enumFromInt(0), null);
     const first = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
     const first_domain = (try state.projectSymbolicDomain(parent, 0)).?;
+    const first_nested = (try state.projectSymbolicStorage(state.symbolicPointee(first.identity).?, .{ .field = 1 }, null)).?;
     state.tracker.end(parent.generation.?);
     parent.generation = try state.tracker.establish(.fresh);
     state.symbolic_pointees.items[0] = parent;
     const current = (try state.projectSymbolicStorage(parent, .{ .field = 0 }, null)).?;
     const current_domain = (try state.projectSymbolicDomain(parent, 0)).?;
+    const current_nested = (try state.projectSymbolicStorage(state.symbolicPointee(current.identity).?, .{ .field = 1 }, null)).?;
 
+    try std.testing.expect(first_nested.generation != current_nested.generation);
+    try std.testing.expectEqual(state.symbolicPointee(first_nested.identity).?.backing, state.symbolicPointee(current_nested.identity).?.backing);
     try std.testing.expect(first.identity != current.identity);
     try std.testing.expect(first.generation != current.generation);
     try std.testing.expectEqual(state.symbolicPointee(first.identity).?.backing, state.symbolicPointee(current.identity).?.backing);
