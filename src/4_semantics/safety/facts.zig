@@ -715,7 +715,18 @@ pub fn remapValueRoots(allocator: std.mem.Allocator, value: ValueFacts, mapping:
     return (try replaceValueRootsIfChanged(allocator, value, .{ .sources = &.{}, .destinations = .{ .map = mapping } })) orelse value;
 }
 
+/// Rebase a verified current owner alternative. Conditional witnesses can
+/// follow the owner only when that exact observation is valid at the join.
+pub fn rebaseLoopOwnerRoots(allocator: std.mem.Allocator, value: ValueFacts, sources: []const ValidityRootId, destination: ValidityRootId, tracker: *const Tracker) !ValueFacts {
+    return (try replaceValueRootsIfChanged(allocator, value, .{
+        .sources = sources,
+        .destinations = .{ .shared = destination },
+        .owner_tracker = tracker,
+    })) orelse value;
+}
+
 const RootReplacement = struct {
+    owner_tracker: ?*const Tracker = null,
     sources: []const ValidityRootId,
     destinations: union(enum) {
         shared: ValidityRootId,
@@ -730,10 +741,14 @@ const RootReplacement = struct {
     }
 
     fn applyObservation(self: RootReplacement, observation: ValidityDependency) ValidityDependency {
-        // A generation substitution cannot certify which retirement events
-        // an existing conditional observation has survived.
-        if (observation.retirement_mark != 0) return observation;
-        return .{ .root = self.apply(observation.root) };
+        // Conditional witnesses require the tracker from the owner join.
+        const target = self.apply(observation.root);
+        if (target == observation.root) return observation;
+        if (observation.retirement_mark != 0) {
+            const tracker = self.owner_tracker orelse return observation;
+            if (!tracker.dependencyIsAlive(observation)) return observation;
+        }
+        return .{ .root = target };
     }
 };
 
@@ -887,4 +902,27 @@ test "reference offsets retain validity observations without retaining a false t
     try std.testing.expectEqual(@as(usize, 0), offset.virtual_no_access.len);
     try std.testing.expectEqual(@as(?u32, 3), offset.lexical_frame);
     try std.testing.expectEqualSlices(ValidityDependency, original.dependencies, offset.dependencies);
+}
+
+test "loop owner rebasing preserves an expired conditional observation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var namespace: Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var tracker = Tracker.init(a);
+    defer tracker.deinit();
+    tracker.namespace = &namespace;
+    const source = try tracker.establish(.fresh);
+    const destination = try tracker.establish(.fresh);
+    try std.testing.expect(tracker.deferRetirement(source, 1));
+    const mark = tracker.roots.items[@intFromEnum(source)].retirement_mark;
+    const value: ValueFacts = .{ .dependencies = &.{
+        .{ .root = source, .retirement_mark = mark },
+        .{ .root = source, .retirement_mark = mark - 1 },
+    } };
+    const rebased = try rebaseLoopOwnerRoots(a, value, &.{source}, destination, &tracker);
+    try std.testing.expectEqual(destination, rebased.dependencies[0].root);
+    try std.testing.expectEqual(value.dependencies[1], rebased.dependencies[1]);
+    try std.testing.expect(!tracker.dependenciesAreAlive(rebased));
 }

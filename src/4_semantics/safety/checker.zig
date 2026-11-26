@@ -10426,7 +10426,7 @@ pub const SafetyChecker = struct {
             const phi = try self.loopRootPhi(context, joined, logical_storage) orelse continue;
             for (joined.places.items) |*related| {
                 if (!logical_storage.isPrefixOf(related.storage)) continue;
-                related.value = try facts.replaceValueRoots(self.allocator, related.value, alternatives[0..alternative_count], phi);
+                related.value = try facts.rebaseLoopOwnerRoots(self.allocator, related.value, alternatives[0..alternative_count], phi, &joined.tracker);
             }
         }
         try self.trimUnreferencedLoopRoots(context, joined);
@@ -10612,8 +10612,8 @@ pub const SafetyChecker = struct {
             // this branch. A retained observation must keep its old meaning.
             if (!live and try rootRetainedAcrossLoop(state, entry.root)) return null;
             try state.tracker.materialize(entry.root);
-            state.tracker.roots.items[index].state = .alive;
-            state.tracker.roots.items[index].owned_resource = true;
+            // A recycled identity without observers starts a new incarnation.
+            if (!live) state.tracker.roots.items[index] = .{ .id = entry.root, .owned_resource = true };
             return entry.root;
         };
         const root = try state.tracker.establish(.fresh);
