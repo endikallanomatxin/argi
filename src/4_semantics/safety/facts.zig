@@ -437,6 +437,24 @@ pub const Tracker = struct {
             projected: ValidityRootId,
         };
 
+        pub const ProjectedStorage = struct {
+            parent: SymbolicPointeeId,
+            parent_generation: ValidityRootId,
+            selector: SymbolicStorageSelector,
+            identity: SymbolicPointeeId,
+            backing: ValidityRootId,
+            generation: ValidityRootId,
+            ty: ?graph.GlobalTypeId = null,
+        };
+        pub const ProjectionObservation = struct {
+            parent: SymbolicPointeeId,
+            generation: ValidityRootId,
+            selector: SymbolicStorageSelector,
+        };
+        const EmbeddedSlot = struct {
+            base: EmbeddedBase,
+            selector: SymbolicStorageSelector,
+        };
         next_id: u32 = 0,
         next_symbolic_id: u32 = 0,
         next_capability_id: u32 = 0,
@@ -445,20 +463,43 @@ pub const Tracker = struct {
         // First observations persist across branches and loop iterations. A
         // repeated lexical binding never receives a later, stronger birth.
         lexical_allocations: std.AutoArrayHashMapUnmanaged(graph.GlobalBindingId, bool) = .empty,
-        projected_storage: std.ArrayList(struct {
-            parent: SymbolicPointeeId,
-            parent_generation: ValidityRootId,
-            selector: SymbolicStorageSelector,
-            identity: SymbolicPointeeId,
-            backing: ValidityRootId,
-            generation: ValidityRootId,
-            ty: ?graph.GlobalTypeId = null,
-        }) = .empty,
+        projected_storage: std.ArrayList(ProjectedStorage) = .empty,
+        projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
+        embedded_slots: std.AutoHashMapUnmanaged(EmbeddedSlot, ValidityRootId) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
         pub fn embeddedBase(self: *const RootNamespace, identity: SymbolicPointeeId) EmbeddedBase {
             const index = self.projectionIndex(identity) orelse return .{ .input = identity };
             return .{ .projected = self.projected_storage.items[index].backing };
+        }
+
+        pub fn observedProjection(self: *const RootNamespace, observation: ProjectionObservation) ?ProjectedStorage {
+            const index = self.projection_observations.get(observation) orelse return null;
+            return self.projected_storage.items[index];
+        }
+
+        pub fn embeddedBacking(self: *const RootNamespace, observation: ProjectionObservation) ?ValidityRootId {
+            if (!observation.selector.embedded()) return null;
+            return self.embedded_slots.get(.{ .base = self.embeddedBase(observation.parent), .selector = observation.selector });
+        }
+
+        pub fn reserveProjection(self: *RootNamespace, allocator: std.mem.Allocator, selector: SymbolicStorageSelector) !void {
+            try self.projected_storage.ensureUnusedCapacity(allocator, 1);
+            try self.projection_observations.ensureUnusedCapacity(allocator, 1);
+            if (selector.embedded()) try self.embedded_slots.ensureUnusedCapacity(allocator, 1);
+        }
+
+        pub fn publishProjection(self: *RootNamespace, row: ProjectedStorage) void {
+            const key: ProjectionObservation = .{ .parent = row.parent, .generation = row.parent_generation, .selector = row.selector };
+            self.projection_observations.putAssumeCapacityNoClobber(key, self.projected_storage.items.len);
+            if (row.selector.embedded()) {
+                const slot: EmbeddedSlot = .{ .base = self.embeddedBase(row.parent), .selector = row.selector };
+                const entry = self.embedded_slots.getOrPutAssumeCapacity(slot);
+                if (entry.found_existing) {
+                    std.debug.assert(entry.value_ptr.* == row.backing);
+                } else entry.value_ptr.* = row.backing;
+            }
+            self.projected_storage.appendAssumeCapacity(row);
         }
 
         /// Projections are appended in identity allocation order. Ordinary
@@ -485,12 +526,18 @@ pub const Tracker = struct {
             result.initial_storage = try self.initial_storage.clone(allocator);
             errdefer result.initial_storage.deinit(allocator);
             result.projected_storage = try self.projected_storage.clone(allocator);
+            errdefer result.projected_storage.deinit(allocator);
+            result.projection_observations = try self.projection_observations.clone(allocator);
+            errdefer result.projection_observations.deinit(allocator);
+            result.embedded_slots = try self.embedded_slots.clone(allocator);
             return result;
         }
         pub fn deinit(self: *RootNamespace, allocator: std.mem.Allocator) void {
             self.lexical_allocations.deinit(allocator);
             self.initial_storage.deinit(allocator);
             self.projected_storage.deinit(allocator);
+            self.projection_observations.deinit(allocator);
+            self.embedded_slots.deinit(allocator);
         }
     };
     namespace: ?*RootNamespace = null,
@@ -679,10 +726,12 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     try original.initial_storage.append(a, .{ .storage = .{ .root = @enumFromInt(3) }, .root = @enumFromInt(1) });
     original.next_symbolic_id = 4;
     original.next_capability_id = 7;
-    try original.projected_storage.append(a, .{
+    const field: SymbolicStorageSelector = .{ .projection = .{ .field = 0 } };
+    try original.reserveProjection(a, field);
+    original.publishProjection(.{
         .parent = @enumFromInt(0),
         .parent_generation = @enumFromInt(1),
-        .selector = .{ .projection = .{ .field = 0 } },
+        .selector = field,
         .identity = @enumFromInt(3),
         .backing = @enumFromInt(0),
         .generation = @enumFromInt(1),
@@ -694,10 +743,22 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     tracker.namespace = &candidate;
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(try tracker.establish(.fresh)));
     candidate.initial_storage.items[0].root = @enumFromInt(2);
-    candidate.projected_storage.items[0].selector = .{ .projection = .{ .variant = 2 } };
+    const variant: SymbolicStorageSelector = .{ .projection = .{ .variant = 2 } };
+    try candidate.reserveProjection(allocator, variant);
+    candidate.publishProjection(.{
+        .parent = @enumFromInt(0),
+        .parent_generation = @enumFromInt(1),
+        .selector = variant,
+        .identity = @enumFromInt(4),
+        .backing = @enumFromInt(2),
+        .generation = @enumFromInt(2),
+    });
     candidate.next_symbolic_id = 5;
     candidate.next_capability_id = 8;
     try std.testing.expect(original.projected_storage.items[0].selector.eql(.{ .projection = .{ .field = 0 } }));
+    const key: Tracker.RootNamespace.ProjectionObservation = .{ .parent = @enumFromInt(0), .generation = @enumFromInt(1), .selector = variant };
+    try std.testing.expectEqual(null, original.observedProjection(key));
+    try std.testing.expectEqual(@as(SymbolicPointeeId, @enumFromInt(4)), candidate.observedProjection(key).?.identity);
     try std.testing.expectEqual(@as(u32, 4), original.next_symbolic_id);
     try std.testing.expectEqual(@as(u32, 7), original.next_capability_id);
     try std.testing.expectEqual(@as(u32, 2), original.next_id);

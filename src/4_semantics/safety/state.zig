@@ -698,42 +698,28 @@ pub const State = struct {
         var identity: ?facts.SymbolicPointeeId = null;
         var initial: ?facts.ValidityRootId = null;
         var backing: ?facts.ValidityRootId = null;
-        for (namespace.projected_storage.items) |entry| {
-            if (entry.parent == parent.identity and entry.parent_generation == parent_generation and entry.selector.eql(selector)) {
-                identity = entry.identity;
-                initial = entry.generation;
-                backing = entry.backing;
-                break;
-            }
+        const key: facts.Tracker.RootNamespace.ProjectionObservation = .{ .parent = parent.identity, .generation = parent_generation, .selector = selector };
+        if (namespace.observedProjection(key)) |entry| {
+            identity = entry.identity;
+            initial = entry.generation;
+            backing = entry.backing;
         }
         if (identity == null) {
             const next = namespace.next_symbolic_id;
             const following = try std.math.add(u32, next, 1);
             identity = @enumFromInt(next);
-            const embedded_base = if (selector.embedded()) namespace.embeddedBase(parent.identity) else null;
-            for (namespace.projected_storage.items) |entry| {
-                // Embedded fields keep their physical backing when the same
-                // parent storage receives a new value. Loaded references and
-                // erased domains can instead select different storage.
-                if (!entry.selector.eql(selector)) continue;
-                const same_parent_storage = selector.embedded() and entry.parent == parent.identity or if (embedded_base) |base|
-                    std.meta.eql(base, namespace.embeddedBase(entry.parent))
-                else
-                    false;
-                if (same_parent_storage or entry.parent_generation == parent_generation) {
-                    backing = entry.backing;
-                    break;
-                }
-            }
+            // Embedded fields keep their physical backing across parent
+            // generations. A dereference or opaque selector may retarget.
+            backing = namespace.embeddedBacking(key);
             // Reserve every table and root before publishing this projection.
             const root_count: u32 = if (backing == null) 2 else 1;
             if (namespace.next_id > std.math.maxInt(u32) - root_count) return error.SafetyRootIdentityLimit;
-            try namespace.projected_storage.ensureUnusedCapacity(self.tracker.allocator, 1);
+            try namespace.reserveProjection(self.tracker.allocator, selector);
             try self.symbolic_pointees.ensureUnusedCapacity(1);
             try self.tracker.roots.ensureTotalCapacity(@as(usize, namespace.next_id) + root_count);
             if (backing == null) backing = try self.tracker.establish(.fresh);
             initial = try self.tracker.establish(.fresh);
-            namespace.projected_storage.appendAssumeCapacity(.{
+            namespace.publishProjection(.{
                 .parent = parent.identity,
                 .parent_generation = parent_generation,
                 .selector = selector,
@@ -1356,11 +1342,14 @@ test "Safety symbolic projection partitions keep observations separate from back
     try std.testing.expect(!std.meta.eql(namespace.embeddedBase(input.identity), namespace.embeddedBase(other.identity)));
 
     const prior = (try state.projectSymbolicStorage(input, .{ .field = 0 }, null)).?;
+    const prior_domain = (try state.projectSymbolicDomain(input, 0)).?;
     input.generation = try state.tracker.establish(.fresh);
     const current = (try state.projectSymbolicStorage(input, .{ .field = 0 }, null)).?;
+    const current_domain = (try state.projectSymbolicDomain(input, 0)).?;
     try std.testing.expect(prior.identity != current.identity);
     try std.testing.expect(prior.generation != current.generation);
     try std.testing.expectEqualDeep(namespace.embeddedBase(prior.identity), namespace.embeddedBase(current.identity));
+    try std.testing.expect(!std.meta.eql(namespace.embeddedBase(prior_domain.identity), namespace.embeddedBase(current_domain.identity)));
 }
 
 test "Safety storage observation publishes generations atomically" {
