@@ -10770,7 +10770,7 @@ pub const SafetyChecker = struct {
                 // coordinates until those reads can include historical rows.
                 if (row.hidden_dependencies.len != 0 or row.outcome_guard != 0 or retained.identities.contains(identity) or
                     @intFromEnum(projection.parent_generation) < context.first_loop_root or
-                    !hasRetiredProjectionParent(state, projection))
+                    !hasNoncurrentProjectionParent(state, projection))
                 {
                     index += 1;
                     continue;
@@ -10779,7 +10779,11 @@ pub const SafetyChecker = struct {
                     index += 1;
                     continue;
                 };
-                if (!try isDetachedLoopProjection(state, entry, context.exits, namespace, pointee)) {
+                if (!try isUnobservedLoopProjection(state, entry, context.exits, pointee) or
+                    try rootRetainedAcrossLoop(state, projection.parent_generation) or
+                    try rootRetainedAcrossLoop(entry, projection.parent_generation) or
+                    (if (context.exits) |exit| try rootRetainedAcrossLoop(exit, projection.parent_generation) else false))
+                {
                     index += 1;
                     continue;
                 }
@@ -10834,6 +10838,10 @@ pub const SafetyChecker = struct {
         const index = namespace.projectionIndex(row.identity) orelse return false;
         const projection = namespace.projected_storage.items[index];
         if (!hasRetiredProjectionParent(state, projection)) return false;
+        return isUnobservedLoopProjection(state, entry, exits, row);
+    }
+
+    fn isUnobservedLoopProjection(state: *const FunctionState, entry: *const FunctionState, exits: ?*const FunctionState, row: state_mod.SymbolicPointeeState) !bool {
         // Opaque provenance recovery can match an observation by root
         // even when a value no longer carries the symbolic cell identity.
         for ([_]?facts.ValidityRootId{ row.generation, row.backing }) |candidate| {
@@ -10847,11 +10855,16 @@ pub const SafetyChecker = struct {
     }
 
     fn hasRetiredProjectionParent(state: *const FunctionState, projection: facts.Tracker.RootNamespace.ProjectedStorage) bool {
+        return hasNoncurrentProjectionParent(state, projection) and
+            state.tracker.roots.items[@intFromEnum(projection.parent_generation)].state == .dead;
+    }
+
+    fn hasNoncurrentProjectionParent(state: *const FunctionState, projection: facts.Tracker.RootNamespace.ProjectedStorage) bool {
         const parent = state.symbolicPointee(projection.parent) orelse return false;
         if (parent.generation == null or parent.generation == projection.parent_generation) return false;
         const ordinal = @intFromEnum(projection.parent_generation);
         return ordinal < state.tracker.roots.items.len and state.tracker.roots.items[ordinal].present and
-            state.tracker.roots.items[ordinal].state == .dead;
+            !state.tracker.isAlive(projection.parent_generation);
     }
 
     fn trimCompletedLoopExecutions(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
@@ -11923,12 +11936,20 @@ test "loop opaque history groups detached observations and resists exact emptyin
     var parent = try header.establishSymbolicInput(@enumFromInt(0), null);
     const owner = try header.tracker.establish(.fresh);
     const hidden = try header.tracker.establish(.fresh);
-    for (0..3) |_| {
+    const witness: facts.Place = .{ .root = @enumFromInt(0) };
+    for (0..3) |turn| {
         const domain = (try header.projectSymbolicDomain(parent, 0)).?;
         try header.mergeOpaqueStorage(.{ .symbolic = domain.identity }, &.{}, &.{owner});
-        header.tracker.end(parent.generation.?);
+        const previous_generation = parent.generation.?;
+        header.tracker.markPossiblyRetired(previous_generation);
         parent.generation = try header.tracker.establish(.fresh);
         header.symbolic_pointees.items[0] = parent;
+        if (turn == 0) {
+            try header.setPlace(witness, .initialized, .{ .dependencies = &.{.{ .root = previous_generation }} });
+            try checker.summarizeDetachedOpaqueDomains(&context, &header, &entry);
+            try std.testing.expect(!header.opaque_storages.items[0].historical);
+            header.places.clearRetainingCapacity();
+        }
         try checker.summarizeDetachedOpaqueDomains(&context, &header, &entry);
         try std.testing.expectEqual(@as(usize, 1), header.opaque_storages.items.len);
         try std.testing.expect(header.opaque_storages.items[0].historical);
