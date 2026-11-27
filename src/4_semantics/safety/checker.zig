@@ -10318,6 +10318,7 @@ pub const SafetyChecker = struct {
             try self.summarizeHistoricalObservations(&join_context, &next);
             try self.summarizeDetachedLoopWrites(&join_context, &next, &entry);
             try self.summarizeDetachedOpaqueDomains(&join_context, &next, &entry);
+            try self.trimEmptyDetachedSymbolicValues(&join_context, &next, &entry);
             try self.trimDefaultSymbolicProjections(&next, &entry, join_context.exits);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
@@ -10805,6 +10806,38 @@ pub const SafetyChecker = struct {
             try state.mergeOpaqueStorage(state.opaque_storages.items[partition.value_ptr.*].storage, row.hidden_dependencies, row.owner_roots);
             _ = state.opaque_storages.orderedRemove(index);
         }
+    }
+
+    fn trimEmptyDetachedSymbolicValues(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState, entry: *const FunctionState) !void {
+        const namespace = state.tracker.namespace orelse return;
+        var retained: RetainedSymbolic = .{ .namespace = namespace, .identities = .init(self.state_allocator) };
+        defer retained.identities.deinit();
+        try retained.recordState(entry, true);
+        if (context.exits) |exits| try retained.recordState(exits, true);
+        try retained.recordObservableStorage(state, true);
+        for (state.opaque_storages.items) |row| try retained.recordStorage(row.storage);
+        for (state.symbolic_values.items) |stored| {
+            if (stored.definite or !facts.isEmptyValue(stored.value)) try retained.record(stored.identity);
+        }
+
+        var kept: usize = 0;
+        for (state.symbolic_values.items) |stored| {
+            if (!retained.identities.contains(stored.identity)) drop: {
+                const index = namespace.projectionIndex(stored.identity) orelse break :drop;
+                const projection = namespace.projected_storage.items[index];
+                if (@intFromEnum(projection.parent_generation) < context.first_loop_root or
+                    !hasNoncurrentProjectionParent(state, projection)) break :drop;
+                const row = state.symbolicPointee(stored.identity) orelse break :drop;
+                if (!try isUnobservedLoopProjection(state, entry, context.exits, row)) break :drop;
+                if (try rootRetainedAcrossLoop(state, projection.parent_generation) or
+                    try rootRetainedAcrossLoop(entry, projection.parent_generation)) break :drop;
+                if (context.exits) |exit| if (try rootRetainedAcrossLoop(exit, projection.parent_generation)) break :drop;
+                continue;
+            }
+            state.symbolic_values.items[kept] = stored;
+            kept += 1;
+        }
+        state.symbolic_values.shrinkRetainingCapacity(kept);
     }
 
     fn trimDefaultSymbolicProjections(self: *SafetyChecker, state: *FunctionState, entry: *const FunctionState, exits: ?*const FunctionState) !void {
@@ -11672,6 +11705,10 @@ const RetainedSymbolic = struct {
 
     fn recordStateExceptOpaque(self: *@This(), state: *const SafetyChecker.FunctionState, include_write_keys: bool) !void {
         for (state.symbolic_values.items) |value| try self.record(value.identity);
+        try self.recordObservableStorage(state, include_write_keys);
+    }
+
+    fn recordObservableStorage(self: *@This(), state: *const SafetyChecker.FunctionState, include_write_keys: bool) !void {
         if (include_write_keys) for (state.reference_writes.items) |row| {
             try self.recordStorage(row.target);
             for (row.overwritten) |storage| try self.recordStorage(storage);
@@ -11945,6 +11982,8 @@ test "loop opaque history groups detached observations and resists exact emptyin
     const hidden = try header.tracker.establish(.fresh);
     const witness: facts.Place = .{ .root = @enumFromInt(0) };
     for (0..3) |turn| {
+        const empty = (try header.projectSymbolicStorage(parent, .{ .field = 1 }, null)).?;
+        try header.setSymbolicValue(.{ .identity = empty.identity, .value = .{}, .definite = false }, false, true);
         const domain = (try header.projectSymbolicDomain(parent, 0)).?;
         try header.mergeOpaqueStorage(.{ .symbolic = domain.identity }, &.{hidden}, &.{owner});
         const previous_generation = parent.generation.?;
@@ -11955,11 +11994,15 @@ test "loop opaque history groups detached observations and resists exact emptyin
             try header.setPlace(witness, .initialized, .{ .dependencies = &.{.{ .root = previous_generation }} });
             try checker.summarizeDetachedOpaqueDomains(&context, &header, &entry);
             try std.testing.expect(!header.opaque_storages.items[0].historical);
+            try checker.trimEmptyDetachedSymbolicValues(&context, &header, &entry);
+            try std.testing.expect(header.exactSymbolicValue(empty.identity) != null);
             header.places.clearRetainingCapacity();
         }
         try checker.summarizeDetachedOpaqueDomains(&context, &header, &entry);
         try std.testing.expectEqual(@as(usize, 1), header.opaque_storages.items.len);
         try std.testing.expect(header.opaque_storages.items[0].historical);
+        try checker.trimEmptyDetachedSymbolicValues(&context, &header, &entry);
+        try std.testing.expectEqual(null, header.exactSymbolicValue(empty.identity));
     }
     const historical = header.opaque_storages.items[0].storage;
     const current = (try header.projectSymbolicDomain(parent, 0)).?;
