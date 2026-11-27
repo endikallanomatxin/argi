@@ -4122,9 +4122,9 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage| {
             for (state.opaque_storages.items) |opaque_storage| {
-                if (!opaque_storage.storage.eql(storage)) continue;
+                if (!state.opaqueStorageMayMatch(opaque_storage, storage, false)) continue;
                 for (opaque_storage.hidden_dependencies) |dependency| {
-                    if (self.opaqueDependencyIsInternalToStorage(state, storage, dependency)) continue;
+                    if (self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, dependency)) continue;
                     try appendDependencyFact(&dependencies, .{ .root = dependency });
                 }
             }
@@ -4246,7 +4246,7 @@ pub const SafetyChecker = struct {
         for (storages.items) |storage| {
             const generation = try state.domainGeneration(storage);
             for (state.opaque_storages.items) |opaque_storage| {
-                if (!opaque_storage.storage.eql(storage)) continue;
+                if (!state.opaqueStorageMayMatch(opaque_storage, storage, false)) continue;
                 var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, generation);
                 if (!invalidates_dependency) {
                     const storage_value = self.domainValue(state, storage) orelse facts.ValueFacts{};
@@ -4445,7 +4445,7 @@ pub const SafetyChecker = struct {
 
     fn requireOpaqueContentsLive(self: *SafetyChecker, source: primitives.SourceRef, storage: StorageIdentity, state: *FunctionState) !void {
         for (state.opaque_storages.items) |opaque_storage| {
-            if (!state.storageContains(storage, opaque_storage.storage)) continue;
+            if (!state.opaqueStorageMayMatch(opaque_storage, storage, true)) continue;
             for (opaque_storage.hidden_dependencies) |dependency| {
                 if (self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, dependency)) continue;
                 if (state.tracker.roots.items[@intFromEnum(dependency)].state != .alive) {
@@ -4597,7 +4597,7 @@ pub const SafetyChecker = struct {
                 // An unconditional guarantee has already discharged this domain.
                 // Otherwise keep its current dependencies until the tag is known.
                 var guarded = false;
-                for (state.opaque_storages.items) |*domain| if (domain.storage.eql(storage) and domain.hidden_dependencies.len != 0) {
+                for (state.opaque_storages.items) |*domain| if (!domain.historical and domain.storage.eql(storage) and domain.hidden_dependencies.len != 0) {
                     domain.outcome_guard = guard;
                     guarded = true;
                     break;
@@ -5712,7 +5712,7 @@ pub const SafetyChecker = struct {
             break;
         };
         for (state.opaque_storages.items) |domain| {
-            if (!state.storageContains(.{ .symbolic = identity }, domain.storage)) continue;
+            if (!state.opaqueStorageMayMatch(domain, .{ .symbolic = identity }, true)) continue;
             for (domain.hidden_dependencies) |root| {
                 if (!self.opaqueDependencyIsInternalToStorage(state, domain.storage, root))
                     try appendDependencyFact(dependencies, .{ .root = root });
@@ -6034,9 +6034,9 @@ pub const SafetyChecker = struct {
             const storage = try self.resolveSummaryOpaqueStoragePath(input_path, &.{}, arguments, state) orelse continue;
             try self.collectReturnedStorageDependencies(state, storage, hidden);
             for (state.opaque_storages.items) |opaque_storage| {
-                if (!opaque_storage.storage.eql(storage)) continue;
+                if (!state.opaqueStorageMayMatch(opaque_storage, storage, false)) continue;
                 for (opaque_storage.hidden_dependencies) |dependency|
-                    if (!self.opaqueDependencyIsInternalToStorage(state, storage, dependency))
+                    if (!self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, dependency))
                         try appendRootFact(hidden, dependency);
             }
         }
@@ -6167,9 +6167,9 @@ pub const SafetyChecker = struct {
             try self.collectReturnedStorageDependencies(state, storage, &returned_dependencies);
             for (returned_dependencies.items) |dependency| try appendDependencyFact(&dependencies, dependency);
             for (state.opaque_storages.items) |opaque_storage| {
-                if (!opaque_storage.storage.eql(storage)) continue;
+                if (!state.opaqueStorageMayMatch(opaque_storage, storage, false)) continue;
                 for (opaque_storage.hidden_dependencies) |dependency|
-                    if (!self.opaqueDependencyIsInternalToStorage(state, storage, dependency))
+                    if (!self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, dependency))
                         try appendDependencyFact(&dependencies, .{ .root = dependency });
             }
         }
@@ -7527,8 +7527,8 @@ pub const SafetyChecker = struct {
     fn joinOpaqueStorageRow(self: *SafetyChecker, state: *FunctionState, first: OpaqueStorage, second: ?OpaqueStorage, predecessors: []const *const FunctionState) !void {
         var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer owners.deinit();
-        if (self.domainValue(state, first.storage)) |value| try collectOwnedRoots(value, &owners);
-        if (first.storage == .symbolic) for (predecessors) |predecessor| {
+        if (!first.historical) if (self.domainValue(state, first.storage)) |value| try collectOwnedRoots(value, &owners);
+        if (!first.historical and first.storage == .symbolic) for (predecessors) |predecessor| {
             // The join can replace the parent generation. Retain owners that
             // were visible through this same observation on either incoming path.
             if (self.domainValue(@constCast(predecessor), first.storage)) |value| try collectOwnedRoots(value, &owners);
@@ -7622,6 +7622,10 @@ pub const SafetyChecker = struct {
         // the address as lying inside an opaque domain.
         if (pointer.referenced_place != null) return;
         for (state.opaque_storages.items) |opaque_storage| {
+            if (opaque_storage.historical) for (pointer.dependencies) |dependency| {
+                if (containsRoot(opaque_storage.owner_roots, dependency.root))
+                    try appendStorageIdentity(result, opaque_storage.storage);
+            };
             if ((self.domainValue(state, opaque_storage.storage))) |storage_value| {
                 for (pointer.dependencies) |dependency|
                     if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendStorageIdentity(result, opaque_storage.storage);
@@ -7788,6 +7792,11 @@ pub const SafetyChecker = struct {
         storage: StorageIdentity,
         root: facts.ValidityRootId,
     ) bool {
+        // A historical association is only a possible owner. It cannot
+        // discharge the external dependency of every represented instance.
+        if (findOpaqueStorageEntry(state.opaque_storages.items, storage, 0)) |index| {
+            if (state.opaque_storages.items[index].historical) return false;
+        }
         if ((self.domainValue(state, storage))) |storage_value|
             if (valueContainsOwnedRoot(storage_value, root) or valueDependsOnRoot(storage_value, root)) return true;
         if (storage == .symbolic) for (state.symbolic_pointees.items) |entry| {
@@ -10308,6 +10317,7 @@ pub const SafetyChecker = struct {
             try canonicalizeUnobservedLexicalGenerations(&join_context, &next);
             try self.summarizeHistoricalObservations(&join_context, &next);
             try self.summarizeDetachedLoopWrites(&join_context, &next, &entry);
+            try self.summarizeDetachedOpaqueDomains(&join_context, &next, &entry);
             try self.trimDefaultSymbolicProjections(&next, &entry, join_context.exits);
             try self.trimUnreferencedLoopRoots(&join_context, &next);
             try self.trimLoopCapabilities(&next, entry.storage_capabilities.items.len, join_context.exits);
@@ -10727,6 +10737,62 @@ pub const SafetyChecker = struct {
                 namespace.next_symbolic_id += 1;
             }
             try stores.summarizeObservations(group.items, .{ .symbolic = partition.value_ptr.* }, ReferenceStoreContext{ .checker = self });
+        }
+    }
+
+    fn summarizeDetachedOpaqueDomains(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState, entry: *const FunctionState) !void {
+        const namespace = state.tracker.namespace orelse return;
+        if (state.opaque_storages.items.len == 0) return;
+        var retained: RetainedSymbolic = .{ .namespace = namespace, .identities = .init(self.state_allocator) };
+        defer retained.identities.deinit();
+        try retained.recordStateExceptOpaque(state, true);
+        try retained.recordState(entry, true);
+        if (context.exits) |exits| try retained.recordState(exits, true);
+
+        var partitions: std.AutoHashMapUnmanaged(facts.Tracker.RootNamespace.ProjectionPartition, usize) = .empty;
+        defer partitions.deinit(self.state_allocator);
+        var index: usize = 0;
+        while (index < state.opaque_storages.items.len) {
+            const row = &state.opaque_storages.items[index];
+            if (row.storage != .symbolic) {
+                index += 1;
+                continue;
+            }
+            const identity = row.storage.symbolic;
+            const projection_index = namespace.projectionIndex(identity) orelse {
+                index += 1;
+                continue;
+            };
+            const projection = namespace.projected_storage.items[projection_index];
+            if (!row.historical) {
+                // A nonempty row can still be observed through the current
+                // domain or an enclosing receiver. Preserve its exact
+                // coordinates until those reads can include historical rows.
+                if (row.hidden_dependencies.len != 0 or row.outcome_guard != 0 or retained.identities.contains(identity) or
+                    @intFromEnum(projection.parent_generation) < context.first_loop_root or
+                    !hasRetiredProjectionParent(state, projection))
+                {
+                    index += 1;
+                    continue;
+                }
+                const pointee = state.symbolicPointee(identity) orelse {
+                    index += 1;
+                    continue;
+                };
+                if (!try isDetachedLoopProjection(state, entry, context.exits, namespace, pointee)) {
+                    index += 1;
+                    continue;
+                }
+            }
+            const partition = try partitions.getOrPut(self.state_allocator, projection.partition);
+            if (!partition.found_existing) {
+                partition.value_ptr.* = index;
+                row.historical = true;
+                index += 1;
+                continue;
+            }
+            try state.mergeOpaqueStorage(state.opaque_storages.items[partition.value_ptr.*].storage, row.hidden_dependencies, row.owner_roots);
+            _ = state.opaque_storages.orderedRemove(index);
         }
     }
 
@@ -11580,8 +11646,12 @@ const RetainedSymbolic = struct {
     }
 
     fn recordState(self: *@This(), state: *const SafetyChecker.FunctionState, include_write_keys: bool) !void {
-        for (state.symbolic_values.items) |value| try self.record(value.identity);
         for (state.opaque_storages.items) |row| try self.recordStorage(row.storage);
+        try self.recordStateExceptOpaque(state, include_write_keys);
+    }
+
+    fn recordStateExceptOpaque(self: *@This(), state: *const SafetyChecker.FunctionState, include_write_keys: bool) !void {
+        for (state.symbolic_values.items) |value| try self.record(value.identity);
         if (include_write_keys) for (state.reference_writes.items) |row| {
             try self.recordStorage(row.target);
             for (row.overwritten) |storage| try self.recordStorage(storage);
@@ -11835,6 +11905,51 @@ test "loop reference writes keep detached payloads under one weak backing partit
     try std.testing.expectEqual(@as(usize, 1), context.historical_reference_writes.count());
 }
 
+test "loop opaque history groups detached observations and resists exact emptying" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var entry = SafetyChecker.FunctionState.init(a);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var header = try entry.clone(a);
+    defer header.deinit();
+    var context = SafetyChecker.LoopJoinContext.init(a);
+    defer context.deinit();
+    var parent = try header.establishSymbolicInput(@enumFromInt(0), null);
+    const owner = try header.tracker.establish(.fresh);
+    const hidden = try header.tracker.establish(.fresh);
+    for (0..3) |_| {
+        const domain = (try header.projectSymbolicDomain(parent, 0)).?;
+        try header.mergeOpaqueStorage(.{ .symbolic = domain.identity }, &.{}, &.{owner});
+        header.tracker.end(parent.generation.?);
+        parent.generation = try header.tracker.establish(.fresh);
+        header.symbolic_pointees.items[0] = parent;
+        try checker.summarizeDetachedOpaqueDomains(&context, &header, &entry);
+        try std.testing.expectEqual(@as(usize, 1), header.opaque_storages.items.len);
+        try std.testing.expect(header.opaque_storages.items[0].historical);
+    }
+    const historical = header.opaque_storages.items[0].storage;
+    const current = (try header.projectSymbolicDomain(parent, 0)).?;
+    const current_storage: facts.StorageIdentity = .{ .symbolic = current.identity };
+    try header.mergeOpaqueStorage(historical, &.{hidden}, &.{});
+    try header.mergeOpaqueStorage(current_storage, &.{hidden}, &.{});
+    header.markOpaqueStorageEmpty(current_storage);
+    header.markOpaqueStorageEmpty(historical);
+    try std.testing.expect(header.opaqueStorageMayMatch(header.opaque_storages.items[0], current_storage, false));
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{hidden}, header.opaque_storages.items[0].hidden_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), header.opaque_storages.items[1].hidden_dependencies.len);
+
+    var domains = std.array_list.Managed(facts.StorageIdentity).init(a);
+    defer domains.deinit();
+    try checker.collectOpaqueDomainsAccessedBy(&header, .{ .dependencies = &.{.{ .root = owner }} }, &domains);
+    try std.testing.expectEqualSlices(facts.StorageIdentity, &.{historical}, domains.items);
+}
+
 test "loop projection reduction preserves retained domains and lazily restores default rows" {
     const allocator = std.testing.allocator;
     var namespace: facts.Tracker.RootNamespace = .{};
@@ -12076,7 +12191,7 @@ fn compareLoopStates(left: *const SafetyChecker.FunctionState, right: *const Saf
     for (left.opaque_storages.items, 0..) |opaque_storage, index| {
         const match = findOpaqueStorageEntry(right.opaque_storages.items, opaque_storage.storage, index) orelse return false;
         const other = right.opaque_storages.items[match];
-        if (opaque_storage.outcome_guard != other.outcome_guard) return false;
+        if (opaque_storage.historical != other.historical or opaque_storage.outcome_guard != other.outcome_guard) return false;
         if (relation == .equal and
             (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len or
                 opaque_storage.owner_roots.len != other.owner_roots.len)) return false;

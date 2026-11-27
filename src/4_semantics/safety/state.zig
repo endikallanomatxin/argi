@@ -37,6 +37,7 @@ pub const StorageGeneration = struct {
     needs_current_generation: bool = false,
 };
 pub const OpaqueStorage = struct {
+    historical: bool = false,
     storage: facts.StorageIdentity,
     hidden_dependencies: []const facts.ValidityRootId,
     outcome_guard: u64 = 0,
@@ -632,7 +633,7 @@ pub const State = struct {
         const hidden = try unionRoots(a, previous.hidden_dependencies, dependencies);
         errdefer if (hidden.ptr != previous.hidden_dependencies.ptr) a.free(hidden);
         const combined = try unionRoots(a, previous.owner_roots, owners);
-        const next: OpaqueStorage = .{ .storage = storage, .hidden_dependencies = hidden, .owner_roots = combined };
+        const next: OpaqueStorage = .{ .historical = previous.historical, .storage = storage, .hidden_dependencies = hidden, .owner_roots = combined };
         if (existing) |entry| entry.* = next else self.opaque_storages.appendAssumeCapacity(next);
     }
 
@@ -650,6 +651,7 @@ pub const State = struct {
         };
         if (owners.ptr != first.owner_roots.ptr and owners.ptr != combined.ptr) a.free(owners);
         self.opaque_storages.appendAssumeCapacity(.{
+            .historical = first.historical or if (second) |row| row.historical else false,
             .storage = first.storage,
             .hidden_dependencies = hidden,
             .owner_roots = combined,
@@ -666,9 +668,27 @@ pub const State = struct {
         }
     }
 
+    /// Historical rows contribute possible contents. Exact mutations use
+    /// the observation identity and cannot consume a historical row.
+    pub fn opaqueStorageMayMatch(self: *const State, row: OpaqueStorage, storage: facts.StorageIdentity, include_children: bool) bool {
+        if (row.storage.eql(storage) or (include_children and self.storageContains(storage, row.storage))) return true;
+        if (!row.historical or row.storage != .symbolic or storage != .symbolic) return false;
+        const namespace = self.tracker.namespace orelse return false;
+        var current = row.storage.symbolic;
+        const wanted = namespace.projectionPartition(storage.symbolic);
+        while (true) {
+            if (current == storage.symbolic) return true;
+            const index = namespace.projectionIndex(current) orelse return false;
+            const projection = namespace.projected_storage.items[index];
+            if (wanted == projection.partition) return true;
+            if (!include_children or !projection.selector.embedded()) return false;
+            current = projection.parent;
+        }
+    }
+
     pub fn markOpaqueStorageEmpty(self: *State, storage: facts.StorageIdentity) void {
         for (self.opaque_storages.items) |*entry| {
-            if (!entry.storage.eql(storage)) continue;
+            if (entry.historical or !entry.storage.eql(storage)) continue;
             entry.hidden_dependencies = &.{};
             entry.outcome_guard = 0;
             return;
