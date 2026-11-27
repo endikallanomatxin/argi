@@ -828,6 +828,15 @@ to eight members over eight transfers. Row presence still affects
 provenance lookup, so an empty hidden-dependency set cannot justify
 dropping the row.
 
+At `c4adb8aed`, the retired parent observations in the same trace are
+`maybe_alive`, with no retained witness in the header, entry or exits.
+They all map to one opaque partition. After folding, the header holds
+one opaque row on each of the eight transfers. The root table still
+grows from 25 to 102 entries and explicit symbolic values grow from
+four to 25. Opaque-row count alone no longer explains nonconvergence.
+The symbolic values and possible owners still need a representation
+that covers retained instances without requiring an identity per turn.
+
 The abstraction therefore needs two keys for projected opaque storage.
 Use a stable domain key for possible aliasing and provenance recovery.
 Use a current observation key for exact lookup, retirement and guarded

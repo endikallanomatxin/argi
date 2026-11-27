@@ -10765,13 +10765,20 @@ pub const SafetyChecker = struct {
             };
             const projection = namespace.projected_storage.items[projection_index];
             if (!row.historical) {
-                // A nonempty row can still be observed through the current
-                // domain or an enclosing receiver. Preserve its exact
-                // coordinates until those reads can include historical rows.
-                if (row.hidden_dependencies.len != 0 or row.outcome_guard != 0 or retained.identities.contains(identity) or
+                if (row.outcome_guard != 0 or retained.identities.contains(identity) or
                     @intFromEnum(projection.parent_generation) < context.first_loop_root or
                     !hasNoncurrentProjectionParent(state, projection))
                 {
+                    index += 1;
+                    continue;
+                }
+                // Historical rows cannot prove that a hidden dependency
+                // belongs to each represented owner. Keep a row precise
+                // while its internal contents depend on that distinction.
+                const has_internal_dependency = for (row.hidden_dependencies) |root| {
+                    if (self.opaqueDependencyIsInternalToStorage(state, row.storage, root)) break true;
+                } else false;
+                if (has_internal_dependency) {
                     index += 1;
                     continue;
                 }
@@ -11939,7 +11946,7 @@ test "loop opaque history groups detached observations and resists exact emptyin
     const witness: facts.Place = .{ .root = @enumFromInt(0) };
     for (0..3) |turn| {
         const domain = (try header.projectSymbolicDomain(parent, 0)).?;
-        try header.mergeOpaqueStorage(.{ .symbolic = domain.identity }, &.{}, &.{owner});
+        try header.mergeOpaqueStorage(.{ .symbolic = domain.identity }, &.{hidden}, &.{owner});
         const previous_generation = parent.generation.?;
         header.tracker.markPossiblyRetired(previous_generation);
         parent.generation = try header.tracker.establish(.fresh);
@@ -11957,7 +11964,6 @@ test "loop opaque history groups detached observations and resists exact emptyin
     const historical = header.opaque_storages.items[0].storage;
     const current = (try header.projectSymbolicDomain(parent, 0)).?;
     const current_storage: facts.StorageIdentity = .{ .symbolic = current.identity };
-    try header.mergeOpaqueStorage(historical, &.{hidden}, &.{});
     try header.mergeOpaqueStorage(current_storage, &.{hidden}, &.{});
     header.markOpaqueStorageEmpty(current_storage);
     header.markOpaqueStorageEmpty(historical);
