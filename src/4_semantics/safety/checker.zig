@@ -7693,10 +7693,13 @@ pub const SafetyChecker = struct {
         domain: StorageIdentity,
         value: facts.ValueFacts,
     ) !bool {
-        const domain_value = self.domainValue(state, domain) orelse return false;
         var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer owners.deinit();
-        try collectOwnedRoots(domain_value, &owners);
+        if (self.domainValue(state, domain)) |domain_value| try collectOwnedRoots(domain_value, &owners);
+        if (findOpaqueStorageEntry(state.opaque_storages.items, domain, 0)) |index| {
+            for (state.opaque_storages.items[index].owner_roots) |owner| try appendRootFact(&owners, owner);
+        }
+        if (owners.items.len == 0) return false;
 
         var transferred = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer transferred.deinit();
@@ -12609,6 +12612,16 @@ test "opaque ownership cycle detection follows indirect edges" {
     try state.setPlace(third_storage, .initialized, .{ .owned_roots = &.{third} });
     try checker.mergeOpaqueStorage(&state, .{ .place = first_storage }, &.{second});
     try checker.mergeOpaqueStorage(&state, .{ .place = second_storage }, &.{third});
+
+    // A detached domain can retain an owner association after its value
+    // slot is gone. The edge into that domain still participates in cycles.
+    const detached: facts.StorageIdentity = .{ .symbolic = @enumFromInt(0) };
+    try state.mergeOpaqueStorage(detached, &.{}, &.{third});
+    try std.testing.expect(try checker.opaqueWriteCreatesOwnershipCycle(
+        &state,
+        detached,
+        .{ .owned_roots = &.{first} },
+    ));
 
     try std.testing.expect(try checker.opaqueWriteCreatesOwnershipCycle(
         &state,
