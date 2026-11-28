@@ -153,6 +153,7 @@ pub const Slots = struct {
         retain_owner: struct { slot: usize, producer: usize },
         observe: struct { slot: usize, producer: usize },
         copy_reference: ReferenceWrite,
+        copy_reference_to_candidates: struct { source: usize, destinations: []const usize },
         reference_post_states: []const ReferenceWrite,
         select: Selection,
         extract_opaque_element: struct { selection: Selection, domain: OpaqueRows, result_producer: usize },
@@ -167,6 +168,11 @@ pub const Slots = struct {
                 .retain_owner => |retained| retained.slot < layout.slots and retained.producer < layout.producers,
                 .observe => |reference| reference.slot < layout.slots and reference.producer < layout.producers,
                 .copy_reference => |write| validWrite(layout, write),
+                .copy_reference_to_candidates => |write| blk: {
+                    if (write.source >= layout.slots or write.destinations.len == 0) break :blk false;
+                    for (write.destinations) |destination| if (destination >= layout.slots) break :blk false;
+                    break :blk true;
+                },
                 .reference_post_states => |writes| for (writes) |write| {
                     if (!validWrite(layout, write)) break false;
                 } else true,
@@ -218,6 +224,12 @@ pub const Slots = struct {
                 .retain_owner => |retained| state.owner(retained.slot, retained.producer).current = true,
                 .observe => |reference| state.observeCurrent(reference.slot, reference.producer),
                 .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
+                .copy_reference_to_candidates => |write| {
+                    // A weak self-write is idempotent, so evaluating the
+                    // source row once also works when it is a candidate.
+                    const value = state.referenceValue(write.source);
+                    for (write.destinations) |destination| state.writeReferenceValue(destination, value, false);
+                },
                 .reference_post_states => |writes| try state.applyReferencePostStates(allocator, writes),
                 .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
                 .start_execution => |site| state.ageExecution(site),
@@ -1050,4 +1062,19 @@ test "safety finite post-values preserve alternatives for an aliased destination
     try std.testing.expectEqual(Observation{}, state.observation(0, 0));
     try std.testing.expect(state.observation(0, 1).provesCurrent());
     try std.testing.expect(state.observation(0, 2).provesCurrent());
+}
+
+test "safety finite writes to possible destinations retain each entry alternative" {
+    const a = std.testing.allocator;
+    const state = try Slots.initEntry(a, .{ .slots = 3, .producers = 3 });
+    defer state.deinit(a);
+    for (0..3) |slot| state.observeCurrent(slot, slot);
+    const op: Slots.Transfer = .{ .copy_reference_to_candidates = .{ .source = 0, .destinations = &.{ 1, 0, 2 } } };
+    try std.testing.expect(op.valid(state.layout));
+    try op.apply(state, a);
+    for (0..3) |slot| {
+        try std.testing.expect(state.observation(slot, slot).provesCurrent());
+        try std.testing.expect(state.observation(slot, 0).provesCurrent());
+    }
+    try std.testing.expectEqual(Observation{}, state.observation(0, 1));
 }
