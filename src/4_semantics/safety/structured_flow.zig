@@ -11,8 +11,10 @@ pub const Flow = struct {
             none,
             statement: graph.GlobalNodeId,
             condition: struct { expression: graph.GlobalNodeId, statement: graph.GlobalNodeId },
+            switch_value: graph.GlobalSwitchId,
+            switch_case: struct { selection: graph.GlobalSwitchId, case: graph.GlobalSwitchCaseId },
         },
-        // A condition has true and false destinations in that order.
+        // Tests have matching and nonmatching destinations in that order.
         successors: [2]?usize,
     };
 
@@ -77,9 +79,31 @@ const Builder = struct {
             .break_statement => return (parent orelse return error.InvalidLoopControl).on_break,
             .continue_statement => return (parent orelse return error.InvalidLoopControl).on_continue,
             .return_statement, .abort_statement => return self.append(.{ .action = .{ .statement = id }, .successors = .{ null, null } }),
-            .switch_statement => return error.UnsupportedStructuredFlow,
+            .switch_statement => |selection| return self.lowerSwitch(selection, next, parent),
             else => return self.append(.{ .action = .{ .statement = id }, .successors = .{ next, null } }),
         }
+    }
+
+    fn lowerSwitch(self: *Builder, id: graph.GlobalSwitchId, next: usize, parent: ?LoopTargets) anyerror!usize {
+        const selection = self.semantic.switches.items[@intFromEnum(id)];
+        var unmatched: ?usize = if (selection.default_block) |default|
+            try self.lowerBlock(default, next, parent)
+        else if (selection.exhaustive)
+            null
+        else
+            next;
+        var remaining = selection.cases.len;
+        while (remaining != 0) {
+            remaining -= 1;
+            const index = selection.cases.start + remaining;
+            const case = self.semantic.switch_cases.items[index];
+            const matched = try self.lowerBlock(case.body, next, parent);
+            unmatched = try self.append(.{
+                .action = .{ .switch_case = .{ .selection = id, .case = @enumFromInt(index) } },
+                .successors = .{ matched, unmatched },
+            });
+        }
+        return self.append(.{ .action = .{ .switch_value = id }, .successors = .{ unmatched, null } });
     }
 };
 
@@ -115,4 +139,41 @@ test "safety structured flow routes continue through the increment and break pas
     try std.testing.expectEqual(@as(graph.GlobalNodeId, @enumFromInt(1)), increment.action.statement);
     try std.testing.expectEqual(flow.entry, increment.successors[0].?);
     try std.testing.expectEqual(header.successors[1], branch.successors[1]);
+}
+
+test "safety structured switch preserves case identity and evaluates its subject once" {
+    const a = std.testing.allocator;
+    var semantic: graph.GlobalSemanticGraph = .{};
+    defer semantic.deinit(a);
+    const source: @FieldType(graph.Node, "source") = .{ .file_index = 0, .offset = 0 };
+    try semantic.nodes.appendSlice(a, &.{
+        .{ .ty = null, .source = source, .content = .{ .bool_literal = true } },
+        .{ .ty = null, .source = source, .content = .{ .switch_statement = @enumFromInt(0) } },
+        .{ .ty = null, .source = source, .content = .abort_statement },
+    });
+    try semantic.node_refs.appendSlice(a, &.{ @enumFromInt(1), @enumFromInt(2) });
+    try semantic.blocks.appendSlice(a, &.{
+        .{ .nodes = .{ .start = 0, .len = 1 } },
+        .{ .nodes = .{ .start = 1, .len = 1 } },
+    });
+    try semantic.switch_cases.append(a, .{
+        .value = @enumFromInt(0),
+        .variant = @enumFromInt(0),
+        .body = @enumFromInt(1),
+        .payload_binding = @enumFromInt(0),
+    });
+    try semantic.switches.append(a, .{
+        .expression = @enumFromInt(0),
+        .cases = .{ .start = 0, .len = 1 },
+        .default_block = null,
+        .exhaustive = true,
+    });
+    const flow = try Flow.lower(a, &semantic, @enumFromInt(0));
+    defer flow.deinit(a);
+    const entry = flow.blocks[flow.entry];
+    const case = flow.blocks[entry.successors[0].?];
+    try std.testing.expectEqual(@as(graph.GlobalSwitchId, @enumFromInt(0)), entry.action.switch_value);
+    try std.testing.expectEqual(@as(graph.GlobalSwitchCaseId, @enumFromInt(0)), case.action.switch_case.case);
+    try std.testing.expectEqual(null, case.successors[1]);
+    try std.testing.expectEqual(@as(graph.GlobalNodeId, @enumFromInt(2)), flow.blocks[case.successors[0].?].action.statement);
 }
