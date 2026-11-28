@@ -24,9 +24,18 @@ pub const Custody = packed struct(u2) {
 };
 
 pub const Slots = struct {
+    /// The concrete domain can change when its producing handle is renewed.
+    /// Both rows are assigned once, before the first transfer.
+    pub const OpaqueRows = struct {
+        producer: usize,
+        current: usize,
+        historical: usize,
+    };
+
     pub const Layout = struct {
         slots: usize,
         producers: usize,
+        opaque_rows: []const OpaqueRows = &.{},
     };
 
     layout: Layout,
@@ -84,6 +93,17 @@ pub const Slots = struct {
         }
     }
 
+    pub fn retainOpaqueObservation(self: Slots, domain: OpaqueRows, historical: bool, producer: usize, dependency: Observation) void {
+        const row = self.observationRow(if (historical) domain.historical else domain.current);
+        row[producer] = row[producer].join(dependency);
+    }
+
+    /// Clear dependency evidence for a certified exact emptying.
+    /// The caller must account for the custody discharged by the operation.
+    pub fn emptyCurrentOpaque(self: Slots, domain: OpaqueRows) void {
+        @memset(self.observationRow(domain.current), .{});
+    }
+
     /// Apply a production event to every stored observation of this producer.
     /// Age observations and outstanding custody together.
     pub fn age(self: Slots, producer: usize) void {
@@ -94,10 +114,30 @@ pub const Slots = struct {
             const custody = self.owner(slot, producer);
             custody.* = custody.age();
         }
+        for (self.layout.opaque_rows) |domain| {
+            if (domain.producer != producer) continue;
+            const current = self.observationRow(domain.current);
+            const history = self.observationRow(domain.historical);
+            for (history, current, 0..) |*older, *latest, dependency_producer| {
+                older.* = older.join(latest.*);
+                latest.* = .{};
+                const previous_custody = self.owner(domain.historical, dependency_producer);
+                const current_custody = self.owner(domain.current, dependency_producer);
+                previous_custody.* = previous_custody.join(current_custody.*);
+                current_custody.* = .{};
+            }
+        }
+    }
+
+    fn sameLayout(self: Slots, incoming: Slots) bool {
+        return self.layout.slots == incoming.layout.slots and
+            self.layout.producers == incoming.layout.producers and
+            self.layout.opaque_rows.ptr == incoming.layout.opaque_rows.ptr and
+            self.layout.opaque_rows.len == incoming.layout.opaque_rows.len;
     }
 
     pub fn covers(self: Slots, incoming: Slots) bool {
-        std.debug.assert(std.meta.eql(self.layout, incoming.layout));
+        std.debug.assert(self.sameLayout(incoming));
         for (self.initialization, incoming.initialization) |a, b| if (!a.covers(b)) return false;
         for (self.observations, incoming.observations) |a, b| if (!a.covers(b)) return false;
         for (self.custody, incoming.custody) |a, b| if (!a.covers(b)) return false;
@@ -105,7 +145,7 @@ pub const Slots = struct {
     }
 
     pub fn include(self: Slots, incoming: Slots) void {
-        std.debug.assert(std.meta.eql(self.layout, incoming.layout));
+        std.debug.assert(self.sameLayout(incoming));
         for (self.initialization, incoming.initialization) |*a, b| a.* = a.join(b);
         for (self.observations, incoming.observations) |*a, b| a.* = a.join(b);
         for (self.custody, incoming.custody) |*a, b| a.* = a.join(b);
@@ -156,4 +196,28 @@ test "safety finite slots preserve historical custody after exact current destru
     header.include(state);
     try std.testing.expect(header.covers(state));
     try std.testing.expectEqual(Custody{ .current = true, .historical = true }, header.owner(0, 0).*);
+}
+
+test "safety finite opaque rows age with their handle and preserve older hidden dependencies" {
+    const a = std.testing.allocator;
+    const domain: Slots.OpaqueRows = .{ .producer = 0, .current = 0, .historical = 1 };
+    const state = try Slots.init(a, .{ .slots = 2, .producers = 2, .opaque_rows = &.{domain} });
+    defer state.deinit(a);
+    const header = try Slots.init(a, state.layout);
+    defer header.deinit(a);
+    state.retainOpaqueObservation(domain, false, 0, .{ .current_live = true });
+    state.retainOpaqueObservation(domain, false, 1, .{ .current_live = true });
+    state.owner(domain.current, 1).current = true;
+    state.age(0);
+    state.retainOpaqueObservation(domain, false, 1, .{ .current_live = true });
+    state.emptyCurrentOpaque(domain);
+    try std.testing.expectEqual(Observation{}, state.observation(domain.current, 1));
+    try std.testing.expectEqual(Observation{ .historical = true }, state.observation(domain.historical, 0));
+    try std.testing.expect(state.observation(domain.historical, 1).provesCurrent());
+    try std.testing.expect(state.owner(domain.historical, 1).current);
+    try std.testing.expect(!state.owner(domain.current, 1).current);
+    try std.testing.expect(!header.covers(state));
+    header.include(state);
+    state.age(0);
+    try std.testing.expect(header.covers(state));
 }
