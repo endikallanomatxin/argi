@@ -630,6 +630,7 @@ test "safety finite solver propagates through a long loop-carried reference chai
     const a = std.testing.allocator;
     const length = 32;
     const initial = try Slots.init(a, .{ .slots = length, .producers = 1 });
+    @memset(initial.initialization, .{ .deinitialized = true });
     initial.observeCurrent(0, 0);
     var writes: [length - 1]Slots.Transfer = undefined;
     for (&writes, 0..) |*write, index| {
@@ -643,6 +644,7 @@ test "safety finite solver propagates through a long loop-carried reference chai
     try @import("finite_dataflow.zig").solve(Program, a, &headers, 0, initial, program);
     const header = headers[0].?;
     try std.testing.expect(header.observation(length - 1, 0).provesCurrent());
+    try std.testing.expect(!header.initialization[length - 1].definitelyInitialized());
     const incoming = (try program.transfer(0, edges[0], header)).?;
     defer program.release(incoming);
     try std.testing.expect(header.covers(incoming));
