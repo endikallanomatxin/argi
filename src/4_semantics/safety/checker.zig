@@ -10431,6 +10431,10 @@ pub const SafetyChecker = struct {
             _ = try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = .{ .summary = source } });
         for (value.fresh_owned_roots) |source|
             _ = try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = .{ .summary = source } });
+        for (value.fresh_executions) |execution| {
+            try registerValueProducerRoles(state, site, execution.inputs.*);
+            if (execution.result == .updated_input) try registerValueProducerRoles(state, site, execution.result.updated_input.*);
+        }
         for (value.fields) |field| try registerValueProducerRoles(state, site, field.value.*);
         for (value.variants) |variant| try registerValueProducerRoles(state, site, variant.value.*);
     }
@@ -12104,6 +12108,30 @@ test "loop execution reduction retains observed and exit receipts" {
     try std.testing.expect(header.executionState(observed) != null);
     try std.testing.expect(header.executionState(exits) != null);
     try std.testing.expect(@intFromEnum(try header.establishExecution(&.{})) > @intFromEnum(exits));
+}
+
+test "safety loop producer inventory includes execution snapshots and results" {
+    const a = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const site: facts.Tracker.RootNamespace.ProducerSite = .{ .virtual_call = @enumFromInt(0) };
+    const inputs: facts.ValueEffect = .{ .fresh_owned_roots = &.{3} };
+    const output: facts.ValueEffect = .{ .fresh_dependencies = &.{4} };
+    const value: facts.ValueEffect = .{ .fresh_executions = &.{.{
+        .source = 0,
+        .inputs = &inputs,
+        .input_type = 0,
+        .result = .{ .updated_input = &output },
+    }} };
+    try SafetyChecker.registerValueProducerRoles(&state, site, value);
+    try std.testing.expectEqual(@as(usize, 2), namespace.producers.count());
+    try std.testing.expectEqual(@as(u32, 0), namespace.next_id);
+    try std.testing.expectEqual(@as(u32, 0), namespace.next_execution_id);
+    try SafetyChecker.registerValueProducerRoles(&state, site, value);
+    try std.testing.expectEqual(@as(usize, 2), namespace.producers.count());
 }
 
 test "safety summary layout registers a nested reference leaf without creating observations" {
