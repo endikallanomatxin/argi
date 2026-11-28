@@ -962,6 +962,25 @@ its effects under per-observation identities. A finite transfer must
 write both the new owner's custody and the aged owners' obligations
 under the preassigned keys before the backedge join.
 
+A Debug trace at `c26845b4d` measured the failing outer loop over eight
+transfers in each reduced program, with one frontend worker and the
+frontend cache disabled. No late producer key was registered in these
+runs. The producer and projection key counts already stabilize on the
+first measured transfer.
+
+| Loop | Producer keys | Projection keys | Root slots | Symbolic values | Opaque rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| DynamicArray growth | 1 | 13 | 24 → 94 | 4 → 25 | 1 |
+| String growth | 1 | 13 | 22 → 78 | 4 → 25 | 0 |
+| Array of owned strings | 3 | 1 | 32 → 106 | 0 | 1 |
+
+Root slots count allocated tracker entries, including tombstones.
+The owned-string example reproduces unbounded iteration-dependent
+allocation with no explicit symbolic values. It therefore exercises
+producer aging independently of the symbolic-value table that grows
+in the two reference-parameter examples. A transfer that addresses
+only that table cannot recover all three controls.
+
 The abstraction therefore needs two keys for projected opaque storage.
 Use a stable domain key for possible aliasing and provenance recovery.
 Use a current observation key for exact lookup, retirement and guarded
