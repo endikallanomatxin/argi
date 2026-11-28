@@ -2787,7 +2787,7 @@ pub const Infer = struct {
         const control = loop.control;
         const before_condition = flow.calls.count();
         try self.infer_capability_node(function, control.condition, flow, exits);
-        if (!flow.reachable) return;
+        if (!flow.reachable or loop.bodyIsUnreachable(self.graph)) return;
 
         const previous_loop = self.loop_capability_effects;
         defer self.loop_capability_effects = previous_loop;
@@ -3489,6 +3489,7 @@ pub const Infer = struct {
         if (parent_observations != null) self.observation_sink = &observations;
         defer self.observation_sink = parent_observations;
         try self.inferInputPostStatesNode(function, loop.control.condition, flow, exits);
+        if (loop.bodyIsUnreachable(self.graph)) return;
         flow.collapse();
 
         var transfers: LoopTransfersFor(InputPostStateFlow) = .{};

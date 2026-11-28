@@ -10484,6 +10484,10 @@ pub const SafetyChecker = struct {
     ) !void {
         const control = loop.control;
         const condition = control.condition;
+        if (loop.bodyIsUnreachable(self.graph)) {
+            _ = try self.evaluate(function, condition, state);
+            return;
+        }
         try self.registerBodyProducerRoles(state, function);
         // Structural storage exists before control enters the loop. Materialize
         // its generations before cloning entry state so first address-taking

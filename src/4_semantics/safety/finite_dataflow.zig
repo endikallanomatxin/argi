@@ -33,6 +33,13 @@ pub const SemanticLoop = struct {
     body: graph.GlobalBlockId,
     control: LoopControl(graph.GlobalNodeId),
 
+    pub fn bodyIsUnreachable(self: SemanticLoop, semantic: *const graph.GlobalSemanticGraph) bool {
+        return switch (semantic.node(self.control.condition).content) {
+            .bool_literal => |value| !value,
+            else => false,
+        };
+    }
+
     pub fn fromNode(node: graph.Node) SemanticLoop {
         return switch (node.content) {
             .while_statement => |loop| .{ .body = loop.body, .control = .{ .condition = loop.condition } },
