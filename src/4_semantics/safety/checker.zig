@@ -10384,28 +10384,45 @@ pub const SafetyChecker = struct {
         destination.* = joined;
     }
 
-    fn registerLoopProducerRoles(self: *SafetyChecker, state: *FunctionState, body: graph_mod.GlobalBlockId) !void {
+    fn registerLoopProducerRoles(self: *SafetyChecker, state: *FunctionState, body: graph_mod.GlobalBlockId, additional: []const ?graph_mod.GlobalNodeId) !void {
         const namespace = state.tracker.namespace orelse return;
-        var nodes = try @import("../global/reachability.zig").localBodyNodes(self.state_allocator, self.graph, body);
+        var nodes = try @import("../global/reachability.zig").localBodyNodes(self.state_allocator, self.graph, body, additional);
         defer nodes.deinit();
         var keys = nodes.keyIterator();
         while (keys.next()) |id| {
-            const node = self.graph.node(id.*);
-            if (node.content != .function_call) continue;
-            const callee = node.content.function_call.callee;
-            const site: facts.Tracker.RootNamespace.ProducerSite = .{ .call = id.* };
-            switch (primitive_transfer.forPrimitive(self.graph.function(callee).safety_primitive).value) {
-                .allocation, .opaque_move_out => {
-                    _ = try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = .primitive_owner });
+            switch (self.graph.node(id.*).content) {
+                .function_call => |call| {
+                    const site: facts.Tracker.RootNamespace.ProducerSite = .{ .call = id.* };
+                    switch (primitive_transfer.forPrimitive(self.graph.function(call.callee).safety_primitive).value) {
+                        .allocation, .opaque_move_out => {
+                            _ = try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = .primitive_owner });
+                        },
+                        else => {},
+                    }
+                    const engine = self.active_summaries orelse continue;
+                    if (engine.summaryFor(call.callee)) |summary| try registerSummaryProducerRoles(state, site, summary);
+                },
+                .virtual_call => |call_id| {
+                    const inference = self.active_summary_inference orelse continue;
+                    const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
+                    const summary = inference.virtualSummary(call.safety_methods) catch |err| switch (err) {
+                        error.MissingVirtualSafetyContract => continue,
+                        else => return err,
+                    };
+                    if (summary) |effects| try registerSummaryProducerRoles(state, .{ .virtual_call = call_id }, effects);
                 },
                 else => {},
             }
-            const engine = self.active_summaries orelse continue;
-            const summary = engine.summaryFor(callee) orelse continue;
-            for (summary.outputs) |value| try registerValueProducerRoles(state, site, value);
-            for (summary.input_post_states) |post| try registerValueProducerRoles(state, site, post.value);
-            for (summary.opaque_storage_effects) |effect| try registerValueProducerRoles(state, site, effect.hidden_dependencies);
         }
+    }
+
+    fn registerSummaryProducerRoles(state: *FunctionState, site: facts.Tracker.RootNamespace.ProducerSite, summary: facts.SafetySummary) anyerror!void {
+        for (summary.outputs) |value| try registerValueProducerRoles(state, site, value);
+        for (summary.input_post_states) |post| try registerValueProducerRoles(state, site, post.value);
+        for (summary.opaque_storage_effects) |effect| try registerValueProducerRoles(state, site, effect.hidden_dependencies);
+        for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |post|
+            try registerValueProducerRoles(state, site, post.value);
+        for (summary.guarded_effects) |guarded| try registerSummaryProducerRoles(state, site, guarded.effects.*);
     }
 
     fn registerValueProducerRoles(state: *FunctionState, site: facts.Tracker.RootNamespace.ProducerSite, value: facts.ValueEffect) anyerror!void {
@@ -10426,7 +10443,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         increment: ?graph_mod.GlobalNodeId,
     ) !void {
-        try self.registerLoopProducerRoles(state, body);
+        try self.registerLoopProducerRoles(state, body, &.{ condition, increment });
         // Structural storage exists before control enters the loop. Materialize
         // its generations before cloning entry state so first address-taking
         // in the body is not mistaken for a conditionally created lifetime.
