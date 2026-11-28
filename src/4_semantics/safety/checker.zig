@@ -141,6 +141,11 @@ pub const SafetyChecker = struct {
         root: facts.ValidityRootId,
     };
 
+    const CallRoots = struct {
+        state: *FunctionState,
+        roots: std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
+    };
+
     const LoopJoinContext = struct {
         exits: ?*const FunctionState = null,
         expired_lexical_observation: ?facts.ValidityRootId = null,
@@ -185,6 +190,8 @@ pub const SafetyChecker = struct {
     // Outputs and input post-states of one call share acquisition identities.
     // Nested calls install their own map so repeated acquisitions stay distinct.
     next_outcome_guard: u64 = 1,
+    active_call_roots: ?*CallRoots = null,
+
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
     active_summary_call_source: ?primitives.SourceRef = null,
     active_root_producer_site: ?facts.Tracker.RootNamespace.ProducerSite = null,
@@ -4611,6 +4618,11 @@ pub const SafetyChecker = struct {
         return true;
     }
     fn applyOutcomeSummary(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var call_roots: CallRoots = .{ .state = state, .roots = .init(self.state_allocator) };
+        defer call_roots.roots.deinit();
+        const previous_roots = self.active_call_roots;
+        self.active_call_roots = &call_roots;
+        defer self.active_call_roots = previous_roots;
         const completions = try self.captureOutcomeCompletions(summary, arguments, state);
         defer self.allocator.free(completions);
         var capture = false;
@@ -6877,9 +6889,13 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
     ) !facts.ValidityRootId {
-        if (fresh.get(source)) |root| return root;
+        const roots = if (self.active_call_roots) |call|
+            if (call.state == state) &call.roots else fresh
+        else
+            fresh;
+        if (roots.get(source)) |root| return root;
         const root = try self.establishProducedRoot(state, .{ .summary = source });
-        try fresh.put(source, root);
+        try roots.put(source, root);
         return root;
     }
 
@@ -13106,6 +13122,30 @@ test "opaque relocation summary rejects a dependency on the source generation" {
     }, &.{}, &.{.{ .referenced_place = from }}, &state);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{generation}, state.opaque_storages.items[0].hidden_dependencies);
+}
+
+test "opaque effect and output share fresh roots within one summary application" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const target: facts.Place = .{ .root = @enumFromInt(0) };
+    const value: facts.ValueEffect = .{ .fresh_dependencies = &.{7} };
+    const summary: facts.SafetySummary = .{
+        .outputs = &.{value},
+        .opaque_storage_effects = &.{.{ .storage = .{ .input_index = 0 }, .hidden_dependencies = value }},
+    };
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const args: []const facts.ValueFacts = &.{.{ .referenced_place = target }};
+    const first = try checker.applyOutcomeSummary(source, summary, &.{}, args, &state);
+    const second = try checker.applyOutcomeSummary(source, summary, &.{}, args, &state);
+    try std.testing.expect(first.dependencies[0].root != second.dependencies[0].root);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ first.dependencies[0].root, second.dependencies[0].root }, state.opaque_storages.items[0].hidden_dependencies);
 }
 
 test "opaque effects of one call share the same fresh observation" {
