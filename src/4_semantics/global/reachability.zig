@@ -200,6 +200,26 @@ pub fn dependencyOrder(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
     return order.toOwnedSlice(allocator);
 }
 
+/// Nodes evaluated within one body, with calls treated as leaves after
+/// visiting their evaluated operands and cleanup arguments. Sparse marks
+/// keep the cost proportional to the body, even in a large global graph.
+pub fn localBodyNodes(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, body: graph_mod.GlobalBlockId) !std.AutoHashMap(graph_mod.GlobalNodeId, void) {
+    var included = FunctionSet.init(allocator);
+    defer included.deinit();
+    var state: State = .{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &included,
+        .visited_functions = .{},
+        .visited_nodes = .{},
+        .local_body = true,
+    };
+    try state.walkBlock(body);
+    var result = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator);
+    std.mem.swap(@TypeOf(result), &result, &included.nodes);
+    return result;
+}
+
 const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -207,6 +227,7 @@ const State = struct {
     visited_functions: std.DynamicBitSetUnmanaged,
     visited_nodes: std.DynamicBitSetUnmanaged,
     changed: bool = false,
+    local_body: bool = false,
     dependency_order: ?*std.ArrayList(graph_mod.GlobalFunctionId) = null,
 
     // The graph is borrowed read-only for one traversal. Dense IDs allow
@@ -230,6 +251,7 @@ const State = struct {
     }
 
     fn includeFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
+        if (self.local_body) return;
         if (try self.functions.include(function_id)) self.changed = true;
         try self.walkFunction(function_id);
     }
@@ -269,9 +291,14 @@ const State = struct {
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
         const raw = @intFromEnum(node_id);
-        if (self.visited_nodes.isSet(raw)) return;
-        self.visited_nodes.set(raw);
-        try self.functions.nodes.put(node_id, {});
+        if (self.local_body) {
+            const entry = try self.functions.nodes.getOrPut(node_id);
+            if (entry.found_existing) return;
+        } else {
+            if (self.visited_nodes.isSet(raw)) return;
+            self.visited_nodes.set(raw);
+            try self.functions.nodes.put(node_id, {});
+        }
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
             .captured_expression, .declaration, .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal, .break_statement, .continue_statement, .abort_statement, .type_literal, .definition_literal => {},
@@ -534,6 +561,11 @@ test "summary dependency order handles late callees and recursive cycles" {
     defer allocator.free(ordered);
     try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, &.{ @enumFromInt(1), @enumFromInt(0) }, ordered);
     graph.blocks.items[1].nodes.len = 1;
+    var local = try localBodyNodes(allocator, &graph, @enumFromInt(0));
+    defer local.deinit();
+    try std.testing.expect(local.contains(@enumFromInt(0)));
+    try std.testing.expect(local.contains(@enumFromInt(1)));
+    try std.testing.expect(!local.contains(@enumFromInt(2)));
     const recursive = try dependencyOrder(allocator, &graph, &functions);
     defer allocator.free(recursive);
     try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, ordered, recursive);
