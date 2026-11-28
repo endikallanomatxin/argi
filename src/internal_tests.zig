@@ -221,6 +221,7 @@ comptime {
     _ = @import("4_semantics/safety/reference_observation_model.zig");
     _ = @import("4_semantics/safety/loop_observation.zig");
     _ = @import("4_semantics/safety/finite_dataflow.zig");
+    _ = @import("4_semantics/safety/structured_flow.zig");
     _ = @import("4_semantics/safety/finite_slots.zig");
     _ = @import("4_semantics/safety/access_bounds.zig");
     _ = @import("4_semantics/safety/domains.zig");
