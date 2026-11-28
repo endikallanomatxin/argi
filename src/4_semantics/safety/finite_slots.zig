@@ -84,6 +84,12 @@ pub const Slots = struct {
         mode: Access = .read,
     };
 
+    pub const ReferenceWrite = struct {
+        destination: usize,
+        source: usize,
+        definite: bool,
+    };
+
     /// Transfer operands are resolved against the immutable layout before
     /// solving. The lowering must prove each exact destination and encode
     /// only the success edge of a checked selection.
@@ -92,19 +98,21 @@ pub const Slots = struct {
         relocate_backing: OpaqueRows,
         retain_owner: struct { slot: usize, producer: usize },
         observe: struct { slot: usize, producer: usize },
-        copy_reference: struct { destination: usize, source: usize, definite: bool },
+        copy_reference: ReferenceWrite,
+        reference_post_states: []const ReferenceWrite,
         select: Selection,
         suspend_access: struct { slot: usize, receipt_site: usize, exclusive: bool },
         start_execution: usize,
         complete_execution: usize,
 
-        pub fn apply(self: Transfer, state: Slots) error{UnprovedObservation}!void {
+        pub fn apply(self: Transfer, state: Slots, allocator: std.mem.Allocator) !void {
             switch (self) {
                 .produce => |producer| state.age(producer),
                 .relocate_backing => |domain| state.renewRelocatingOpaque(domain),
                 .retain_owner => |retained| state.owner(retained.slot, retained.producer).current = true,
                 .observe => |reference| state.observeCurrent(reference.slot, reference.producer),
                 .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
+                .reference_post_states => |writes| try state.applyReferencePostStates(allocator, writes),
                 .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
                 .start_execution => |site| state.ageExecution(site),
                 .complete_execution => |site| state.completeCurrent(site),
@@ -202,16 +210,31 @@ pub const Slots = struct {
     /// This does not copy or discharge owning obligations.
     pub fn writeReference(self: Slots, destination: usize, source: usize, definite: bool) void {
         if (destination == source) return;
-        const incoming = self.observationRow(source);
+        self.writeReferenceFrom(self, .{ .destination = destination, .source = source, .definite = definite });
+    }
+
+    /// Call post-values use the same entry snapshot. Their destinations
+    /// have already been resolved, including possible aliases of writes.
+    fn applyReferencePostStates(self: Slots, allocator: std.mem.Allocator, writes: []const ReferenceWrite) !void {
+        if (writes.len == 0) return;
+        const entry = try self.clone(allocator);
+        defer entry.deinit(allocator);
+        for (writes) |write| self.writeReferenceFrom(entry, write);
+    }
+
+    fn writeReferenceFrom(self: Slots, entry: Slots, write: ReferenceWrite) void {
+        const destination = write.destination;
+        const source = write.source;
+        const incoming = entry.observationRow(source);
         const stored = self.observationRow(destination);
-        if (definite) {
+        if (write.definite) {
             @memcpy(stored, incoming);
-            self.initialization[destination] = self.initialization[source];
-            self.unobserved[destination] = self.unobserved[source];
+            self.initialization[destination] = entry.initialization[source];
+            self.unobserved[destination] = entry.unobserved[source];
         } else {
             for (stored, incoming) |*old, new| old.* = old.join(new);
-            self.initialization[destination] = self.initialization[destination].weakWrite(self.initialization[source]);
-            self.unobserved[destination] = self.unobserved[destination] or self.unobserved[source];
+            self.initialization[destination] = self.initialization[destination].weakWrite(entry.initialization[source]);
+            self.unobserved[destination] = self.unobserved[destination] or entry.unobserved[source];
         }
     }
 
@@ -495,7 +518,7 @@ pub const Program = struct {
     pub fn transfer(self: Program, _: usize, edge: Edge, state: State) !?State {
         const next = try state.clone(self.allocator);
         errdefer next.deinit(self.allocator);
-        for (edge.operations) |operation| try operation.apply(next);
+        for (edge.operations) |operation| try operation.apply(next, self.allocator);
         return next;
     }
 
@@ -576,8 +599,8 @@ test "safety finite symbolic writes preserve both targets of a possible update" 
     defer state.deinit(a);
     state.observeCurrent(0, 0);
     state.observeCurrent(1, 1);
-    try (Slots.Transfer{ .copy_reference = .{ .destination = 2, .source = 0, .definite = true } }).apply(state);
-    try (Slots.Transfer{ .copy_reference = .{ .destination = 2, .source = 1, .definite = false } }).apply(state);
+    try (Slots.Transfer{ .copy_reference = .{ .destination = 2, .source = 0, .definite = true } }).apply(state, a);
+    try (Slots.Transfer{ .copy_reference = .{ .destination = 2, .source = 1, .definite = false } }).apply(state, a);
     try std.testing.expect(state.observation(2, 0).provesCurrent());
     try std.testing.expect(state.observation(2, 1).provesCurrent());
     state.age(0);
@@ -594,15 +617,15 @@ test "safety finite authority retains historical loans independently of validity
     before.observeCurrent(0, 0);
     const state = try before.clone(a);
     defer state.deinit(a);
-    try (Slots.Transfer{ .suspend_access = .{ .slot = 0, .receipt_site = 0, .exclusive = false } }).apply(state);
-    try (Slots.Transfer{ .start_execution = 0 }).apply(state);
+    try (Slots.Transfer{ .suspend_access = .{ .slot = 0, .receipt_site = 0, .exclusive = false } }).apply(state, a);
+    try (Slots.Transfer{ .start_execution = 0 }).apply(state, a);
     state.suspendAccess(1, 0, true);
     try std.testing.expect(state.accessSuspended(1, .read));
     const selection: Slots.Selection = .{ .destination = 1, .receiver = 0, .region = 1 };
-    try std.testing.expectError(error.UnprovedObservation, (Slots.Transfer{ .select = selection }).apply(state));
-    try (Slots.Transfer{ .complete_execution = 0 }).apply(state);
+    try std.testing.expectError(error.UnprovedObservation, (Slots.Transfer{ .select = selection }).apply(state, a));
+    try (Slots.Transfer{ .complete_execution = 0 }).apply(state, a);
     try std.testing.expect(!state.accessSuspended(1, .read));
-    try (Slots.Transfer{ .select = selection }).apply(state);
+    try (Slots.Transfer{ .select = selection }).apply(state, a);
     try std.testing.expect(!state.borrowSelected(.{ .destination = 1, .receiver = 0, .region = 0, .mode = .write }));
     try std.testing.expect(!state.accessSuspended(0, .read));
     try std.testing.expect(state.accessSuspended(0, .write));
@@ -655,4 +678,19 @@ test "safety finite solver propagates through a long loop-carried reference chai
     const incoming = (try program.transfer(0, edges[0], header)).?;
     defer program.release(incoming);
     try std.testing.expect(header.covers(incoming));
+}
+
+test "safety finite summary reference outputs use the same entry snapshot" {
+    const a = std.testing.allocator;
+    const state = try Slots.initEntry(a, .{ .slots = 2, .producers = 2 });
+    defer state.deinit(a);
+    state.observeCurrent(0, 0);
+    state.observeCurrent(1, 1);
+    try (Slots.Transfer{ .reference_post_states = &.{
+        .{ .destination = 0, .source = 1, .definite = true },
+        .{ .destination = 1, .source = 0, .definite = true },
+    } }).apply(state, a);
+    try std.testing.expect(state.observation(0, 1).provesCurrent());
+    try std.testing.expect(state.observation(1, 0).provesCurrent());
+    try std.testing.expectEqual(Observation{}, state.observation(1, 1));
 }
