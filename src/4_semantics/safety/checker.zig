@@ -6098,6 +6098,10 @@ pub const SafetyChecker = struct {
         entry_hidden: []const []const facts.ValidityRootId,
         state: *FunctionState,
     ) !void {
+        // Every destination is part of the same evaluated call. A fresh
+        // source mentioned by multiple effects denotes one observation.
+        var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.state_allocator);
+        defer fresh_roots.deinit();
         for (summary.opaque_storage_effects, entry_hidden) |effect, captured| {
             var destinations = std.array_list.Managed(StorageIdentity).init(self.allocator);
             defer destinations.deinit();
@@ -6119,8 +6123,6 @@ pub const SafetyChecker = struct {
             var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer hidden.deinit();
             try hidden.appendSlice(captured);
-            var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
-            defer fresh_roots.deinit();
             try self.instantiateOpaqueDependencies(effect.hidden_dependencies, arguments, state, &fresh_roots, &hidden);
 
             var hidden_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
@@ -13104,6 +13106,28 @@ test "opaque relocation summary rejects a dependency on the source generation" {
     }, &.{}, &.{.{ .referenced_place = from }}, &state);
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{generation}, state.opaque_storages.items[0].hidden_dependencies);
+}
+
+test "opaque effects of one call share the same fresh observation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    const hidden: facts.ValueEffect = .{ .fresh_dependencies = &.{7} };
+    try checker.applySummaryOpaqueStorageEffects(.{
+        .opaque_storage_effects = &.{
+            .{ .storage = .{ .input_index = 0 }, .hidden_dependencies = hidden },
+            .{ .storage = .{ .input_index = 1 }, .hidden_dependencies = hidden },
+        },
+    }, &.{}, &.{ .{ .referenced_place = first }, .{ .referenced_place = second } }, &.{ &.{}, &.{} }, &state);
+    try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items.len);
+    const dependency = state.opaque_storages.items[0].hidden_dependencies[0];
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{dependency}, state.opaque_storages.items[1].hidden_dependencies);
 }
 
 test "opaque summary emptying cannot erase dependencies transferred from entry" {
