@@ -5509,6 +5509,7 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
+        if (summary.input_post_states.len == 0) return;
         var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
@@ -5524,6 +5525,26 @@ pub const SafetyChecker = struct {
         const post_targets = try self.allocator.alloc(?facts.Place, summary.input_post_states.len);
         for (summary.input_post_states, post_targets) |post_state, *target|
             target.* = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state);
+        // Resolve symbolic destinations in the same entry state as concrete
+        // ones, before output recipes materialize any new observations.
+        const SymbolicPostTarget = struct {
+            access: ?facts.ValueFacts = null,
+            was_initialized: bool = false,
+        };
+        const symbolic_targets = try self.state_allocator.alloc(SymbolicPostTarget, summary.input_post_states.len);
+        defer self.state_allocator.free(symbolic_targets);
+        @memset(symbolic_targets, .{});
+        for (summary.input_post_states, post_targets, symbolic_targets) |post, concrete, *symbolic| {
+            if (concrete != null and !cleanupTransition(summary, post)) continue;
+            const access = try self.symbolicConsumptionValue(post.target, argument_ids, arguments, state) orelse continue;
+            symbolic.access = access;
+            if (post.initializedness == .initialized and post.initialization != .preserved and
+                !post.requires_available_destination and access.symbolic_pointees.len == 1)
+            {
+                symbolic.was_initialized = self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
+            }
+        }
+
         var captures = std.array_list.Managed(PostCapture).init(self.allocator);
         defer captures.deinit();
         const previous_captures = self.active_post_captures;
@@ -5560,26 +5581,6 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post, index| if (post.reference_refresh) {
             if (post_values[index]) |pointer| reference_generations[index] = try state.referenceObservationGeneration(pointer);
         };
-
-        // Resolve symbolic destinations in the same entry state as concrete
-        // ones. A previous postcondition may retarget or renew the argument.
-        const SymbolicPostTarget = struct {
-            access: ?facts.ValueFacts = null,
-            was_initialized: bool = false,
-        };
-        const symbolic_targets = try self.state_allocator.alloc(SymbolicPostTarget, summary.input_post_states.len);
-        defer self.state_allocator.free(symbolic_targets);
-        @memset(symbolic_targets, .{});
-        for (summary.input_post_states, post_targets, symbolic_targets) |post, concrete, *symbolic| {
-            if (concrete != null and !cleanupTransition(summary, post)) continue;
-            const access = try self.symbolicConsumptionValue(post.target, argument_ids, arguments, state) orelse continue;
-            symbolic.access = access;
-            if (post.initializedness == .initialized and post.initialization != .preserved and
-                !post.requires_available_destination and access.symbolic_pointees.len == 1)
-            {
-                symbolic.was_initialized = self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
-            }
-        }
 
         for (summary.input_post_states, symbolic_targets, 0..) |post_state, symbolic, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
