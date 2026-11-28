@@ -410,6 +410,13 @@ pub const Slots = struct {
             if (dependency.current_ended or dependency.historical) return false;
             witnessed = witnessed or dependency.provesCurrent();
         }
+        for (self.layout.opaque_rows) |domain| {
+            if (selection.region != domain.current) continue;
+            for (self.observationRow(domain.current)) |dependency| {
+                if (dependency.current_ended or dependency.historical) return false;
+            }
+            break;
+        }
         return witnessed;
     }
 
@@ -694,7 +701,7 @@ test "safety checked selection borrows old owned elements from a current contain
     try std.testing.expectEqual(Observation{}, state.observation(1, 1));
     try std.testing.expectEqual(Custody{}, state.owner(1, 1).*);
 
-    state.retainOpaqueObservation(domain, false, 0, .{ .current_live = true });
+    state.retainOpaqueObservation(domain, false, 1, .{ .current_live = true });
     state.renewRelocatingOpaque(domain);
     try std.testing.expect(!state.borrowSelected(.{ .destination = 2, .receiver = 0, .region = domain.current }));
     state.observeCurrent(0, 0);
@@ -703,7 +710,7 @@ test "safety checked selection borrows old owned elements from a current contain
     try std.testing.expect(state.observation(2, 0).provesCurrent());
     try std.testing.expectEqual(Custody{ .current = true, .historical = true }, state.owner(domain.current, 1).*);
     try std.testing.expectEqual(Custody{}, state.owner(domain.historical, 1).*);
-    try std.testing.expect(state.observation(domain.current, 0).historical);
+    try std.testing.expect(state.observation(domain.current, 1).provesCurrent());
 }
 
 /// A lowered graph of transfers with statically named destinations.
@@ -1077,4 +1084,18 @@ test "safety finite writes to possible destinations retain each entry alternativ
         try std.testing.expect(state.observation(slot, 0).provesCurrent());
     }
     try std.testing.expectEqual(Observation{}, state.observation(0, 1));
+}
+
+test "safety finite selection checks hidden obligations independently of the receiver" {
+    const a = std.testing.allocator;
+    const domain: Slots.OpaqueRows = .{ .producer = 0, .current = 2, .historical = 3 };
+    const state = try Slots.initEntry(a, .{ .slots = 4, .producers = 2, .opaque_rows = &.{domain} });
+    defer state.deinit(a);
+    state.observeCurrent(0, 0);
+    state.retainOpaqueObservation(domain, false, 1, .{ .current_live = true });
+    const select: Slots.Selection = .{ .destination = 1, .receiver = 0, .region = domain.current };
+    try std.testing.expect(state.borrowSelected(select));
+    state.age(1);
+    try std.testing.expect(state.observation(0, 0).provesCurrent());
+    try std.testing.expect(!state.borrowSelected(select));
 }
