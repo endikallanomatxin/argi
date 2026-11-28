@@ -231,7 +231,7 @@ pub const Transfer = struct {
     };
 
     pub const Input = enum { none, consume_opaque_owner, relocate, ignore };
-    pub const Opaque = enum { none, clear_empty, store_hidden, mark_empty };
+    pub const Opaque = enum { none, clear_empty, store_hidden, relocate_hidden, mark_empty };
 };
 
 /// The second argument selects static task evidence. The runtime value
@@ -275,7 +275,7 @@ pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
             .opaque_state = .store_hidden,
         },
         .trusted_opaque_move_out => .{ .value = .opaque_move_out },
-        .trusted_opaque_relocate => .{ .value = .opaque_relocate, .input = .ignore },
+        .trusted_opaque_relocate => .{ .value = .opaque_relocate, .input = .ignore, .opaque_state = .relocate_hidden },
         .trusted_opaque_drop => .{ .value = .opaque_drop },
         .trusted_opaque_mark_empty => .{ .value = .opaque_mark_empty, .opaque_state = .mark_empty },
     };

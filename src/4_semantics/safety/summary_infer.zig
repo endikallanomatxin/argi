@@ -5025,6 +5025,14 @@ pub const Infer = struct {
                 try self.recordOpaqueStorageWrites(effects, state, storages, hidden);
                 return;
             },
+            .relocate_hidden => {
+                if (arguments.len != 2) return;
+                const sources = try self.inferInputPaths(function_id, arguments[0].value);
+                if (sources.len == 0) return;
+                const destinations = try self.inferInputPaths(function_id, arguments[1].value);
+                try self.recordOpaqueRelocation(effects, state, sources, destinations);
+                return;
+            },
             .mark_empty => {
                 if (arguments.len != 1) return;
                 const storages = try self.inferInputPaths(function_id, arguments[0].value);
@@ -5103,6 +5111,26 @@ pub const Infer = struct {
             const storages = try self.substituteRequiredInputPath(function_id, empty, arguments, override);
             try self.recordOpaqueStorageEmpties(state, storages);
         }
+    }
+
+    fn recordOpaqueRelocation(
+        self: *Infer,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueEmptyState,
+        sources: []const facts.InputPath,
+        destinations: []const facts.InputPath,
+    ) !void {
+        var hidden: facts.ValueEffect = .{ .opaque_storage_dependencies = sources };
+        // Preserve dependencies introduced before this relocation in the
+        // same body, as well as the caller's entry contents.
+        for (effects.items) |previous| {
+            for (sources) |path| {
+                if (!self.inputPathEqual(previous.storage, path)) continue;
+                hidden = try self.mergeValueEffects(hidden, previous.hidden_dependencies);
+                break;
+            }
+        }
+        try self.recordOpaqueStorageWrites(effects, state, destinations, hidden);
     }
 
     fn recordOpaqueStorageWrites(
@@ -10135,6 +10163,28 @@ test "opaque ownership post-state joins preserve storage correlation" {
     try inference.joinInputPostStates(&ambiguous, &opaque_branch, &other);
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.ambiguous, ambiguous.items[0].opaque_ownership);
     try std.testing.expect(ambiguous.items[0].opaque_storage == null);
+}
+
+test "opaque relocation summaries retain entry and newly hidden dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    var effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(a);
+    defer effects.deinit();
+    var state = Infer.OpaqueEmptyState.init(a);
+    defer state.deinit();
+    const source: facts.InputPath = .{ .input_index = 0 };
+    const destination: facts.InputPath = .{ .input_index = 1 };
+    try infer.recordOpaqueStorageEffect(&effects, source, .{ .input_dependencies = &.{.{ .path = .{ .input_index = 2 } }} });
+    try infer.recordOpaqueRelocation(&effects, &state, &.{source}, &.{destination});
+    try std.testing.expectEqual(@as(usize, 2), effects.items.len);
+    const hidden = effects.items[1].hidden_dependencies;
+    try std.testing.expectEqual(@as(u32, 0), hidden.opaque_storage_dependencies[0].input_index);
+    try std.testing.expectEqual(@as(u32, 2), hidden.input_dependencies[0].path.input_index);
 }
 
 test "numeric projected values retain choices without ownership or validity" {
