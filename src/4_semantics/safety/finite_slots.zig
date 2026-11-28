@@ -36,6 +36,20 @@ pub const Slots = struct {
         slots: usize,
         producers: usize,
         opaque_rows: []const OpaqueRows = &.{},
+        /// Each opaque row belongs to exactly one domain. Sharing a row
+        /// would let renewal of one domain clear another domain's contents.
+        fn validate(self: Layout, allocator: std.mem.Allocator) !void {
+            if (self.opaque_rows.len == 0) return;
+            var used = try std.DynamicBitSetUnmanaged.initEmpty(allocator, self.slots);
+            defer used.deinit(allocator);
+            for (self.opaque_rows) |rows| {
+                if (rows.producer >= self.producers or rows.current >= self.slots or rows.historical >= self.slots or
+                    rows.current == rows.historical or used.isSet(rows.current) or used.isSet(rows.historical))
+                    return error.InvalidOpaqueLayout;
+                used.set(rows.current);
+                used.set(rows.historical);
+            }
+        }
     };
 
     layout: Layout,
@@ -45,6 +59,7 @@ pub const Slots = struct {
 
     pub fn init(allocator: std.mem.Allocator, layout: Layout) !Slots {
         const count = try std.math.mul(usize, layout.slots, layout.producers);
+        try layout.validate(allocator);
         const initialization = try allocator.alloc(Initialization, layout.slots);
         errdefer allocator.free(initialization);
         const observations = try allocator.alloc(Observation, count);
@@ -54,6 +69,16 @@ pub const Slots = struct {
         @memset(initialization, .{});
         @memset(observations, .{});
         return .{ .layout = layout, .initialization = initialization, .observations = observations, .custody = custody };
+    }
+
+    /// Copies a state in the same already validated layout.
+    pub fn clone(self: Slots, allocator: std.mem.Allocator) !Slots {
+        const initialization = try allocator.dupe(Initialization, self.initialization);
+        errdefer allocator.free(initialization);
+        const observations = try allocator.dupe(Observation, self.observations);
+        errdefer allocator.free(observations);
+        const custody = try allocator.dupe(Custody, self.custody);
+        return .{ .layout = self.layout, .initialization = initialization, .observations = observations, .custody = custody };
     }
 
     pub fn deinit(self: Slots, allocator: std.mem.Allocator) void {
@@ -305,14 +330,8 @@ test "safety finite dataflow covers repeated owned element insertion and backing
             };
         }
 
-        fn copy(self: @This(), state: State) !State {
-            const next = try Slots.init(self.allocator, layout);
-            next.include(state);
-            return next;
-        }
-
         pub fn transfer(self: @This(), block: usize, successor: usize, state: State) !?State {
-            const next = try self.copy(state);
+            const next = try state.clone(self.allocator);
             if (block == 2 and successor == 3) {
                 try std.testing.expect(next.borrowSelected(fresh, receiver));
                 return next;
@@ -329,7 +348,7 @@ test "safety finite dataflow covers repeated owned element insertion and backing
         }
 
         pub fn join(self: @This(), left: State, right: State) !State {
-            const next = try self.copy(left);
+            const next = try left.clone(self.allocator);
             next.include(right);
             return next;
         }
@@ -356,4 +375,16 @@ test "safety finite dataflow covers repeated owned element insertion and backing
     try std.testing.expectEqual(Custody{ .current = true, .historical = true }, after.owner(Domain.contents.current, Domain.element).*);
     try std.testing.expect(after.observation(Domain.fresh, Domain.backing).provesCurrent());
     try std.testing.expect(!after.observation(Domain.saved, Domain.backing).provesCurrent());
+}
+
+test "safety finite layouts reject overlapping opaque domain rows" {
+    const a = std.testing.allocator;
+    try std.testing.expectError(error.InvalidOpaqueLayout, Slots.init(a, .{
+        .slots = 3,
+        .producers = 2,
+        .opaque_rows = &.{
+            .{ .producer = 0, .current = 0, .historical = 1 },
+            .{ .producer = 1, .current = 2, .historical = 0 },
+        },
+    }));
 }
