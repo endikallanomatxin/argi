@@ -348,85 +348,93 @@ test "safety checked selection borrows old owned elements from a current contain
     try std.testing.expect(state.observation(domain.current, 0).historical);
 }
 
-test "safety finite dataflow covers repeated owned element insertion and backing relocation" {
-    const Domain = struct {
-        pub const State = Slots;
-        const backing = 0;
-        const element = 1;
-        const receiver = 0;
-        const saved = 1;
-        const fresh = 2;
-        const contents: Slots.OpaqueRows = .{ .producer = backing, .current = 3, .historical = 4 };
-        const layout: Slots.Layout = .{ .slots = 5, .producers = 2, .opaque_rows = &.{contents} };
-
-        allocator: std.mem.Allocator,
-
-        pub fn release(self: @This(), state: State) void {
-            state.deinit(self.allocator);
-        }
-
-        pub fn successors(_: @This(), block: usize) []const usize {
-            return switch (block) {
-                0, 1 => &.{2},
-                2 => &.{ 2, 1, 3 },
-                else => &.{},
-            };
-        }
-
-        pub fn transfer(self: @This(), block: usize, successor: usize, state: State) !?State {
-            const next = try state.clone(self.allocator);
-            errdefer next.deinit(self.allocator);
-            const operations: []const Slots.Transfer = switch (block) {
-                0 => &.{
-                    .{ .produce = element },
-                    .{ .retain_owner = .{ .slot = contents.current, .producer = element } },
-                    .{ .select = .{ .destination = saved, .receiver = receiver } },
-                },
-                1 => &.{
-                    .{ .produce = element },
-                    .{ .retain_owner = .{ .slot = contents.current, .producer = element } },
-                },
-                2 => if (successor == 3)
-                    &.{.{ .select = .{ .destination = fresh, .receiver = receiver } }}
-                else
-                    &.{
-                        .{ .relocate_backing = contents },
-                        .{ .observe = .{ .slot = receiver, .producer = backing } },
-                    },
-                else => unreachable,
-            };
-            for (operations) |operation| try operation.apply(next);
-            return next;
-        }
-
-        pub fn join(self: @This(), left: State, right: State) !State {
-            const next = try left.clone(self.allocator);
-            next.include(right);
-            return next;
-        }
-
-        pub fn covers(_: @This(), left: State, right: State) bool {
-            return left.covers(right);
-        }
+/// A lowered graph of transfers with statically named destinations.
+pub const Program = struct {
+    pub const State = Slots;
+    pub const Edge = struct {
+        destination: usize,
+        operations: []const Slots.Transfer,
     };
-    const domain: Domain = .{ .allocator = std.testing.allocator };
-    const initial = try Slots.init(domain.allocator, Domain.layout);
-    initial.observeCurrent(Domain.receiver, Domain.backing);
+
+    allocator: std.mem.Allocator,
+    edges_by_block: []const []const Edge,
+
+    pub fn release(self: Program, state: State) void {
+        state.deinit(self.allocator);
+    }
+
+    pub fn successors(self: Program, block: usize) []const Edge {
+        return self.edges_by_block[block];
+    }
+
+    pub fn target(_: Program, edge: Edge) usize {
+        return edge.destination;
+    }
+
+    pub fn transfer(self: Program, _: usize, edge: Edge, state: State) !?State {
+        const next = try state.clone(self.allocator);
+        errdefer next.deinit(self.allocator);
+        for (edge.operations) |operation| try operation.apply(next);
+        return next;
+    }
+
+    pub fn join(self: Program, left: State, right: State) !State {
+        const next = try left.clone(self.allocator);
+        next.include(right);
+        return next;
+    }
+
+    pub fn covers(_: Program, left: State, right: State) bool {
+        return left.covers(right);
+    }
+};
+
+test "safety finite dataflow covers repeated owned element insertion and backing relocation" {
+    const backing = 0;
+    const element = 1;
+    const receiver = 0;
+    const saved = 1;
+    const fresh = 2;
+    const contents: Slots.OpaqueRows = .{ .producer = backing, .current = 3, .historical = 4 };
+    const layout: Slots.Layout = .{ .slots = 5, .producers = 2, .opaque_rows = &.{contents} };
+    const insert = [_]Slots.Transfer{
+        .{ .produce = element },
+        .{ .retain_owner = .{ .slot = contents.current, .producer = element } },
+    };
+    const relocate: []const Slots.Transfer = &.{
+        .{ .relocate_backing = contents },
+        .{ .observe = .{ .slot = receiver, .producer = backing } },
+    };
+    const domain: Program = .{
+        .allocator = std.testing.allocator,
+        .edges_by_block = &.{
+            &.{.{ .destination = 2, .operations = &(insert ++ [_]Slots.Transfer{.{ .select = .{ .destination = saved, .receiver = receiver } }}) }},
+            &.{.{ .destination = 2, .operations = &insert }},
+            &.{
+                .{ .destination = 2, .operations = relocate },
+                .{ .destination = 1, .operations = relocate },
+                .{ .destination = 3, .operations = &.{.{ .select = .{ .destination = fresh, .receiver = receiver } }} },
+            },
+            &.{},
+        },
+    };
+    const initial = try Slots.init(domain.allocator, layout);
+    initial.observeCurrent(receiver, backing);
     var headers: [4]?Slots = @splat(null);
     defer for (headers) |header| if (header) |state| domain.release(state);
-    try @import("finite_dataflow.zig").solve(Domain, domain.allocator, &headers, 0, initial, domain);
+    try @import("finite_dataflow.zig").solve(Program, domain.allocator, &headers, 0, initial, domain);
 
     for (headers, 0..) |header, block| {
-        for (domain.successors(block)) |successor| {
-            const incoming = (try domain.transfer(block, successor, header.?)).?;
+        for (domain.successors(block)) |edge| {
+            const incoming = (try domain.transfer(block, edge, header.?)).?;
             defer domain.release(incoming);
-            try std.testing.expect(headers[successor].?.covers(incoming));
+            try std.testing.expect(headers[edge.destination].?.covers(incoming));
         }
     }
     const after = headers[3].?;
-    try std.testing.expectEqual(Custody{ .current = true, .historical = true }, after.owner(Domain.contents.current, Domain.element).*);
-    try std.testing.expect(after.observation(Domain.fresh, Domain.backing).provesCurrent());
-    try std.testing.expect(!after.observation(Domain.saved, Domain.backing).provesCurrent());
+    try std.testing.expectEqual(Custody{ .current = true, .historical = true }, after.owner(contents.current, element).*);
+    try std.testing.expect(after.observation(fresh, backing).provesCurrent());
+    try std.testing.expect(!after.observation(saved, backing).provesCurrent());
 }
 
 test "safety finite layouts reject overlapping opaque domain rows" {

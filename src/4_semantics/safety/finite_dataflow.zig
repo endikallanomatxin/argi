@@ -33,8 +33,9 @@ pub fn solve(
         const input = headers[block].?;
         var replaced_input = false;
         defer if (replaced_input) domain.release(input);
-        for (domain.successors(block)) |successor| {
-            const next = (try domain.transfer(block, successor, input)) orelse continue;
+        for (domain.successors(block)) |edge| {
+            const successor = domain.target(edge);
+            const next = (try domain.transfer(block, edge, input)) orelse continue;
             if (headers[successor]) |previous| {
                 defer domain.release(next);
                 if (domain.covers(previous, next)) continue;
@@ -77,8 +78,12 @@ test "finite safety worklist covers a backedge and preserves its stale observati
             };
         }
 
-        fn transfer(_: @This(), block: usize, target: usize, input: State) error{}!?State {
-            if (block == 1 and target == 2) return input;
+        fn target(_: @This(), successor: usize) usize {
+            return successor;
+        }
+
+        fn transfer(_: @This(), block: usize, destination: usize, input: State) error{}!?State {
+            if (block == 1 and destination == 2) return input;
             return .{
                 .saved = input.saved.join(input.current).age(),
                 .current = .{ .current_live = true },
