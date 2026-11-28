@@ -353,7 +353,17 @@ pub const Slots = struct {
             @memcpy(row, capture.observations);
             capture.observations = row;
         }
-        for (writes, captures) |write, value| self.writeReferenceValue(write.destination, value, write.definite);
+        // A definite write kills entry contents, but gives no order
+        // between aliased post-values. Keep every possible final value.
+        var initialized_targets = try std.DynamicBitSetUnmanaged.initEmpty(allocator, self.layout.slots);
+        defer initialized_targets.deinit(allocator);
+        for (writes, captures) |write, value| {
+            if (!write.definite or initialized_targets.isSet(write.destination)) continue;
+            self.writeReferenceValue(write.destination, value, true);
+            initialized_targets.set(write.destination);
+        }
+        for (writes, captures) |write, value|
+            self.writeReferenceValue(write.destination, value, false);
     }
 
     fn writeReferenceValue(self: Slots, destination: usize, value: ReferenceValue, definite: bool) void {
@@ -1026,4 +1036,18 @@ test "safety finite solver checks selection after a backedge invalidates its rec
     defer for (headers) |header| if (header) |state| program.release(state);
     try std.testing.expectError(error.UnprovedObservation, program.solve(&headers, 0, initial));
     try std.testing.expect(headers[1].?.observation(1, 0).historical);
+}
+
+test "safety finite post-values preserve alternatives for an aliased destination" {
+    const a = std.testing.allocator;
+    const state = try Slots.initEntry(a, .{ .slots = 3, .producers = 3 });
+    defer state.deinit(a);
+    for (0..3) |slot| state.observeCurrent(slot, slot);
+    try state.applyReferencePostStates(a, &.{
+        .{ .destination = 0, .source = 1, .definite = false },
+        .{ .destination = 0, .source = 2, .definite = true },
+    });
+    try std.testing.expectEqual(Observation{}, state.observation(0, 0));
+    try std.testing.expect(state.observation(0, 1).provesCurrent());
+    try std.testing.expect(state.observation(0, 2).provesCurrent());
 }
