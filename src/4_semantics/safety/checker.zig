@@ -2050,6 +2050,9 @@ pub const SafetyChecker = struct {
                 if (!try self.validateSummaryRequiredOpaque(input_node.source, summary, values, state)) return .{};
                 if (!try self.validateSummaryExecutionAccess(input_node.source, summary, argument_nodes, values, state)) return .{};
             };
+            const previous_producer = self.active_root_producer_site;
+            self.active_root_producer_site = if (call_node) |node| .{ .call = node } else null;
+            defer self.active_root_producer_site = previous_producer;
             if (self.collect_stats) self.stats.primitive_calls += 1;
             return self.evaluatePrimitive(caller, call.callee, callee.safety_primitive, argument_nodes, values, state, input_node.source);
         }
@@ -14246,6 +14249,40 @@ fn allocationPrimitiveTestGraph(allocator: std.mem.Allocator, count: u32) !graph
     // the selected callee, independently of its enclosing function's signature.
     try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
     return graph;
+}
+
+test "safety direct primitive calls identify their own producer site" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const proof = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.functions.append(a, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .safety_primitive = .trusted_opaque_move_out,
+    });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } });
+    var checker = SafetyChecker.init(proof, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(proof);
+    defer state.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(proof);
+    state.tracker.namespace = &namespace;
+    checker.active_root_producer_site = .{ .call = @enumFromInt(5) };
+    const call = .{ .input = @as(graph_mod.GlobalNodeId, @enumFromInt(0)), .callee = @as(graph_mod.GlobalFunctionId, @enumFromInt(0)) };
+    const first = try checker.evaluateCallCandidate(@enumFromInt(0), @enumFromInt(1), call, &state);
+    const second = try checker.evaluateCallCandidate(@enumFromInt(0), @enumFromInt(1), call, &state);
+    const other = try checker.evaluateCallCandidate(@enumFromInt(0), @enumFromInt(2), call, &state);
+    try std.testing.expect(first.owned_roots[0] != second.owned_roots[0]);
+    const producer = state.tracker.roots.items[@intFromEnum(first.owned_roots[0])].producer.?;
+    try std.testing.expectEqual(producer, state.tracker.roots.items[@intFromEnum(second.owned_roots[0])].producer.?);
+    try std.testing.expect(producer != state.tracker.roots.items[@intFromEnum(other.owned_roots[0])].producer.?);
+    try std.testing.expectEqual(@as(graph_mod.GlobalNodeId, @enumFromInt(5)), checker.active_root_producer_site.?.call);
 }
 
 test "allocation primitive agrees with instantiated symbolic transfer" {
