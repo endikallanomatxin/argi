@@ -7,13 +7,14 @@ const SemanticLoop = @import("finite_dataflow.zig").SemanticLoop;
 
 pub const Flow = struct {
     pub const Block = struct {
-        action: union(enum) {
+        pub const Action = union(enum) {
             none,
             statement: graph.GlobalNodeId,
             condition: struct { expression: graph.GlobalNodeId, statement: graph.GlobalNodeId },
             switch_value: graph.GlobalSwitchId,
             switch_case: struct { selection: graph.GlobalSwitchId, case: graph.GlobalSwitchCaseId },
-        },
+        };
+        action: Action,
         // Tests have matching and nonmatching destinations in that order.
         successors: [2]?usize,
     };
@@ -52,6 +53,55 @@ pub const Flow = struct {
         const exit = try builder.append(.{ .action = .none, .successors = .{ null, null } });
         const entry = try builder.lowerBlock(body, exit, null);
         return .{ .blocks = try builder.blocks.toOwnedSlice(allocator), .entry = entry };
+    }
+
+    /// Solve a lowered body using the operation semantics of a finite
+    /// domain. The transfer receives the selected edge, including its
+    /// polarity, and can omit an infeasible successor.
+    pub fn solve(self: Flow, comptime Domain: type, allocator: std.mem.Allocator, headers: []?Domain.State, initial: Domain.State, domain: Domain) !void {
+        const Adapter = struct {
+            const Self = @This();
+            pub const State = Domain.State;
+
+            flow: Flow,
+            semantics: Domain,
+            buffer: *[2]Edge,
+
+            pub fn successors(adapter: Self, block: usize) []const Edge {
+                return adapter.flow.edges(block, adapter.buffer);
+            }
+
+            pub fn target(_: Self, edge: Edge) usize {
+                return edge.destination;
+            }
+
+            pub fn transfer(adapter: Self, block: usize, edge: Edge, state: State) !?State {
+                return adapter.semantics.transfer(adapter.flow.blocks[block].action, edge, state);
+            }
+
+            pub fn covers(adapter: Self, left: State, right: State) bool {
+                return adapter.semantics.covers(left, right);
+            }
+
+            pub fn include(adapter: Self, left: *State, right: State) !void {
+                try adapter.semantics.include(left, right);
+            }
+
+            pub fn release(adapter: Self, state: State) void {
+                adapter.semantics.release(state);
+            }
+        };
+        if (headers.len != self.blocks.len or self.entry >= headers.len) {
+            domain.release(initial);
+            return error.InvalidFiniteGraph;
+        }
+        for (headers) |header| if (header != null) {
+            domain.release(initial);
+            return error.InvalidFiniteGraph;
+        };
+        var buffer: [2]Edge = undefined;
+        const adapter: Adapter = .{ .flow = self, .semantics = domain, .buffer = &buffer };
+        try @import("finite_dataflow.zig").solve(Adapter, allocator, headers, self.entry, initial, adapter);
     }
 
     pub fn deinit(self: Flow, allocator: std.mem.Allocator) void {
@@ -251,4 +301,33 @@ test "safety structured conditions route short circuit edges around the right op
         try std.testing.expectEqual(if (is_and) skip else take, left.successors[if (is_and) 1 else 0].?);
         try std.testing.expectEqual([2]?usize{ take, skip }, right.successors);
     }
+}
+
+test "safety structured flow solves only feasible branch edges" {
+    const Domain = struct {
+        pub const State = u8;
+
+        fn transfer(_: @This(), action: Flow.Block.Action, edge: Flow.Edge, state: State) error{}!?State {
+            if (action == .condition and edge.outcome == .unmatched) return null;
+            return state | 2;
+        }
+
+        fn covers(_: @This(), left: State, right: State) bool {
+            return left & right == right;
+        }
+
+        fn include(_: @This(), left: *State, right: State) error{}!void {
+            left.* |= right;
+        }
+
+        fn release(_: @This(), _: State) void {}
+    };
+    const flow: Flow = .{ .entry = 0, .blocks = &.{
+        .{ .action = .{ .condition = .{ .expression = @enumFromInt(0), .statement = @enumFromInt(1) } }, .successors = .{ 1, 2 } },
+        .{ .action = .none, .successors = .{ 0, null } },
+        .{ .action = .none, .successors = .{ null, null } },
+    } };
+    var headers: [3]?Domain.State = @splat(null);
+    try flow.solve(Domain, std.testing.allocator, &headers, 1, .{});
+    try std.testing.expectEqual([3]?Domain.State{ 3, 3, null }, headers);
 }
