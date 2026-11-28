@@ -4247,23 +4247,10 @@ pub const SafetyChecker = struct {
         var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.state_allocator);
         defer hidden.deinit();
         for (storages.items) |storage| {
-            const generation = try state.domainGeneration(storage);
-            for (state.opaque_storages.items) |opaque_storage| {
-                if (!state.opaqueStorageMayMatch(opaque_storage, storage, false)) continue;
-                var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, generation);
-                if (!invalidates_dependency) {
-                    const storage_value = self.domainValue(state, storage) orelse facts.ValueFacts{};
-                    for (opaque_storage.hidden_dependencies) |dependency| {
-                        if (!valueContainsOwnedRoot(storage_value, dependency)) continue;
-                        invalidates_dependency = true;
-                        break;
-                    }
-                }
-                if (invalidates_dependency) {
-                    try self.report(source, "relocation would invalidate a hidden opaque dependency", .{});
-                    return;
-                }
-                for (opaque_storage.hidden_dependencies) |dependency| try appendRootFact(&hidden, dependency);
+            if (!try self.checkOpaqueRelocationSource(source, state, storage)) return;
+            for (state.opaque_storages.items) |row| {
+                if (!state.opaqueStorageMayMatch(row, storage, false)) continue;
+                for (row.hidden_dependencies) |dependency| try appendRootFact(&hidden, dependency);
             }
         }
         if (hidden.items.len == 0) return;
@@ -4277,6 +4264,20 @@ pub const SafetyChecker = struct {
         // A slot move may leave other source elements alive. Retain its
         // obligations until a verified whole-domain emptying.
         for (targets.items) |target| try self.mergeOpaqueStorage(state, target, hidden.items);
+    }
+
+    fn checkOpaqueRelocationSource(self: *SafetyChecker, source: primitives.SourceRef, state: *FunctionState, storage: StorageIdentity) !bool {
+        for (state.opaque_storages.items) |row| {
+            if (row.hidden_dependencies.len == 0 or !state.opaqueStorageMayMatch(row, storage, false)) continue;
+            const generation = try state.domainGeneration(storage);
+            const value = self.domainValue(state, storage) orelse facts.ValueFacts{};
+            for (row.hidden_dependencies) |dependency| {
+                if (dependency != generation and !valueContainsOwnedRoot(value, dependency)) continue;
+                try self.report(source, "relocation would invalidate a hidden opaque dependency", .{});
+                return false;
+            }
+        }
+        return true;
     }
 
     fn primitiveArgumentRootBinding(
@@ -4892,7 +4893,7 @@ pub const SafetyChecker = struct {
     /// finite boundary excludes partial values and replacement effects, so a
     /// preserving exit confirms current facts instead of restoring snapshots.
     fn relocationSelectedBy(summary: facts.SafetySummary, destination: facts.PlacePostState, output_index: u32) ?facts.InputPath {
-        if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.storage_capability_uses.len != 0) return null;
+        if (summary.opaque_storage_effects.len != 0 or summary.opaque_relocation_sources.len != 0 or summary.opaque_storage_empties.len != 0 or summary.storage_capability_uses.len != 0) return null;
         if (destination.target.projections.len != 0 or destination.initializedness != .maybe_initialized or
             !destination.requires_available_destination or !destination.refreshes_storage_generation or
             destination.ends_previous_roots or destination.opaque_ownership != .none or destination.opaque_storage != null or
@@ -5020,7 +5021,7 @@ pub const SafetyChecker = struct {
     /// selected by one output. Replacements and unrelated predicates retain
     /// their conservative post-state rather than recovering caller snapshots.
     fn consumptionSelectedBy(summary: facts.SafetySummary, post: facts.PlacePostState, output_index: u32) bool {
-        if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.storage_capability_uses.len != 0) return false;
+        if (summary.opaque_storage_effects.len != 0 or summary.opaque_relocation_sources.len != 0 or summary.opaque_storage_empties.len != 0 or summary.storage_capability_uses.len != 0) return false;
         if (post.initializedness != .maybe_initialized or !post.ends_previous_roots or post.target.projections.len != 0) return false;
         var consumes = false;
         for (summary.outcome_post_states) |outcome| {
@@ -5372,6 +5373,16 @@ pub const SafetyChecker = struct {
             if (try hasPendingExecution(value, state)) {
                 try self.report(source, "cannot abandon a pending execution before certified completion", .{});
             }
+        }
+        for (summary.opaque_relocation_sources) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var domains = std.array_list.Managed(StorageIdentity).init(self.state_allocator);
+            defer domains.deinit();
+            if (path.storage_domain == null and path.projections.len == 0)
+                try self.collectOpaqueDomainsAccessedBy(state, arguments[path.input_index], &domains);
+            if (try self.resolveSummaryOpaqueStoragePath(path, argument_ids, arguments, state)) |storage|
+                try appendStorageIdentity(&domains, storage);
+            for (domains.items) |storage| if (!try self.checkOpaqueRelocationSource(source, state, storage)) return;
         }
         const entry_hidden = try self.captureSummaryOpaqueDependencies(summary, arguments, state);
         defer self.state_allocator.free(entry_hidden);
@@ -12875,6 +12886,30 @@ test "opaque summary dependency reads include every possible source domain" {
     const result = try checker.instantiateOutput(.{ .opaque_storage_dependencies = &.{.{ .input_index = 0 }} }, &.{argument}, &state);
     try std.testing.expect(valueDependsOnRoot(result, left));
     try std.testing.expect(valueDependsOnRoot(result, right));
+}
+
+test "opaque relocation summary rejects a dependency on the source generation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const from: facts.Place = .{ .root = @enumFromInt(0) };
+    const domain: facts.StorageIdentity = .{ .place = from };
+    const generation = try state.domainGeneration(domain);
+    try state.mergeOpaqueStorage(domain, &.{generation}, &.{});
+    const path: facts.InputPath = .{ .input_index = 0 };
+    try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
+        .opaque_relocation_sources = &.{path},
+        .opaque_storage_empties = &.{path},
+    }, &.{}, &.{.{ .referenced_place = from }}, &state);
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{generation}, state.opaque_storages.items[0].hidden_dependencies);
 }
 
 test "opaque summary emptying cannot erase dependencies transferred from entry" {

@@ -186,6 +186,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         a.input_post_states.len != b.input_post_states.len or
         a.outcome_post_states.len != b.outcome_post_states.len or
         a.opaque_storage_effects.len != b.opaque_storage_effects.len or
+        a.opaque_relocation_sources.len != b.opaque_relocation_sources.len or
         a.opaque_storage_empties.len != b.opaque_storage_empties.len or a.completed_executions.len != b.completed_executions.len) return false;
 
     for (a.outputs, b.outputs) |left, right| if (!valueEffectEql(left, right)) return false;
@@ -202,6 +203,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         for (left.input_post_states, right.input_post_states) |left_state, right_state|
             if (!postStateEql(left_state, right_state)) return false;
     }
+    for (a.opaque_relocation_sources, b.opaque_relocation_sources) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.opaque_storage_effects, b.opaque_storage_effects) |left, right| {
         if (!inputPathEql(left.storage, right.storage) or !valueEffectEql(left.hidden_dependencies, right.hidden_dependencies)) return false;
     }

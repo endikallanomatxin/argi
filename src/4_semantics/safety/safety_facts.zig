@@ -477,6 +477,7 @@ pub const SafetySummary = struct {
     /// Selectors identify the output field and its choice variant.
     outcome_post_states: []const OutcomePostStates = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
+    opaque_relocation_sources: []const InputPath = &.{},
     opaque_storage_empties: []const InputPath = &.{},
     completed_executions: []const InputPath = &.{},
     invalidated_domains: []const InputDomain = &.{},

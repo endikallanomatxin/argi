@@ -58,6 +58,7 @@ pub const Infer = struct {
     capability_flow_ns: u64 = 0,
     guards_ns: u64 = 0,
     unbound_opaque_dependencies: facts.ValueEffect = .{},
+    opaque_relocation_sink: ?*std.array_list.Managed(facts.InputPath) = null,
     opaque_empty_seen: bool = false,
     inferring_completions: bool = false,
     virtual_summary_ns: u64 = 0,
@@ -1007,6 +1008,7 @@ pub const Infer = struct {
             .input_post_states = previous.input_post_states,
             .outcome_post_states = previous.outcome_post_states,
             .opaque_storage_effects = previous.opaque_storage_effects,
+            .opaque_relocation_sources = previous.opaque_relocation_sources,
             .opaque_storage_empties = previous.opaque_storage_empties,
             .completed_executions = previous.completed_executions,
         };
@@ -1083,11 +1085,18 @@ pub const Infer = struct {
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
         defer opaque_storage_effects.deinit();
         self.opaque_empty_seen = false;
-        const opaque_storage_empties = try self.inferOpaqueStorageEffects(
-            function_id,
-            function.body.?,
-            &opaque_storage_effects,
-        );
+        var relocation_sources = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        defer relocation_sources.deinit();
+        const opaque_storage_empties = blk: {
+            const previous_sink = self.opaque_relocation_sink;
+            self.opaque_relocation_sink = &relocation_sources;
+            defer self.opaque_relocation_sink = previous_sink;
+            break :blk try self.inferOpaqueStorageEffects(
+                function_id,
+                function.body.?,
+                &opaque_storage_effects,
+            );
+        };
         const has_opaque_empty_effect = self.opaque_empty_seen;
         self.inferring_completions = true;
         self.opaque_empty_seen = false;
@@ -1375,6 +1384,7 @@ pub const Infer = struct {
             .input_post_states = try post_states.toOwnedSlice(),
             .outcome_post_states = outcome_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
+            .opaque_relocation_sources = try relocation_sources.toOwnedSlice(),
             .opaque_storage_empties = opaque_storage_empties,
             .completed_executions = completed_executions,
             .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
@@ -5029,6 +5039,7 @@ pub const Infer = struct {
                 if (arguments.len != 2) return;
                 const sources = try self.inferInputPaths(function_id, arguments[0].value);
                 if (sources.len == 0) return;
+                if (self.opaque_relocation_sink) |sink| for (sources) |path| try appendInputPath(sink, path);
                 const destinations = try self.inferInputPaths(function_id, arguments[1].value);
                 try self.recordOpaqueRelocation(effects, state, sources, destinations);
                 return;
@@ -5095,6 +5106,10 @@ pub const Infer = struct {
             }
             return;
         }
+        if (self.opaque_relocation_sink) |sink| for (summary.opaque_relocation_sources) |path| {
+            const sources = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (sources) |mapped| try appendInputPath(sink, mapped);
+        };
         if (self.summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
         for (summary.outcome_post_states) |outcome| if (outcome.opaque_storage_empties.len != 0) {
             self.opaque_empty_seen = true;
@@ -7381,7 +7396,7 @@ pub const Infer = struct {
         }
         if (cleanup.deinit_fn) |callee| {
             const summary = self.engine.summaryFor(callee) orelse return null;
-            if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0) return null;
+            if (summary.opaque_storage_effects.len != 0 or summary.opaque_relocation_sources.len != 0 or summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0) return null;
             const arguments = self.structArguments(cleanup.input orelse return null) orelse return null;
             for (summary.input_post_states) |post| {
                 if (post.target.input_index == cleanup.self_field_index) {
@@ -7452,7 +7467,7 @@ pub const Infer = struct {
                     if (callee.body == null or callee.safety_primitive != .none) return fallback;
                     const summary = self.engine.summaryFor(call.callee) orelse return fallback;
                     const arguments = self.structArguments(call.input) orelse return fallback;
-                    if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0) return fallback;
+                    if (summary.opaque_storage_effects.len != 0 or summary.opaque_relocation_sources.len != 0 or summary.opaque_storage_empties.len != 0 or summary.invalidated_domains.len != 0) return fallback;
                     var changes = false;
                     for (summary.input_post_states) |post| {
                         if (post.target.input_index >= arguments.len) return fallback;
@@ -11537,7 +11552,7 @@ pub fn executionResult(graph: *const graph_mod.GlobalSemanticGraph, worker: grap
 
 fn updatedExecutionOutput(graph: *const graph_mod.GlobalSemanticGraph, worker: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) ?*const facts.ValueEffect {
     if (summary.outputs.len != 1 or summary.unknown_access or summary.unresolved_transfer) return null;
-    if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or
+    if (summary.opaque_storage_effects.len != 0 or summary.opaque_relocation_sources.len != 0 or summary.opaque_storage_empties.len != 0 or
         summary.invalidated_domains.len != 0 or summary.storage_capability_uses.len != 0) return null;
     const output = &summary.outputs[0];
     if (!output.fields_are_updates) return null;
