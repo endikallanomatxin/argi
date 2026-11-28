@@ -23,6 +23,30 @@ pub const Custody = packed struct(u2) {
     }
 };
 
+/// Suspended authority from a statically named execution site. Historical
+/// restrictions can represent several still-pending receipts.
+const Restriction = packed struct(u4) {
+    current_read: bool = false,
+    current_write: bool = false,
+    historical_read: bool = false,
+    historical_write: bool = false,
+
+    fn include(self: Restriction, incoming: Restriction) Restriction {
+        return @bitCast(@as(u4, @bitCast(self)) | @as(u4, @bitCast(incoming)));
+    }
+
+    fn covers(self: Restriction, incoming: Restriction) bool {
+        return @as(u4, @bitCast(self.include(incoming))) == @as(u4, @bitCast(self));
+    }
+
+    fn age(self: Restriction) Restriction {
+        return .{
+            .historical_read = self.current_read or self.historical_read,
+            .historical_write = self.current_write or self.historical_write,
+        };
+    }
+};
+
 pub const Slots = struct {
     /// The concrete domain can change when its producing handle is renewed.
     /// Both rows are assigned once, before the first transfer.
@@ -62,6 +86,8 @@ pub const Slots = struct {
         observe: struct { slot: usize, producer: usize },
         copy_reference: struct { destination: usize, source: usize, definite: bool },
         select: struct { destination: usize, receiver: usize },
+        suspend_access: struct { slot: usize, receipt_site: usize, exclusive: bool },
+        complete_execution: usize,
 
         pub fn apply(self: Transfer, state: Slots) error{UnprovedObservation}!void {
             switch (self) {
@@ -70,6 +96,8 @@ pub const Slots = struct {
                 .retain_owner => |retained| state.owner(retained.slot, retained.producer).current = true,
                 .observe => |reference| state.observeCurrent(reference.slot, reference.producer),
                 .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
+                .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
+                .complete_execution => |site| state.completeCurrent(site),
                 .select => |selection| if (!state.borrowSelected(selection.destination, selection.receiver))
                     return error.UnprovedObservation,
             }
@@ -80,6 +108,7 @@ pub const Slots = struct {
     initialization: []Initialization,
     observations: []Observation,
     custody: []Custody,
+    restrictions: []Restriction,
 
     pub fn init(allocator: std.mem.Allocator, layout: Layout) !Slots {
         const count = try std.math.mul(usize, layout.slots, layout.producers);
@@ -89,10 +118,13 @@ pub const Slots = struct {
         const observations = try allocator.alloc(Observation, count);
         errdefer allocator.free(observations);
         const custody = try allocator.alloc(Custody, count);
+        errdefer allocator.free(custody);
+        const restrictions = try allocator.alloc(Restriction, count);
+        @memset(restrictions, .{});
         @memset(custody, .{});
         @memset(initialization, .{});
         @memset(observations, .{});
-        return .{ .layout = layout, .initialization = initialization, .observations = observations, .custody = custody };
+        return .{ .layout = layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions };
     }
 
     /// Copies a state in the same already validated layout.
@@ -102,10 +134,13 @@ pub const Slots = struct {
         const observations = try allocator.dupe(Observation, self.observations);
         errdefer allocator.free(observations);
         const custody = try allocator.dupe(Custody, self.custody);
-        return .{ .layout = self.layout, .initialization = initialization, .observations = observations, .custody = custody };
+        errdefer allocator.free(custody);
+        const restrictions = try allocator.dupe(Restriction, self.restrictions);
+        return .{ .layout = self.layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions };
     }
 
     pub fn deinit(self: Slots, allocator: std.mem.Allocator) void {
+        allocator.free(self.restrictions);
         allocator.free(self.custody);
         allocator.free(self.observations);
         allocator.free(self.initialization);
@@ -165,6 +200,40 @@ pub const Slots = struct {
         return &self.custody[slot * self.layout.producers + producer];
     }
 
+    pub const Access = enum { read, write };
+
+    /// The caller has checked compatibility and supplies every overlapping
+    /// slot. Shared loans suspend writes; exclusive loans suspend both.
+    pub fn suspendAccess(self: Slots, slot: usize, receipt_site: usize, exclusive: bool) void {
+        const loan = self.restriction(slot, receipt_site);
+        loan.current_read = loan.current_read or exclusive;
+        loan.current_write = true;
+    }
+
+    fn restriction(self: Slots, slot: usize, receipt_site: usize) *Restriction {
+        std.debug.assert(slot < self.layout.slots and receipt_site < self.layout.producers);
+        return &self.restrictions[slot * self.layout.producers + receipt_site];
+    }
+
+    pub fn accessSuspended(self: Slots, slot: usize, mode: Access) bool {
+        for (0..self.layout.producers) |site| {
+            const loan = self.restriction(slot, site).*;
+            if (loan.current_read or loan.historical_read) return true;
+            if (mode == .write and (loan.current_write or loan.historical_write)) return true;
+        }
+        return false;
+    }
+
+    /// Completion is authorized by the exact current receipt, independent
+    /// of validity or initialization. Historical loans stay suspended.
+    pub fn completeCurrent(self: Slots, receipt_site: usize) void {
+        for (0..self.layout.slots) |slot| {
+            const loan = self.restriction(slot, receipt_site);
+            loan.current_read = false;
+            loan.current_write = false;
+        }
+    }
+
     /// The caller must already have identified the exact current owner.
     /// Destroying it cannot discharge older instances from the same producer.
     pub fn dischargeCurrent(self: Slots, slot: usize, producer: usize) void {
@@ -219,6 +288,8 @@ pub const Slots = struct {
             row[producer] = row[producer].age();
             const custody = self.owner(slot, producer);
             custody.* = custody.age();
+            const loan = self.restriction(slot, producer);
+            loan.* = loan.age();
         }
         for (self.layout.opaque_rows) |domain| {
             if (domain.producer != producer or domain.current == relocated_row) continue;
@@ -238,6 +309,7 @@ pub const Slots = struct {
         for (self.initialization, incoming.initialization) |a, b| if (!a.covers(b)) return false;
         for (self.observations, incoming.observations) |a, b| if (!a.covers(b)) return false;
         for (self.custody, incoming.custody) |a, b| if (!a.covers(b)) return false;
+        for (self.restrictions, incoming.restrictions) |a, b| if (!a.covers(b)) return false;
         return true;
     }
 
@@ -246,6 +318,7 @@ pub const Slots = struct {
         for (self.initialization, incoming.initialization) |*a, b| a.* = a.join(b);
         for (self.observations, incoming.observations) |*a, b| a.* = a.join(b);
         for (self.custody, incoming.custody) |*a, b| a.* = a.join(b);
+        for (self.restrictions, incoming.restrictions) |*a, b| a.* = a.include(b);
     }
 };
 
@@ -464,4 +537,25 @@ test "safety finite symbolic writes preserve both targets of a possible update" 
     state.writeReference(2, 1, true);
     try std.testing.expectEqual(Observation{}, state.observation(2, 0));
     try std.testing.expect(state.borrowSelected(0, 2));
+}
+
+test "safety finite authority retains historical loans independently of validity" {
+    const a = std.testing.allocator;
+    const before = try Slots.init(a, .{ .slots = 2, .producers = 2 });
+    defer before.deinit(a);
+    before.observeCurrent(0, 0);
+    const state = try before.clone(a);
+    defer state.deinit(a);
+    try (Slots.Transfer{ .suspend_access = .{ .slot = 0, .receipt_site = 1, .exclusive = false } }).apply(state);
+    state.age(1);
+    state.suspendAccess(1, 1, true);
+    try std.testing.expect(state.accessSuspended(1, .read));
+    try (Slots.Transfer{ .complete_execution = 1 }).apply(state);
+    try std.testing.expect(!state.accessSuspended(1, .read));
+    try std.testing.expect(!state.accessSuspended(0, .read));
+    try std.testing.expect(state.accessSuspended(0, .write));
+    try std.testing.expect(state.observation(0, 0).provesCurrent());
+    try std.testing.expect(!before.covers(state));
+    before.include(state);
+    try std.testing.expect(before.covers(state));
 }
