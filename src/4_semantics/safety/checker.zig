@@ -5373,6 +5373,8 @@ pub const SafetyChecker = struct {
                 try self.report(source, "cannot abandon a pending execution before certified completion", .{});
             }
         }
+        const entry_hidden = try self.captureSummaryOpaqueDependencies(summary, arguments, state);
+        defer self.state_allocator.free(entry_hidden);
         for (summary.invalidated_domains) |domain| {
             if (domain.path.input_index >= arguments.len) continue;
             const value = try self.load_summary_input_value(domain.path, arguments, state);
@@ -5405,7 +5407,7 @@ pub const SafetyChecker = struct {
         try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
         try self.applySummaryInputPostStates(source, summary, argument_ids, arguments, state);
         try self.applySummaryOpaqueStorageEmpties(summary, argument_ids, arguments, state);
-        try self.applySummaryOpaqueStorageEffects(summary, argument_ids, arguments, state);
+        try self.applySummaryOpaqueStorageEffects(summary, argument_ids, arguments, entry_hidden, state);
     }
 
     // Ending a value preserves its backing storage. Distinct input accesses
@@ -5908,14 +5910,52 @@ pub const SafetyChecker = struct {
         return null;
     }
 
+    fn captureSummaryOpaqueDependencies(
+        self: *SafetyChecker,
+        summary: facts.SafetySummary,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) ![][]const facts.ValidityRootId {
+        const captured = try self.state_allocator.alloc([]const facts.ValidityRootId, summary.opaque_storage_effects.len);
+        errdefer self.state_allocator.free(captured);
+        for (summary.opaque_storage_effects, captured) |effect, *roots| {
+            var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            errdefer hidden.deinit();
+            try self.collectEntryOpaqueDependencies(effect.hidden_dependencies, arguments, state, &hidden);
+            roots.* = try hidden.toOwnedSlice();
+        }
+        return captured;
+    }
+
+    fn collectEntryOpaqueDependencies(
+        self: *SafetyChecker,
+        effect: facts.ValueEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
+    ) anyerror!void {
+        for (effect.opaque_storage_dependencies) |path| {
+            const storage = try self.resolveSummaryOpaqueStoragePath(path, &.{}, arguments, state) orelse continue;
+            for (state.opaque_storages.items) |row| {
+                if (!state.opaqueStorageMayMatch(row, storage, false)) continue;
+                for (row.hidden_dependencies) |root| {
+                    if (!self.opaqueDependencyIsInternalToStorage(state, row.storage, root)) try appendRootFact(hidden, root);
+                }
+            }
+        }
+        for (effect.fields) |field| try self.collectEntryOpaqueDependencies(field.value.*, arguments, state, hidden);
+        for (effect.variants) |variant| try self.collectEntryOpaqueDependencies(variant.value.*, arguments, state, hidden);
+    }
+
     fn applySummaryOpaqueStorageEffects(
         self: *SafetyChecker,
         summary: facts.SafetySummary,
         argument_ids: []const graph_mod.GlobalValueFieldId,
         arguments: []const facts.ValueFacts,
+        entry_hidden: []const []const facts.ValidityRootId,
         state: *FunctionState,
     ) !void {
-        for (summary.opaque_storage_effects) |effect| {
+        for (summary.opaque_storage_effects, entry_hidden) |effect, captured| {
             var destinations = std.array_list.Managed(StorageIdentity).init(self.allocator);
             defer destinations.deinit();
             const path = effect.storage;
@@ -5935,6 +5975,7 @@ pub const SafetyChecker = struct {
             }
             var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer hidden.deinit();
+            try hidden.appendSlice(captured);
             var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
             defer fresh_roots.deinit();
             try self.instantiateOpaqueDependencies(effect.hidden_dependencies, arguments, state, &fresh_roots, &hidden);
@@ -12798,6 +12839,34 @@ test "call completion cannot authorize its earlier may-access effects" {
     try std.testing.expect(!state.executionPending(id));
     try checker.applySummaryEffects(source, access, &.{}, &arguments, &state);
     try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+}
+
+test "opaque summary emptying cannot erase dependencies transferred from entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var a = arena.allocator();
+    var diags = try diagnostics.Diagnostics.init(&a, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(a, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const from: facts.Place = .{ .root = @enumFromInt(0) };
+    const to: facts.Place = .{ .root = @enumFromInt(1) };
+    const external = try state.tracker.establish(.fresh);
+    try state.mergeOpaqueStorage(.{ .place = from }, &.{external}, &.{});
+    const source: facts.InputPath = .{ .input_index = 0 };
+    try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
+        .opaque_storage_empties = &.{source},
+        .opaque_storage_effects = &.{.{
+            .storage = .{ .input_index = 1 },
+            .hidden_dependencies = .{ .opaque_storage_dependencies = &.{source} },
+        }},
+    }, &.{}, &.{ .{ .referenced_place = from }, .{ .referenced_place = to } }, &state);
+    try std.testing.expectEqual(@as(usize, 0), diags.list.items.len);
+    try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{external}, state.opaque_storages.items[1].hidden_dependencies);
 }
 
 test "opaque relocation retains possible hidden dependencies in both domains" {
