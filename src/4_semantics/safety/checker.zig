@@ -12462,9 +12462,10 @@ test "loop joins do not infer a lazy generation from a refreshed symbolic row" {
 }
 
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
-    if (left == right) return left;
+    // Preserve the lexical move diagnostic until lexical slots retain
+    // the full set of initialization alternatives.
     if (left == .moved or right == .moved) return .moved;
-    return .maybe_initialized;
+    return value_state.joinInitializedness(left, right);
 }
 
 fn isPointer(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {

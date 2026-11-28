@@ -4307,7 +4307,7 @@ pub const Infer = struct {
             var merged = left_state;
             if (self.findInputPostState(right.items, left_state.target)) |right_state| {
                 merged.initialization = if (left_state.initialization == right_state.initialization) left_state.initialization else .possible;
-                merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
+                merged.initializedness = value_state.joinInitializedness(left_state.initializedness, right_state.initializedness);
                 merged.value = try self.joinStorageAlternatives(self.postStateValueType(left_state.target), left_state.value, right_state.value);
                 merged.reference_refresh = left_state.reference_refresh and right_state.reference_refresh;
                 merged.reference_targets = if (left_state.reference_targets != null and right_state.reference_targets != null)
@@ -10135,11 +10135,6 @@ test "opaque ownership post-state joins preserve storage correlation" {
     try inference.joinInputPostStates(&ambiguous, &opaque_branch, &other);
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.ambiguous, ambiguous.items[0].opaque_ownership);
     try std.testing.expect(ambiguous.items[0].opaque_storage == null);
-}
-
-fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
-    if (left == right) return left;
-    return .maybe_initialized;
 }
 
 test "numeric projected values retain choices without ownership or validity" {

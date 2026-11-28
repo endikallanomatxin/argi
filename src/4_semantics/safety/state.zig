@@ -66,7 +66,7 @@ pub const SymbolicPointeeState = struct {
         var result = self;
         if (other) |opposite| {
             std.debug.assert(self.identity == opposite.identity);
-            if (self.initializedness != opposite.initializedness) result.initializedness = .maybe_initialized;
+            result.initializedness = value_state.joinInitializedness(self.initializedness, opposite.initializedness);
             if (self.backing != opposite.backing) result.backing = null;
             if (self.generation != opposite.generation) result.generation = null;
         } else result.initializedness = .maybe_initialized;

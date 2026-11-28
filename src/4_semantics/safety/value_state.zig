@@ -23,6 +23,15 @@ pub const Initialization = packed struct(u3) {
         };
     }
 
+    pub fn toLegacy(self: Initialization) Initializedness {
+        return switch (@as(u3, @bitCast(self))) {
+            1 => .initialized,
+            2 => .moved,
+            4 => .deinitialized,
+            else => .maybe_initialized,
+        };
+    }
+
     pub fn join(left: Initialization, right: Initialization) Initialization {
         return @bitCast(@as(u3, @bitCast(left)) | @as(u3, @bitCast(right)));
     }
@@ -51,6 +60,12 @@ test "safety initialization weak writes preserve all reaching states" {
         try testing.expectEqual(joined.weakWrite(written), left.weakWrite(written).join(right.weakWrite(written)));
         try testing.expectEqual(a == 1, left.definitelyInitialized());
     };
+}
+
+/// Compatibility projection for state tables that still use the four-case
+/// representation. Keep the exact cases in the finite domain itself.
+pub fn joinInitializedness(left: Initializedness, right: Initializedness) Initializedness {
+    return Initialization.fromLegacy(left).join(Initialization.fromLegacy(right)).toLegacy();
 }
 
 pub const State = struct {
