@@ -759,6 +759,70 @@ substitution.
 
 ### Loop header domain
 
+#### Replacement architecture
+
+The checker and summary evaluator need a common finite state algebra.
+Build the key universe from the specialized function before solving its
+control flow. Number entry reference leaves, lexical slots, effect sites,
+and typed selectors from the graph and the summaries it calls. Assign an
+embedded field to its base slot and selector. A dereference or opaque
+lookup follows targets in the value stored at a slot. It cannot append a
+new identity to a path constructed during iteration. Keep explicit
+embedded paths from the completed layout. For indexed or unresolved
+storage, use an overlapping region of the containing type with weak
+updates. The set of regions is fixed before the first transfer.
+
+For each production site and output role, preallocate a current
+singleton and a historical partition. Reexecuting the transfer shifts
+every reference to the previous singleton to the historical partition,
+then initializes the singleton. Perform this once as part of abstract
+allocation. The shift must transport target sets, observations, opaque
+contents and owner relations together. An outstanding loan or acquisition
+receipt must retain a possible obligation after the shift. A historical
+partition can contain several live or ended instances. Its membership
+never proves validity, unique access or the right to destroy a specific
+instance.
+
+Use a product of finite components over those keys. Value slots contain
+possible targets, validity dependencies and owner associations. Authority
+records possible outstanding restrictions and definite grants separately.
+Opaque rows contain possible hidden dependencies, and a definite
+emptying operation changes only a uniquely selected current row.
+Consumption and initialization use finite state sets. Choices carry
+definite refinements in the state with bounded tags from the graph.
+A join unions possible facts and intersects definite facts. Coverage is
+the resulting product order. Neither the representation nor the order
+depends on a counter for execution visits.
+
+Use the same transfer interface for checker operations and application
+of summaries. Summaries refer to entry locations and production roles.
+Instantiate those roles into the caller's preallocated keys, composing
+read/write and normal-return effects without copying callee identities.
+For the first implementation, retain one conservative outcome wherever
+a conditional effect cannot be represented soundly by the graph's
+finite refinements. Keep rejected cases diagnostic, and measure where
+that loss of precision matters before introducing a relational refinement.
+
+Replace the loop driver as a unit once the new state can express the
+growth controls. Iterate an ascending worklist over basic blocks and
+check that each successor fact set is included in its destination.
+Exits accumulate facts in the same lattice. Inference and validation
+must use that same semantics for backedges. Test allocation aging and
+summary substitution against finite concrete traces with simultaneous
+owners, live current views, stale views, guarded empties and pending
+loans. Verify monotonicity of each transfer over small enumerated
+states before claiming termination for whole functions.
+
+Use the reduced growth, pre-reserved growth and straight-line controls
+for DynamicArray, and a String append loop with a stale-view companion.
+Record abstract key count, strict header increases, transfer visits,
+GlobalSafety time and peak RSS. Run the geometry kernel only after the
+small programs accept or reject as specified. Compare repeated visits
+to one allocation site with extra static sites to distinguish growth
+in the program from growth introduced by the solver.
+
+#### Measurements and constraints from the existing checker
+
 Use a bounded recency abstraction for each abstract storage or producer
 partition. Keep entry-relative identities rigid. Name a projection by
 its base partition and typed path, with an unresolved suffix once the
