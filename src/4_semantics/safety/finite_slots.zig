@@ -283,3 +283,77 @@ test "safety checked selection borrows old owned elements from a current contain
     try std.testing.expectEqual(Custody{}, state.owner(domain.historical, 1).*);
     try std.testing.expect(state.observation(domain.current, 0).historical);
 }
+
+test "safety finite dataflow covers repeated owned element insertion and backing relocation" {
+    const Domain = struct {
+        pub const State = Slots;
+        const backing = 0;
+        const element = 1;
+        const receiver = 0;
+        const saved = 1;
+        const fresh = 2;
+        const contents: Slots.OpaqueRows = .{ .producer = backing, .current = 3, .historical = 4 };
+        const layout: Slots.Layout = .{ .slots = 5, .producers = 2, .opaque_rows = &.{contents} };
+
+        allocator: std.mem.Allocator,
+
+        pub fn successors(_: @This(), block: usize) []const usize {
+            return switch (block) {
+                0, 1 => &.{2},
+                2 => &.{ 1, 3 },
+                else => &.{},
+            };
+        }
+
+        fn copy(self: @This(), state: State) !State {
+            const next = try Slots.init(self.allocator, layout);
+            next.include(state);
+            return next;
+        }
+
+        pub fn transfer(self: @This(), block: usize, successor: usize, state: State) !?State {
+            const next = try self.copy(state);
+            if (block == 2 and successor == 3) {
+                try std.testing.expect(next.borrowSelected(fresh, receiver));
+                return next;
+            }
+            if (block == 2) {
+                next.renewRelocatingOpaque(contents);
+                next.observeCurrent(receiver, backing);
+            } else {
+                next.age(element);
+                next.owner(contents.current, element).current = true;
+                if (block == 0) try std.testing.expect(next.borrowSelected(saved, receiver));
+            }
+            return next;
+        }
+
+        pub fn join(self: @This(), left: State, right: State) !State {
+            const next = try self.copy(left);
+            next.include(right);
+            return next;
+        }
+
+        pub fn covers(_: @This(), left: State, right: State) bool {
+            return left.covers(right);
+        }
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const domain: Domain = .{ .allocator = arena.allocator() };
+    const initial = try Slots.init(domain.allocator, Domain.layout);
+    initial.observeCurrent(Domain.receiver, Domain.backing);
+    var headers: [4]?Slots = @splat(null);
+    try @import("finite_dataflow.zig").solve(Domain, domain.allocator, &headers, 0, initial, domain);
+
+    for (headers, 0..) |header, block| {
+        for (domain.successors(block)) |successor| {
+            const incoming = (try domain.transfer(block, successor, header.?)).?;
+            try std.testing.expect(headers[successor].?.covers(incoming));
+        }
+    }
+    const after = headers[3].?;
+    try std.testing.expectEqual(Custody{ .current = true, .historical = true }, after.owner(Domain.contents.current, Domain.element).*);
+    try std.testing.expect(after.observation(Domain.fresh, Domain.backing).provesCurrent());
+    try std.testing.expect(!after.observation(Domain.saved, Domain.backing).provesCurrent());
+}
