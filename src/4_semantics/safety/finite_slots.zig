@@ -322,16 +322,21 @@ test "safety finite dataflow covers repeated owned element insertion and backing
 
         allocator: std.mem.Allocator,
 
+        pub fn release(self: @This(), state: State) void {
+            state.deinit(self.allocator);
+        }
+
         pub fn successors(_: @This(), block: usize) []const usize {
             return switch (block) {
                 0, 1 => &.{2},
-                2 => &.{ 1, 3 },
+                2 => &.{ 2, 1, 3 },
                 else => &.{},
             };
         }
 
         pub fn transfer(self: @This(), block: usize, successor: usize, state: State) !?State {
             const next = try state.clone(self.allocator);
+            errdefer next.deinit(self.allocator);
             if (block == 2 and successor == 3) {
                 try std.testing.expect(next.borrowSelected(fresh, receiver));
                 return next;
@@ -357,17 +362,17 @@ test "safety finite dataflow covers repeated owned element insertion and backing
             return left.covers(right);
         }
     };
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const domain: Domain = .{ .allocator = arena.allocator() };
+    const domain: Domain = .{ .allocator = std.testing.allocator };
     const initial = try Slots.init(domain.allocator, Domain.layout);
     initial.observeCurrent(Domain.receiver, Domain.backing);
     var headers: [4]?Slots = @splat(null);
+    defer for (headers) |header| if (header) |state| domain.release(state);
     try @import("finite_dataflow.zig").solve(Domain, domain.allocator, &headers, 0, initial, domain);
 
     for (headers, 0..) |header, block| {
         for (domain.successors(block)) |successor| {
             const incoming = (try domain.transfer(block, successor, header.?)).?;
+            defer domain.release(incoming);
             try std.testing.expect(headers[successor].?.covers(incoming));
         }
     }

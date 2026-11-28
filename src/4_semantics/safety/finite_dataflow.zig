@@ -4,8 +4,10 @@ const std = @import("std");
 
 /// Reachability is represented by optional headers. The caller supplies
 /// empty headers, an entry state, and fixed successors for each block.
-/// State payloads must be immutable so edge transfers can read a snapshot,
-/// including on self edges.
+/// State payloads must be immutable during transfer and join. Both
+/// operations return independently owned states. The domain releases
+/// discarded states. The caller owns every published header, including
+/// the entry state and any headers published before an error.
 pub fn solve(
     comptime Domain: type,
     allocator: std.mem.Allocator,
@@ -14,6 +16,7 @@ pub fn solve(
     initial: Domain.State,
     domain: Domain,
 ) !void {
+    headers[entry] = initial;
     const queued = try allocator.alloc(bool, headers.len);
     defer allocator.free(queued);
     @memset(queued, false);
@@ -22,18 +25,27 @@ pub fn solve(
     var count: usize = 1;
     pending[0] = entry;
     queued[entry] = true;
-    headers[entry] = initial;
 
     while (count != 0) {
         count -= 1;
         const block = pending[count];
         queued[block] = false;
         const input = headers[block].?;
+        var replaced_input = false;
+        defer if (replaced_input) domain.release(input);
         for (domain.successors(block)) |successor| {
             const next = (try domain.transfer(block, successor, input)) orelse continue;
             if (headers[successor]) |previous| {
+                defer domain.release(next);
                 if (domain.covers(previous, next)) continue;
-                headers[successor] = try domain.join(previous, next);
+                const combined = try domain.join(previous, next);
+                if (successor == block and !replaced_input) {
+                    // Other edges still read the block's original snapshot.
+                    replaced_input = true;
+                } else {
+                    domain.release(previous);
+                }
+                headers[successor] = combined;
             } else {
                 headers[successor] = next;
             }
@@ -54,6 +66,8 @@ test "finite safety worklist covers a backedge and preserves its stale observati
             current: Observation = .{},
             slot: Initialization = .{ .deinitialized = true },
         };
+
+        fn release(_: @This(), _: State) void {}
 
         fn successors(_: @This(), block: usize) []const usize {
             return switch (block) {
