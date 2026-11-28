@@ -2786,6 +2786,7 @@ pub const Infer = struct {
         exits: *?CapabilityFlow,
     ) anyerror!void {
         if (!flow.reachable) return;
+        const control: @import("finite_dataflow.zig").LoopControl(graph_mod.GlobalNodeId) = .{ .condition = condition, .increment = increment };
         const before_condition = flow.calls.count();
         try self.infer_capability_node(function, condition, flow, exits);
         if (!flow.reachable) return;
@@ -2814,13 +2815,16 @@ pub const Infer = struct {
             if (transfers.break_flow) |*exit| try self.join_capability_alternative(exit, &broken);
             if (transfers.continue_flow) |*continued|
                 try self.join_capability_fallthrough(&backedge, &backedge, continued);
-            for (@import("finite_dataflow.zig").backedgeNodes(graph_mod.GlobalNodeId, condition, increment), 0..) |step, index| {
+            for (control.steps(.backedge)) |step| {
                 if (!backedge.reachable) break;
-                const node = step orelse continue;
-                if (index == 1) {
-                    for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
+                switch (step) {
+                    .none => {},
+                    .increment => |node| try self.infer_capability_node(function, node, &backedge, exits),
+                    .condition => |node| {
+                        for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
+                        try self.infer_capability_node(function, node, &backedge, exits);
+                    },
                 }
-                try self.infer_capability_node(function, node, &backedge, exits);
             }
             if (!backedge.reachable) break;
 
@@ -3502,9 +3506,13 @@ pub const Infer = struct {
         try self.inferInputPostStates(function, body, &backedge, exits);
         if (transfers.continue_flow) |*continued|
             try self.joinInputPostStateFallthrough(&backedge, &backedge, continued);
-        for (@import("finite_dataflow.zig").backedgeNodes(graph_mod.GlobalNodeId, condition, increment)) |step| {
+        const control: @import("finite_dataflow.zig").LoopControl(graph_mod.GlobalNodeId) = .{ .condition = condition, .increment = increment };
+        for (control.steps(.backedge)) |step| {
             if (!backedge.reachable) break;
-            if (step) |node| try self.inferInputPostStatesNode(function, node, &backedge, exits);
+            switch (step) {
+                .none => {},
+                .increment, .condition => |node| try self.inferInputPostStatesNode(function, node, &backedge, exits),
+            }
         }
 
         if (parent_observations) |parent| {

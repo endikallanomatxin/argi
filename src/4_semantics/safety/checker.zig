@@ -10478,6 +10478,7 @@ pub const SafetyChecker = struct {
         defer self.allocator.free(existing_places);
         for (existing_places) |place_facts| _ = try state.storageGeneration(place_facts.storage);
 
+        const control: @import("finite_dataflow.zig").LoopControl(graph_mod.GlobalNodeId) = .{ .condition = condition, .increment = increment };
         _ = try self.evaluate(function, condition, state);
         var entry = try self.cloneState(state);
         defer entry.deinit();
@@ -10504,9 +10505,12 @@ pub const SafetyChecker = struct {
             if (transfers.continue_state) |*continue_state|
                 try self.mergeLoopTransfer(&iteration, continue_state);
             if (iteration.reachable) {
-                for (@import("finite_dataflow.zig").backedgeNodes(graph_mod.GlobalNodeId, condition, increment)) |step| {
+                for (control.steps(.backedge)) |step| {
                     if (!iteration.reachable) break;
-                    if (step) |node| _ = try self.evaluate(function, node, &iteration);
+                    switch (step) {
+                        .none => {},
+                        .increment, .condition => |node| _ = try self.evaluate(function, node, &iteration),
+                    }
                 }
                 for (iteration.executions.items) |execution| {
                     if (!execution.pending or entry.executionPending(execution.id)) continue;

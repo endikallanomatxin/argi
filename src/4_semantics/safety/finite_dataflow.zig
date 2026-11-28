@@ -2,10 +2,35 @@
 //! edge transfer, coverage and a least upper bound on states.
 const std = @import("std");
 
-/// Fallthrough and continue evaluate the increment before the next
-/// condition. A break reaches the exit without evaluating either.
-pub fn backedgeNodes(comptime Node: type, condition: Node, increment: ?Node) [2]?Node {
-    return .{ increment, condition };
+/// The control transfers of a structured loop. Entry has already
+/// executed any initializer. Only fallthrough and continue run the
+/// increment and re-test. A break bypasses both.
+pub fn LoopControl(comptime Node: type) type {
+    return struct {
+        condition: Node,
+        increment: ?Node = null,
+
+        pub const Edge = enum { entry, backedge, loop_break };
+        pub const Step = union(enum) { none, increment: Node, condition: Node };
+
+        pub fn steps(self: @This(), edge: Edge) [2]Step {
+            return switch (edge) {
+                .entry => .{ .none, .{ .condition = self.condition } },
+                .backedge => .{
+                    if (self.increment) |node| .{ .increment = node } else .none,
+                    .{ .condition = self.condition },
+                },
+                .loop_break => .{ .none, .none },
+            };
+        }
+    };
+}
+
+test "safety loop control separates entry, backedge and break effects" {
+    const loop: LoopControl(u8) = .{ .condition = 5, .increment = 7 };
+    try std.testing.expectEqualDeep([2]@TypeOf(loop).Step{ .none, .{ .condition = 5 } }, loop.steps(.entry));
+    try std.testing.expectEqualDeep([2]@TypeOf(loop).Step{ .{ .increment = 7 }, .{ .condition = 5 } }, loop.steps(.backedge));
+    try std.testing.expectEqualDeep([2]@TypeOf(loop).Step{ .none, .none }, loop.steps(.loop_break));
 }
 
 /// Reachability is represented by optional headers. The caller supplies
