@@ -103,6 +103,22 @@ pub const Slots = struct {
         self.initialization[destination] = .{ .initialized = true };
     }
 
+    /// Write a copied reference into a preassigned storage row. A caller
+    /// with multiple possible destinations applies a weak write to each.
+    /// This does not copy or discharge owning obligations.
+    pub fn writeReference(self: Slots, destination: usize, source: usize, definite: bool) void {
+        if (destination == source) return;
+        const incoming = self.observationRow(source);
+        const stored = self.observationRow(destination);
+        if (definite) {
+            @memcpy(stored, incoming);
+            self.initialization[destination] = self.initialization[source];
+        } else {
+            for (stored, incoming) |*old, new| old.* = old.join(new);
+            self.initialization[destination] = self.initialization[destination].weakWrite(self.initialization[source]);
+        }
+    }
+
     /// On the success edge of a checked selection, the element inherits
     /// the observation dependencies of the receiver. Bounds, initialized
     /// contents, and access authority must be proved by the operation.
@@ -116,8 +132,7 @@ pub const Slots = struct {
             witnessed = witnessed or dependency.provesCurrent();
         }
         if (!witnessed) return false;
-        if (destination != receiver) @memcpy(self.observationRow(destination), source);
-        self.initialization[destination] = .{ .initialized = true };
+        self.writeReference(destination, receiver, true);
         return true;
     }
 
@@ -392,4 +407,21 @@ test "safety finite layouts reject overlapping opaque domain rows" {
             .{ .producer = 1, .current = 2, .historical = 0 },
         },
     }));
+}
+
+test "safety finite symbolic writes preserve both targets of a possible update" {
+    const a = std.testing.allocator;
+    const state = try Slots.init(a, .{ .slots = 3, .producers = 2 });
+    defer state.deinit(a);
+    state.observeCurrent(0, 0);
+    state.observeCurrent(1, 1);
+    state.writeReference(2, 0, true);
+    state.writeReference(2, 1, false);
+    try std.testing.expect(state.observation(2, 0).provesCurrent());
+    try std.testing.expect(state.observation(2, 1).provesCurrent());
+    state.age(0);
+    try std.testing.expect(!state.borrowSelected(0, 2));
+    state.writeReference(2, 1, true);
+    try std.testing.expectEqual(Observation{}, state.observation(2, 0));
+    try std.testing.expect(state.borrowSelected(0, 2));
 }
