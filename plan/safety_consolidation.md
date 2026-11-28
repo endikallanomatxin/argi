@@ -846,6 +846,13 @@ in the program from growth introduced by the solver.
 
 #### Measurements and constraints from the existing checker
 
+The reduced DynamicArray controls also live under `plan/safety_repros`.
+At `b056072a0`, `dynamic_array_growth` and `dynamic_array_reserved`
+both report nonconvergence in the helper's loop. They differ only in
+the caller's initial capacity. `dynamic_array_straight` builds and
+runs, and `dynamic_array_stale` rejects dereferencing an element
+reference after a forced increase in capacity.
+
 The reduced String controls live under `plan/safety_repros`. Build each
 directory with a Debug compiler, `--frontend-jobs 1 --no-cache`, and a
 disk-backed temporary directory. At `b13c81a45`, `string_straight` builds
