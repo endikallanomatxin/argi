@@ -1217,6 +1217,30 @@ pub const SafetyChecker = struct {
             _ = try namespace.registerProjectionPartition(state.tracker.allocator, .{ .parent = parent, .selector = .{ .domain = domain } });
     }
 
+    fn registerSummaryEntryPaths(state: *FunctionState, summary: facts.SafetySummary) anyerror!void {
+        for (summary.input_accesses) |access| try registerEntryProjectionPath(state, access.target);
+        for (summary.storage_observations) |path| try registerEntryProjectionPath(state, path);
+        for (summary.required_opaque_inputs) |path| try registerEntryProjectionPath(state, path);
+        for (summary.input_post_states) |post| {
+            try registerEntryProjectionPath(state, post.target);
+            if (post.opaque_storage) |storage| try registerEntryProjectionPath(state, storage);
+        }
+        for (summary.opaque_storage_effects) |effect| try registerEntryProjectionPath(state, effect.storage);
+        for (summary.opaque_storage_empties) |path| try registerEntryProjectionPath(state, path);
+        for (summary.opaque_relocation_sources) |path| try registerEntryProjectionPath(state, path);
+        for (summary.invalidated_domains) |domain| {
+            var path = domain.path;
+            path.storage_domain = domain.domain_index;
+            try registerEntryProjectionPath(state, path);
+        }
+        for (summary.outcome_post_states) |outcome| try registerSummaryEntryPaths(state, .{
+            .input_post_states = outcome.input_post_states,
+            .opaque_storage_empties = outcome.opaque_storage_empties,
+            .invalidated_domains = outcome.invalidated_domains,
+        });
+        for (summary.guarded_effects) |guarded| try registerSummaryEntryPaths(state, guarded.effects.*);
+    }
+
     fn seedFunctionInputs(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, state: *FunctionState) !void {
         self.seeding_function_inputs = true;
         defer self.seeding_function_inputs = false;
@@ -1235,11 +1259,7 @@ pub const SafetyChecker = struct {
             };
             try state.setPlace(.{ .root = binding }, .initialized, value);
         }
-        if (summary) |effects| {
-            for (effects.storage_observations) |path| try registerEntryProjectionPath(state, path);
-            for (effects.input_post_states) |post| try registerEntryProjectionPath(state, post.target);
-            for (effects.opaque_storage_effects) |effect| try registerEntryProjectionPath(state, effect.storage);
-        }
+        if (summary) |effects| try registerSummaryEntryPaths(state, effects);
         // Output defaults are explicit first writes in the checked body.
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
             if (self.graph.binding(binding).initialization != null) return error.UnmaterializedOutputInitializers;
@@ -12149,7 +12169,10 @@ test "safety summary layout registers a nested reference leaf without creating o
     state.symbolic_pointees.items[0].input_path = .{ .input_index = 0, .projections = &prefix };
     const selectors = prefix ++ [_]facts.Projection{.{ .field = 2 }};
     const count = namespace.next_id;
-    try SafetyChecker.registerEntryProjectionPath(&state, .{ .input_index = 0, .projections = &selectors, .storage_domain = 0 });
+    const path: facts.InputPath = .{ .input_index = 0, .projections = &selectors, .storage_domain = 0 };
+    try SafetyChecker.registerSummaryEntryPaths(&state, .{
+        .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{path} }},
+    });
     try std.testing.expectEqual(count, namespace.next_id);
     try std.testing.expectEqual(@as(usize, 0), namespace.projected_storage.items.len);
     const field = namespace.lookupProjectionPartition(.{ .parent = .{ .input = leaf.identity }, .selector = .{ .projection = .{ .field = 2 } } }).?;
