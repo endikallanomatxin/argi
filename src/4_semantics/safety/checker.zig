@@ -1225,6 +1225,13 @@ pub const SafetyChecker = struct {
         }) |field| {
             for (@field(value, field)) |path| try registerEntryProjectionPath(state, path);
         }
+        if (value.input_backing_observation) |path| try registerEntryProjectionPath(state, path);
+        for (value.input_captured_storages) |capture| try registerEntryProjectionPath(state, capture.path);
+        if (value.staged_output) |staged| try registerValueEntryPaths(state, staged.*);
+        for (value.fresh_executions) |execution| {
+            try registerValueEntryPaths(state, execution.inputs.*);
+            if (execution.result == .updated_input) try registerValueEntryPaths(state, execution.result.updated_input.*);
+        }
         for (value.input_dependencies) |dependency| try registerEntryProjectionPath(state, dependency.path);
         for (value.input_domains) |domain| {
             var path = domain.path;
@@ -12180,15 +12187,21 @@ test "safety summary layout registers a nested reference leaf without creating o
     const prefix = [_]facts.Projection{ .{ .field = 1 }, .dereference };
     state.symbolic_pointees.items[0].input_path = .{ .input_index = 0, .projections = &prefix };
     const selectors = prefix ++ [_]facts.Projection{.{ .field = 2 }};
+    const dynamic = prefix ++ [_]facts.Projection{ .dynamic_index, .{ .field = 3 } };
+    const capture: facts.ValueEffect = .{ .input_captured_storages = &.{.{
+        .path = .{ .input_index = 0, .projections = &dynamic },
+    }} };
     const count = namespace.next_id;
     const path: facts.InputPath = .{ .input_index = 0, .projections = &selectors, .storage_domain = 0 };
     try SafetyChecker.registerSummaryEntryPaths(&state, .{
-        .outputs = &.{.{ .opaque_storage_dependencies = &.{path} }},
+        .outputs = &.{.{ .opaque_storage_dependencies = &.{path}, .staged_output = &capture }},
     });
     try std.testing.expectEqual(count, namespace.next_id);
     try std.testing.expectEqual(@as(usize, 0), namespace.projected_storage.items.len);
     const field = namespace.lookupProjectionPartition(.{ .parent = .{ .input = leaf.identity }, .selector = .{ .projection = .{ .field = 2 } } }).?;
     try std.testing.expect(namespace.lookupProjectionPartition(.{ .parent = .{ .projected = field }, .selector = .{ .domain = 0 } }) != null);
+    const indexed = namespace.lookupProjectionPartition(.{ .parent = .{ .input = leaf.identity }, .selector = .{ .projection = .dynamic_index } }).?;
+    try std.testing.expect(namespace.lookupProjectionPartition(.{ .parent = .{ .projected = indexed }, .selector = .{ .projection = .{ .field = 3 } } }) != null);
 }
 
 test "loop reference writes keep detached payloads under one weak backing partition" {
