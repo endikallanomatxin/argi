@@ -1862,7 +1862,7 @@ pub const SafetyChecker = struct {
                 _ = try self.evaluate(function, logic.left, state);
                 var right_state = try self.cloneState(state);
                 defer right_state.deinit();
-                if (self.choiceTestFromCondition(logic.left)) |choice_test| {
+                if (@import("structured_flow.zig").choiceTestFromCondition(self.graph, logic.left)) |choice_test| {
                     const left_has_variant = logic.operator == .and_;
                     try self.refineChoice(
                         &right_state,
@@ -11497,42 +11497,6 @@ pub const SafetyChecker = struct {
         if (value.known_choice_variant) |active| for (value.variants) |variant| {
             if (variant.index == active) try self.activate_conditional_capabilities(state, variant.value.*);
         };
-    }
-
-    fn choiceTestFromCondition(self: *SafetyChecker, node_id: graph_mod.GlobalNodeId) ?primitives.ChoiceTagTest(graph_mod.Ids) {
-        const comparison = switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
-            .comparison => |value| value,
-            else => return null,
-        };
-        if (comparison.operator != .equal and comparison.operator != .not_equal) return null;
-
-        var choice_node = comparison.left;
-        var tag_node = comparison.right;
-        const tag = switch (self.graph.nodes.items[@intFromEnum(tag_node)].content) {
-            .int_literal => |value| value,
-            else => blk: {
-                choice_node = comparison.right;
-                tag_node = comparison.left;
-                break :blk switch (self.graph.nodes.items[@intFromEnum(tag_node)].content) {
-                    .int_literal => |value| value,
-                    else => return null,
-                };
-            },
-        };
-
-        const choice_type = self.graph.nodes.items[@intFromEnum(choice_node)].ty orelse return null;
-        const variants = types.variants(self.graph, choice_type) orelse return null;
-        for (0..variants.len) |offset| {
-            const raw = variants.start + @as(u32, @intCast(offset));
-            if (self.graph.variants.items[raw].value != tag) continue;
-            return .{
-                .choice_value = choice_node,
-                .choice_type = choice_type,
-                .variant = @enumFromInt(raw),
-                .then_has_variant = comparison.operator == .equal,
-            };
-        }
-        return null;
     }
 
     fn staticIndex(self: *SafetyChecker, node: graph_mod.GlobalNodeId) ?usize {

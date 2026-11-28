@@ -2,6 +2,8 @@
 //! Expression transfers are lowered separately, including short circuit
 //! evaluation and exceptional exits inside expressions.
 const std = @import("std");
+const primitives = @import("../primitives/schema.zig");
+const types = @import("../global/types.zig");
 const graph = @import("../global/graph.zig");
 const SemanticLoop = @import("finite_dataflow.zig").SemanticLoop;
 
@@ -10,7 +12,11 @@ pub const Flow = struct {
         pub const Action = union(enum) {
             none,
             statement: graph.GlobalNodeId,
-            condition: struct { expression: graph.GlobalNodeId, statement: graph.GlobalNodeId },
+            condition: struct {
+                expression: graph.GlobalNodeId,
+                statement: graph.GlobalNodeId,
+                choice_test: ?primitives.ChoiceTagTest(graph.Ids) = null,
+            },
             switch_value: graph.GlobalSwitchId,
             switch_case: struct { selection: graph.GlobalSwitchId, case: graph.GlobalSwitchCaseId },
         };
@@ -176,10 +182,22 @@ const Builder = struct {
                 };
             },
             else => return self.append(.{
-                .action = .{ .condition = .{ .expression = expression, .statement = statement } },
+                .action = .{ .condition = .{
+                    .expression = expression,
+                    .statement = statement,
+                    .choice_test = self.conditionChoiceTest(expression, statement),
+                } },
                 .successors = .{ take, skip },
             }),
         }
+    }
+
+    fn conditionChoiceTest(self: *Builder, expression: graph.GlobalNodeId, statement: graph.GlobalNodeId) ?primitives.ChoiceTagTest(graph.Ids) {
+        if (self.semantic.node(statement).content == .if_statement) {
+            const branch = self.semantic.node(statement).content.if_statement;
+            if (branch.condition == expression) if (branch.choice_test) |test_info| return test_info;
+        }
+        return choiceTestFromCondition(self.semantic, expression);
     }
 
     fn lowerSwitch(self: *Builder, id: graph.GlobalSwitchId, next: usize, parent: ?LoopTargets) anyerror!usize {
@@ -204,6 +222,42 @@ const Builder = struct {
         return self.append(.{ .action = .{ .switch_value = id }, .successors = .{ unmatched, null } });
     }
 };
+
+pub fn choiceTestFromCondition(semantic: *const graph.GlobalSemanticGraph, node_id: graph.GlobalNodeId) ?primitives.ChoiceTagTest(graph.Ids) {
+    const comparison = switch (semantic.nodes.items[@intFromEnum(node_id)].content) {
+        .comparison => |value| value,
+        else => return null,
+    };
+    if (comparison.operator != .equal and comparison.operator != .not_equal) return null;
+
+    var choice_node = comparison.left;
+    var tag_node = comparison.right;
+    const tag = switch (semantic.nodes.items[@intFromEnum(tag_node)].content) {
+        .int_literal => |value| value,
+        else => blk: {
+            choice_node = comparison.right;
+            tag_node = comparison.left;
+            break :blk switch (semantic.nodes.items[@intFromEnum(tag_node)].content) {
+                .int_literal => |value| value,
+                else => return null,
+            };
+        },
+    };
+
+    const choice_type = semantic.nodes.items[@intFromEnum(choice_node)].ty orelse return null;
+    const variants = types.variants(semantic, choice_type) orelse return null;
+    for (0..variants.len) |offset| {
+        const raw = variants.start + @as(u32, @intCast(offset));
+        if (semantic.variants.items[raw].value != tag) continue;
+        return .{
+            .choice_value = choice_node,
+            .choice_type = choice_type,
+            .variant = @enumFromInt(raw),
+            .then_has_variant = comparison.operator == .equal,
+        };
+    }
+    return null;
+}
 
 test "safety structured flow routes continue through the increment and break past the loop" {
     const a = std.testing.allocator;
