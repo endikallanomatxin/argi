@@ -2651,6 +2651,11 @@ pub const Infer = struct {
         };
     }
 
+    fn capabilityConflictsEqual(self: *Infer, a: CapabilityConflict, b: CapabilityConflict) bool {
+        return (self.capability_source_equal(a.first, b.first) and self.capability_source_equal(a.second, b.second)) or
+            (self.capability_source_equal(a.first, b.second) and self.capability_source_equal(a.second, b.first));
+    }
+
     fn record_capability_conflict(self: *Infer, flow: *CapabilityFlow, first: CapabilitySource, second: CapabilitySource) !void {
         if (self.capability_source_equal(first, second)) {
             for (flow.counts.items) |*count| if (self.capability_source_equal(count.source, first)) {
@@ -2658,8 +2663,9 @@ pub const Infer = struct {
                 return;
             };
         }
-        for (flow.conflicts.items) |pair| if ((self.capability_source_equal(pair.first, first) and self.capability_source_equal(pair.second, second)) or
-            (self.capability_source_equal(pair.first, second) and self.capability_source_equal(pair.second, first))) return;
+        for (flow.conflicts.items) |pair| {
+            if (self.capabilityConflictsEqual(pair, .{ .first = first, .second = second })) return;
+        }
         try flow.conflicts.append(.{ .first = first, .second = second });
     }
 
@@ -2839,12 +2845,20 @@ pub const Infer = struct {
             left.counts.items.len != right.counts.items.len or left.conflicts.items.len != right.conflicts.items.len or
             left.bindings.count() != right.bindings.count() or left.addresses.count() != right.addresses.count()) return false;
         for (left.calls.keys()) |call| if (!right.calls.contains(call)) return false;
-        for (left.counts.items, right.counts.items) |a, b| {
-            if (!self.capability_source_equal(a.source, b.source) or a.minimum != b.minimum or
-                a.maximum != b.maximum or a.requires_authorization != b.requires_authorization) return false;
+        for (left.counts.items, 0..) |a, index| {
+            const b = if (self.capability_source_equal(a.source, right.counts.items[index].source))
+                right.counts.items[index]
+            else for (right.counts.items) |candidate| {
+                if (self.capability_source_equal(a.source, candidate.source)) break candidate;
+            } else return false;
+            if (a.minimum != b.minimum or a.maximum != b.maximum or
+                a.requires_authorization != b.requires_authorization) return false;
         }
-        for (left.conflicts.items, right.conflicts.items) |a, b| {
-            if (!self.capability_source_equal(a.first, b.first) or !self.capability_source_equal(a.second, b.second)) return false;
+        for (left.conflicts.items, 0..) |a, index| {
+            if (self.capabilityConflictsEqual(a, right.conflicts.items[index])) continue;
+            for (right.conflicts.items) |candidate| {
+                if (self.capabilityConflictsEqual(a, candidate)) break;
+            } else return false;
         }
         var bindings = left.bindings.iterator();
         while (bindings.next()) |entry| {
@@ -2854,7 +2868,11 @@ pub const Infer = struct {
         var addresses = left.addresses.iterator();
         while (addresses.next()) |entry| {
             const other = right.addresses.get(entry.key_ptr.*) orelse return false;
-            if (!std.mem.eql(graph_mod.GlobalNodeId, entry.value_ptr.*, other)) return false;
+            if (std.mem.eql(graph_mod.GlobalNodeId, entry.value_ptr.*, other)) continue;
+            if (entry.value_ptr.len != other.len) return false;
+            for (entry.value_ptr.*) |target| {
+                if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, other, target) == null) return false;
+            }
         }
         return true;
     }
@@ -10181,6 +10199,31 @@ test "opaque ownership post-state joins preserve storage correlation" {
     try inference.joinInputPostStates(&ambiguous, &opaque_branch, &other);
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.ambiguous, ambiguous.items[0].opaque_ownership);
     try std.testing.expect(ambiguous.items[0].opaque_storage == null);
+}
+
+test "safety capability loop equality ignores alternative insertion order" {
+    const a = std.testing.allocator;
+    var engine = summaries.Engine.init(a);
+    defer engine.deinit();
+    var infer = Infer.init(a, undefined, &engine);
+    defer infer.deinit();
+    var left = Infer.CapabilityFlow.init(a);
+    defer left.deinit();
+    var right = Infer.CapabilityFlow.init(a);
+    defer right.deinit();
+    const first: Infer.CapabilitySource = .{ .fresh = 0 };
+    const second: Infer.CapabilitySource = .{ .fresh = 1 };
+    try infer.add_capability_count(&left, first, 0, 1);
+    try infer.add_capability_count(&left, second, 0, 2);
+    try infer.add_capability_count(&right, second, 0, 2);
+    try infer.add_capability_count(&right, first, 0, 1);
+    try infer.record_capability_conflict(&left, first, second);
+    try infer.record_capability_conflict(&right, second, first);
+    try left.addresses.put(@enumFromInt(0), &.{ @enumFromInt(1), @enumFromInt(2) });
+    try right.addresses.put(@enumFromInt(0), &.{ @enumFromInt(2), @enumFromInt(1) });
+    try std.testing.expect(infer.capabilityLoopStateEqual(&left, &right));
+    right.counts.items[0].maximum = 1;
+    try std.testing.expect(!infer.capabilityLoopStateEqual(&left, &right));
 }
 
 test "opaque relocation summaries retain entry and newly hidden dependencies" {
