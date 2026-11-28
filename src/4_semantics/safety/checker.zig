@@ -1182,6 +1182,41 @@ pub const SafetyChecker = struct {
         return false;
     }
 
+    fn registerEntryProjectionPath(state: *FunctionState, path: facts.InputPath) !void {
+        const namespace = state.tracker.namespace orelse return;
+        // Use the deepest seeded reference leaf. Traversal through a
+        // stored reference beyond that leaf needs its own target set.
+        var anchor: ?state_mod.SymbolicPointeeState = null;
+        for (state.symbolic_pointees.items) |slot| {
+            const origin = slot.input_path orelse continue;
+            if (origin.input_index != path.input_index or origin.storage_domain != null or
+                origin.projections.len > path.projections.len) continue;
+            for (origin.projections, path.projections[0..origin.projections.len]) |left, right| {
+                if (!left.eql(right)) break;
+            } else {
+                if (anchor == null or origin.projections.len > anchor.?.input_path.?.projections.len)
+                    anchor = slot;
+            }
+        }
+        const slot = anchor orelse return;
+        const suffix = path.projections[slot.input_path.?.projections.len..];
+        for (suffix) |projection| {
+            const selector: facts.SymbolicStorageSelector = .{ .projection = projection };
+            if (!selector.embedded()) return;
+        }
+        const Step = facts.Tracker.RootNamespace.PartitionStep;
+        var parent: @FieldType(Step, "parent") = .{ .input = slot.identity };
+        for (suffix) |projection| {
+            const partition = try namespace.registerProjectionPartition(state.tracker.allocator, .{
+                .parent = parent,
+                .selector = .{ .projection = projection },
+            });
+            parent = .{ .projected = partition };
+        }
+        if (path.storage_domain) |domain|
+            _ = try namespace.registerProjectionPartition(state.tracker.allocator, .{ .parent = parent, .selector = .{ .domain = domain } });
+    }
+
     fn seedFunctionInputs(self: *SafetyChecker, id: graph_mod.GlobalFunctionId, function: graph_mod.Function, state: *FunctionState) !void {
         self.seeding_function_inputs = true;
         defer self.seeding_function_inputs = false;
@@ -1199,6 +1234,11 @@ pub const SafetyChecker = struct {
                 return err;
             };
             try state.setPlace(.{ .root = binding }, .initialized, value);
+        }
+        if (summary) |effects| {
+            for (effects.storage_observations) |path| try registerEntryProjectionPath(state, path);
+            for (effects.input_post_states) |post| try registerEntryProjectionPath(state, post.target);
+            for (effects.opaque_storage_effects) |effect| try registerEntryProjectionPath(state, effect.storage);
         }
         // Output defaults are explicit first writes in the checked body.
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
@@ -12008,6 +12048,25 @@ test "loop execution reduction retains observed and exit receipts" {
     try std.testing.expect(header.executionState(observed) != null);
     try std.testing.expect(header.executionState(exits) != null);
     try std.testing.expect(@intFromEnum(try header.establishExecution(&.{})) > @intFromEnum(exits));
+}
+
+test "safety summary layout registers a nested reference leaf without creating observations" {
+    const a = std.testing.allocator;
+    var namespace: facts.Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    state.tracker.namespace = &namespace;
+    const leaf = try state.establishSymbolicInput(@enumFromInt(0), null);
+    const prefix = [_]facts.Projection{ .{ .field = 1 }, .dereference };
+    state.symbolic_pointees.items[0].input_path = .{ .input_index = 0, .projections = &prefix };
+    const selectors = prefix ++ [_]facts.Projection{.{ .field = 2 }};
+    const count = namespace.next_id;
+    try SafetyChecker.registerEntryProjectionPath(&state, .{ .input_index = 0, .projections = &selectors, .storage_domain = 0 });
+    try std.testing.expectEqual(count, namespace.next_id);
+    try std.testing.expectEqual(@as(usize, 0), namespace.projected_storage.items.len);
+    const field = namespace.lookupProjectionPartition(.{ .parent = .{ .input = leaf.identity }, .selector = .{ .projection = .{ .field = 2 } } }).?;
+    try std.testing.expect(namespace.lookupProjectionPartition(.{ .parent = .{ .projected = field }, .selector = .{ .domain = 0 } }) != null);
 }
 
 test "loop reference writes keep detached payloads under one weak backing partition" {
