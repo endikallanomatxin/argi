@@ -96,6 +96,7 @@ pub const Slots = struct {
     pub const Transfer = union(enum) {
         produce: usize,
         relocate_backing: OpaqueRows,
+        destroy_opaque_contents: OpaqueRows,
         retain_owner: struct { slot: usize, producer: usize },
         observe: struct { slot: usize, producer: usize },
         copy_reference: ReferenceWrite,
@@ -109,6 +110,7 @@ pub const Slots = struct {
             switch (self) {
                 .produce => |producer| state.age(producer),
                 .relocate_backing => |domain| state.renewRelocatingOpaque(domain),
+                .destroy_opaque_contents => |domain| state.destroyOpaqueContents(domain),
                 .retain_owner => |retained| state.owner(retained.slot, retained.producer).current = true,
                 .observe => |reference| state.observeCurrent(reference.slot, reference.producer),
                 .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
@@ -347,6 +349,25 @@ pub const Slots = struct {
     /// The caller must account for the custody discharged by the operation.
     pub fn emptyCurrentOpaque(self: Slots, domain: OpaqueRows) void {
         @memset(self.observationRow(domain.current), .{});
+    }
+
+    /// A verified whole-domain traversal can destroy every instance in
+    /// the current backing, including older elements. Its effects on
+    /// observations of possible element owners are weak.
+    fn destroyOpaqueContents(self: Slots, domain: OpaqueRows) void {
+        for (0..self.layout.producers) |producer| {
+            const custody = self.owner(domain.current, producer);
+            if (custody.current or producer == domain.producer) {
+                for (0..self.layout.slots) |slot| {
+                    const row = self.observationRow(slot);
+                    const before = row[producer];
+                    const retired = before.retireCurrent();
+                    row[producer] = if (producer == domain.producer) retired else before.join(retired);
+                }
+            }
+            custody.* = .{};
+        }
+        self.emptyCurrentOpaque(domain);
     }
 
     fn moveOpaqueContents(self: Slots, from: usize, to: usize) void {
@@ -716,4 +737,22 @@ test "safety finite summary reference outputs use the same entry snapshot" {
     try std.testing.expect(state.observation(0, 1).provesCurrent());
     try std.testing.expect(state.observation(1, 0).provesCurrent());
     try std.testing.expectEqual(Observation{}, state.observation(1, 1));
+}
+
+test "safety finite whole-container cleanup discharges only the current backing" {
+    const a = std.testing.allocator;
+    const domain: Slots.OpaqueRows = .{ .producer = 0, .current = 2, .historical = 3 };
+    const state = try Slots.initEntry(a, .{ .slots = 4, .producers = 2, .opaque_rows = &.{domain} });
+    defer state.deinit(a);
+    state.owner(domain.historical, 1).historical = true;
+    state.owner(domain.current, 1).* = .{ .current = true, .historical = true };
+    state.retainOpaqueObservation(domain, false, 1, .{ .current_live = true });
+    state.observeCurrent(0, 0);
+    state.observeCurrent(1, 1);
+    try (Slots.Transfer{ .destroy_opaque_contents = domain }).apply(state, a);
+    try std.testing.expectEqual(Custody{}, state.owner(domain.current, 1).*);
+    try std.testing.expect(state.owner(domain.historical, 1).historical);
+    try std.testing.expectEqual(Observation{}, state.observation(domain.current, 1));
+    try std.testing.expectEqual(Observation{ .current_ended = true }, state.observation(0, 0));
+    try std.testing.expectEqual(Observation{ .current_live = true, .current_ended = true }, state.observation(1, 1));
 }
