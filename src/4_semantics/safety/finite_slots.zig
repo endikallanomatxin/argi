@@ -47,6 +47,25 @@ const Restriction = packed struct(u4) {
     }
 };
 
+/// Construct the immutable overlap relation for authority checks. Unknown
+/// referents may alias even when they have distinct symbolic identities.
+pub fn storageOverlaps(
+    allocator: std.mem.Allocator,
+    graph: *const @import("../global/graph.zig").GlobalSemanticGraph,
+    storage: []const @import("facts.zig").StorageIdentity,
+) ![][2]usize {
+    var pairs: std.ArrayList([2]usize) = .empty;
+    defer pairs.deinit(allocator);
+    for (storage, 0..) |left, i| {
+        for (storage[0..i], 0..) |right, j| {
+            if (left == .place and right == .place and
+                !@import("access_bounds.zig").storageMayOverlap(graph, left.place, right.place)) continue;
+            try pairs.append(allocator, .{ j, i });
+        }
+    }
+    return pairs.toOwnedSlice(allocator);
+}
+
 pub const Slots = struct {
     /// The concrete domain can change when its producing handle is renewed.
     /// Both rows are assigned once, before the first transfer.
@@ -903,4 +922,18 @@ test "safety finite access restrictions follow symmetric nontransitive storage o
     state.suspendAccess(0, 0, false);
     try std.testing.expect(state.accessSuspended(2, .write));
     try std.testing.expect(!state.accessSuspended(2, .read));
+}
+
+test "safety finite overlap does not infer disjointness from symbolic identity" {
+    const a = std.testing.allocator;
+    const graph: @import("../global/graph.zig").GlobalSemanticGraph = .{};
+    const identities: []const @import("facts.zig").StorageIdentity = &.{
+        .{ .place = .{ .root = @enumFromInt(0) } },
+        .{ .place = .{ .root = @enumFromInt(1) } },
+        .{ .symbolic = @enumFromInt(0) },
+        .{ .symbolic = @enumFromInt(1) },
+    };
+    const pairs = try storageOverlaps(a, &graph, identities);
+    defer a.free(pairs);
+    try std.testing.expectEqualDeep(@as([]const [2]usize, &.{ .{ 0, 2 }, .{ 1, 2 }, .{ 0, 3 }, .{ 1, 3 }, .{ 2, 3 } }), @as([]const [2]usize, pairs));
 }
