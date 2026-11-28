@@ -2666,14 +2666,16 @@ pub const SafetyChecker = struct {
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
-    fn symbolicConsumptionValue(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
+    fn symbolicConsumptionValue(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, allow_index_region: bool) !?facts.ValueFacts {
         if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return null;
         var argument = arguments[path.input_index];
         const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
         var ty = self.graph.node(node).ty orelse return null;
         if (path.projections.len != 0 and isPointer(self.graph, ty)) {
             for (path.projections) |projection| {
-                if (projection != .field and projection != .variant and projection != .static_index) return null;
+                // Runtime indices select a weak region. Keep it for
+                // writes without granting a singleton consumption identity.
+                if (projection == .dereference or (projection == .dynamic_index and !allow_index_region)) return null;
                 argument = try self.projectSymbolicStorage(argument, projection, state) orelse return null;
             }
             return argument;
@@ -2714,7 +2716,7 @@ pub const SafetyChecker = struct {
     }
 
     fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const facts.SymbolicPointeeId {
-        const value = try self.symbolicConsumptionValue(path, ids, arguments, state) orelse return &.{};
+        const value = try self.symbolicConsumptionValue(path, ids, arguments, state, false) orelse return &.{};
         return value.symbolic_pointees;
     }
 
@@ -2756,7 +2758,7 @@ pub const SafetyChecker = struct {
             return .{ .places = try places.toOwnedSlice(), .symbolic = try symbolic.toOwnedSlice() };
         }
         if (try self.resolveSummaryInputPath(path, ids, arguments, state)) |storage| return .{ .places = try self.allocator.dupe(facts.Place, &.{storage}) };
-        if (try self.symbolicConsumptionValue(path, ids, arguments, state)) |pointer| return .{ .symbolic = pointer.symbolic_pointees };
+        if (try self.symbolicConsumptionValue(path, ids, arguments, state, false)) |pointer| return .{ .symbolic = pointer.symbolic_pointees };
         return error.MissingVirtualStorageDomain;
     }
 
@@ -2825,8 +2827,8 @@ pub const SafetyChecker = struct {
                 if (!try self.validateConcurrentInputAliasing(source, conflict, ids, arguments, state)) return false;
                 continue;
             }
-            const symbolic_consumed = try self.symbolicConsumptionValue(conflict.incompatible, ids, arguments, state);
-            const symbolic_observed = try self.symbolicConsumptionValue(conflict.observed, ids, arguments, state);
+            const symbolic_consumed = try self.symbolicConsumptionValue(conflict.incompatible, ids, arguments, state, false);
+            const symbolic_observed = try self.symbolicConsumptionValue(conflict.observed, ids, arguments, state, false);
             if (symbolic_consumed != null and symbolic_observed != null) {
                 for (symbolic_consumed.?.symbolic_pointees) |consumed| for (symbolic_observed.?.symbolic_pointees) |observed| {
                     if (state.symbolicStorageMayOverlap(self.graph, consumed, observed)) {
@@ -2866,7 +2868,7 @@ pub const SafetyChecker = struct {
                             try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
                             return false;
                         }
-                        const observed = try self.symbolicConsumptionValue(post.target, ids, arguments, state) orelse continue;
+                        const observed = try self.symbolicConsumptionValue(post.target, ids, arguments, state, false) orelse continue;
                         // Whole-input consumption has its own alias obligations
                         // at the caller. A dead shared value generation alone
                         // must not forbid consuming a different input identity.
@@ -5536,7 +5538,9 @@ pub const SafetyChecker = struct {
         @memset(symbolic_targets, .{});
         for (summary.input_post_states, post_targets, symbolic_targets) |post, concrete, *symbolic| {
             if (concrete != null and !cleanupTransition(summary, post)) continue;
-            const access = try self.symbolicConsumptionValue(post.target, argument_ids, arguments, state) orelse continue;
+            const weak_write = post.initializedness == .initialized and post.initialization != .preserved and
+                !post.ends_previous_roots and !post.refreshes_storage_generation and !cleanupTransition(summary, post);
+            const access = try self.symbolicConsumptionValue(post.target, argument_ids, arguments, state, weak_write) orelse continue;
             symbolic.access = access;
             if (post.initializedness == .initialized and post.initialization != .preserved and
                 !post.requires_available_destination and access.symbolic_pointees.len == 1)
@@ -5660,6 +5664,7 @@ pub const SafetyChecker = struct {
                 {
                     if (symbolic_access) |access| {
                         if (exactSymbolicTarget(access)) |identity| {
+                            if (state.symbolicStorageHasDynamicIndex(identity)) continue;
                             if (post_state.ends_previous_roots) state.setSymbolicInitializedness(identity, .deinitialized);
                             if (try state.renewSymbolicAccess(access)) |renewed| {
                                 state.setSymbolicInitializedness(renewed.symbolic_pointees[0], .initialized);
@@ -5970,7 +5975,7 @@ pub const SafetyChecker = struct {
             return error.MissingVirtualStorageDomain;
         }
         if (try self.resolveSummaryInputPath(path, argument_ids, arguments, state)) |storage| return .{ .place = storage };
-        if (try self.symbolicConsumptionValue(path, argument_ids, arguments, state)) |value| {
+        if (try self.symbolicConsumptionValue(path, argument_ids, arguments, state, false)) |value| {
             if (value.reference_target_incomplete) {
                 const source = self.graph.node(self.graph.value_fields.items[@intFromEnum(argument_ids[path.input_index])].value).source;
                 try self.report(source, "opaque storage selection requires a complete reference target set", .{});
