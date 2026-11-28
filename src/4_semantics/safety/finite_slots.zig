@@ -107,6 +107,39 @@ pub const Slots = struct {
         start_execution: usize,
         complete_execution: usize,
 
+        fn valid(self: Transfer, layout: Layout) bool {
+            return switch (self) {
+                .produce => |producer| producer < layout.producers,
+                .relocate_backing, .destroy_opaque_contents => |domain| hasDomain(layout, domain),
+                .retain_owner => |retained| retained.slot < layout.slots and retained.producer < layout.producers,
+                .observe => |reference| reference.slot < layout.slots and reference.producer < layout.producers,
+                .copy_reference => |write| validWrite(layout, write),
+                .reference_post_states => |writes| for (writes) |write| {
+                    if (!validWrite(layout, write)) break false;
+                } else true,
+                .select => |selection| validSelection(layout, selection),
+                .extract_opaque_element => |op| hasDomain(layout, op.domain) and validSelection(layout, op.selection) and
+                    op.selection.mode == .write and op.selection.region == op.domain.current and
+                    op.selection.destination != op.domain.current and op.selection.destination != op.domain.historical and
+                    op.result_producer < layout.producers and op.result_producer != op.domain.producer,
+                .suspend_access => |loan| loan.slot < layout.slots and loan.receipt_site < layout.receipt_sites,
+                .start_execution, .complete_execution => |site| site < layout.receipt_sites,
+            };
+        }
+
+        fn validWrite(layout: Layout, write: ReferenceWrite) bool {
+            return write.destination < layout.slots and write.source < layout.slots;
+        }
+
+        fn validSelection(layout: Layout, selection: Selection) bool {
+            return selection.destination < layout.slots and selection.receiver < layout.slots and selection.region < layout.slots;
+        }
+
+        fn hasDomain(layout: Layout, domain: OpaqueRows) bool {
+            for (layout.opaque_rows) |declared| if (std.meta.eql(declared, domain)) return true;
+            return false;
+        }
+
         pub fn apply(self: Transfer, state: Slots, allocator: std.mem.Allocator) !void {
             switch (self) {
                 .produce => |producer| state.age(producer),
@@ -575,6 +608,26 @@ pub const Program = struct {
     allocator: std.mem.Allocator,
     edges_by_block: []const []const Edge,
 
+    /// Validate operands before publishing any header. The solver owns
+    /// the initial allocation through publication or validation failure.
+    pub fn solve(self: Program, headers: []?State, entry: usize, initial: State) !void {
+        self.validate(headers, entry, initial.layout) catch |err| {
+            self.release(initial);
+            return err;
+        };
+        try @import("finite_dataflow.zig").solve(Program, self.allocator, headers, entry, initial, self);
+    }
+
+    fn validate(self: Program, headers: []const ?State, entry: usize, layout: Slots.Layout) !void {
+        if (headers.len != self.edges_by_block.len or entry >= headers.len) return error.InvalidFiniteGraph;
+        for (headers) |header| if (header != null) return error.InvalidFiniteGraph;
+        for (self.edges_by_block) |edges| for (edges) |edge| {
+            if (edge.destination >= headers.len) return error.InvalidFiniteGraph;
+            for (edge.operations) |operation|
+                if (!operation.valid(layout)) return error.InvalidFiniteOperand;
+        };
+    }
+
     pub fn release(self: Program, state: State) void {
         state.deinit(self.allocator);
     }
@@ -636,7 +689,7 @@ test "safety finite dataflow covers repeated owned element insertion and backing
     initial.observeCurrent(receiver, backing);
     var headers: [4]?Slots = @splat(null);
     defer for (headers) |header| if (header) |state| domain.release(state);
-    try @import("finite_dataflow.zig").solve(Program, domain.allocator, &headers, 0, initial, domain);
+    try domain.solve(&headers, 0, initial);
 
     for (headers, 0..) |header, block| {
         for (domain.successors(block)) |edge| {
@@ -741,7 +794,7 @@ test "safety finite solver propagates through a long loop-carried reference chai
     const program: Program = .{ .allocator = a, .edges_by_block = &.{&edges} };
     var headers: [1]?Slots = @splat(null);
     defer if (headers[0]) |header| program.release(header);
-    try @import("finite_dataflow.zig").solve(Program, a, &headers, 0, initial, program);
+    try program.solve(&headers, 0, initial);
     const header = headers[0].?;
     try std.testing.expect(header.observation(length - 1, 0).provesCurrent());
     try std.testing.expect(!header.initialization[length - 1].definitelyInitialized());
@@ -801,4 +854,16 @@ test "safety finite extraction keeps other historical element owners" {
     try std.testing.expect(state.observation(1, 2).provesCurrent());
     try std.testing.expect(state.observation(1, 3).provesCurrent());
     try std.testing.expect(!state.observation(0, 0).provesCurrent());
+}
+
+test "safety finite program rejects operands outside the frozen layout" {
+    const a = std.testing.allocator;
+    const state = try Slots.initEntry(a, .{ .slots = 1, .producers = 1 });
+    const program: Program = .{
+        .allocator = a,
+        .edges_by_block = &.{&.{.{ .destination = 0, .operations = &.{.{ .produce = 1 }} }}},
+    };
+    var headers: [1]?Slots = @splat(null);
+    try std.testing.expectError(error.InvalidFiniteOperand, program.solve(&headers, 0, state));
+    try std.testing.expectEqual(null, headers[0]);
 }
