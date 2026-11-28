@@ -15066,12 +15066,19 @@ test "symbolic dynamic array writes retain earlier reference dependencies" {
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
         .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } },
         .{ .array = .{ .element = @enumFromInt(2), .length = 2 } },
+        .{ .pointer = .{ .child = @enumFromInt(3), .mutability = .read_only } },
     });
     try graph.fields.append(allocator, .{
         .name = .{ .start = 0, .len = 0 },
         .source = .{ .file_index = 0, .offset = 0 },
         .ty = @enumFromInt(1),
     });
+    try graph.nodes.append(allocator, .{
+        .ty = @enumFromInt(4),
+        .source = .{ .file_index = 0, .offset = 0 },
+        .content = .{ .binding_use = @enumFromInt(0) },
+    });
+    try graph.value_fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) });
     var checker = SafetyChecker.init(allocator, undefined, &graph);
     defer checker.deinit();
     var namespace: facts.Tracker.RootNamespace = .{ .next_symbolic_id = 1 };
@@ -15092,7 +15099,19 @@ test "symbolic dynamic array writes retain earlier reference dependencies" {
     const old_root = try state.tracker.establish(.fresh);
     const new_root = try state.tracker.establish(.fresh);
     try checker.storeSymbolicValue(&state, field, .{ .dependencies = &.{.{ .root = old_root }} }, true);
-    try checker.storeSymbolicValue(&state, field, .{ .dependencies = &.{.{ .root = new_root }} }, true);
+    const generation = state.symbolicPointee(field.symbolic_pointees[0]).?.generation;
+    try checker.applySummaryInputPostStates(.{ .file_index = 0, .offset = 0 }, .{
+        .input_post_states = &.{.{
+            .target = .{ .input_index = 0, .projections = &.{ .dynamic_index, .{ .field = 0 } } },
+            .initialization = .definite,
+            .initializedness = .initialized,
+            .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} },
+        }},
+    }, &.{@enumFromInt(0)}, &.{
+        .{ .symbolic_pointees = &.{array} },
+        .{ .dependencies = &.{.{ .root = new_root }} },
+    }, &state);
+    try std.testing.expectEqual(generation, state.symbolicPointee(field.symbolic_pointees[0]).?.generation);
     const stored = state.exactSymbolicValue(field.symbolic_pointees[0]).?;
     try std.testing.expect(!stored.definite);
     try std.testing.expect(valueDependsOnRoot(stored.value, old_root));
