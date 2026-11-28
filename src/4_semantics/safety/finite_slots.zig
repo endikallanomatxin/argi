@@ -59,6 +59,7 @@ pub const Slots = struct {
     pub const Layout = struct {
         slots: usize,
         producers: usize,
+        receipt_sites: usize = 0,
         opaque_rows: []const OpaqueRows = &.{},
         /// Each opaque row belongs to exactly one domain. Sharing a row
         /// would let renewal of one domain clear another domain's contents.
@@ -94,6 +95,7 @@ pub const Slots = struct {
         copy_reference: struct { destination: usize, source: usize, definite: bool },
         select: Selection,
         suspend_access: struct { slot: usize, receipt_site: usize, exclusive: bool },
+        start_execution: usize,
         complete_execution: usize,
 
         pub fn apply(self: Transfer, state: Slots) error{UnprovedObservation}!void {
@@ -104,6 +106,7 @@ pub const Slots = struct {
                 .observe => |reference| state.observeCurrent(reference.slot, reference.producer),
                 .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
                 .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
+                .start_execution => |site| state.ageExecution(site),
                 .complete_execution => |site| state.completeCurrent(site),
                 .select => |selection| if (!state.borrowSelected(selection))
                     return error.UnprovedObservation,
@@ -120,6 +123,7 @@ pub const Slots = struct {
 
     pub fn init(allocator: std.mem.Allocator, layout: Layout) !Slots {
         const count = try std.math.mul(usize, layout.slots, layout.producers);
+        const restriction_count = try std.math.mul(usize, layout.slots, layout.receipt_sites);
         try layout.validate(allocator);
         const initialization = try allocator.alloc(Initialization, layout.slots);
         errdefer allocator.free(initialization);
@@ -127,7 +131,7 @@ pub const Slots = struct {
         errdefer allocator.free(observations);
         const custody = try allocator.alloc(Custody, count);
         errdefer allocator.free(custody);
-        const restrictions = try allocator.alloc(Restriction, count);
+        const restrictions = try allocator.alloc(Restriction, restriction_count);
         errdefer allocator.free(restrictions);
         const unobserved = try allocator.alloc(bool, layout.slots);
         @memset(unobserved, false);
@@ -237,17 +241,25 @@ pub const Slots = struct {
     }
 
     fn restriction(self: Slots, slot: usize, receipt_site: usize) *Restriction {
-        std.debug.assert(slot < self.layout.slots and receipt_site < self.layout.producers);
-        return &self.restrictions[slot * self.layout.producers + receipt_site];
+        std.debug.assert(slot < self.layout.slots and receipt_site < self.layout.receipt_sites);
+        return &self.restrictions[slot * self.layout.receipt_sites + receipt_site];
     }
 
     pub fn accessSuspended(self: Slots, slot: usize, mode: Access) bool {
-        for (0..self.layout.producers) |site| {
+        for (0..self.layout.receipt_sites) |site| {
             const loan = self.restriction(slot, site).*;
             if (loan.current_read or loan.historical_read) return true;
             if (mode == .write and (loan.current_write or loan.historical_write)) return true;
         }
         return false;
+    }
+
+    fn ageExecution(self: Slots, receipt_site: usize) void {
+        std.debug.assert(receipt_site < self.layout.receipt_sites);
+        for (0..self.layout.slots) |slot| {
+            const loan = self.restriction(slot, receipt_site);
+            loan.* = loan.age();
+        }
     }
 
     /// Completion is authorized by the exact current receipt, independent
@@ -314,8 +326,6 @@ pub const Slots = struct {
             row[producer] = row[producer].age();
             const custody = self.owner(slot, producer);
             custody.* = custody.age();
-            const loan = self.restriction(slot, producer);
-            loan.* = loan.age();
         }
         for (self.layout.opaque_rows) |domain| {
             if (domain.producer != producer or domain.current == relocated_row) continue;
@@ -326,6 +336,7 @@ pub const Slots = struct {
     fn sameLayout(self: Slots, incoming: Slots) bool {
         return self.layout.slots == incoming.layout.slots and
             self.layout.producers == incoming.layout.producers and
+            self.layout.receipt_sites == incoming.layout.receipt_sites and
             self.layout.opaque_rows.ptr == incoming.layout.opaque_rows.ptr and
             self.layout.opaque_rows.len == incoming.layout.opaque_rows.len;
     }
@@ -373,6 +384,7 @@ test "safety finite slots age every alias without growing the layout" {
         try std.testing.expect(successor.observation(2, 1).provesCurrent());
     }
     try std.testing.expectEqual(@as(usize, 6), successor.observations.len);
+    try std.testing.expectEqual(@as(usize, 0), successor.restrictions.len);
 }
 
 test "safety finite slots preserve historical custody after exact current destruction" {
@@ -569,24 +581,29 @@ test "safety finite symbolic writes preserve both targets of a possible update" 
 
 test "safety finite authority retains historical loans independently of validity" {
     const a = std.testing.allocator;
-    const before = try Slots.init(a, .{ .slots = 2, .producers = 2 });
+    const before = try Slots.init(a, .{ .slots = 2, .producers = 1, .receipt_sites = 1 });
     defer before.deinit(a);
     before.observeCurrent(0, 0);
     const state = try before.clone(a);
     defer state.deinit(a);
-    try (Slots.Transfer{ .suspend_access = .{ .slot = 0, .receipt_site = 1, .exclusive = false } }).apply(state);
-    state.age(1);
-    state.suspendAccess(1, 1, true);
+    try (Slots.Transfer{ .suspend_access = .{ .slot = 0, .receipt_site = 0, .exclusive = false } }).apply(state);
+    try (Slots.Transfer{ .start_execution = 0 }).apply(state);
+    state.suspendAccess(1, 0, true);
     try std.testing.expect(state.accessSuspended(1, .read));
     const selection: Slots.Selection = .{ .destination = 1, .receiver = 0, .region = 1 };
     try std.testing.expectError(error.UnprovedObservation, (Slots.Transfer{ .select = selection }).apply(state));
-    try (Slots.Transfer{ .complete_execution = 1 }).apply(state);
+    try (Slots.Transfer{ .complete_execution = 0 }).apply(state);
     try std.testing.expect(!state.accessSuspended(1, .read));
     try (Slots.Transfer{ .select = selection }).apply(state);
     try std.testing.expect(!state.borrowSelected(.{ .destination = 1, .receiver = 0, .region = 0, .mode = .write }));
     try std.testing.expect(!state.accessSuspended(0, .read));
     try std.testing.expect(state.accessSuspended(0, .write));
     try std.testing.expect(state.observation(0, 0).provesCurrent());
+    state.suspendAccess(1, 0, true);
+    state.age(0);
+    state.completeCurrent(0);
+    try std.testing.expect(!state.accessSuspended(1, .read));
+    try std.testing.expect(state.accessSuspended(0, .write));
     try std.testing.expect(!before.covers(state));
     before.include(state);
     try std.testing.expect(before.covers(state));
