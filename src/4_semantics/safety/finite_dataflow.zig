@@ -2,6 +2,12 @@
 //! edge transfer, coverage and a least upper bound on states.
 const std = @import("std");
 
+/// Fallthrough and continue evaluate the increment before the next
+/// condition. A break reaches the exit without evaluating either.
+pub fn backedgeNodes(comptime Node: type, condition: Node, increment: ?Node) [2]?Node {
+    return .{ increment, condition };
+}
+
 /// Reachability is represented by optional headers. The caller supplies
 /// empty headers, an entry state, and fixed successors for each block.
 /// State payloads must be immutable during transfer and join. Both

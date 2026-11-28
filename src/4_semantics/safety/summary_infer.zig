@@ -2808,11 +2808,13 @@ pub const Infer = struct {
             if (transfers.break_flow) |*exit| try self.join_capability_alternative(exit, &broken);
             if (transfers.continue_flow) |*continued|
                 try self.join_capability_fallthrough(&backedge, &backedge, continued);
-            if (backedge.reachable) if (increment) |advance|
-                try self.infer_capability_node(function, advance, &backedge, exits);
-            if (backedge.reachable) {
-                for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
-                try self.infer_capability_node(function, condition, &backedge, exits);
+            for (@import("finite_dataflow.zig").backedgeNodes(graph_mod.GlobalNodeId, condition, increment), 0..) |step, index| {
+                if (!backedge.reachable) break;
+                const node = step orelse continue;
+                if (index == 1) {
+                    for (flow.calls.keys()[before_condition..]) |call| _ = backedge.calls.swapRemove(call);
+                }
+                try self.infer_capability_node(function, node, &backedge, exits);
             }
             if (!backedge.reachable) break;
 
@@ -3482,9 +3484,10 @@ pub const Infer = struct {
         try self.inferInputPostStates(function, body, &backedge, exits);
         if (transfers.continue_flow) |*continued|
             try self.joinInputPostStateFallthrough(&backedge, &backedge, continued);
-        if (increment) |advance|
-            try self.inferInputPostStatesNode(function, advance, &backedge, exits);
-        try self.inferInputPostStatesNode(function, condition, &backedge, exits);
+        for (@import("finite_dataflow.zig").backedgeNodes(graph_mod.GlobalNodeId, condition, increment)) |step| {
+            if (!backedge.reachable) break;
+            if (step) |node| try self.inferInputPostStatesNode(function, node, &backedge, exits);
+        }
 
         if (parent_observations) |parent| {
             self.observation_sink = parent;

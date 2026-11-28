@@ -10422,9 +10422,10 @@ pub const SafetyChecker = struct {
             if (transfers.continue_state) |*continue_state|
                 try self.mergeLoopTransfer(&iteration, continue_state);
             if (iteration.reachable) {
-                if (increment) |node| _ = try self.evaluate(function, node, &iteration);
-                // Fallthrough and continue both reach the next test after the increment.
-                _ = try self.evaluate(function, condition, &iteration);
+                for (@import("finite_dataflow.zig").backedgeNodes(graph_mod.GlobalNodeId, condition, increment)) |step| {
+                    if (!iteration.reachable) break;
+                    if (step) |node| _ = try self.evaluate(function, node, &iteration);
+                }
                 for (iteration.executions.items) |execution| {
                     if (!execution.pending or entry.executionPending(execution.id)) continue;
                     try self.report(self.graph.declaration(self.graph.function(function).declaration).source, "pending execution loans must complete within their loop iteration", .{});
