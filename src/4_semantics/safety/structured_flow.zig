@@ -174,6 +174,7 @@ const Builder = struct {
 
     fn lowerCondition(self: *Builder, expression: graph.GlobalNodeId, statement: graph.GlobalNodeId, take: usize, skip: usize) anyerror!usize {
         switch (self.semantic.node(expression).content) {
+            .bool_literal => |value| return if (value) take else skip,
             .logical_operation => |logic| {
                 const right = try self.lowerCondition(logic.right, statement, take, skip);
                 return switch (logic.operator) {
@@ -265,7 +266,7 @@ test "safety structured flow routes continue through the increment and break pas
     defer semantic.deinit(a);
     const source: @FieldType(graph.Node, "source") = .{ .file_index = 0, .offset = 0 };
     try semantic.nodes.appendSlice(a, &.{
-        .{ .ty = null, .source = source, .content = .{ .bool_literal = true } },
+        .{ .ty = null, .source = source, .content = .{ .binding_use = @enumFromInt(0) } },
         .{ .ty = null, .source = source, .content = .{ .bool_literal = false } },
         .{ .ty = null, .source = source, .content = .continue_statement },
         .{ .ty = null, .source = source, .content = .break_statement },
@@ -346,8 +347,8 @@ test "safety structured conditions route short circuit edges around the right op
     defer semantic.deinit(a);
     const source: @FieldType(graph.Node, "source") = .{ .file_index = 0, .offset = 0 };
     try semantic.nodes.appendSlice(a, &.{
-        .{ .ty = null, .source = source, .content = .{ .bool_literal = true } },
-        .{ .ty = null, .source = source, .content = .{ .bool_literal = false } },
+        .{ .ty = null, .source = source, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .ty = null, .source = source, .content = .{ .binding_use = @enumFromInt(1) } },
         .{ .ty = null, .source = source, .content = .{ .logical_operation = .{ .operator = .and_, .left = @enumFromInt(0), .right = @enumFromInt(1) } } },
     });
     var builder: Builder = .{ .allocator = a, .semantic = &semantic };
@@ -364,6 +365,23 @@ test "safety structured conditions route short circuit edges around the right op
         try std.testing.expectEqual(if (is_and) skip else take, left.successors[if (is_and) 1 else 0].?);
         try std.testing.expectEqual([2]?usize{ take, skip }, right.successors);
     }
+}
+
+test "safety structured false conjunction bypasses an unreachable right operand" {
+    const a = std.testing.allocator;
+    var semantic: graph.GlobalSemanticGraph = .{};
+    defer semantic.deinit(a);
+    const source: @FieldType(graph.Node, "source") = .{ .file_index = 0, .offset = 0 };
+    try semantic.nodes.appendSlice(a, &.{
+        .{ .ty = null, .source = source, .content = .{ .bool_literal = false } },
+        .{ .ty = null, .source = source, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .ty = null, .source = source, .content = .{ .logical_operation = .{ .operator = .and_, .left = @enumFromInt(0), .right = @enumFromInt(1) } } },
+    });
+    var builder: Builder = .{ .allocator = a, .semantic = &semantic };
+    defer builder.blocks.deinit(a);
+    const take = try builder.append(.{ .action = .none, .successors = .{ null, null } });
+    const skip = try builder.append(.{ .action = .none, .successors = .{ null, null } });
+    try std.testing.expectEqual(skip, try builder.lowerCondition(@enumFromInt(2), @enumFromInt(2), take, skip));
 }
 
 test "safety structured flow solves only feasible branch edges" {
