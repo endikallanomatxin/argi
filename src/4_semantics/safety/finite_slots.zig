@@ -52,6 +52,30 @@ pub const Slots = struct {
         }
     };
 
+    /// Transfer operands are resolved against the immutable layout before
+    /// solving. The lowering must prove each exact destination and encode
+    /// only the success edge of a checked selection.
+    pub const Transfer = union(enum) {
+        produce: usize,
+        relocate_backing: OpaqueRows,
+        retain_owner: struct { slot: usize, producer: usize },
+        observe: struct { slot: usize, producer: usize },
+        copy_reference: struct { destination: usize, source: usize, definite: bool },
+        select: struct { destination: usize, receiver: usize },
+
+        pub fn apply(self: Transfer, state: Slots) error{UnprovedObservation}!void {
+            switch (self) {
+                .produce => |producer| state.age(producer),
+                .relocate_backing => |domain| state.renewRelocatingOpaque(domain),
+                .retain_owner => |retained| state.owner(retained.slot, retained.producer).current = true,
+                .observe => |reference| state.observeCurrent(reference.slot, reference.producer),
+                .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
+                .select => |selection| if (!state.borrowSelected(selection.destination, selection.receiver))
+                    return error.UnprovedObservation,
+            }
+        }
+    };
+
     layout: Layout,
     initialization: []Initialization,
     observations: []Observation,
@@ -352,18 +376,26 @@ test "safety finite dataflow covers repeated owned element insertion and backing
         pub fn transfer(self: @This(), block: usize, successor: usize, state: State) !?State {
             const next = try state.clone(self.allocator);
             errdefer next.deinit(self.allocator);
-            if (block == 2 and successor == 3) {
-                try std.testing.expect(next.borrowSelected(fresh, receiver));
-                return next;
-            }
-            if (block == 2) {
-                next.renewRelocatingOpaque(contents);
-                next.observeCurrent(receiver, backing);
-            } else {
-                next.age(element);
-                next.owner(contents.current, element).current = true;
-                if (block == 0) try std.testing.expect(next.borrowSelected(saved, receiver));
-            }
+            const operations: []const Slots.Transfer = switch (block) {
+                0 => &.{
+                    .{ .produce = element },
+                    .{ .retain_owner = .{ .slot = contents.current, .producer = element } },
+                    .{ .select = .{ .destination = saved, .receiver = receiver } },
+                },
+                1 => &.{
+                    .{ .produce = element },
+                    .{ .retain_owner = .{ .slot = contents.current, .producer = element } },
+                },
+                2 => if (successor == 3)
+                    &.{.{ .select = .{ .destination = fresh, .receiver = receiver } }}
+                else
+                    &.{
+                        .{ .relocate_backing = contents },
+                        .{ .observe = .{ .slot = receiver, .producer = backing } },
+                    },
+                else => unreachable,
+            };
+            for (operations) |operation| try operation.apply(next);
             return next;
         }
 
@@ -415,8 +447,8 @@ test "safety finite symbolic writes preserve both targets of a possible update" 
     defer state.deinit(a);
     state.observeCurrent(0, 0);
     state.observeCurrent(1, 1);
-    state.writeReference(2, 0, true);
-    state.writeReference(2, 1, false);
+    try (Slots.Transfer{ .copy_reference = .{ .destination = 2, .source = 0, .definite = true } }).apply(state);
+    try (Slots.Transfer{ .copy_reference = .{ .destination = 2, .source = 1, .definite = false } }).apply(state);
     try std.testing.expect(state.observation(2, 0).provesCurrent());
     try std.testing.expect(state.observation(2, 1).provesCurrent());
     state.age(0);
