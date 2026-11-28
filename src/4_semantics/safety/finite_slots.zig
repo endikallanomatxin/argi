@@ -625,3 +625,25 @@ test "safety finite joins keep initialized references without observations" {
     tracked.observeCurrent(0, 0);
     try std.testing.expect(tracked.borrowSelected(.{ .destination = 1, .receiver = 0, .region = 0 }));
 }
+
+test "safety finite solver propagates through a long loop-carried reference chain" {
+    const a = std.testing.allocator;
+    const length = 32;
+    const initial = try Slots.init(a, .{ .slots = length, .producers = 1 });
+    initial.observeCurrent(0, 0);
+    var writes: [length - 1]Slots.Transfer = undefined;
+    for (&writes, 0..) |*write, index| {
+        const destination = length - 1 - index;
+        write.* = .{ .copy_reference = .{ .destination = destination, .source = destination - 1, .definite = true } };
+    }
+    const edges = [_]Program.Edge{.{ .destination = 0, .operations = &writes }};
+    const program: Program = .{ .allocator = a, .edges_by_block = &.{&edges} };
+    var headers: [1]?Slots = @splat(null);
+    defer if (headers[0]) |header| program.release(header);
+    try @import("finite_dataflow.zig").solve(Program, a, &headers, 0, initial, program);
+    const header = headers[0].?;
+    try std.testing.expect(header.observation(length - 1, 0).provesCurrent());
+    const incoming = (try program.transfer(0, edges[0], header)).?;
+    defer program.release(incoming);
+    try std.testing.expect(header.covers(incoming));
+}
