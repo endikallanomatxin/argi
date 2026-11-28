@@ -1200,17 +1200,13 @@ pub const SafetyChecker = struct {
         }
         const slot = anchor orelse return;
         const suffix = path.projections[slot.input_path.?.projections.len..];
+        var parent = namespace.partitionParent(slot.identity);
         for (suffix) |projection| {
             const selector: facts.SymbolicStorageSelector = .{ .projection = projection };
+            // Keep the embedded prefix. Beyond a dereference the path
+            // must be resolved from the stored target set.
             if (!selector.embedded()) return;
-        }
-        const Step = facts.Tracker.RootNamespace.PartitionStep;
-        var parent: @FieldType(Step, "parent") = .{ .input = slot.identity };
-        for (suffix) |projection| {
-            const partition = try namespace.registerProjectionPartition(state.tracker.allocator, .{
-                .parent = parent,
-                .selector = .{ .projection = projection },
-            });
+            const partition = try namespace.registerProjectionPartition(state.tracker.allocator, .{ .parent = parent, .selector = selector });
             parent = .{ .projected = partition };
         }
         if (path.storage_domain) |domain|
@@ -12191,9 +12187,11 @@ test "safety summary layout registers a nested reference leaf without creating o
     const capture: facts.ValueEffect = .{ .input_captured_storages = &.{.{
         .path = .{ .input_index = 0, .projections = &dynamic },
     }} };
+    const indirect = prefix ++ [_]facts.Projection{ .{ .field = 4 }, .dereference, .{ .field = 5 } };
     const count = namespace.next_id;
     const path: facts.InputPath = .{ .input_index = 0, .projections = &selectors, .storage_domain = 0 };
     try SafetyChecker.registerSummaryEntryPaths(&state, .{
+        .storage_observations = &.{.{ .input_index = 0, .projections = &indirect }},
         .outputs = &.{.{ .opaque_storage_dependencies = &.{path}, .staged_output = &capture }},
     });
     try std.testing.expectEqual(count, namespace.next_id);
@@ -12202,6 +12200,8 @@ test "safety summary layout registers a nested reference leaf without creating o
     try std.testing.expect(namespace.lookupProjectionPartition(.{ .parent = .{ .projected = field }, .selector = .{ .domain = 0 } }) != null);
     const indexed = namespace.lookupProjectionPartition(.{ .parent = .{ .input = leaf.identity }, .selector = .{ .projection = .dynamic_index } }).?;
     try std.testing.expect(namespace.lookupProjectionPartition(.{ .parent = .{ .projected = indexed }, .selector = .{ .projection = .{ .field = 3 } } }) != null);
+    const before_deref = namespace.lookupProjectionPartition(.{ .parent = .{ .input = leaf.identity }, .selector = .{ .projection = .{ .field = 4 } } }).?;
+    try std.testing.expectEqual(null, namespace.lookupProjectionPartition(.{ .parent = .{ .projected = before_deref }, .selector = .{ .projection = .dereference } }));
 }
 
 test "loop reference writes keep detached payloads under one weak backing partition" {

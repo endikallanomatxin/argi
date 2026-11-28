@@ -447,8 +447,9 @@ pub const Tracker = struct {
         };
 
         pub const ProjectionPartition = enum(u32) { _ };
+        pub const PartitionParent = union(enum) { input: SymbolicPointeeId, projected: ProjectionPartition };
         pub const PartitionStep = struct {
-            parent: union(enum) { input: SymbolicPointeeId, projected: ProjectionPartition },
+            parent: PartitionParent,
             selector: SymbolicStorageSelector,
         };
         const EmbeddedSlot = struct {
@@ -517,6 +518,10 @@ pub const Tracker = struct {
             return @enumFromInt(entry.index);
         }
 
+        pub fn partitionParent(self: *const RootNamespace, identity: SymbolicPointeeId) PartitionParent {
+            return if (self.projectionPartition(identity)) |partition| .{ .projected = partition } else .{ .input = identity };
+        }
+
         pub fn observedProjection(self: *const RootNamespace, observation: ProjectionObservation) ?ProjectedStorage {
             const index = self.projection_observations.get(observation) orelse return null;
             return self.projected_storage.items[index];
@@ -550,10 +555,7 @@ pub const Tracker = struct {
                     std.debug.assert(entry.value_ptr.* == row.backing);
                 } else entry.value_ptr.* = row.backing;
             }
-            const step: PartitionStep = .{
-                .parent = if (self.projectionPartition(row.parent)) |partition| .{ .projected = partition } else .{ .input = row.parent },
-                .selector = row.selector,
-            };
+            const step: PartitionStep = .{ .parent = self.partitionParent(row.parent), .selector = row.selector };
             const partition = self.projection_partitions.getOrPutAssumeCapacity(step);
             // The partition ordinal follows the path table, independently
             // of how many symbolic observations precede this path.
