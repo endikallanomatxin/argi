@@ -3686,7 +3686,7 @@ pub const SafetyChecker = struct {
             },
             .opaque_move_out => try self.opaqueMoveOutPrimitive(argument_ids, values, state),
             .opaque_relocate => blk: {
-                if (values.len != 0) try self.rejectOpaqueRelocation(source, state, values[0]);
+                if (values.len >= 2) try self.relocateOpaqueDependencies(source, state, values[0], values[1]);
                 break :blk .{};
             },
             .opaque_mark_empty => blk: {
@@ -4234,15 +4234,18 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn rejectOpaqueRelocation(
+    fn relocateOpaqueDependencies(
         self: *SafetyChecker,
         source: primitives.SourceRef,
         state: *FunctionState,
         pointer: facts.ValueFacts,
+        destination: facts.ValueFacts,
     ) !void {
         var storages = std.array_list.Managed(StorageIdentity).init(self.allocator);
         defer storages.deinit();
         try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
+        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.state_allocator);
+        defer hidden.deinit();
         for (storages.items) |storage| {
             const generation = try state.domainGeneration(storage);
             for (state.opaque_storages.items) |opaque_storage| {
@@ -4256,11 +4259,24 @@ pub const SafetyChecker = struct {
                         break;
                     }
                 }
-                if (!invalidates_dependency) continue;
-                try self.report(source, "relocation would invalidate a hidden opaque dependency", .{});
-                return;
+                if (invalidates_dependency) {
+                    try self.report(source, "relocation would invalidate a hidden opaque dependency", .{});
+                    return;
+                }
+                for (opaque_storage.hidden_dependencies) |dependency| try appendRootFact(&hidden, dependency);
             }
         }
+        if (hidden.items.len == 0) return;
+        var targets = std.array_list.Managed(StorageIdentity).init(self.state_allocator);
+        defer targets.deinit();
+        try self.collectOpaqueWriteDomains(state, destination, &targets);
+        if (targets.items.len == 0) {
+            try self.report(source, "cannot determine the destination of opaque relocation with hidden dependencies", .{});
+            return;
+        }
+        // A slot move may leave other source elements alive. Retain its
+        // obligations until a verified whole-domain emptying.
+        for (targets.items) |target| try self.mergeOpaqueStorage(state, target, hidden.items);
     }
 
     fn primitiveArgumentRootBinding(
@@ -12782,6 +12798,33 @@ test "call completion cannot authorize its earlier may-access effects" {
     try std.testing.expect(!state.executionPending(id));
     try checker.applySummaryEffects(source, access, &.{}, &arguments, &state);
     try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+}
+
+test "opaque relocation retains possible hidden dependencies in both domains" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const from: facts.StorageIdentity = .{ .place = .{ .root = @enumFromInt(0) } };
+    const to: facts.StorageIdentity = .{ .place = .{ .root = @enumFromInt(1) } };
+    const external = try state.tracker.establish(.fresh);
+    const from_generation = try state.domainGeneration(from);
+    const to_generation = try state.domainGeneration(to);
+    try state.mergeOpaqueStorage(from, &.{external}, &.{});
+    try checker.relocateOpaqueDependencies(
+        .{ .file_index = 0, .offset = 0 },
+        &state,
+        .{ .opaque_provenance = &.{.{ .storage = from, .generation = from_generation }} },
+        .{ .opaque_provenance = &.{.{ .storage = to, .generation = to_generation }} },
+    );
+    try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items.len);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{external}, state.opaque_storages.items[0].hidden_dependencies);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{external}, state.opaque_storages.items[1].hidden_dependencies);
+    state.markOpaqueStorageEmpty(from);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{external}, state.opaque_storages.items[1].hidden_dependencies);
 }
 
 test "opaque ownership cycle detection follows indirect edges" {
