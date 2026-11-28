@@ -76,6 +76,13 @@ pub const Slots = struct {
         }
     };
 
+    pub const Selection = struct {
+        destination: usize,
+        receiver: usize,
+        region: usize,
+        mode: Access = .read,
+    };
+
     /// Transfer operands are resolved against the immutable layout before
     /// solving. The lowering must prove each exact destination and encode
     /// only the success edge of a checked selection.
@@ -85,7 +92,7 @@ pub const Slots = struct {
         retain_owner: struct { slot: usize, producer: usize },
         observe: struct { slot: usize, producer: usize },
         copy_reference: struct { destination: usize, source: usize, definite: bool },
-        select: struct { destination: usize, receiver: usize },
+        select: Selection,
         suspend_access: struct { slot: usize, receipt_site: usize, exclusive: bool },
         complete_execution: usize,
 
@@ -98,7 +105,7 @@ pub const Slots = struct {
                 .copy_reference => |write| state.writeReference(write.destination, write.source, write.definite),
                 .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
                 .complete_execution => |site| state.completeCurrent(site),
-                .select => |selection| if (!state.borrowSelected(selection.destination, selection.receiver))
+                .select => |selection| if (!state.borrowSelected(selection))
                     return error.UnprovedObservation,
             }
         }
@@ -179,19 +186,20 @@ pub const Slots = struct {
     }
 
     /// On the success edge of a checked selection, the element inherits
-    /// the observation dependencies of the receiver. Bounds, initialized
-    /// contents, and access authority must be proved by the operation.
+    /// the observation dependencies of the receiver. The lowered operation
+    /// supplies a region with checked bounds and initialized contents.
     /// A successful selection supplies no custody of the selected value.
-    pub fn borrowSelected(self: Slots, destination: usize, receiver: usize) bool {
-        if (!self.initialization[receiver].definitelyInitialized()) return false;
-        const source = self.observationRow(receiver);
+    pub fn borrowSelected(self: Slots, selection: Selection) bool {
+        if (self.accessSuspended(selection.receiver, .read) or self.accessSuspended(selection.region, selection.mode)) return false;
+        if (!self.initialization[selection.receiver].definitelyInitialized()) return false;
+        const source = self.observationRow(selection.receiver);
         var witnessed = false;
         for (source) |dependency| {
             if (dependency.current_ended or dependency.historical) return false;
             witnessed = witnessed or dependency.provesCurrent();
         }
         if (!witnessed) return false;
-        self.writeReference(destination, receiver, true);
+        self.writeReference(selection.destination, selection.receiver, true);
         return true;
     }
 
@@ -402,18 +410,18 @@ test "safety checked selection borrows old owned elements from a current contain
         state.owner(domain.current, 1).current = true;
     }
     try std.testing.expectEqual(Custody{ .current = true, .historical = true }, state.owner(domain.current, 1).*);
-    try std.testing.expect(!state.borrowSelected(1, 0));
+    try std.testing.expect(!state.borrowSelected(.{ .destination = 1, .receiver = 0, .region = domain.current }));
     state.observeCurrent(0, 0);
-    try std.testing.expect(state.borrowSelected(1, 0));
+    try std.testing.expect(state.borrowSelected(.{ .destination = 1, .receiver = 0, .region = domain.current }));
     try std.testing.expect(state.observation(1, 0).provesCurrent());
     try std.testing.expectEqual(Observation{}, state.observation(1, 1));
     try std.testing.expectEqual(Custody{}, state.owner(1, 1).*);
 
     state.retainOpaqueObservation(domain, false, 0, .{ .current_live = true });
     state.renewRelocatingOpaque(domain);
-    try std.testing.expect(!state.borrowSelected(2, 0));
+    try std.testing.expect(!state.borrowSelected(.{ .destination = 2, .receiver = 0, .region = domain.current }));
     state.observeCurrent(0, 0);
-    try std.testing.expect(state.borrowSelected(2, 0));
+    try std.testing.expect(state.borrowSelected(.{ .destination = 2, .receiver = 0, .region = domain.current }));
     try std.testing.expect(!state.observation(1, 0).provesCurrent());
     try std.testing.expect(state.observation(2, 0).provesCurrent());
     try std.testing.expectEqual(Custody{ .current = true, .historical = true }, state.owner(domain.current, 1).*);
@@ -481,12 +489,12 @@ test "safety finite dataflow covers repeated owned element insertion and backing
     const domain: Program = .{
         .allocator = std.testing.allocator,
         .edges_by_block = &.{
-            &.{.{ .destination = 2, .operations = &(insert ++ [_]Slots.Transfer{.{ .select = .{ .destination = saved, .receiver = receiver } }}) }},
+            &.{.{ .destination = 2, .operations = &(insert ++ [_]Slots.Transfer{.{ .select = .{ .destination = saved, .receiver = receiver, .region = contents.current } }}) }},
             &.{.{ .destination = 2, .operations = &insert }},
             &.{
                 .{ .destination = 2, .operations = relocate },
                 .{ .destination = 1, .operations = relocate },
-                .{ .destination = 3, .operations = &.{.{ .select = .{ .destination = fresh, .receiver = receiver } }} },
+                .{ .destination = 3, .operations = &.{.{ .select = .{ .destination = fresh, .receiver = receiver, .region = contents.current } }} },
             },
             &.{},
         },
@@ -533,10 +541,10 @@ test "safety finite symbolic writes preserve both targets of a possible update" 
     try std.testing.expect(state.observation(2, 0).provesCurrent());
     try std.testing.expect(state.observation(2, 1).provesCurrent());
     state.age(0);
-    try std.testing.expect(!state.borrowSelected(0, 2));
+    try std.testing.expect(!state.borrowSelected(.{ .destination = 0, .receiver = 2, .region = 2 }));
     state.writeReference(2, 1, true);
     try std.testing.expectEqual(Observation{}, state.observation(2, 0));
-    try std.testing.expect(state.borrowSelected(0, 2));
+    try std.testing.expect(state.borrowSelected(.{ .destination = 0, .receiver = 2, .region = 2 }));
 }
 
 test "safety finite authority retains historical loans independently of validity" {
@@ -550,8 +558,12 @@ test "safety finite authority retains historical loans independently of validity
     state.age(1);
     state.suspendAccess(1, 1, true);
     try std.testing.expect(state.accessSuspended(1, .read));
+    const selection: Slots.Selection = .{ .destination = 1, .receiver = 0, .region = 1 };
+    try std.testing.expectError(error.UnprovedObservation, (Slots.Transfer{ .select = selection }).apply(state));
     try (Slots.Transfer{ .complete_execution = 1 }).apply(state);
     try std.testing.expect(!state.accessSuspended(1, .read));
+    try (Slots.Transfer{ .select = selection }).apply(state);
+    try std.testing.expect(!state.borrowSelected(.{ .destination = 1, .receiver = 0, .region = 0, .mode = .write }));
     try std.testing.expect(!state.accessSuspended(0, .read));
     try std.testing.expect(state.accessSuspended(0, .write));
     try std.testing.expect(state.observation(0, 0).provesCurrent());
