@@ -210,31 +210,56 @@ pub const Slots = struct {
     /// This does not copy or discharge owning obligations.
     pub fn writeReference(self: Slots, destination: usize, source: usize, definite: bool) void {
         if (destination == source) return;
-        self.writeReferenceFrom(self, .{ .destination = destination, .source = source, .definite = definite });
+        self.writeReferenceValue(destination, self.referenceValue(source), definite);
+    }
+
+    const ReferenceValue = struct {
+        observations: []const Observation,
+        initialization: Initialization,
+        unobserved: bool,
+    };
+
+    fn referenceValue(self: Slots, source: usize) ReferenceValue {
+        return .{
+            .observations = self.observationRow(source),
+            .initialization = self.initialization[source],
+            .unobserved = self.unobserved[source],
+        };
     }
 
     /// Call post-values use the same entry snapshot. Their destinations
     /// have already been resolved, including possible aliases of writes.
     fn applyReferencePostStates(self: Slots, allocator: std.mem.Allocator, writes: []const ReferenceWrite) !void {
         if (writes.len == 0) return;
-        const entry = try self.clone(allocator);
-        defer entry.deinit(allocator);
-        for (writes) |write| self.writeReferenceFrom(entry, write);
+        if (writes.len == 1) {
+            const write = writes[0];
+            self.writeReference(write.destination, write.source, write.definite);
+            return;
+        }
+        const width = self.layout.producers;
+        const captures = try allocator.alloc(ReferenceValue, writes.len);
+        defer allocator.free(captures);
+        const observations = try allocator.alloc(Observation, try std.math.mul(usize, writes.len, width));
+        defer allocator.free(observations);
+        for (writes, captures, 0..) |write, *capture, index| {
+            capture.* = self.referenceValue(write.source);
+            const row = observations[index * width ..][0..width];
+            @memcpy(row, capture.observations);
+            capture.observations = row;
+        }
+        for (writes, captures) |write, value| self.writeReferenceValue(write.destination, value, write.definite);
     }
 
-    fn writeReferenceFrom(self: Slots, entry: Slots, write: ReferenceWrite) void {
-        const destination = write.destination;
-        const source = write.source;
-        const incoming = entry.observationRow(source);
+    fn writeReferenceValue(self: Slots, destination: usize, value: ReferenceValue, definite: bool) void {
         const stored = self.observationRow(destination);
-        if (write.definite) {
-            @memcpy(stored, incoming);
-            self.initialization[destination] = entry.initialization[source];
-            self.unobserved[destination] = entry.unobserved[source];
+        if (definite) {
+            @memcpy(stored, value.observations);
+            self.initialization[destination] = value.initialization;
+            self.unobserved[destination] = value.unobserved;
         } else {
-            for (stored, incoming) |*old, new| old.* = old.join(new);
-            self.initialization[destination] = self.initialization[destination].weakWrite(entry.initialization[source]);
-            self.unobserved[destination] = self.unobserved[destination] or entry.unobserved[source];
+            for (stored, value.observations) |*old, new| old.* = old.join(new);
+            self.initialization[destination] = self.initialization[destination].weakWrite(value.initialization);
+            self.unobserved[destination] = self.unobserved[destination] or value.unobserved;
         }
     }
 
