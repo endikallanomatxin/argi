@@ -484,7 +484,7 @@ pub const Tracker = struct {
         projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
         projection_parents: std.AutoHashMapUnmanaged(ValidityRootId, void) = .empty,
         embedded_slots: std.AutoHashMapUnmanaged(EmbeddedSlot, ValidityRootId) = .empty,
-        projection_partitions: std.AutoHashMapUnmanaged(PartitionStep, ProjectionPartition) = .empty,
+        projection_partitions: std.AutoArrayHashMapUnmanaged(PartitionStep, void) = .empty,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
 
         pub fn embeddedBase(self: *const RootNamespace, identity: SymbolicPointeeId) EmbeddedBase {
@@ -542,9 +542,10 @@ pub const Tracker = struct {
                 .selector = row.selector,
             };
             const partition = self.projection_partitions.getOrPutAssumeCapacity(step);
-            if (!partition.found_existing) partition.value_ptr.* = @enumFromInt(@intFromEnum(row.identity));
+            // The partition ordinal follows the path table, independently
+            // of how many symbolic observations precede this path.
             var observed = row;
-            observed.partition = partition.value_ptr.*;
+            observed.partition = @enumFromInt(partition.index);
             self.projected_storage.appendAssumeCapacity(observed);
         }
 
@@ -860,6 +861,8 @@ fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
     const key: Tracker.RootNamespace.ProjectionObservation = .{ .parent = @enumFromInt(0), .generation = @enumFromInt(1), .selector = variant };
     try std.testing.expectEqual(null, original.observedProjection(key));
     try std.testing.expectEqual(@as(SymbolicPointeeId, @enumFromInt(4)), candidate.observedProjection(key).?.identity);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(original.projectionPartition(@enumFromInt(3)).?));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(candidate.projectionPartition(@enumFromInt(4)).?));
     try std.testing.expectEqual(@as(u32, 4), original.next_symbolic_id);
     try std.testing.expectEqual(@as(u32, 7), original.next_capability_id);
     try std.testing.expectEqual(@as(u32, 2), original.next_id);
