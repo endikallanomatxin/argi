@@ -650,6 +650,10 @@ pub fn check(allocator: std.mem.Allocator, contract: Contract, summary: facts.Sa
         }
         for (outcome.invalidated_domains) |domain| if (!permitsDomain(allowed, domain)) return .{ .kind = .unsupported_post_state, .input = domain.path, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
     }
+    // Preservation contracts cannot express the entry requirement that
+    // hidden contents are independent of a relocated backing.
+    for (summary.opaque_relocation_sources) |path|
+        return .{ .kind = .unsupported_opaque_effect, .input = path };
     for (summary.opaque_storage_effects) |effect| {
         if (!permitsRetention(contract, effect.storage, effect.hidden_dependencies)) return .{ .kind = .unsupported_opaque_effect, .input = effect.storage };
     }
@@ -1911,4 +1915,12 @@ test "guarded output guarantees cannot erase an acquisition precondition" {
     const contract: Contract = .{ .outputs = &.{}, .general_conditions = true };
     try std.testing.expectEqual(Failure.Kind.unsupported_capability_requirement, (try check(allocator, contract, summary)).?.kind);
     try std.testing.expectEqual(Failure.Kind.unsupported_capability_requirement, (try checkStatic(allocator, contract, summary)).?.kind);
+}
+
+test "preservation contracts reject hidden relocation preconditions" {
+    const path: facts.InputPath = .{ .input_index = 0, .storage_domain = 1 };
+    const contract: Contract = .{ .outputs = &.{} };
+    const failure = (try check(std.testing.allocator, contract, .{ .opaque_relocation_sources = &.{path} })).?;
+    try std.testing.expectEqual(.unsupported_opaque_effect, failure.kind);
+    try std.testing.expect(samePath(path, failure.input.?));
 }
