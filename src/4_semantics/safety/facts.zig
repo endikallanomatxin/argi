@@ -447,7 +447,7 @@ pub const Tracker = struct {
         };
 
         pub const ProjectionPartition = enum(u32) { _ };
-        const PartitionStep = struct {
+        pub const PartitionStep = struct {
             parent: union(enum) { input: SymbolicPointeeId, projected: ProjectionPartition },
             selector: SymbolicStorageSelector,
         };
@@ -497,6 +497,18 @@ pub const Tracker = struct {
         pub fn projectionPartition(self: *const RootNamespace, identity: SymbolicPointeeId) ?ProjectionPartition {
             const index = self.projectionIndex(identity) orelse return null;
             return self.projected_storage.items[index].partition;
+        }
+
+        /// The layout builder can allocate a path key without allocating
+        /// any backing, lifetime, or symbolic observation.
+        pub fn registerProjectionPartition(self: *RootNamespace, allocator: std.mem.Allocator, path: PartitionStep) !ProjectionPartition {
+            const partition = try self.projection_partitions.getOrPut(allocator, path);
+            return @enumFromInt(partition.index);
+        }
+
+        pub fn lookupProjectionPartition(self: *const RootNamespace, path: PartitionStep) ?ProjectionPartition {
+            const index = self.projection_partitions.getIndex(path) orelse return null;
+            return @enumFromInt(index);
         }
 
         pub fn internProducer(self: *RootNamespace, allocator: std.mem.Allocator, producer: Producer) !RootProducerId {
@@ -1176,4 +1188,45 @@ pub fn valueFactsEqual(left: ValueFacts, right: ValueFacts) bool {
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     return true;
+}
+
+test "safety symbolic paths can be registered before any lifetime observations" {
+    const a = std.testing.allocator;
+    var namespace: Tracker.RootNamespace = .{};
+    defer namespace.deinit(a);
+    const Path = Tracker.RootNamespace.PartitionStep;
+    const root: SymbolicPointeeId = @enumFromInt(0);
+    const field: Path = .{ .parent = .{ .input = root }, .selector = .{ .projection = .{ .field = 0 } } };
+    try std.testing.expectEqual(null, namespace.lookupProjectionPartition(field));
+    const key = try namespace.registerProjectionPartition(a, field);
+    const child: Path = .{ .parent = .{ .projected = key }, .selector = .{ .domain = 0 } };
+    const child_key = try namespace.registerProjectionPartition(a, child);
+    try std.testing.expectEqual(@as(u32, 0), namespace.next_id);
+    try std.testing.expectEqual(@as(u32, 0), namespace.next_symbolic_id);
+
+    for (1..4) |ordinal| {
+        const identity: SymbolicPointeeId = @enumFromInt(ordinal * 2 - 1);
+        try namespace.reserveProjection(a, field.selector);
+        namespace.publishProjection(.{
+            .parent = root,
+            .parent_generation = @enumFromInt(ordinal),
+            .selector = field.selector,
+            .identity = identity,
+            .backing = @enumFromInt(0),
+            .generation = @enumFromInt(ordinal),
+        });
+        try std.testing.expectEqual(key, namespace.projectionPartition(identity).?);
+        const domain_identity: SymbolicPointeeId = @enumFromInt(ordinal * 2);
+        try namespace.reserveProjection(a, child.selector);
+        namespace.publishProjection(.{
+            .parent = identity,
+            .parent_generation = @enumFromInt(ordinal),
+            .selector = child.selector,
+            .identity = domain_identity,
+            .backing = @enumFromInt(ordinal),
+            .generation = @enumFromInt(ordinal),
+        });
+        try std.testing.expectEqual(child_key, namespace.projectionPartition(domain_identity).?);
+    }
+    try std.testing.expectEqual(@as(usize, 2), namespace.projection_partitions.count());
 }
