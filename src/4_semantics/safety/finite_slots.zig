@@ -49,21 +49,41 @@ const Restriction = packed struct(u4) {
 
 /// Construct the immutable overlap relation for authority checks. Unknown
 /// referents may alias even when they have distinct symbolic identities.
+pub const StorageOverlaps = struct {
+    pairs: [][2]usize,
+    unknown: []usize,
+
+    pub fn deinit(self: StorageOverlaps, allocator: std.mem.Allocator) void {
+        allocator.free(self.unknown);
+        allocator.free(self.pairs);
+    }
+};
+
 pub fn storageOverlaps(
     allocator: std.mem.Allocator,
     graph: *const @import("../global/graph.zig").GlobalSemanticGraph,
     storage: []const @import("facts.zig").StorageIdentity,
-) ![][2]usize {
+) !StorageOverlaps {
     var pairs: std.ArrayList([2]usize) = .empty;
     defer pairs.deinit(allocator);
+    var unknown: std.ArrayList(usize) = .empty;
+    defer unknown.deinit(allocator);
+    var places: std.ArrayList(usize) = .empty;
+    defer places.deinit(allocator);
     for (storage, 0..) |left, i| {
-        for (storage[0..i], 0..) |right, j| {
-            if (left == .place and right == .place and
-                !@import("access_bounds.zig").storageMayOverlap(graph, left.place, right.place)) continue;
-            try pairs.append(allocator, .{ j, i });
+        if (left == .symbolic) {
+            try unknown.append(allocator, i);
+            continue;
         }
+        for (places.items) |j| {
+            if (@import("access_bounds.zig").storageMayOverlap(graph, left.place, storage[j].place))
+                try pairs.append(allocator, .{ j, i });
+        }
+        try places.append(allocator, i);
     }
-    return pairs.toOwnedSlice(allocator);
+    const owned_pairs = try pairs.toOwnedSlice(allocator);
+    errdefer allocator.free(owned_pairs);
+    return .{ .pairs = owned_pairs, .unknown = try unknown.toOwnedSlice(allocator) };
 }
 
 pub const Slots = struct {
@@ -83,10 +103,16 @@ pub const Slots = struct {
         /// Symmetric pairs from the typed overlap analysis. Overlap is not
         /// transitive: disjoint siblings may both overlap a whole record.
         overlaps: []const [2]usize = &.{},
+        /// Regions that may alias every slot, in ascending slot order.
+        unknown_overlaps: []const usize = &.{},
 
         /// Each opaque row belongs to exactly one domain. Sharing a row
         /// would let renewal of one domain clear another domain's contents.
         fn validate(self: Layout, allocator: std.mem.Allocator) !void {
+            for (self.unknown_overlaps, 0..) |slot, index| {
+                if (slot >= self.slots or (index != 0 and self.unknown_overlaps[index - 1] >= slot))
+                    return error.InvalidStorageOverlap;
+            }
             for (self.overlaps) |pair| {
                 if (pair[0] >= self.slots or pair[1] >= self.slots or pair[0] == pair[1])
                     return error.InvalidStorageOverlap;
@@ -392,6 +418,13 @@ pub const Slots = struct {
 
     pub fn accessSuspended(self: Slots, slot: usize, mode: Access) bool {
         if (self.layout.receipt_sites == 0) return false;
+        for (self.layout.unknown_overlaps) |unknown| {
+            if (unknown == slot) {
+                for (0..self.layout.slots) |candidate| if (self.hasRestriction(candidate, mode)) return true;
+                return false;
+            }
+            if (self.hasRestriction(unknown, mode)) return true;
+        }
         if (self.hasRestriction(slot, mode)) return true;
         for (self.layout.overlaps) |pair| {
             if (pair[0] == slot and self.hasRestriction(pair[1], mode)) return true;
@@ -510,6 +543,8 @@ pub const Slots = struct {
         return self.layout.slots == incoming.layout.slots and
             self.layout.producers == incoming.layout.producers and
             self.layout.receipt_sites == incoming.layout.receipt_sites and
+            self.layout.unknown_overlaps.ptr == incoming.layout.unknown_overlaps.ptr and
+            self.layout.unknown_overlaps.len == incoming.layout.unknown_overlaps.len and
             self.layout.overlaps.ptr == incoming.layout.overlaps.ptr and
             self.layout.overlaps.len == incoming.layout.overlaps.len and
             self.layout.opaque_rows.ptr == incoming.layout.opaque_rows.ptr and
@@ -933,7 +968,22 @@ test "safety finite overlap does not infer disjointness from symbolic identity" 
         .{ .symbolic = @enumFromInt(0) },
         .{ .symbolic = @enumFromInt(1) },
     };
-    const pairs = try storageOverlaps(a, &graph, identities);
-    defer a.free(pairs);
-    try std.testing.expectEqualDeep(@as([]const [2]usize, &.{ .{ 0, 2 }, .{ 1, 2 }, .{ 0, 3 }, .{ 1, 3 }, .{ 2, 3 } }), @as([]const [2]usize, pairs));
+    const overlaps = try storageOverlaps(a, &graph, identities);
+    defer overlaps.deinit(a);
+    try std.testing.expectEqual(@as(usize, 0), overlaps.pairs.len);
+    try std.testing.expectEqualSlices(usize, &.{ 2, 3 }, overlaps.unknown);
+    const state = try Slots.init(a, .{
+        .slots = identities.len,
+        .producers = 0,
+        .receipt_sites = 1,
+        .overlaps = overlaps.pairs,
+        .unknown_overlaps = overlaps.unknown,
+    });
+    defer state.deinit(a);
+    state.suspendAccess(0, 0, true);
+    try std.testing.expect(state.accessSuspended(2, .read));
+    try std.testing.expect(!state.accessSuspended(1, .write));
+    state.suspendAccess(3, 0, false);
+    try std.testing.expect(state.accessSuspended(1, .write));
+    try std.testing.expect(!state.accessSuspended(1, .read));
 }
