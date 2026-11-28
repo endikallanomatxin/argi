@@ -114,6 +114,7 @@ pub const Slots = struct {
     layout: Layout,
     initialization: []Initialization,
     observations: []Observation,
+    unobserved: []bool,
     custody: []Custody,
     restrictions: []Restriction,
 
@@ -127,11 +128,14 @@ pub const Slots = struct {
         const custody = try allocator.alloc(Custody, count);
         errdefer allocator.free(custody);
         const restrictions = try allocator.alloc(Restriction, count);
+        errdefer allocator.free(restrictions);
+        const unobserved = try allocator.alloc(bool, layout.slots);
+        @memset(unobserved, false);
         @memset(restrictions, .{});
         @memset(custody, .{});
         @memset(initialization, .{});
         @memset(observations, .{});
-        return .{ .layout = layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions };
+        return .{ .layout = layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions, .unobserved = unobserved };
     }
 
     /// Copies a state in the same already validated layout.
@@ -143,10 +147,13 @@ pub const Slots = struct {
         const custody = try allocator.dupe(Custody, self.custody);
         errdefer allocator.free(custody);
         const restrictions = try allocator.dupe(Restriction, self.restrictions);
-        return .{ .layout = self.layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions };
+        errdefer allocator.free(restrictions);
+        const unobserved = try allocator.dupe(bool, self.unobserved);
+        return .{ .layout = self.layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions, .unobserved = unobserved };
     }
 
     pub fn deinit(self: Slots, allocator: std.mem.Allocator) void {
+        allocator.free(self.unobserved);
         allocator.free(self.restrictions);
         allocator.free(self.custody);
         allocator.free(self.observations);
@@ -167,6 +174,15 @@ pub const Slots = struct {
         @memset(row, .{});
         row[producer] = .{ .current_live = true };
         self.initialization[destination] = .{ .initialized = true };
+        self.unobserved[destination] = false;
+    }
+
+    /// An initialized pointer without a tracked observation cannot
+    /// inherit evidence from a different incoming path.
+    pub fn writeUnobservedReference(self: Slots, destination: usize) void {
+        @memset(self.observationRow(destination), .{});
+        self.initialization[destination] = .{ .initialized = true };
+        self.unobserved[destination] = true;
     }
 
     /// Write a copied reference into a preassigned storage row. A caller
@@ -179,9 +195,11 @@ pub const Slots = struct {
         if (definite) {
             @memcpy(stored, incoming);
             self.initialization[destination] = self.initialization[source];
+            self.unobserved[destination] = self.unobserved[source];
         } else {
             for (stored, incoming) |*old, new| old.* = old.join(new);
             self.initialization[destination] = self.initialization[destination].weakWrite(self.initialization[source]);
+            self.unobserved[destination] = self.unobserved[destination] or self.unobserved[source];
         }
     }
 
@@ -191,7 +209,7 @@ pub const Slots = struct {
     /// A successful selection supplies no custody of the selected value.
     pub fn borrowSelected(self: Slots, selection: Selection) bool {
         if (self.accessSuspended(selection.receiver, .read) or self.accessSuspended(selection.region, selection.mode)) return false;
-        if (!self.initialization[selection.receiver].definitelyInitialized()) return false;
+        if (self.unobserved[selection.receiver] or !self.initialization[selection.receiver].definitelyInitialized()) return false;
         const source = self.observationRow(selection.receiver);
         var witnessed = false;
         for (source) |dependency| {
@@ -316,6 +334,7 @@ pub const Slots = struct {
         std.debug.assert(self.sameLayout(incoming));
         for (self.initialization, incoming.initialization) |a, b| if (!a.covers(b)) return false;
         for (self.observations, incoming.observations) |a, b| if (!a.covers(b)) return false;
+        for (self.unobserved, incoming.unobserved) |a, b| if (!a and b) return false;
         for (self.custody, incoming.custody) |a, b| if (!a.covers(b)) return false;
         for (self.restrictions, incoming.restrictions) |a, b| if (!a.covers(b)) return false;
         return true;
@@ -325,6 +344,7 @@ pub const Slots = struct {
         std.debug.assert(self.sameLayout(incoming));
         for (self.initialization, incoming.initialization) |*a, b| a.* = a.join(b);
         for (self.observations, incoming.observations) |*a, b| a.* = a.join(b);
+        for (self.unobserved, incoming.unobserved) |*a, b| a.* = a.* or b;
         for (self.custody, incoming.custody) |*a, b| a.* = a.join(b);
         for (self.restrictions, incoming.restrictions) |*a, b| a.* = a.include(b);
     }
@@ -570,4 +590,21 @@ test "safety finite authority retains historical loans independently of validity
     try std.testing.expect(!before.covers(state));
     before.include(state);
     try std.testing.expect(before.covers(state));
+}
+
+test "safety finite joins keep initialized references without observations" {
+    const a = std.testing.allocator;
+    const tracked = try Slots.init(a, .{ .slots = 2, .producers = 1 });
+    defer tracked.deinit(a);
+    const unknown = try Slots.init(a, tracked.layout);
+    defer unknown.deinit(a);
+    tracked.observeCurrent(0, 0);
+    unknown.writeUnobservedReference(0);
+    try std.testing.expect(!tracked.covers(unknown));
+    tracked.include(unknown);
+    try std.testing.expect(tracked.covers(unknown));
+    try std.testing.expect(tracked.initialization[0].definitelyInitialized());
+    try std.testing.expect(!tracked.borrowSelected(.{ .destination = 1, .receiver = 0, .region = 0 }));
+    tracked.observeCurrent(0, 0);
+    try std.testing.expect(tracked.borrowSelected(.{ .destination = 1, .receiver = 0, .region = 0 }));
 }
