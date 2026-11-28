@@ -122,9 +122,33 @@ pub const Slots = struct {
         @memset(self.observationRow(domain.current), .{});
     }
 
+    fn moveOpaqueContents(self: Slots, from: usize, to: usize) void {
+        const source = self.observationRow(from);
+        const destination = self.observationRow(to);
+        for (destination, source, 0..) |*retained, *moved, dependency_producer| {
+            retained.* = retained.join(moved.*);
+            moved.* = .{};
+            const old_custody = self.owner(from, dependency_producer);
+            const new_custody = self.owner(to, dependency_producer);
+            new_custody.* = new_custody.join(old_custody.*);
+            old_custody.* = .{};
+        }
+    }
+
     /// Apply a production event to every stored observation of this producer.
     /// Age observations and outstanding custody together.
     pub fn age(self: Slots, producer: usize) void {
+        self.renewProducer(producer, null);
+    }
+
+    /// A verified full relocation moves initialized contents to the new
+    /// current backing. Observations of the old backing still age. The
+    /// caller proves a unique current source and preservation of contents.
+    pub fn renewRelocatingOpaque(self: Slots, domain: OpaqueRows) void {
+        self.renewProducer(domain.producer, domain.current);
+    }
+
+    fn renewProducer(self: Slots, producer: usize, relocated_row: ?usize) void {
         std.debug.assert(producer < self.layout.producers);
         for (0..self.layout.slots) |slot| {
             const row = self.observationRow(slot);
@@ -133,17 +157,8 @@ pub const Slots = struct {
             custody.* = custody.age();
         }
         for (self.layout.opaque_rows) |domain| {
-            if (domain.producer != producer) continue;
-            const current = self.observationRow(domain.current);
-            const history = self.observationRow(domain.historical);
-            for (history, current, 0..) |*older, *latest, dependency_producer| {
-                older.* = older.join(latest.*);
-                latest.* = .{};
-                const previous_custody = self.owner(domain.historical, dependency_producer);
-                const current_custody = self.owner(domain.current, dependency_producer);
-                previous_custody.* = previous_custody.join(current_custody.*);
-                current_custody.* = .{};
-            }
+            if (domain.producer != producer or domain.current == relocated_row) continue;
+            self.moveOpaqueContents(domain.current, domain.historical);
         }
     }
 
@@ -257,11 +272,14 @@ test "safety checked selection borrows old owned elements from a current contain
     try std.testing.expectEqual(Observation{}, state.observation(1, 1));
     try std.testing.expectEqual(Custody{}, state.owner(1, 1).*);
 
-    state.age(0);
+    state.retainOpaqueObservation(domain, false, 0, .{ .current_live = true });
+    state.renewRelocatingOpaque(domain);
     try std.testing.expect(!state.borrowSelected(2, 0));
     state.observeCurrent(0, 0);
     try std.testing.expect(state.borrowSelected(2, 0));
     try std.testing.expect(!state.observation(1, 0).provesCurrent());
     try std.testing.expect(state.observation(2, 0).provesCurrent());
-    try std.testing.expect(state.owner(domain.historical, 1).historical);
+    try std.testing.expectEqual(Custody{ .current = true, .historical = true }, state.owner(domain.current, 1).*);
+    try std.testing.expectEqual(Custody{}, state.owner(domain.historical, 1).*);
+    try std.testing.expect(state.observation(domain.current, 0).historical);
 }
