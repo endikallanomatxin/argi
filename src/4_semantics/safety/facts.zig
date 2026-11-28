@@ -436,7 +436,7 @@ pub const Tracker = struct {
         };
         pub const Producer = struct {
             site: ProducerSite,
-            effect: FreshEffectSource,
+            effect: union(enum) { summary: FreshEffectSource, primitive_owner },
         };
         /// Embedded projections follow physical storage across observations.
         /// Ordinary symbolic inputs may share a validity root without sharing

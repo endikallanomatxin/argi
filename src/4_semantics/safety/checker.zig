@@ -3595,7 +3595,7 @@ pub const SafetyChecker = struct {
                 };
             },
             .allocation => blk: {
-                const root = try state.tracker.establish(.fresh);
+                const root = try self.establishProducedRoot(state, .primitive_owner);
                 state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
                 const shape = primitive_transfer.AllocationTransfer;
                 const fields = try self.allocator.alloc(facts.FieldFacts, try shape.fieldCount(self.graph, callee));
@@ -4117,7 +4117,7 @@ pub const SafetyChecker = struct {
         values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !facts.ValueFacts {
-        const root = try state.tracker.establish(.fresh);
+        const root = try self.establishProducedRoot(state, .primitive_owner);
         state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         if (try self.primitiveArgumentStorage(argument_ids, values, 0, state)) |storage| {
@@ -6669,6 +6669,19 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn establishProducedRoot(self: *SafetyChecker, state: *FunctionState, effect: @FieldType(facts.Tracker.RootNamespace.Producer, "effect")) !facts.ValidityRootId {
+        const producer = if (self.active_root_producer_site) |site|
+            if (state.tracker.namespace) |namespace|
+                try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = effect })
+            else
+                null
+        else
+            null;
+        const root = try state.tracker.establish(.fresh);
+        state.tracker.roots.items[@intFromEnum(root)].producer = producer;
+        return root;
+    }
+
     fn instantiateFreshRoot(
         self: *SafetyChecker,
         source: facts.FreshEffectSource,
@@ -6676,15 +6689,7 @@ pub const SafetyChecker = struct {
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
     ) !facts.ValidityRootId {
         if (fresh.get(source)) |root| return root;
-        const producer = if (self.active_root_producer_site) |site|
-            if (state.tracker.namespace) |namespace|
-                try namespace.internProducer(state.tracker.allocator, .{ .site = site, .effect = source })
-            else
-                null
-        else
-            null;
-        const root = try state.tracker.establish(.fresh);
-        state.tracker.roots.items[@intFromEnum(root)].producer = producer;
+        const root = try self.establishProducedRoot(state, .{ .summary = source });
         try fresh.put(source, root);
         return root;
     }
@@ -12078,7 +12083,12 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     const other = try checker.instantiateFreshRoot(1, &state, &fresh);
     const unobserved = try checker.instantiateFreshRoot(2, &state, &fresh);
     try std.testing.expect(first != second);
-    const opaque_owner = try state.tracker.establish(.fresh);
+    const opaque_owner = try checker.establishProducedRoot(&state, .primitive_owner);
+    const another_owner = try checker.establishProducedRoot(&state, .primitive_owner);
+    try std.testing.expect(opaque_owner != another_owner);
+    const producer = state.tracker.roots.items[@intFromEnum(opaque_owner)].producer.?;
+    try std.testing.expectEqual(producer, state.tracker.roots.items[@intFromEnum(another_owner)].producer.?);
+    try std.testing.expect(producer != state.tracker.roots.items[@intFromEnum(first)].producer.?);
     for ([_]facts.ValidityRootId{ first, second, other, unobserved, opaque_owner }) |root| {
         state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
         if (root == second) state.tracker.markPossiblyRetired(root) else state.tracker.end(root);
@@ -12088,7 +12098,7 @@ test "loop expiry summarizes retired resource observations and retains opaque cu
     try state.setPlace(storage, .initialized, .{ .dependencies = &.{ .{ .root = first, .retirement_mark = retired_mark }, .{ .root = second }, .{ .root = other } } });
     try state.opaque_storages.append(.{ .storage = .{ .place = storage }, .hidden_dependencies = &.{}, .owner_roots = &.{opaque_owner} });
     try checker.summarizeHistoricalObservations(&context, &state);
-    try std.testing.expectEqual(@as(usize, 3), namespace.producers.count());
+    try std.testing.expectEqual(@as(usize, 4), namespace.producers.count());
     try std.testing.expectEqual(@as(usize, 2), context.expired_produced_resources.count());
     try std.testing.expect(!state.tracker.roots.items[@intFromEnum(unobserved)].present);
     const value = state.getPlace(storage).?.value;
