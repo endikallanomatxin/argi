@@ -5561,21 +5561,31 @@ pub const SafetyChecker = struct {
             if (post_values[index]) |pointer| reference_generations[index] = try state.referenceObservationGeneration(pointer);
         };
 
-        for (summary.input_post_states, 0..) |post_state, post_index| {
+        // Resolve symbolic destinations in the same entry state as concrete
+        // ones. A previous postcondition may retarget or renew the argument.
+        const SymbolicPostTarget = struct {
+            access: ?facts.ValueFacts = null,
+            was_initialized: bool = false,
+        };
+        const symbolic_targets = try self.state_allocator.alloc(SymbolicPostTarget, summary.input_post_states.len);
+        defer self.state_allocator.free(symbolic_targets);
+        @memset(symbolic_targets, .{});
+        for (summary.input_post_states, post_targets, symbolic_targets) |post, concrete, *symbolic| {
+            if (concrete != null and !cleanupTransition(summary, post)) continue;
+            const access = try self.symbolicConsumptionValue(post.target, argument_ids, arguments, state) orelse continue;
+            symbolic.access = access;
+            if (post.initializedness == .initialized and post.initialization != .preserved and
+                !post.requires_available_destination and access.symbolic_pointees.len == 1)
+            {
+                symbolic.was_initialized = self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
+            }
+        }
+
+        for (summary.input_post_states, symbolic_targets, 0..) |post_state, symbolic, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
-            // The write, retirement and renewal in this postcondition
-            // refer to the same evaluated symbolic destination.
-            const symbolic_access = if (post_targets[post_index] == null or cleanupTransition(summary, post_state))
-                try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments, state)
-            else
-                null;
-            const symbolic_was_initialized = blk: {
-                if (post_state.initializedness != .initialized or post_state.initialization == .preserved or post_state.requires_available_destination) break :blk false;
-                const access = symbolic_access orelse break :blk false;
-                if (access.symbolic_pointees.len != 1) break :blk false;
-                break :blk self.symbolicStorageReadiness(state, access.symbolic_pointees[0]) == .complete;
-            };
+            const symbolic_access = symbolic.access;
+            const symbolic_was_initialized = symbolic.was_initialized;
             if (cleanupTransition(summary, post_state)) {
                 const identities = if (symbolic_access) |access| access.symbolic_pointees else &.{};
                 for (identities) |identity| {
