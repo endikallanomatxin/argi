@@ -823,6 +823,18 @@ in the program from growth introduced by the solver.
 
 #### Measurements and constraints from the existing checker
 
+The reduced String controls live under `plan/safety_repros`. Build each
+directory with a Debug compiler, `--frontend-jobs 1 --no-cache`, and a
+disk-backed temporary directory. At `b13c81a45`, `string_straight` builds
+and its executable returns successfully. `string_growth` rejects the
+loop with a nonconvergence diagnostic. `string_stale` rejects reading
+the saved view after actual growth with the ended-root diagnostic.
+A single baseline run measured 1.11 s and 158 MiB peak RSS for the
+complete straight build, 0.92 s and 149 MiB for the growth rejection,
+and 0.90 s and 146 MiB for the stale rejection. The failed builds stop
+before code generation, so compare safety phase time separately when
+the growth control begins to compile.
+
 Use a bounded recency abstraction for each abstract storage or producer
 partition. Keep entry-relative identities rigid. Name a projection by
 its base partition and typed path, with an unresolved suffix once the
