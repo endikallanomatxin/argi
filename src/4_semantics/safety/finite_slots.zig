@@ -61,9 +61,17 @@ pub const Slots = struct {
         producers: usize,
         receipt_sites: usize = 0,
         opaque_rows: []const OpaqueRows = &.{},
+        /// Symmetric pairs from the typed overlap analysis. Overlap is not
+        /// transitive: disjoint siblings may both overlap a whole record.
+        overlaps: []const [2]usize = &.{},
+
         /// Each opaque row belongs to exactly one domain. Sharing a row
         /// would let renewal of one domain clear another domain's contents.
         fn validate(self: Layout, allocator: std.mem.Allocator) !void {
+            for (self.overlaps) |pair| {
+                if (pair[0] >= self.slots or pair[1] >= self.slots or pair[0] == pair[1])
+                    return error.InvalidStorageOverlap;
+            }
             if (self.opaque_rows.len == 0) return;
             var used = try std.DynamicBitSetUnmanaged.initEmpty(allocator, self.slots);
             defer used.deinit(allocator);
@@ -364,6 +372,16 @@ pub const Slots = struct {
     }
 
     pub fn accessSuspended(self: Slots, slot: usize, mode: Access) bool {
+        if (self.layout.receipt_sites == 0) return false;
+        if (self.hasRestriction(slot, mode)) return true;
+        for (self.layout.overlaps) |pair| {
+            if (pair[0] == slot and self.hasRestriction(pair[1], mode)) return true;
+            if (pair[1] == slot and self.hasRestriction(pair[0], mode)) return true;
+        }
+        return false;
+    }
+
+    fn hasRestriction(self: Slots, slot: usize, mode: Access) bool {
         for (0..self.layout.receipt_sites) |site| {
             const loan = self.restriction(slot, site).*;
             if (loan.current_read or loan.historical_read) return true;
@@ -473,6 +491,8 @@ pub const Slots = struct {
         return self.layout.slots == incoming.layout.slots and
             self.layout.producers == incoming.layout.producers and
             self.layout.receipt_sites == incoming.layout.receipt_sites and
+            self.layout.overlaps.ptr == incoming.layout.overlaps.ptr and
+            self.layout.overlaps.len == incoming.layout.overlaps.len and
             self.layout.opaque_rows.ptr == incoming.layout.opaque_rows.ptr and
             self.layout.opaque_rows.len == incoming.layout.opaque_rows.len;
     }
@@ -866,4 +886,21 @@ test "safety finite program rejects operands outside the frozen layout" {
     var headers: [1]?Slots = @splat(null);
     try std.testing.expectError(error.InvalidFiniteOperand, program.solve(&headers, 0, state));
     try std.testing.expectEqual(null, headers[0]);
+}
+
+test "safety finite access restrictions follow symmetric nontransitive storage overlap" {
+    const a = std.testing.allocator;
+    const state = try Slots.init(a, .{
+        .slots = 3,
+        .producers = 0,
+        .receipt_sites = 1,
+        .overlaps = &.{ .{ 0, 1 }, .{ 0, 2 } },
+    });
+    defer state.deinit(a);
+    state.suspendAccess(1, 0, true);
+    try std.testing.expect(state.accessSuspended(0, .read));
+    try std.testing.expect(!state.accessSuspended(2, .write));
+    state.suspendAccess(0, 0, false);
+    try std.testing.expect(state.accessSuspended(2, .write));
+    try std.testing.expect(!state.accessSuspended(2, .read));
 }
