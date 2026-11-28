@@ -203,7 +203,7 @@ pub fn dependencyOrder(allocator: std.mem.Allocator, graph: *const graph_mod.Glo
 /// Nodes evaluated within one body, with calls treated as leaves after
 /// visiting their evaluated operands and cleanup arguments. Sparse marks
 /// keep the cost proportional to the body, even in a large global graph.
-pub fn localBodyNodes(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, body: graph_mod.GlobalBlockId, additional: []const ?graph_mod.GlobalNodeId) !std.AutoHashMap(graph_mod.GlobalNodeId, void) {
+pub fn localBodyNodes(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, body: graph_mod.GlobalBlockId) !std.AutoHashMap(graph_mod.GlobalNodeId, void) {
     var included = FunctionSet.init(allocator);
     defer included.deinit();
     var state: State = .{
@@ -215,7 +215,6 @@ pub fn localBodyNodes(allocator: std.mem.Allocator, graph: *const graph_mod.Glob
         .local_body = true,
     };
     try state.walkBlock(body);
-    for (additional) |root| if (root) |node| try state.walkNode(node);
     var result = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator);
     std.mem.swap(@TypeOf(result), &result, &included.nodes);
     return result;
@@ -562,14 +561,11 @@ test "summary dependency order handles late callees and recursive cycles" {
     defer allocator.free(ordered);
     try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, &.{ @enumFromInt(1), @enumFromInt(0) }, ordered);
     graph.blocks.items[1].nodes.len = 1;
-    var local = try localBodyNodes(allocator, &graph, @enumFromInt(0), &.{});
+    var local = try localBodyNodes(allocator, &graph, @enumFromInt(0));
     defer local.deinit();
     try std.testing.expect(local.contains(@enumFromInt(0)));
     try std.testing.expect(local.contains(@enumFromInt(1)));
     try std.testing.expect(!local.contains(@enumFromInt(2)));
-    var with_condition = try localBodyNodes(allocator, &graph, @enumFromInt(0), &.{@enumFromInt(2)});
-    defer with_condition.deinit();
-    try std.testing.expect(with_condition.contains(@enumFromInt(2)));
     const recursive = try dependencyOrder(allocator, &graph, &functions);
     defer allocator.free(recursive);
     try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, ordered, recursive);

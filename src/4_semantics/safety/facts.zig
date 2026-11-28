@@ -480,6 +480,7 @@ pub const Tracker = struct {
         // repeated lexical binding never receives a later, stronger birth.
         lexical_allocations: std.AutoArrayHashMapUnmanaged(graph.GlobalBindingId, bool) = .empty,
         producers: std.AutoArrayHashMapUnmanaged(Producer, void) = .empty,
+        inventoried_body_producers: bool = false,
         projected_storage: std.ArrayList(ProjectedStorage) = .empty,
         projection_observations: std.AutoHashMapUnmanaged(ProjectionObservation, usize) = .empty,
         projection_parents: std.AutoHashMapUnmanaged(ValidityRootId, void) = .empty,

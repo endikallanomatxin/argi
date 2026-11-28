@@ -10384,9 +10384,11 @@ pub const SafetyChecker = struct {
         destination.* = joined;
     }
 
-    fn registerLoopProducerRoles(self: *SafetyChecker, state: *FunctionState, body: graph_mod.GlobalBlockId, additional: []const ?graph_mod.GlobalNodeId) !void {
+    fn registerBodyProducerRoles(self: *SafetyChecker, state: *FunctionState, function: graph_mod.GlobalFunctionId) !void {
         const namespace = state.tracker.namespace orelse return;
-        var nodes = try @import("../global/reachability.zig").localBodyNodes(self.state_allocator, self.graph, body, additional);
+        if (namespace.inventoried_body_producers) return;
+        const body = self.graph.function(function).body orelse return;
+        var nodes = try @import("../global/reachability.zig").localBodyNodes(self.state_allocator, self.graph, body);
         defer nodes.deinit();
         var keys = nodes.keyIterator();
         while (keys.next()) |id| {
@@ -10414,6 +10416,7 @@ pub const SafetyChecker = struct {
                 else => {},
             }
         }
+        namespace.inventoried_body_producers = true;
     }
 
     fn registerSummaryProducerRoles(state: *FunctionState, site: facts.Tracker.RootNamespace.ProducerSite, summary: facts.SafetySummary) anyerror!void {
@@ -10447,7 +10450,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         increment: ?graph_mod.GlobalNodeId,
     ) !void {
-        try self.registerLoopProducerRoles(state, body, &.{ condition, increment });
+        try self.registerBodyProducerRoles(state, function);
         // Structural storage exists before control enters the loop. Materialize
         // its generations before cloning entry state so first address-taking
         // in the body is not mistaken for a conditionally created lifetime.
