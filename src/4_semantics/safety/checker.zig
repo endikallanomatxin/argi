@@ -1449,12 +1449,10 @@ pub const SafetyChecker = struct {
                     if (statement.else_block) |child| try self.validateBlock(function, child, &else_state, loop_transfers);
                     try self.joinState(state, &then_state, &else_state);
                 },
-                .while_statement => |statement| {
-                    try self.validateLoop(function, statement.condition, statement.body, state, null);
-                },
-                .for_statement => |statement| {
-                    if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
-                    try self.validateLoop(function, statement.condition, statement.body, state, statement.increment);
+                .while_statement, .for_statement => {
+                    const loop = @import("finite_dataflow.zig").SemanticLoop.fromNode(node);
+                    if (loop.initializer) |initialization| _ = try self.evaluate(function, initialization, state);
+                    if (state.reachable) try self.validateLoop(function, loop, state);
                 },
                 .switch_statement => |switch_id| try self.validateSwitch(function, switch_id, state, loop_transfers),
                 .return_statement => |ret| {
@@ -10465,11 +10463,11 @@ pub const SafetyChecker = struct {
     fn validateLoop(
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
-        condition: graph_mod.GlobalNodeId,
-        body: graph_mod.GlobalBlockId,
+        loop: @import("finite_dataflow.zig").SemanticLoop,
         state: *FunctionState,
-        increment: ?graph_mod.GlobalNodeId,
     ) !void {
+        const control = loop.control;
+        const condition = control.condition;
         try self.registerBodyProducerRoles(state, function);
         // Structural storage exists before control enters the loop. Materialize
         // its generations before cloning entry state so first address-taking
@@ -10478,7 +10476,6 @@ pub const SafetyChecker = struct {
         defer self.allocator.free(existing_places);
         for (existing_places) |place_facts| _ = try state.storageGeneration(place_facts.storage);
 
-        const control: @import("finite_dataflow.zig").LoopControl(graph_mod.GlobalNodeId) = .{ .condition = condition, .increment = increment };
         _ = try self.evaluate(function, condition, state);
         var entry = try self.cloneState(state);
         defer entry.deinit();
@@ -10500,7 +10497,7 @@ pub const SafetyChecker = struct {
             var transfers: LoopTransfers = .{};
             defer transfers.deinit();
 
-            try self.validateBlock(function, body, &iteration, &transfers);
+            try self.validateBlock(function, loop.body, &iteration, &transfers);
             if (transfers.break_state) |*break_state| try self.mergeLoopTransfer(&exits, break_state);
             if (transfers.continue_state) |*continue_state|
                 try self.mergeLoopTransfer(&iteration, continue_state);

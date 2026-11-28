@@ -26,6 +26,26 @@ pub fn LoopControl(comptime Node: type) type {
     };
 }
 
+/// Structure and evaluation order from the specialized semantic graph.
+pub const SemanticLoop = struct {
+    const graph = @import("../global/graph.zig");
+    initializer: ?graph.GlobalNodeId = null,
+    body: graph.GlobalBlockId,
+    control: LoopControl(graph.GlobalNodeId),
+
+    pub fn fromNode(node: graph.Node) SemanticLoop {
+        return switch (node.content) {
+            .while_statement => |loop| .{ .body = loop.body, .control = .{ .condition = loop.condition } },
+            .for_statement => |loop| .{
+                .initializer = loop.init,
+                .body = loop.body,
+                .control = .{ .condition = loop.condition, .increment = loop.increment },
+            },
+            else => unreachable,
+        };
+    }
+};
+
 test "safety loop control separates entry, backedge and break effects" {
     const loop: LoopControl(u8) = .{ .condition = 5, .increment = 7 };
     try std.testing.expectEqualDeep([2]@TypeOf(loop).Step{ .none, .{ .condition = 5 } }, loop.steps(.entry));

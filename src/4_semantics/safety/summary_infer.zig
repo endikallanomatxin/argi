@@ -2779,16 +2779,14 @@ pub const Infer = struct {
     fn inferLoopCapabilities(
         self: *Infer,
         function: graph_mod.GlobalFunctionId,
-        condition: graph_mod.GlobalNodeId,
-        body: graph_mod.GlobalBlockId,
-        increment: ?graph_mod.GlobalNodeId,
+        loop: @import("finite_dataflow.zig").SemanticLoop,
         flow: *CapabilityFlow,
         exits: *?CapabilityFlow,
     ) anyerror!void {
         if (!flow.reachable) return;
-        const control: @import("finite_dataflow.zig").LoopControl(graph_mod.GlobalNodeId) = .{ .condition = condition, .increment = increment };
+        const control = loop.control;
         const before_condition = flow.calls.count();
-        try self.infer_capability_node(function, condition, flow, exits);
+        try self.infer_capability_node(function, control.condition, flow, exits);
         if (!flow.reachable) return;
 
         const previous_loop = self.loop_capability_effects;
@@ -2811,7 +2809,7 @@ pub const Infer = struct {
             // previous iteration do not suppress a fresh body or condition.
             backedge.calls.clearRetainingCapacity();
             for (flow.calls.keys()) |call| try backedge.calls.put(self.allocator, call, {});
-            try self.infer_capability_block(function, body, &backedge, exits);
+            try self.infer_capability_block(function, loop.body, &backedge, exits);
             if (transfers.break_flow) |*exit| try self.join_capability_alternative(exit, &broken);
             if (transfers.continue_flow) |*continued|
                 try self.join_capability_fallthrough(&backedge, &backedge, continued);
@@ -2925,10 +2923,10 @@ pub const Infer = struct {
                 if (branch.else_block) |block| try self.infer_capability_block(function, block, &right, exits);
                 try self.join_capability_fallthrough(flow, &left, &right);
             },
-            .while_statement => |loop| try self.inferLoopCapabilities(function, loop.condition, loop.body, null, flow, exits),
-            .for_statement => |loop| {
-                if (loop.init) |value| try self.infer_capability_node(function, value, flow, exits);
-                try self.inferLoopCapabilities(function, loop.condition, loop.body, loop.increment, flow, exits);
+            .while_statement, .for_statement => {
+                const loop = @import("finite_dataflow.zig").SemanticLoop.fromNode(self.graph.node(node));
+                if (loop.initializer) |value| try self.infer_capability_node(function, value, flow, exits);
+                try self.inferLoopCapabilities(function, loop, flow, exits);
             },
             .choice_literal => |literal| {
                 if (literal.payload) |value| try self.infer_capability_node(function, value, flow, exits);
@@ -3415,13 +3413,13 @@ pub const Infer = struct {
                     try self.inferInputPostStates(function_id, child, &else_flow, exits);
                 try self.joinInputPostStateFallthrough(flow, &then_flow, &else_flow);
             },
-            .while_statement => |statement| try self.inferLoopPostStates(function_id, statement.condition, statement.body, null, flow, exits),
-            .for_statement => |statement| {
-                if (statement.init) |initialization|
+            .while_statement, .for_statement => {
+                const loop = @import("finite_dataflow.zig").SemanticLoop.fromNode(node);
+                if (loop.initializer) |initialization|
                     try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
                 if (!flow.reachable) return;
-                flow.collapse();
-                try self.inferLoopPostStates(function_id, statement.condition, statement.body, statement.increment, flow, exits);
+                if (node.content == .for_statement) flow.collapse();
+                try self.inferLoopPostStates(function_id, loop, flow, exits);
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -3481,9 +3479,7 @@ pub const Infer = struct {
     fn inferLoopPostStates(
         self: *Infer,
         function: graph_mod.GlobalFunctionId,
-        condition: graph_mod.GlobalNodeId,
-        body: graph_mod.GlobalBlockId,
-        increment: ?graph_mod.GlobalNodeId,
+        loop: @import("finite_dataflow.zig").SemanticLoop,
         flow: *InputPostStateFlow,
         exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
@@ -3492,7 +3488,7 @@ pub const Infer = struct {
         const parent_observations = self.observation_sink;
         if (parent_observations != null) self.observation_sink = &observations;
         defer self.observation_sink = parent_observations;
-        try self.inferInputPostStatesNode(function, condition, flow, exits);
+        try self.inferInputPostStatesNode(function, loop.control.condition, flow, exits);
         flow.collapse();
 
         var transfers: LoopTransfersFor(InputPostStateFlow) = .{};
@@ -3503,11 +3499,10 @@ pub const Infer = struct {
 
         var backedge = try flow.clone(self.allocator);
         defer backedge.deinit();
-        try self.inferInputPostStates(function, body, &backedge, exits);
+        try self.inferInputPostStates(function, loop.body, &backedge, exits);
         if (transfers.continue_flow) |*continued|
             try self.joinInputPostStateFallthrough(&backedge, &backedge, continued);
-        const control: @import("finite_dataflow.zig").LoopControl(graph_mod.GlobalNodeId) = .{ .condition = condition, .increment = increment };
-        for (control.steps(.backedge)) |step| {
+        for (loop.control.steps(.backedge)) |step| {
             if (!backedge.reachable) break;
             switch (step) {
                 .none => {},
