@@ -78,6 +78,24 @@ pub const Slots = struct {
         self.initialization[destination] = .{ .initialized = true };
     }
 
+    /// On the success edge of a checked selection, the element inherits
+    /// the observation dependencies of the receiver. Bounds, initialized
+    /// contents, and access authority must be proved by the operation.
+    /// A successful selection supplies no custody of the selected value.
+    pub fn borrowSelected(self: Slots, destination: usize, receiver: usize) bool {
+        if (!self.initialization[receiver].definitelyInitialized()) return false;
+        const source = self.observationRow(receiver);
+        var witnessed = false;
+        for (source) |dependency| {
+            if (dependency.current_ended or dependency.historical) return false;
+            witnessed = witnessed or dependency.provesCurrent();
+        }
+        if (!witnessed) return false;
+        if (destination != receiver) @memcpy(self.observationRow(destination), source);
+        self.initialization[destination] = .{ .initialized = true };
+        return true;
+    }
+
     pub fn owner(self: Slots, slot: usize, producer: usize) *Custody {
         std.debug.assert(slot < self.layout.slots and producer < self.layout.producers);
         return &self.custody[slot * self.layout.producers + producer];
@@ -220,4 +238,30 @@ test "safety finite opaque rows age with their handle and preserve older hidden 
     header.include(state);
     state.age(0);
     try std.testing.expect(header.covers(state));
+}
+
+test "safety checked selection borrows old owned elements from a current container" {
+    const a = std.testing.allocator;
+    const domain: Slots.OpaqueRows = .{ .producer = 0, .current = 3, .historical = 4 };
+    const state = try Slots.init(a, .{ .slots = 5, .producers = 2, .opaque_rows = &.{domain} });
+    defer state.deinit(a);
+    for (0..100) |_| {
+        state.age(1);
+        state.owner(domain.current, 1).current = true;
+    }
+    try std.testing.expectEqual(Custody{ .current = true, .historical = true }, state.owner(domain.current, 1).*);
+    try std.testing.expect(!state.borrowSelected(1, 0));
+    state.observeCurrent(0, 0);
+    try std.testing.expect(state.borrowSelected(1, 0));
+    try std.testing.expect(state.observation(1, 0).provesCurrent());
+    try std.testing.expectEqual(Observation{}, state.observation(1, 1));
+    try std.testing.expectEqual(Custody{}, state.owner(1, 1).*);
+
+    state.age(0);
+    try std.testing.expect(!state.borrowSelected(2, 0));
+    state.observeCurrent(0, 0);
+    try std.testing.expect(state.borrowSelected(2, 0));
+    try std.testing.expect(!state.observation(1, 0).provesCurrent());
+    try std.testing.expect(state.observation(2, 0).provesCurrent());
+    try std.testing.expect(state.owner(domain.historical, 1).historical);
 }
