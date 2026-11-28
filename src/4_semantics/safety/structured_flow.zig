@@ -154,7 +154,13 @@ const Builder = struct {
             .code_block => |block| return self.lowerBlock(block, next, parent),
             .break_statement => return (parent orelse return error.InvalidLoopControl).on_break,
             .continue_statement => return (parent orelse return error.InvalidLoopControl).on_continue,
-            .return_statement, .abort_statement => return self.append(.{ .action = .{ .statement = id }, .successors = .{ null, null } }),
+            .return_statement, .abort_statement => {
+                // Even without a lexical continuation, the statement can
+                // evaluate a value and perform cleanup. Its private exit
+                // keeps that transfer separate from normal fallthrough.
+                const terminal = try self.append(.{ .action = .none, .successors = .{ null, null } });
+                return self.append(.{ .action = .{ .statement = id }, .successors = .{ terminal, null } });
+            },
             .switch_statement => |selection| return self.lowerSwitch(selection, next, parent),
             else => return self.append(.{ .action = .{ .statement = id }, .successors = .{ next, null } }),
         }
@@ -274,7 +280,10 @@ test "safety structured switch preserves case identity and evaluates its subject
     try std.testing.expectEqual(@as(usize, 1), case_edges.len);
     try std.testing.expectEqual(.matched, case_edges[0].outcome);
     try std.testing.expectEqual(null, case.successors[1]);
-    try std.testing.expectEqual(@as(graph.GlobalNodeId, @enumFromInt(2)), flow.blocks[case.successors[0].?].action.statement);
+    const abort = flow.blocks[case.successors[0].?];
+    try std.testing.expectEqual(@as(graph.GlobalNodeId, @enumFromInt(2)), abort.action.statement);
+    try std.testing.expect(abort.successors[0].? != 0);
+    try std.testing.expectEqual([2]?usize{ null, null }, flow.blocks[abort.successors[0].?].successors);
 }
 
 test "safety structured conditions route short circuit edges around the right operand" {
