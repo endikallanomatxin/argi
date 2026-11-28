@@ -219,6 +219,7 @@ comptime {
     _ = @import("4_semantics/safety/transfer_evidence.zig");
     _ = @import("4_semantics/safety/contracts.zig");
     _ = @import("4_semantics/safety/reference_observation_model.zig");
+    _ = @import("4_semantics/safety/loop_observation.zig");
     _ = @import("4_semantics/safety/access_bounds.zig");
     _ = @import("4_semantics/safety/domains.zig");
     _ = global_lsp_index;
