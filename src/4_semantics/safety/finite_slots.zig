@@ -547,10 +547,8 @@ pub const Program = struct {
         return next;
     }
 
-    pub fn join(self: Program, left: State, right: State) !State {
-        const next = try left.clone(self.allocator);
-        next.include(right);
-        return next;
+    pub fn include(_: Program, left: *State, right: State) error{}!void {
+        left.include(right);
     }
 
     pub fn covers(_: Program, left: State, right: State) bool {

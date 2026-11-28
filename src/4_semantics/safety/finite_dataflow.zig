@@ -10,8 +10,9 @@ pub fn backedgeNodes(comptime Node: type, condition: Node, increment: ?Node) [2]
 
 /// Reachability is represented by optional headers. The caller supplies
 /// empty headers, an entry state, and fixed successors for each block.
-/// State payloads must be immutable during transfer and join. Both
-/// operations return independently owned states. The domain releases
+/// Transfer takes a read-only snapshot and returns an independently
+/// owned state. Inclusion updates a destination with the least upper
+/// bound of both states. The domain releases
 /// discarded states. The caller owns every published header, including
 /// the entry state and any headers published before an error.
 pub fn solve(
@@ -41,20 +42,24 @@ pub fn solve(
         defer if (replaced_input) domain.release(input);
         for (domain.successors(block)) |edge| {
             const successor = domain.target(edge);
-            const next = (try domain.transfer(block, edge, input)) orelse continue;
-            if (headers[successor]) |previous| {
-                defer domain.release(next);
-                if (domain.covers(previous, next)) continue;
-                const combined = try domain.join(previous, next);
+            var next = (try domain.transfer(block, edge, input)) orelse continue;
+            var next_owned = true;
+            defer if (next_owned) domain.release(next);
+            if (headers[successor]) |*previous| {
+                if (domain.covers(previous.*, next)) continue;
                 if (successor == block and !replaced_input) {
-                    // Other edges still read the block's original snapshot.
+                    // Other edges still read the original header. Reuse
+                    // the incoming allocation as its replacement.
+                    try domain.include(&next, previous.*);
+                    previous.* = next;
+                    next_owned = false;
                     replaced_input = true;
                 } else {
-                    domain.release(previous);
+                    try domain.include(previous, next);
                 }
-                headers[successor] = combined;
             } else {
                 headers[successor] = next;
+                next_owned = false;
             }
             if (queued[successor]) continue;
             pending[count] = successor;
@@ -101,8 +106,8 @@ test "finite safety worklist covers a backedge and preserves its stale observati
             return left.saved.covers(right.saved) and left.current.covers(right.current) and left.slot.covers(right.slot);
         }
 
-        fn join(_: @This(), left: State, right: State) error{}!State {
-            return .{
+        fn include(_: @This(), left: *State, right: State) error{}!void {
+            left.* = .{
                 .saved = left.saved.join(right.saved),
                 .current = left.current.join(right.current),
                 .slot = left.slot.join(right.slot),
