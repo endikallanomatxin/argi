@@ -1217,15 +1217,42 @@ pub const SafetyChecker = struct {
             _ = try namespace.registerProjectionPartition(state.tracker.allocator, .{ .parent = parent, .selector = .{ .domain = domain } });
     }
 
+    fn registerValueEntryPaths(state: *FunctionState, value: facts.ValueEffect) anyerror!void {
+        inline for (.{
+            "input_places",                   "input_generation_dependencies", "input_place_values",
+            "input_owned_roots",              "input_receiver_values",         "opaque_storage_dependencies",
+            "opaque_generation_dependencies",
+        }) |field| {
+            for (@field(value, field)) |path| try registerEntryProjectionPath(state, path);
+        }
+        for (value.input_dependencies) |dependency| try registerEntryProjectionPath(state, dependency.path);
+        for (value.input_domains) |domain| {
+            var path = domain.path;
+            path.storage_domain = domain.domain_index;
+            try registerEntryProjectionPath(state, path);
+        }
+        for (value.domain_values) |domain| {
+            try registerValueEntryPaths(state, domain.value.*);
+            if (domain.required_reads) |reads| try registerValueEntryPaths(state, reads.*);
+        }
+        for (value.fields) |field| try registerValueEntryPaths(state, field.value.*);
+        for (value.variants) |variant| try registerValueEntryPaths(state, variant.value.*);
+    }
+
     fn registerSummaryEntryPaths(state: *FunctionState, summary: facts.SafetySummary) anyerror!void {
+        for (summary.outputs) |output| try registerValueEntryPaths(state, output);
         for (summary.input_accesses) |access| try registerEntryProjectionPath(state, access.target);
         for (summary.storage_observations) |path| try registerEntryProjectionPath(state, path);
         for (summary.required_opaque_inputs) |path| try registerEntryProjectionPath(state, path);
         for (summary.input_post_states) |post| {
             try registerEntryProjectionPath(state, post.target);
+            try registerValueEntryPaths(state, post.value);
             if (post.opaque_storage) |storage| try registerEntryProjectionPath(state, storage);
         }
-        for (summary.opaque_storage_effects) |effect| try registerEntryProjectionPath(state, effect.storage);
+        for (summary.opaque_storage_effects) |effect| {
+            try registerEntryProjectionPath(state, effect.storage);
+            try registerValueEntryPaths(state, effect.hidden_dependencies);
+        }
         for (summary.opaque_storage_empties) |path| try registerEntryProjectionPath(state, path);
         for (summary.opaque_relocation_sources) |path| try registerEntryProjectionPath(state, path);
         for (summary.invalidated_domains) |domain| {
@@ -12156,7 +12183,7 @@ test "safety summary layout registers a nested reference leaf without creating o
     const count = namespace.next_id;
     const path: facts.InputPath = .{ .input_index = 0, .projections = &selectors, .storage_domain = 0 };
     try SafetyChecker.registerSummaryEntryPaths(&state, .{
-        .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{path} }},
+        .outputs = &.{.{ .opaque_storage_dependencies = &.{path} }},
     });
     try std.testing.expectEqual(count, namespace.next_id);
     try std.testing.expectEqual(@as(usize, 0), namespace.projected_storage.items.len);
