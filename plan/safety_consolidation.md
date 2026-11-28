@@ -783,6 +783,29 @@ partition can contain several live or ended instances. Its membership
 never proves validity, unique access or the right to destroy a specific
 instance.
 
+Repeated production must support containers holding several live owners
+from one site. In `array.push(String("hello"))` inside a loop, the older
+strings still belong to the array. Keep this custody even when the
+producer's history cannot authenticate an old reference. A fresh
+checked selection such as `array[0]` derives a new observation from the
+current borrow of the container, the initialized-element guarantee of
+its checked operation, and the extent and authority of the selection.
+It does not recover a validity witness from the producer's history.
+Name the observation by its selection site and relate it to the
+container observation that authenticated it. Invalidating the container
+generation or the selected storage invalidates that witness. Distinct
+unknown indices can alias.
+
+A consuming selection additionally needs a checked extraction contract.
+It must establish initializedness and remove exactly the selected
+element's custody, with a fresh owner for the output. Its effect on a
+historical may-set is weak unless the operation covers all instances.
+The drop operation for the entire container may discharge all custody
+covered by its verified traversal. These rules require no identity for
+each loop execution. Validate fresh access, extraction, and full
+cleanup of a container holding several historical owners, alongside a
+saved view invalidated by a later reallocation.
+
 Use a product of finite components over those keys. Value slots contain
 possible targets, validity dependencies and owner associations. Authority
 records possible outstanding restrictions and definite grants separately.
