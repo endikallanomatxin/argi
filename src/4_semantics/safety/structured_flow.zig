@@ -18,6 +18,31 @@ pub const Flow = struct {
         successors: [2]?usize,
     };
 
+    pub const Edge = struct {
+        destination: usize,
+        outcome: enum { unconditional, matched, unmatched },
+    };
+
+    /// Keep edge polarity even when one branch is absent. In particular,
+    /// an exhaustive switch's final test has no unmatched continuation.
+    pub fn edges(self: Flow, index: usize, buffer: *[2]Edge) []const Edge {
+        const block = self.blocks[index];
+        const conditional = switch (block.action) {
+            .condition, .switch_case => true,
+            else => false,
+        };
+        var len: usize = 0;
+        for (block.successors, 0..) |target, ordinal| {
+            const destination = target orelse continue;
+            buffer[len] = .{
+                .destination = destination,
+                .outcome = if (!conditional) .unconditional else if (ordinal == 0) .matched else .unmatched,
+            };
+            len += 1;
+        }
+        return buffer[0..len];
+    }
+
     blocks: []const Block,
     entry: usize,
 
@@ -191,6 +216,13 @@ test "safety structured switch preserves case identity and evaluates its subject
     const case = flow.blocks[entry.successors[0].?];
     try std.testing.expectEqual(@as(graph.GlobalSwitchId, @enumFromInt(0)), entry.action.switch_value);
     try std.testing.expectEqual(@as(graph.GlobalSwitchCaseId, @enumFromInt(0)), case.action.switch_case.case);
+    var edge_buffer: [2]Flow.Edge = undefined;
+    const dispatch_edges = flow.edges(flow.entry, &edge_buffer);
+    try std.testing.expectEqual(@as(usize, 1), dispatch_edges.len);
+    try std.testing.expectEqual(.unconditional, dispatch_edges[0].outcome);
+    const case_edges = flow.edges(entry.successors[0].?, &edge_buffer);
+    try std.testing.expectEqual(@as(usize, 1), case_edges.len);
+    try std.testing.expectEqual(.matched, case_edges[0].outcome);
     try std.testing.expectEqual(null, case.successors[1]);
     try std.testing.expectEqual(@as(graph.GlobalNodeId, @enumFromInt(2)), flow.blocks[case.successors[0].?].action.statement);
 }
