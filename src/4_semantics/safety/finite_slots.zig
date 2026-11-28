@@ -193,7 +193,24 @@ pub const Slots = struct {
             return false;
         }
 
+        fn requiredSelection(self: Transfer) ?Selection {
+            return switch (self) {
+                .select => |selected| selected,
+                .extract_opaque_element => |extraction| extraction.selection,
+                else => null,
+            };
+        }
+
         pub fn apply(self: Transfer, state: Slots, allocator: std.mem.Allocator) !void {
+            if (self.requiredSelection()) |selected| {
+                if (!state.canSelect(selected)) return error.UnprovedObservation;
+            }
+            try self.propagate(state, allocator);
+        }
+
+        // Compute the effect of a successful operation. The solver checks
+        // its safety precondition against the fixed point before accepting.
+        fn propagate(self: Transfer, state: Slots, allocator: std.mem.Allocator) !void {
             switch (self) {
                 .produce => |producer| state.age(producer),
                 .relocate_backing => |domain| state.renewRelocatingOpaque(domain),
@@ -205,10 +222,8 @@ pub const Slots = struct {
                 .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
                 .start_execution => |site| state.ageExecution(site),
                 .complete_execution => |site| state.completeCurrent(site),
-                .extract_opaque_element => |extraction| if (!state.extractOpaqueElement(extraction.selection, extraction.domain, extraction.result_producer))
-                    return error.UnprovedObservation,
-                .select => |selection| if (!state.borrowSelected(selection))
-                    return error.UnprovedObservation,
+                .extract_opaque_element => |extraction| state.extractOpaqueElement(extraction.selection, extraction.domain, extraction.result_producer),
+                .select => |selected| state.writeReference(selected.destination, selected.receiver, true),
             }
         }
     };
@@ -378,11 +393,10 @@ pub const Slots = struct {
 
     /// A verified extraction removes one occupied element and transfers
     /// its custody. Aggregate may-facts cannot identify the removed owner.
-    fn extractOpaqueElement(self: Slots, selection: Selection, domain: OpaqueRows, result_producer: usize) bool {
+    fn extractOpaqueElement(self: Slots, selection: Selection, domain: OpaqueRows, result_producer: usize) void {
         std.debug.assert(selection.region == domain.current and selection.mode == .write);
         std.debug.assert(selection.destination != domain.current and selection.destination != domain.historical);
         std.debug.assert(result_producer != domain.producer);
-        if (!self.canSelect(selection)) return false;
         self.age(result_producer);
         self.retireObservations(domain.producer, true);
         for (0..self.layout.producers) |producer| {
@@ -393,7 +407,6 @@ pub const Slots = struct {
         for (result, self.observationRow(domain.current)) |*retained, dependency|
             retained.* = retained.join(dependency);
         self.owner(selection.destination, result_producer).current = true;
-        return true;
     }
 
     pub fn owner(self: Slots, slot: usize, producer: usize) *Custody {
@@ -690,6 +703,19 @@ pub const Program = struct {
             return err;
         };
         try @import("finite_dataflow.zig").solve(Program, self.allocator, headers, entry, initial, self);
+        for (headers, self.edges_by_block) |header, edges| {
+            const state = header orelse continue;
+            for (edges) |edge| {
+                var last_check: ?usize = null;
+                for (edge.operations, 0..) |op, index| {
+                    if (op.requiredSelection() != null) last_check = index;
+                }
+                const last = last_check orelse continue;
+                const scratch = try state.clone(self.allocator);
+                defer self.release(scratch);
+                for (edge.operations[0 .. last + 1]) |op| try op.apply(scratch, self.allocator);
+            }
+        }
     }
 
     fn validate(self: Program, headers: []const ?State, entry: usize, layout: Slots.Layout) !void {
@@ -717,7 +743,7 @@ pub const Program = struct {
     pub fn transfer(self: Program, _: usize, edge: Edge, state: State) !?State {
         const next = try state.clone(self.allocator);
         errdefer next.deinit(self.allocator);
-        for (edge.operations) |operation| try operation.apply(next, self.allocator);
+        for (edge.operations) |operation| try operation.propagate(next, self.allocator);
         return next;
     }
 
@@ -986,4 +1012,18 @@ test "safety finite overlap does not infer disjointness from symbolic identity" 
     state.suspendAccess(3, 0, false);
     try std.testing.expect(state.accessSuspended(1, .write));
     try std.testing.expect(!state.accessSuspended(1, .read));
+}
+
+test "safety finite solver checks selection after a backedge invalidates its receiver" {
+    const a = std.testing.allocator;
+    const initial = try Slots.initEntry(a, .{ .slots = 2, .producers = 1 });
+    initial.observeCurrent(0, 0);
+    const program: Program = .{ .allocator = a, .edges_by_block = &.{
+        &.{.{ .destination = 1, .operations = &.{.{ .select = .{ .destination = 1, .receiver = 0, .region = 0 } }} }},
+        &.{.{ .destination = 0, .operations = &.{.{ .produce = 0 }} }},
+    } };
+    var headers: [2]?Slots = @splat(null);
+    defer for (headers) |header| if (header) |state| program.release(state);
+    try std.testing.expectError(error.UnprovedObservation, program.solve(&headers, 0, initial));
+    try std.testing.expect(headers[1].?.observation(1, 0).historical);
 }
