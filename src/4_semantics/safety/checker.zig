@@ -5934,17 +5934,42 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         hidden: *std.array_list.Managed(facts.ValidityRootId),
     ) anyerror!void {
-        for (effect.opaque_storage_dependencies) |path| {
-            const storage = try self.resolveSummaryOpaqueStoragePath(path, &.{}, arguments, state) orelse continue;
-            for (state.opaque_storages.items) |row| {
-                if (!state.opaqueStorageMayMatch(row, storage, false)) continue;
-                for (row.hidden_dependencies) |root| {
-                    if (!self.opaqueDependencyIsInternalToStorage(state, row.storage, root)) try appendRootFact(hidden, root);
-                }
-            }
-        }
+        for (effect.opaque_storage_dependencies) |path|
+            try self.collectSummaryOpaqueRowDependencies(path, arguments, state, hidden);
         for (effect.fields) |field| try self.collectEntryOpaqueDependencies(field.value.*, arguments, state, hidden);
         for (effect.variants) |variant| try self.collectEntryOpaqueDependencies(variant.value.*, arguments, state, hidden);
+    }
+
+    fn collectSummaryOpaqueRowDependencies(
+        self: *SafetyChecker,
+        path: facts.InputPath,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
+    ) !void {
+        if (state.opaque_storages.items.len == 0 or path.input_index >= arguments.len) return;
+        var candidates = std.array_list.Managed(StorageIdentity).init(self.state_allocator);
+        defer candidates.deinit();
+        if (path.storage_domain == null and path.projections.len == 0) {
+            const pointer = arguments[path.input_index];
+            if (pointer.referenced_place) |place| try appendStorageIdentity(&candidates, .{ .place = place });
+            for (pointer.mutation_places) |place| try appendStorageIdentity(&candidates, .{ .place = place });
+            for (pointer.symbolic_pointees) |identity| try appendStorageIdentity(&candidates, .{ .symbolic = identity });
+            try self.collectOpaqueDomainsAccessedBy(state, pointer, &candidates);
+        }
+        if (candidates.items.len == 0) {
+            const storage = try self.resolveSummaryOpaqueStoragePath(path, &.{}, arguments, state) orelse return;
+            try candidates.append(storage);
+        }
+        for (state.opaque_storages.items) |row| {
+            const matches = for (candidates.items) |storage| {
+                if (state.opaqueStorageMayMatch(row, storage, false)) break true;
+            } else false;
+            if (!matches) continue;
+            for (row.hidden_dependencies) |root| {
+                if (!self.opaqueDependencyIsInternalToStorage(state, row.storage, root)) try appendRootFact(hidden, root);
+            }
+        }
     }
 
     fn applySummaryOpaqueStorageEffects(
@@ -6088,14 +6113,9 @@ pub const SafetyChecker = struct {
         }
         for (effect.opaque_storage_dependencies) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
-            const storage = try self.resolveSummaryOpaqueStoragePath(input_path, &.{}, arguments, state) orelse continue;
-            try self.collectReturnedStorageDependencies(state, storage, hidden);
-            for (state.opaque_storages.items) |opaque_storage| {
-                if (!state.opaqueStorageMayMatch(opaque_storage, storage, false)) continue;
-                for (opaque_storage.hidden_dependencies) |dependency|
-                    if (!self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, dependency))
-                        try appendRootFact(hidden, dependency);
-            }
+            try self.collectSummaryOpaqueRowDependencies(input_path, arguments, state, hidden);
+            if (try self.resolveSummaryOpaqueStoragePath(input_path, &.{}, arguments, state)) |storage|
+                try self.collectReturnedStorageDependencies(state, storage, hidden);
         }
         for (effect.fields) |field|
             try self.instantiateOpaqueDependencies(field.value.*, arguments, state, fresh_roots, hidden);
@@ -12839,6 +12859,26 @@ test "call completion cannot authorize its earlier may-access effects" {
     try std.testing.expect(!state.executionPending(id));
     try checker.applySummaryEffects(source, access, &.{}, &arguments, &state);
     try std.testing.expectEqual(@as(usize, 2), diags.list.items.len);
+}
+
+test "opaque summary dependency reads include every possible source domain" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var checker = SafetyChecker.init(a, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(a);
+    defer state.deinit();
+    const first: facts.Place = .{ .root = @enumFromInt(0) };
+    const second: facts.Place = .{ .root = @enumFromInt(1) };
+    const left = try state.tracker.establish(.fresh);
+    const right = try state.tracker.establish(.fresh);
+    try state.mergeOpaqueStorage(.{ .place = first }, &.{left}, &.{});
+    try state.mergeOpaqueStorage(.{ .place = second }, &.{right}, &.{});
+    var hidden = std.array_list.Managed(facts.ValidityRootId).init(a);
+    defer hidden.deinit();
+    try checker.collectSummaryOpaqueRowDependencies(.{ .input_index = 0 }, &.{.{ .mutation_places = &.{ first, second } }}, &state, &hidden);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ left, right }, hidden.items);
 }
 
 test "opaque summary emptying cannot erase dependencies transferred from entry" {
