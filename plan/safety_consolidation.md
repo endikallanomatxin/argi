@@ -951,6 +951,17 @@ four to 25. Opaque-row count alone no longer explains nonconvergence.
 The symbolic values and possible owners still need a representation
 that covers retained instances without requiring an identity per turn.
 
+At `81fc63258`, the instrumented growth helper has exactly one
+producer key before and throughout all eight transfers. Every materialized
+owner belongs to that key. The number of owner roots still rises from
+one to eight, and the counts of total root slots, symbolic values and
+opaque rows match the earlier trace. The producer inventory is therefore
+already sufficient to name the replacement owners in this case. The
+remaining growth happens when instantiating the producer and storing
+its effects under per-observation identities. A finite transfer must
+write both the new owner's custody and the aged owners' obligations
+under the preassigned keys before the backedge join.
+
 The abstraction therefore needs two keys for projected opaque storage.
 Use a stable domain key for possible aliasing and provenance recovery.
 Use a current observation key for exact lookup, retirement and guarded
