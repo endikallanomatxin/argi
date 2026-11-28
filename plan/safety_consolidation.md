@@ -846,6 +846,14 @@ in the program from growth introduced by the solver.
 
 #### Measurements and constraints from the existing checker
 
+At `d17330421`, the serial Debug internal run passed 1,704 tests
+with one skip. The runner used 230 MiB peak RSS and took about three
+minutes. The eight reduced programs were then built with one frontend
+worker and a disabled frontend cache. Both straight-line programs ran
+successfully and both saved-view controls rejected the stale access.
+The two DynamicArray loops, the String append loop and the array of
+owned strings still exhausted the production loop budget.
+
 The reduced DynamicArray controls also live under `plan/safety_repros`.
 At `b056072a0`, `dynamic_array_growth` and `dynamic_array_reserved`
 both report nonconvergence in the helper's loop. They differ only in
