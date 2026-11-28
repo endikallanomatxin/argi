@@ -235,7 +235,7 @@ pub const Slots = struct {
                 .start_execution => |site| state.ageExecution(site),
                 .complete_execution => |site| state.completeCurrent(site),
                 .extract_opaque_element => |extraction| state.extractOpaqueElement(extraction.selection, extraction.domain, extraction.result_producer),
-                .select => |selected| state.writeReference(selected.destination, selected.receiver, true),
+                .select => |selected| state.writeSelectedReference(selected),
             }
         }
     };
@@ -397,8 +397,23 @@ pub const Slots = struct {
     /// A successful selection supplies no custody of the selected value.
     pub fn borrowSelected(self: Slots, selection: Selection) bool {
         if (!self.canSelect(selection)) return false;
-        self.writeReference(selection.destination, selection.receiver, true);
+        self.writeSelectedReference(selection);
         return true;
+    }
+
+    fn writeSelectedReference(self: Slots, selection: Selection) void {
+        for (self.layout.opaque_rows) |domain| {
+            if (selection.region != domain.current) continue;
+            const output = self.observationRow(selection.destination);
+            const receiver = self.observationRow(selection.receiver);
+            const hidden = self.observationRow(domain.current);
+            for (output, receiver, hidden) |*result, witness, dependency|
+                result.* = witness.join(dependency);
+            self.initialization[selection.destination] = self.initialization[selection.receiver];
+            self.unobserved[selection.destination] = self.unobserved[selection.receiver];
+            return;
+        }
+        self.writeReference(selection.destination, selection.receiver, true);
     }
 
     fn canSelect(self: Slots, selection: Selection) bool {
@@ -1095,7 +1110,10 @@ test "safety finite selection checks hidden obligations independently of the rec
     state.retainOpaqueObservation(domain, false, 1, .{ .current_live = true });
     const select: Slots.Selection = .{ .destination = 1, .receiver = 0, .region = domain.current };
     try std.testing.expect(state.borrowSelected(select));
+    try std.testing.expect(state.observation(1, 1).provesCurrent());
     state.age(1);
+    try std.testing.expect(state.observation(1, 1).historical);
+    try std.testing.expect(!state.borrowSelected(.{ .destination = 0, .receiver = 1, .region = 1 }));
     try std.testing.expect(state.observation(0, 0).provesCurrent());
     try std.testing.expect(!state.borrowSelected(select));
 }
