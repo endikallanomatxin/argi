@@ -142,6 +142,14 @@ pub const Slots = struct {
         return .{ .layout = layout, .initialization = initialization, .observations = observations, .custody = custody, .restrictions = restrictions, .unobserved = unobserved };
     }
 
+    /// Entry slots exist even when the first trip around a loop never
+    /// initializes them. Empty lattice state is reserved for accumulation.
+    pub fn initEntry(allocator: std.mem.Allocator, layout: Layout) !Slots {
+        const state = try init(allocator, layout);
+        @memset(state.initialization, .{ .deinitialized = true });
+        return state;
+    }
+
     /// Copies a state in the same already validated layout.
     pub fn clone(self: Slots, allocator: std.mem.Allocator) !Slots {
         const initialization = try allocator.dupe(Initialization, self.initialization);
@@ -531,7 +539,7 @@ test "safety finite dataflow covers repeated owned element insertion and backing
             &.{},
         },
     };
-    const initial = try Slots.init(domain.allocator, layout);
+    const initial = try Slots.initEntry(domain.allocator, layout);
     initial.observeCurrent(receiver, backing);
     var headers: [4]?Slots = @splat(null);
     defer for (headers) |header| if (header) |state| domain.release(state);
@@ -629,8 +637,7 @@ test "safety finite joins keep initialized references without observations" {
 test "safety finite solver propagates through a long loop-carried reference chain" {
     const a = std.testing.allocator;
     const length = 32;
-    const initial = try Slots.init(a, .{ .slots = length, .producers = 1 });
-    @memset(initial.initialization, .{ .deinitialized = true });
+    const initial = try Slots.initEntry(a, .{ .slots = length, .producers = 1 });
     initial.observeCurrent(0, 0);
     var writes: [length - 1]Slots.Transfer = undefined;
     for (&writes, 0..) |*write, index| {
