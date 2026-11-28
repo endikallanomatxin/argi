@@ -102,6 +102,7 @@ pub const Slots = struct {
         copy_reference: ReferenceWrite,
         reference_post_states: []const ReferenceWrite,
         select: Selection,
+        extract_opaque_element: struct { selection: Selection, domain: OpaqueRows, result_producer: usize },
         suspend_access: struct { slot: usize, receipt_site: usize, exclusive: bool },
         start_execution: usize,
         complete_execution: usize,
@@ -118,6 +119,8 @@ pub const Slots = struct {
                 .suspend_access => |loan| state.suspendAccess(loan.slot, loan.receipt_site, loan.exclusive),
                 .start_execution => |site| state.ageExecution(site),
                 .complete_execution => |site| state.completeCurrent(site),
+                .extract_opaque_element => |extraction| if (!state.extractOpaqueElement(extraction.selection, extraction.domain, extraction.result_producer))
+                    return error.UnprovedObservation,
                 .select => |selection| if (!state.borrowSelected(selection))
                     return error.UnprovedObservation,
             }
@@ -270,6 +273,12 @@ pub const Slots = struct {
     /// supplies a region with checked bounds and initialized contents.
     /// A successful selection supplies no custody of the selected value.
     pub fn borrowSelected(self: Slots, selection: Selection) bool {
+        if (!self.canSelect(selection)) return false;
+        self.writeReference(selection.destination, selection.receiver, true);
+        return true;
+    }
+
+    fn canSelect(self: Slots, selection: Selection) bool {
         if (self.accessSuspended(selection.receiver, .read) or self.accessSuspended(selection.region, selection.mode)) return false;
         if (self.unobserved[selection.receiver] or !self.initialization[selection.receiver].definitelyInitialized()) return false;
         const source = self.observationRow(selection.receiver);
@@ -278,8 +287,26 @@ pub const Slots = struct {
             if (dependency.current_ended or dependency.historical) return false;
             witnessed = witnessed or dependency.provesCurrent();
         }
-        if (!witnessed) return false;
-        self.writeReference(selection.destination, selection.receiver, true);
+        return witnessed;
+    }
+
+    /// A verified extraction removes one occupied element and transfers
+    /// its custody. Aggregate may-facts cannot identify the removed owner.
+    fn extractOpaqueElement(self: Slots, selection: Selection, domain: OpaqueRows, result_producer: usize) bool {
+        std.debug.assert(selection.region == domain.current and selection.mode == .write);
+        std.debug.assert(selection.destination != domain.current and selection.destination != domain.historical);
+        std.debug.assert(result_producer != domain.producer);
+        if (!self.canSelect(selection)) return false;
+        self.age(result_producer);
+        self.retireObservations(domain.producer, true);
+        for (0..self.layout.producers) |producer| {
+            if (self.owner(domain.current, producer).current) self.retireObservations(producer, false);
+        }
+        self.observeCurrent(selection.destination, result_producer);
+        const result = self.observationRow(selection.destination);
+        for (result, self.observationRow(domain.current)) |*retained, dependency|
+            retained.* = retained.join(dependency);
+        self.owner(selection.destination, result_producer).current = true;
         return true;
     }
 
@@ -334,9 +361,14 @@ pub const Slots = struct {
     /// Destroying it cannot discharge older instances from the same producer.
     pub fn dischargeCurrent(self: Slots, slot: usize, producer: usize) void {
         self.owner(slot, producer).current = false;
+        self.retireObservations(producer, true);
+    }
+
+    fn retireObservations(self: Slots, producer: usize, definite: bool) void {
         for (0..self.layout.slots) |index| {
             const row = self.observationRow(index);
-            row[producer] = row[producer].retireCurrent();
+            const retired = row[producer].retireCurrent();
+            row[producer] = if (definite) retired else row[producer].join(retired);
         }
     }
 
@@ -357,14 +389,8 @@ pub const Slots = struct {
     fn destroyOpaqueContents(self: Slots, domain: OpaqueRows) void {
         for (0..self.layout.producers) |producer| {
             const custody = self.owner(domain.current, producer);
-            if (custody.current or producer == domain.producer) {
-                for (0..self.layout.slots) |slot| {
-                    const row = self.observationRow(slot);
-                    const before = row[producer];
-                    const retired = before.retireCurrent();
-                    row[producer] = if (producer == domain.producer) retired else before.join(retired);
-                }
-            }
+            if (custody.current or producer == domain.producer)
+                self.retireObservations(producer, producer == domain.producer);
             custody.* = .{};
         }
         self.emptyCurrentOpaque(domain);
@@ -755,4 +781,24 @@ test "safety finite whole-container cleanup discharges only the current backing"
     try std.testing.expectEqual(Observation{}, state.observation(domain.current, 1));
     try std.testing.expectEqual(Observation{ .current_ended = true }, state.observation(0, 0));
     try std.testing.expectEqual(Observation{ .current_live = true, .current_ended = true }, state.observation(1, 1));
+}
+
+test "safety finite extraction keeps other historical element owners" {
+    const a = std.testing.allocator;
+    const domain: Slots.OpaqueRows = .{ .producer = 0, .current = 2, .historical = 3 };
+    const state = try Slots.initEntry(a, .{ .slots = 4, .producers = 4, .opaque_rows = &.{domain} });
+    defer state.deinit(a);
+    state.observeCurrent(0, 0);
+    state.owner(domain.current, 1).historical = true;
+    state.retainOpaqueObservation(domain, false, 3, .{ .current_live = true });
+    try (Slots.Transfer{ .extract_opaque_element = .{
+        .selection = .{ .destination = 1, .receiver = 0, .region = domain.current, .mode = .write },
+        .domain = domain,
+        .result_producer = 2,
+    } }).apply(state, a);
+    try std.testing.expect(state.owner(domain.current, 1).historical);
+    try std.testing.expect(state.owner(1, 2).current);
+    try std.testing.expect(state.observation(1, 2).provesCurrent());
+    try std.testing.expect(state.observation(1, 3).provesCurrent());
+    try std.testing.expect(!state.observation(0, 0).provesCurrent());
 }
